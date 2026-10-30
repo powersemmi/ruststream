@@ -1,0 +1,63 @@
+error[E0277]: `RcBroker` is not a broker this runtime runs
+  --> tests/ui/local_broker_on_send_runtime.rs:40:65
+   |
+40 |     RustStream::new(AppInfo::new("local", "0.1.0")).with_broker(broker, |_b| {})
+   |                                                     ----------- ^^^^^^ not a `Broker`
+   |                                                     |
+   |                                                     required by a bound introduced by this call
+   |
+help: the trait `ruststream::Broker` is not implemented for `RcBroker`
+  --> tests/ui/local_broker_on_send_runtime.rs:9:1
+   |
+ 9 | struct RcBroker {
+   | ^^^^^^^^^^^^^^^
+   = note: this runtime moves a broker, its deliveries and their futures across threads, so it runs brokers whose types are `Send` and implement `Broker`
+   = note: a broker whose client holds `Rc` or `RefCell` implements `LocalBroker` alone; to run here, keep the client's shared state in `Arc` and `Mutex` and implement `Broker`
+help: the following other types implement trait `ruststream::Broker`
+  --> crates/ruststream-conformance/src/harness.rs
+   |
+   | impl<B: InProcess> Broker for InProcessBroker<B> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `InProcessBroker<B>`
+   |
+  ::: crates/ruststream-memory/src/broker.rs
+   |
+   | impl<Log: LogMode> Broker for MemoryBroker<Log> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryBroker<Log>`
+   = note: required for `RcBroker` to implement `BrokerRegistration`
+note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+  --> crates/ruststream-runtime/src/app/service.rs
+   |
+   |     pub fn with_broker<R, F>(
+   |            ----------- required by a bound in this associated function
+...
+   |         R: BrokerRegistration,
+   |            ^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+
+error[E0277]: `RcBroker` is not a `Broker`
+  --> tests/ui/local_broker_on_send_runtime.rs:40:74
+   |
+40 |     RustStream::new(AppInfo::new("local", "0.1.0")).with_broker(broker, |_b| {})
+   |                                                                          ^^ not a broker this runtime runs
+   |
+help: the trait `ruststream::Broker` is not implemented for `RcBroker`
+  --> tests/ui/local_broker_on_send_runtime.rs:9:1
+   |
+ 9 | struct RcBroker {
+   | ^^^^^^^^^^^^^^^
+   = note: this runtime moves a broker, its deliveries and their futures across threads, so it runs brokers whose types are `Send` and implement `Broker`
+   = note: a broker whose client holds `Rc` or `RefCell` implements `LocalBroker` alone; to run here, keep the client's shared state in `Arc` and `Mutex` and implement `Broker`
+help: the following other types implement trait `ruststream::Broker`
+  --> crates/ruststream-conformance/src/harness.rs
+   |
+   | impl<B: InProcess> Broker for InProcessBroker<B> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `InProcessBroker<B>`
+   |
+  ::: crates/ruststream-memory/src/broker.rs
+   |
+   | impl<Log: LogMode> Broker for MemoryBroker<Log> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryBroker<Log>`
+note: required by a bound in `BrokerScope`
+  --> crates/ruststream-runtime/src/app/scope.rs
+   |
+   | pub struct BrokerScope<B: Broker, Layers = Identity, C = (), State = (), Pipeline = PublishIdentity>
+   |                           ^^^^^^ required by this bound in `BrokerScope`

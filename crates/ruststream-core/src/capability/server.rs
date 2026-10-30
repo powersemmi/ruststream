@@ -11,9 +11,9 @@ use serde_json::Value;
 #[cfg(feature = "asyncapi")]
 use serde_json::json;
 
-use crate::Broker;
 #[cfg(feature = "asyncapi")]
 use crate::bindings::Bindings;
+use crate::{Broker, LocalBroker};
 
 /// How to reach a broker, for the `servers` section of an `AsyncAPI` document.
 ///
@@ -731,53 +731,68 @@ impl SecurityScheme {
     }
 }
 
-/// A broker that describes itself as an `AsyncAPI` server.
-///
-/// Broker crates implement this so their connection coordinates land in the generated `AsyncAPI`
-/// document and the broker carries a stable identity when registered with
-/// [`with_broker_labeled`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.with_broker_labeled); it can also be wired on
-/// manually with [`RustStream::server`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.server). A broker without a
-/// network address (the in-memory broker) describes itself with
-/// [`ServerSpec::in_process`], so it still gets a label / identity for multi-broker routing.
-///
-/// # The host is a coordinate, not the configuration
-///
-/// A description carries the host and port clients connect to, and nothing else the broker was
-/// configured with. Credentials in particular never appear in it: the document is generated to be
-/// published and shared, so a password that reaches it has left the service.
-///
-/// A broker configured from a URL therefore describes itself with
-/// [`ServerSpec::from_url`], which drops the userinfo, rather than trimming the scheme off the URL
-/// and passing the rest to [`ServerSpec::new`]. A broker that configures several addresses joins
-/// them from [`ServerSpec::host_from_url`].
-///
-/// # Examples
-///
-/// ```
-/// use ruststream::{Broker, ConnectedBroker, DescribeServer, ServerSpec};
-/// # struct AmqpBroker { url: String }
-/// # struct ConnectedAmqp;
-/// # impl Broker for AmqpBroker {
-/// #     type Error = std::io::Error;
-/// #     type Connected = ConnectedAmqp;
-/// #     async fn connect(self) -> Result<ConnectedAmqp, Self::Error> { Ok(ConnectedAmqp) }
-/// # }
-/// # impl ConnectedBroker for ConnectedAmqp {
-/// #     type Error = std::io::Error;
-/// #     type Closed = ();
-/// #     async fn shutdown(self) -> Result<(), Self::Error> { Ok(()) }
-/// # }
-///
-/// impl DescribeServer for AmqpBroker {
-///     fn describe_server(&self) -> ServerSpec {
-///         // `amqp://svc:secret@broker:5672/prod` is described as `broker:5672`.
-///         ServerSpec::from_url(&self.url, "amqp")
-///     }
-/// }
-/// ```
-pub trait DescribeServer: Broker {
-    /// Returns the server coordinates for this broker.
-    fn describe_server(&self) -> ServerSpec;
+crate::__contract_twin! {
+    send {
+        /// A broker that describes itself as an `AsyncAPI` server.
+        ///
+        /// Broker crates implement this so their connection coordinates land in the generated
+        /// `AsyncAPI` document and the broker carries a stable identity when registered with
+        /// [`with_broker_labeled`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.with_broker_labeled);
+        /// it can also be wired on manually with
+        /// [`RustStream::server`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.server).
+        /// A broker without a network address (the in-memory broker) describes itself with
+        /// [`ServerSpec::in_process`], so it still gets a label / identity for multi-broker
+        /// routing.
+        ///
+        /// # The host is a coordinate, not the configuration
+        ///
+        /// A description carries the host and port clients connect to, and nothing else the broker
+        /// was configured with. Credentials in particular never appear in it: the document is
+        /// generated to be published and shared, so a password that reaches it has left the
+        /// service.
+        ///
+        /// A broker configured from a URL therefore describes itself with
+        /// [`ServerSpec::from_url`], which drops the userinfo, rather than trimming the scheme off
+        /// the URL and passing the rest to [`ServerSpec::new`]. A broker that configures several
+        /// addresses joins them from [`ServerSpec::host_from_url`].
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use ruststream::{Broker, ConnectedBroker, DescribeServer, ServerSpec};
+        /// # struct AmqpBroker { url: String }
+        /// # struct ConnectedAmqp;
+        /// # impl Broker for AmqpBroker {
+        /// #     type Error = std::io::Error;
+        /// #     type Connected = ConnectedAmqp;
+        /// #     async fn connect(self) -> Result<ConnectedAmqp, Self::Error> { Ok(ConnectedAmqp) }
+        /// # }
+        /// # impl ConnectedBroker for ConnectedAmqp {
+        /// #     type Error = std::io::Error;
+        /// #     type Closed = ();
+        /// #     async fn shutdown(self) -> Result<(), Self::Error> { Ok(()) }
+        /// # }
+        ///
+        /// impl DescribeServer for AmqpBroker {
+        ///     fn describe_server(&self) -> ServerSpec {
+        ///         // `amqp://svc:secret@broker:5672/prod` is described as `broker:5672`.
+        ///         ServerSpec::from_url(&self.url, "amqp")
+        ///     }
+        /// }
+        /// ```
+        pub trait DescribeServer: Broker
+    }
+    local {
+        #[doc = include_str!("../local/describe.md")]
+        pub trait LocalDescribeServer: LocalBroker
+    }
+    blanket { impl<T: DescribeServer> LocalDescribeServer for T }
+    forward { <T as DescribeServer> }
+    docs { DescribeServer }
+    fns {
+        /// Returns the server coordinates for this broker.
+        fn describe_server(&self) -> [ServerSpec];
+    }
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use crate::bindings::Bindings;
 use crate::codec::CodecError;
 use crate::outgoing::{Outgoing, OutgoingName};
 use crate::wire::Serialized;
-use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
+use crate::{ConnectedBroker, HeaderMap, LocalConnectedBroker, OutgoingMessage};
 
 /// How a transport consumes the payload of a publish: [`Lend`] where it reads the bytes,
 /// [`Take`] where its client keeps them.
@@ -304,530 +304,571 @@ mod sealed {
     impl Sealed for super::Take {}
 }
 
-/// A producer that sends messages into the broker.
-///
-/// `Publisher` is `Send + Sync` so a single instance can be shared across tasks. Implementations
-/// are expected to be cheap to clone; expensive shared state (connection pool, batch buffers)
-/// should live behind an [`Arc`].
-///
-/// # Examples
-///
-/// ```
-/// use ruststream::{OutgoingMessage, Publisher};
-///
-/// async fn emit<P: Publisher>(publisher: &P) -> Result<(), P::Error> {
-///     // Bytes the caller holds, in whichever form this publisher declared.
-///     let msg = OutgoingMessage::new("orders.created", b"{}".as_slice());
-///     publisher.publish(msg, None).await
-/// }
-/// ```
-///
-/// [`Arc`]: std::sync::Arc
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a publisher",
-    note = "for an `Out<impl Publisher, _>` slot, the type comes from the policy attached at \
-            the include site: attach one whose live form publishes"
-)]
-pub trait Publisher: Send + Sync {
-    /// How this transport consumes the payload: [`Lend`] where it reads the bytes and keeps
-    /// nothing, [`Take`] where its client keeps them.
-    ///
-    /// The declaration decides what [`publish`] receives - `&[u8]` under `Lend`, a
-    /// [`BytesMut`] of its own under `Take` - and what the framework does with its own buffers
-    /// above it: a lending publisher inside a dispatch loop is lent the one encode buffer that
-    /// loop reuses, so a reply through it allocates nothing per message, while a taking one is
-    /// handed a fresh buffer it may keep. Declare `Lend` unless the client keeps the bytes past
-    /// the call.
-    ///
-    /// [`publish`]: Self::publish
-    type Payload: PayloadForm;
+crate::__contract_twin! {
+    send {
+        /// A producer that sends messages into the broker.
+        ///
+        /// `Publisher` is `Send + Sync` so a single instance can be shared across tasks.
+        /// Implementations are expected to be cheap to clone; expensive shared state (connection
+        /// pool, batch buffers) should live behind an [`Arc`].
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use ruststream::{OutgoingMessage, Publisher};
+        ///
+        /// async fn emit<P: Publisher>(publisher: &P) -> Result<(), P::Error> {
+        ///     // Bytes the caller holds, in whichever form this publisher declared.
+        ///     let msg = OutgoingMessage::new("orders.created", b"{}".as_slice());
+        ///     publisher.publish(msg, None).await
+        /// }
+        /// ```
+        ///
+        /// [`Arc`]: std::sync::Arc
+        #[diagnostic::on_unimplemented(
+            message = "`{Self}` is not a publisher",
+            note = "for an `Out<impl Publisher, _>` slot, the type comes from the policy attached \
+                    at the include site: attach one whose live form publishes"
+        )]
+        pub trait Publisher: Send + Sync
+    }
+    local {
+        #[doc = include_str!("local/publisher.md")]
+        #[diagnostic::on_unimplemented(
+            message = "`{Self}` is not a publisher of the local family",
+            note = "a live publisher implements `Publisher`, or `LocalPublisher` when its client \
+                    holds `Rc` or `RefCell`; every `Publisher` is a `LocalPublisher` through the \
+                    blanket impl"
+        )]
+        pub trait LocalPublisher
+    }
+    blanket { impl<T: ?Sized + Publisher> LocalPublisher for T }
+    forward { <T as Publisher> }
+    docs { Publisher }
+    types {
+        /// How this transport consumes the payload: [`Lend`] where it reads the bytes and keeps
+        /// nothing, [`Take`] where its client keeps them.
+        ///
+        /// The declaration decides what [`publish`] receives - `&[u8]` under `Lend`, a
+        /// [`BytesMut`] of its own under `Take` - and what the framework does with its own buffers
+        /// above it: a lending publisher inside a dispatch loop is lent the one encode buffer that
+        /// loop reuses, so a reply through it allocates nothing per message, while a taking one is
+        /// handed a fresh buffer it may keep. Declare `Lend` unless the client keeps the bytes past
+        /// the call.
+        ///
+        /// [`publish`]: Self::publish
+        type Payload: [PayloadForm];
 
-    /// The error type returned by [`publish`].
-    ///
-    /// [`publish`]: Self::publish
-    type Error: StdError + Send + Sync + 'static;
+        /// The error type returned by [`publish`].
+        ///
+        /// [`publish`]: Self::publish
+        type Error: [StdError + Send + Sync + 'static];
 
-    /// The broker's per-message settings: a `QoS`, a priority, an ordering key, whatever this
-    /// transport lets one message differ from the next in.
-    ///
-    /// Every field is optional, because a publish carries only what its call site adjusted: the
-    /// rest keeps what the [`PublishPolicy`] fixed when it paired this publisher. A broker with
-    /// no per-message setting writes `type Options = ();`.
-    ///
-    /// The type is the broker's own, and so are the builder steps that fill it: a broker ships an
-    /// extension trait over [`PublishBuilder`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.PublishBuilder.html) bounded on this
-    /// type, so its steps appear on a builder over its own publisher and nowhere else.
-    ///
-    /// `Clone` and `'static` are what the test harness needs: it copies the options of each
-    /// publish the runtime makes and hands them back to the test as this type (`with_options(..)`
-    /// on `tb.out::<Marker>()` or on a broker's `published(..)`, under the `testing` feature).
-    /// Deriving `Debug` and `PartialEq` as well lets a service's test assert on the value
-    /// `publish` received rather than on the protocol field it became.
-    ///
-    /// A setting takes one shape: a field here, a default on the policy, and a step on the
-    /// publish builder, shipped from the broker's prelude. The step writes through
-    /// [`PublishBuilder::options_mut`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.PublishBuilder.html#method.options_mut), so nothing
-    /// wraps the publisher and the publish still goes through the mount site's entry, with its
-    /// codec and transforms. A send in a trait of the broker's own would pass outside the slot
-    /// view a test asserts on, and a setting carried as a header would be bytes `publish` parses
-    /// back. A value the transport cannot honour fails the publish; it never falls back to the
-    /// default silently.
-    ///
-    /// # Examples
-    ///
-    /// A priority the policy defaults and a call site adjusts:
-    ///
-    /// ```
-    /// # mod demo {
-    /// use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublish, MemoryPublisher};
-    /// use ruststream::runtime::{PublishBuilder, PublishExt, PublishSink};
-    /// use ruststream::{
-    ///     BytesMut, OutgoingMessage, Outgoing, PairError, PublishPolicy, Publisher, Serialized,
-    ///     Take,
-    /// };
-    ///
-    /// /// Every field optional: what a call leaves unset keeps what the policy fixed.
-    /// #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-    /// pub struct PriorityOptions {
-    ///     priority: Option<u8>,
-    /// }
-    ///
-    /// /// The policy: constructible anywhere, and the place the default is configured.
-    /// #[derive(Debug, Clone, Copy, Default)]
-    /// pub struct PriorityPublish {
-    ///     priority: u8,
-    /// }
-    ///
-    /// /// The live publisher: the connection and the default the policy carried.
-    /// pub struct PriorityPublisher {
-    ///     inner: MemoryPublisher,
-    ///     default_priority: u8,
-    /// }
-    ///
-    /// impl PublishPolicy<ConnectedMemoryBroker> for PriorityPublish {
-    ///     type Live = PriorityPublisher;
-    ///
-    ///     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
-    ///         let inner = MemoryPublish.pair(connected).await?;
-    ///         Ok(PriorityPublisher { inner, default_priority: self.priority })
-    ///     }
-    /// }
-    ///
-    /// impl Publisher for PriorityPublisher {
-    ///     type Payload = Take;
-    ///     type Error = MemoryError;
-    ///     type Options = PriorityOptions;
-    ///
-    ///     async fn publish(
-    ///         &self,
-    ///         msg: OutgoingMessage<'_, BytesMut>,
-    ///         options: Option<&Self::Options>,
-    ///     ) -> Result<(), Self::Error> {
-    ///         let priority = options
-    ///             .and_then(|options| options.priority)
-    ///             .unwrap_or(self.default_priority);
-    ///         // A real client takes `priority` as the protocol field it is; the in-memory bus
-    ///         // has none, so this one passes the message on unchanged.
-    ///         let _ = priority;
-    ///         self.inner.publish(msg, None).await
-    ///     }
-    /// }
-    ///
-    /// /// The step a service imports from the broker's prelude. The bound on the sink's options
-    /// /// keeps it off a builder over any other broker's publisher.
-    /// pub trait PriorityStep {
-    ///     /// Sends this one message at `priority`.
-    ///     #[must_use]
-    ///     fn priority(self, priority: u8) -> Self;
-    /// }
-    ///
-    /// impl<Sink, Body, Enc, Hdrs, Dest> PriorityStep for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
-    /// where
-    ///     Sink: PublishSink<Options = PriorityOptions>,
-    /// {
-    ///     fn priority(mut self, priority: u8) -> Self {
-    ///         self.options_mut().get_or_insert_with(PriorityOptions::default).priority =
-    ///             Some(priority);
-    ///         self
-    ///     }
-    /// }
-    ///
-    /// // Bytes that are already the payload, so this example needs no codec feature.
-    /// #[derive(Outgoing, Serialized)]
-    /// pub struct Alert(Vec<u8>);
-    ///
-    /// pub async fn page(publisher: &PriorityPublisher) -> Result<(), Box<dyn std::error::Error>> {
-    ///     publisher.message(&Alert(b"disk full".to_vec())).to("alerts").priority(9).publish().await?;
-    ///     Ok(())
-    /// }
-    /// # }
-    /// # fn main() {}
-    /// ```
-    type Options: Clone + Send + Sync + 'static;
+        /// The broker's per-message settings: a `QoS`, a priority, an ordering key, whatever this
+        /// transport lets one message differ from the next in.
+        ///
+        /// Every field is optional, because a publish carries only what its call site adjusted: the
+        /// rest keeps what the [`PublishPolicy`] fixed when it paired this publisher. A broker with
+        /// no per-message setting writes `type Options = ();`.
+        ///
+        /// The type is the broker's own, and so are the builder steps that fill it: a broker ships
+        /// an extension trait over
+        /// [`PublishBuilder`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.PublishBuilder.html)
+        /// bounded on this type, so its steps appear on a builder over its own publisher and
+        /// nowhere else.
+        ///
+        /// `Clone` and `'static` are what the test harness needs: it copies the options of each
+        /// publish the runtime makes and hands them back to the test as this type
+        /// (`with_options(..)` on `tb.out::<Marker>()` or on a broker's `published(..)`, under the
+        /// `testing` feature). Deriving `Debug` and `PartialEq` as well lets a service's test
+        /// assert on the value `publish` received rather than on the protocol field it became.
+        ///
+        /// A setting takes one shape: a field here, a default on the policy, and a step on the
+        /// publish builder, shipped from the broker's prelude. The step writes through
+        /// [`PublishBuilder::options_mut`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.PublishBuilder.html#method.options_mut),
+        /// so nothing wraps the publisher and the publish still goes through the mount site's
+        /// entry, with its codec and transforms. A send in a trait of the broker's own would pass
+        /// outside the slot view a test asserts on, and a setting carried as a header would be
+        /// bytes `publish` parses back. A value the transport cannot honour fails the publish; it
+        /// never falls back to the default silently.
+        ///
+        /// # Examples
+        ///
+        /// A priority the policy defaults and a call site adjusts:
+        ///
+        /// ```
+        /// # mod demo {
+        /// use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublish, MemoryPublisher};
+        /// use ruststream::runtime::{PublishBuilder, PublishExt, PublishSink};
+        /// use ruststream::{
+        ///     BytesMut, OutgoingMessage, Outgoing, PairError, PublishPolicy, Publisher, Serialized,
+        ///     Take,
+        /// };
+        ///
+        /// /// Every field optional: what a call leaves unset keeps what the policy fixed.
+        /// #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+        /// pub struct PriorityOptions {
+        ///     priority: Option<u8>,
+        /// }
+        ///
+        /// /// The policy: constructible anywhere, and the place the default is configured.
+        /// #[derive(Debug, Clone, Copy, Default)]
+        /// pub struct PriorityPublish {
+        ///     priority: u8,
+        /// }
+        ///
+        /// /// The live publisher: the connection and the default the policy carried.
+        /// pub struct PriorityPublisher {
+        ///     inner: MemoryPublisher,
+        ///     default_priority: u8,
+        /// }
+        ///
+        /// impl PublishPolicy<ConnectedMemoryBroker> for PriorityPublish {
+        ///     type Live = PriorityPublisher;
+        ///
+        ///     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
+        ///         let inner = MemoryPublish.pair(connected).await?;
+        ///         Ok(PriorityPublisher { inner, default_priority: self.priority })
+        ///     }
+        /// }
+        ///
+        /// impl Publisher for PriorityPublisher {
+        ///     type Payload = Take;
+        ///     type Error = MemoryError;
+        ///     type Options = PriorityOptions;
+        ///
+        ///     async fn publish(
+        ///         &self,
+        ///         msg: OutgoingMessage<'_, BytesMut>,
+        ///         options: Option<&Self::Options>,
+        ///     ) -> Result<(), Self::Error> {
+        ///         let priority = options
+        ///             .and_then(|options| options.priority)
+        ///             .unwrap_or(self.default_priority);
+        ///         // A real client takes `priority` as the protocol field it is; the in-memory bus
+        ///         // has none, so this one passes the message on unchanged.
+        ///         let _ = priority;
+        ///         self.inner.publish(msg, None).await
+        ///     }
+        /// }
+        ///
+        /// /// The step a service imports from the broker's prelude. The bound on the sink's options
+        /// /// keeps it off a builder over any other broker's publisher.
+        /// pub trait PriorityStep {
+        ///     /// Sends this one message at `priority`.
+        ///     #[must_use]
+        ///     fn priority(self, priority: u8) -> Self;
+        /// }
+        ///
+        /// impl<Sink, Body, Enc, Hdrs, Dest> PriorityStep for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
+        /// where
+        ///     Sink: PublishSink<Options = PriorityOptions>,
+        /// {
+        ///     fn priority(mut self, priority: u8) -> Self {
+        ///         self.options_mut().get_or_insert_with(PriorityOptions::default).priority =
+        ///             Some(priority);
+        ///         self
+        ///     }
+        /// }
+        ///
+        /// // Bytes that are already the payload, so this example needs no codec feature.
+        /// #[derive(Outgoing, Serialized)]
+        /// pub struct Alert(Vec<u8>);
+        ///
+        /// pub async fn page(publisher: &PriorityPublisher) -> Result<(), Box<dyn std::error::Error>> {
+        ///     publisher.message(&Alert(b"disk full".to_vec())).to("alerts").priority(9).publish().await?;
+        ///     Ok(())
+        /// }
+        /// # }
+        /// # fn main() {}
+        /// ```
+        type Options: [Clone + Send + Sync + 'static];
+    }
+    fns {
+        /// Publishes a message to the broker, with the per-message settings the call site adjusted.
+        ///
+        /// This is the contract a broker implements, and the direct call a broker crate used on its
+        /// own - without this one - is written against. Inside a service built on `ruststream` it
+        /// is the layer underneath: what a handler sends goes through the publish builder
+        /// ([`message`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishExt.html#method.message)),
+        /// which resolves the destination, the codec and the headers and assembles the
+        /// [`OutgoingMessage`] itself. Reach for this one where the message is already built: a
+        /// publish transform, a middleware, a post-settle hook.
+        ///
+        /// `options` is `None` on every path with no call site to adjust them - a reply, a deferred
+        /// redelivery - and the policy's own settings apply.
+        ///
+        /// The message arrives by value, and so do its payload and its header map. Read them with
+        /// [`OutgoingMessage::payload`] and [`OutgoingMessage::headers`]; a transport that consumes
+        /// the message takes its parts with [`OutgoingMessage::into_parts`] - the destination, the
+        /// payload and the map in one move, nothing copied.
+        ///
+        /// What the payload is follows [`Payload`](Self::Payload). A [`Lend`] publisher is handed
+        /// `&[u8]` valid for the length of the call: read it, write it into your frame, and hold
+        /// nothing afterwards. A [`Take`] publisher is handed the [`BytesMut`] the framework wrote,
+        /// as it was written, so `Vec::from(payload)` and [`BytesMut::freeze`] turn it into what
+        /// the client speaks with no copy of the body; only a publish lending bytes the framework
+        /// does not own is copied into that buffer.
+        ///
+        /// # Cancel safety
+        ///
+        /// Cancel safety is implementation-defined: most brokers will leave a message in an
+        /// indeterminate state if the future is dropped mid-flight. Implementors must document the
+        /// guarantees their broker provides.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`Self::Error`] when the broker rejects the message, the connection is lost, or
+        /// the operation times out.
+        fn publish(&self, msg: OutgoingFor<'_, Self::Payload>, options: Option<&Self::Options>)
+            -> [impl Future<Output = Result<(), Self::Error>> @send { + Send }];
 
-    /// Publishes a message to the broker, with the per-message settings the call site adjusted.
-    ///
-    /// This is the contract a broker implements, and the direct call a broker crate used on its
-    /// own - without this one - is written against. Inside a service built on `ruststream` it is
-    /// the layer underneath: what a handler sends goes through the publish builder
-    /// ([`message`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishExt.html#method.message)), which resolves the destination, the
-    /// codec and the headers and assembles the
-    /// [`OutgoingMessage`] itself. Reach for this one where the message is already built: a
-    /// publish transform, a middleware, a post-settle hook.
-    ///
-    /// `options` is `None` on every path with no call site to adjust them - a reply, a deferred
-    /// redelivery - and the policy's own settings apply.
-    ///
-    /// The message arrives by value, and so do its payload and its header map. Read them with
-    /// [`OutgoingMessage::payload`] and [`OutgoingMessage::headers`]; a transport that consumes
-    /// the message takes its parts with [`OutgoingMessage::into_parts`] - the destination, the
-    /// payload and the map in one move, nothing copied.
-    ///
-    /// What the payload is follows [`Payload`](Self::Payload). A [`Lend`] publisher is handed
-    /// `&[u8]` valid for the length of the call: read it, write it into your frame, and hold
-    /// nothing afterwards. A [`Take`] publisher is handed the [`BytesMut`] the framework wrote,
-    /// as it was written, so `Vec::from(payload)` and [`BytesMut::freeze`] turn it into what the
-    /// client speaks with no copy of the body; only a publish lending bytes the framework does
-    /// not own is copied into that buffer.
-    ///
-    /// # Cancel safety
-    ///
-    /// Cancel safety is implementation-defined: most brokers will leave a message in an
-    /// indeterminate state if the future is dropped mid-flight. Implementors must document the
-    /// guarantees their broker provides.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the broker rejects the message, the connection is lost, or
-    /// the operation times out.
-    fn publish(
-        &self,
-        msg: OutgoingFor<'_, Self::Payload>,
-        options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
-
-    /// The headers this publisher contributes to every message it sends, underneath whatever the
-    /// message itself names.
-    ///
-    /// `None` by default: a plain broker publisher contributes nothing and the outgoing map starts
-    /// empty. This is the place for a constant of the publisher itself - a tenant, a producer
-    /// name, a schema id every message of this handle carries - laid down first, with the
-    /// message's own headers written over it key by key, so the call site wins over the handle.
-    ///
-    /// A delivery setting is not one of those: it belongs to the message, and a broker carries it
-    /// as a field of [`Options`](Self::Options) that the policy defaults and the call site
-    /// adjusts.
-    ///
-    /// Every message the runtime sends through this publisher starts from that base: a publish
-    /// through the builder, and the reply a `reply("dest")` handler returns (whose
-    /// [`PublishTransform`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishTransform.html) stack then writes over it, like any
-    /// other call site). A publish a handler body issues on a value it obtained outside the
-    /// framework is that body's own call and reaches nothing here.
-    ///
-    /// The map is borrowed, never rebuilt per publish, so a handle that has one keeps it in its
-    /// own state.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::PublishExt;
-    /// use ruststream::{HeaderMap, Outgoing, OutgoingFor, Publisher, Serialized};
-    ///
-    /// // A handle that tags every message it sends, without touching the message itself.
-    /// struct Tenanted<P>(P, HeaderMap);
-    ///
-    /// impl<P: Publisher> Publisher for Tenanted<P> {
-    ///     type Payload = P::Payload;
-    ///     type Error = P::Error;
-    ///     type Options = P::Options;
-    ///
-    ///     async fn publish(
-    ///         &self,
-    ///         msg: OutgoingFor<'_, Self::Payload>,
-    ///         options: Option<&Self::Options>,
-    ///     ) -> Result<(), Self::Error> {
-    ///         self.0.publish(msg, options).await
-    ///     }
-    ///
-    ///     fn base_headers(&self) -> Option<&HeaderMap> {
-    ///         Some(&self.1)
-    ///     }
-    /// }
-    ///
-    /// // Bytes that are already the payload, so this example needs no codec feature.
-    /// #[derive(Outgoing, Serialized)]
-    /// struct Order(Vec<u8>);
-    ///
-    /// let broker = MemoryBroker::new();
-    /// let base = [("tenant", "acme")].into_iter().collect();
-    /// let publisher = Tenanted(broker.publisher(), base);
-    /// publisher.message(&Order(b"{}".to_vec())).to("orders").publish().await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    fn base_headers(&self) -> Option<&HeaderMap> {
-        None
+        /// The headers this publisher contributes to every message it sends, underneath whatever
+        /// the message itself names.
+        ///
+        /// `None` by default: a plain broker publisher contributes nothing and the outgoing map
+        /// starts empty. This is the place for a constant of the publisher itself - a tenant, a
+        /// producer name, a schema id every message of this handle carries - laid down first, with
+        /// the message's own headers written over it key by key, so the call site wins over the
+        /// handle.
+        ///
+        /// A delivery setting is not one of those: it belongs to the message, and a broker carries
+        /// it as a field of [`Options`](Self::Options) that the policy defaults and the call site
+        /// adjusts.
+        ///
+        /// Every message the runtime sends through this publisher starts from that base: a publish
+        /// through the builder, and the reply a `reply("dest")` handler returns (whose
+        /// [`PublishTransform`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishTransform.html)
+        /// stack then writes over it, like any other call site). A publish a handler body issues on
+        /// a value it obtained outside the framework is that body's own call and reaches nothing
+        /// here.
+        ///
+        /// The map is borrowed, never rebuilt per publish, so a handle that has one keeps it in its
+        /// own state.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        /// use ruststream::memory::MemoryBroker;
+        /// use ruststream::runtime::PublishExt;
+        /// use ruststream::{HeaderMap, Outgoing, OutgoingFor, Publisher, Serialized};
+        ///
+        /// // A handle that tags every message it sends, without touching the message itself.
+        /// struct Tenanted<P>(P, HeaderMap);
+        ///
+        /// impl<P: Publisher> Publisher for Tenanted<P> {
+        ///     type Payload = P::Payload;
+        ///     type Error = P::Error;
+        ///     type Options = P::Options;
+        ///
+        ///     async fn publish(
+        ///         &self,
+        ///         msg: OutgoingFor<'_, Self::Payload>,
+        ///         options: Option<&Self::Options>,
+        ///     ) -> Result<(), Self::Error> {
+        ///         self.0.publish(msg, options).await
+        ///     }
+        ///
+        ///     fn base_headers(&self) -> Option<&HeaderMap> {
+        ///         Some(&self.1)
+        ///     }
+        /// }
+        ///
+        /// // Bytes that are already the payload, so this example needs no codec feature.
+        /// #[derive(Outgoing, Serialized)]
+        /// struct Order(Vec<u8>);
+        ///
+        /// let broker = MemoryBroker::new();
+        /// let base = [("tenant", "acme")].into_iter().collect();
+        /// let publisher = Tenanted(broker.publisher(), base);
+        /// publisher.message(&Order(b"{}".to_vec())).to("orders").publish().await?;
+        /// # Ok(())
+        /// # }
+        /// ```
+        fn base_headers(&self) -> [Option<&HeaderMap>] {
+            None
+        }
     }
 }
 
-/// The declaration half of a publisher: pure policy, no connection, no publish surface.
-///
-/// A broker publisher is a bundle of policy (an exchange, a queue timeout, a transactional id)
-/// paired with the live connection. `PublishPolicy` is that bundle alone, freely constructible
-/// anywhere - before startup, in router definitions, in configuration - because it holds no
-/// connection and no broker instance identity. [`pair`](Self::pair) joins it with a
-/// [`ConnectedBroker`] witness to produce the live [`Publisher`], so "not connected" is not
-/// representable on this path: a publisher exists only after the connection does.
-///
-/// The policy is also where a broker's per-message settings ([`Publisher::Options`]) get their
-/// defaults: the mount site configures the policy, pairing hands the live publisher whatever it
-/// fixed, and a call site adjusts single fields over that.
-///
-/// This is the publish-side mirror of [`SubscriptionSource`](crate::SubscriptionSource). The
-/// reply wiring a mount site's chain builds over a policy is itself a `PublishPolicy`, resolved
-/// functorially: pairing swaps the leaf for its live publisher and keeps the codec and transform
-/// stacks the chain named, fully monomorphized.
-///
-/// `pair` is async and fallible because some brokers do real work when a publisher comes alive
-/// (a transactional producer initializing its transactions); for most it is a cheap constructor
-/// call. It reports the type-erased [`PairError`]: a broker wraps its own error with
-/// [`PairError::new`]. A policy pairs once, at startup, so `pair` never reaches the hot path.
-///
-/// # Implementing it
-///
-/// A broker ships one policy and one live form per genuine publishing mode, and the choice of mode
-/// is a transition of the policy type, not a runtime flag: a `transactional_id(..)` step moves
-/// the plain policy to a distinct transactional policy whose live form implements
-/// [`TransactionalPublisher`](crate::TransactionalPublisher), and the plain publisher has no
-/// transactional surface at all. Where the plain policy is usable with its defaults, the
-/// connected form also implements [`DefaultPublish`]. The in-memory broker's `MemoryPublish` and
-/// `MemoryRequest`, empty structs because they have no options, are the minimal reference.
-///
-/// # Examples
-///
-/// ```
-/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-/// use ruststream::memory::{MemoryBroker, MemoryPublish};
-/// use ruststream::runtime::PublishExt;
-/// use ruststream::{Broker, Outgoing, PublishPolicy, Serialized};
-///
-/// // Bytes that are already the payload, so this example needs no codec feature.
-/// #[derive(Outgoing, Serialized)]
-/// struct Order(Vec<u8>);
-///
-/// let policy = MemoryPublish; // no broker in sight
-/// let connected = MemoryBroker::new().connect().await?;
-/// let publisher = policy.pair(&connected).await?; // live only past this point
-/// publisher.message(&Order(b"{}".to_vec())).to("orders").publish().await?;
-/// # Ok(())
-/// # }
-/// ```
-pub trait PublishPolicy<C: ConnectedBroker> {
-    /// The live form this policy pairs into: a [`Publisher`] for a leaf policy, or the live
-    /// wiring form for a combinator stack (a typed publisher over a policy pairs into the same
-    /// typed publisher over the live leaf).
-    type Live;
-
-    /// Pairs the policy with a connected broker, producing the live publisher.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PairError`] when bringing the publisher alive requires broker work and that
-    /// work fails (most policies pair infallibly).
-    fn pair(self, connected: &C) -> impl Future<Output = Result<Self::Live, PairError>> + Send;
-
-    /// What a publish through this policy adds to its channel in the generated `AsyncAPI`
-    /// document.
-    ///
-    /// The publish-side mirror of
-    /// [`SubscriptionSource::channel_bindings`](crate::SubscriptionSource::channel_bindings), and
-    /// the same three rules bound it. The value is computed from the policy and the name it is
-    /// handed, because the document is built before anything connects, so a Kafka topic's real
-    /// partition count cannot come from here. A credential never goes in, for the reason
-    /// [`DescribeServer`](crate::DescribeServer) gives. And a protocol the specification has no
-    /// binding for goes in [`Binding::extension`](crate::bindings::Binding::extension).
-    ///
-    /// The policy answers for every position it is bound on: the reply of a `reply(..)`
-    /// registration, an [`Out`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Out.html) slot, and the publisher a dead-lettered
-    /// delivery leaves through. A [`Bound`](crate::bindable::Bound) token answers with the policy
-    /// it carries, so a cross-broker publish is described by the broker it reaches. The channel's
-    /// `servers` list does not follow it: that comes from the label the registration's own broker
-    /// was registered under, which is the only broker the runtime can name for a channel.
-    ///
-    /// `channel` is the destination the mount site resolved for that position - the reply type's
-    /// own name or the `reply("dest")` clause, the slot entry's name, the `dead_letter("dlq")`
-    /// declaration - and it is what the document reports as the channel's `address`. An SNS topic
-    /// and an SQS queue are named by their binding's required `name` field, and this is where
-    /// that name comes from: a policy declares a broker's settings and never a destination. Where
-    /// a naming transform decides the destination per delivery, the document reports no address
-    /// and the mount site's fallback name arrives here instead.
-    ///
-    /// The default says nothing, and a policy that says nothing changes no document.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(feature = "asyncapi")]
-    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
-    /// use ruststream::asyncapi::{Binding, Bindings};
-    /// use serde::Serialize;
-    ///
-    /// #[derive(Serialize)]
-    /// struct SnsChannel {
-    ///     name: String,
-    /// }
-    ///
-    /// # struct SnsPublish;
-    /// # impl SnsPublish {
-    /// fn channel_bindings(&self, channel: &str) -> Bindings {
-    ///     let body = SnsChannel { name: channel.to_owned() };
-    ///     // A binding that fails to build is a binding the document goes without: a broker
-    ///     // never holds up a service over a description of itself.
-    ///     match Binding::new("sns", "0.1.0", &body) {
-    ///         Ok(binding) => Bindings::new().with(binding),
-    ///         Err(_) => Bindings::new(),
-    ///     }
-    /// }
-    /// # }
-    /// # assert!(!SnsPublish.channel_bindings("orders").is_empty());
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(feature = "asyncapi")]
-    #[must_use]
-    fn channel_bindings(&self, channel: &str) -> Bindings {
-        let _ = channel;
-        Bindings::new()
+crate::__contract_twin! {
+    send {
+        /// The declaration half of a publisher: pure policy, no connection, no publish surface.
+        ///
+        /// A broker publisher is a bundle of policy (an exchange, a queue timeout, a transactional
+        /// id) paired with the live connection. `PublishPolicy` is that bundle alone, freely
+        /// constructible anywhere - before startup, in router definitions, in configuration -
+        /// because it holds no connection and no broker instance identity. [`pair`](Self::pair)
+        /// joins it with a [`ConnectedBroker`] witness to produce the live [`Publisher`], so "not
+        /// connected" is not representable on this path: a publisher exists only after the
+        /// connection does.
+        ///
+        /// The policy is also where a broker's per-message settings ([`Publisher::Options`]) get
+        /// their defaults: the mount site configures the policy, pairing hands the live publisher
+        /// whatever it fixed, and a call site adjusts single fields over that.
+        ///
+        /// This is the publish-side mirror of [`SubscriptionSource`](crate::SubscriptionSource).
+        /// The reply wiring a mount site's chain builds over a policy is itself a `PublishPolicy`,
+        /// resolved functorially: pairing swaps the leaf for its live publisher and keeps the codec
+        /// and transform stacks the chain named, fully monomorphized.
+        ///
+        /// `pair` is async and fallible because some brokers do real work when a publisher comes
+        /// alive (a transactional producer initializing its transactions); for most it is a cheap
+        /// constructor call. It reports the type-erased [`PairError`]: a broker wraps its own error
+        /// with [`PairError::new`]. A policy pairs once, at startup, so `pair` never reaches the
+        /// hot path.
+        ///
+        /// # Implementing it
+        ///
+        /// A broker ships one policy and one live form per genuine publishing mode, and the choice
+        /// of mode is a transition of the policy type, not a runtime flag: a `transactional_id(..)`
+        /// step moves the plain policy to a distinct transactional policy whose live form
+        /// implements [`TransactionalPublisher`](crate::TransactionalPublisher), and the plain
+        /// publisher has no transactional surface at all. Where the plain policy is usable with its
+        /// defaults, the connected form also implements [`DefaultPublish`]. The in-memory broker's
+        /// `MemoryPublish` and `MemoryRequest`, empty structs because they have no options, are the
+        /// minimal reference.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+        /// use ruststream::runtime::PublishExt;
+        /// use ruststream::{Broker, Outgoing, PublishPolicy, Serialized};
+        ///
+        /// // Bytes that are already the payload, so this example needs no codec feature.
+        /// #[derive(Outgoing, Serialized)]
+        /// struct Order(Vec<u8>);
+        ///
+        /// let policy = MemoryPublish; // no broker in sight
+        /// let connected = MemoryBroker::new().connect().await?;
+        /// let publisher = policy.pair(&connected).await?; // live only past this point
+        /// publisher.message(&Order(b"{}".to_vec())).to("orders").publish().await?;
+        /// # Ok(())
+        /// # }
+        /// ```
+        pub trait PublishPolicy<C: ConnectedBroker>
     }
-
-    /// What a publish through this policy adds to its `send` operation in the document.
-    ///
-    /// The producer's own settings live here rather than on the channel: a Kafka client id, an
-    /// MQTT `QoS`, an SQS delay. The rules of [`channel_bindings`](Self::channel_bindings) apply
-    /// unchanged, `channel` included: it is the same resolved destination.
-    ///
-    /// A reply has no `send` operation - it is the `reply` of the operation it answers, and the
-    /// specification gives that object no bindings - so what this returns reaches the document
-    /// from a slot and from a dead-letter destination only.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(feature = "asyncapi")]
-    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
-    /// use ruststream::asyncapi::{Binding, Bindings};
-    /// use serde::Serialize;
-    ///
-    /// #[derive(Serialize)]
-    /// struct SqsOperation {
-    ///     queues: Vec<SqsQueue>,
-    /// }
-    ///
-    /// #[derive(Serialize)]
-    /// struct SqsQueue {
-    ///     name: String,
-    /// }
-    ///
-    /// # struct SqsPublish;
-    /// # impl SqsPublish {
-    /// fn operation_bindings(&self, channel: &str) -> Bindings {
-    ///     let body = SqsOperation { queues: vec![SqsQueue { name: channel.to_owned() }] };
-    ///     match Binding::new("sqs", "0.3.0", &body) {
-    ///         Ok(binding) => Bindings::new().with(binding),
-    ///         Err(_) => Bindings::new(),
-    ///     }
-    /// }
-    /// # }
-    /// # assert!(!SqsPublish.operation_bindings("orders").is_empty());
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(feature = "asyncapi")]
-    #[must_use]
-    fn operation_bindings(&self, channel: &str) -> Bindings {
-        let _ = channel;
-        Bindings::new()
+    local {
+        #[doc = include_str!("local/policy.md")]
+        pub trait LocalPublishPolicy<C: LocalConnectedBroker>
     }
-
-    /// What a publish through this policy adds to the messages that leave through it.
-    ///
-    /// A Kafka record's key schema, a Pub/Sub ordering key. The rules of
-    /// [`channel_bindings`](Self::channel_bindings) apply unchanged, `channel` included: it is
-    /// the same resolved destination.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(feature = "asyncapi")]
-    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
-    /// use ruststream::asyncapi::{Binding, Bindings};
-    /// use serde::Serialize;
-    ///
-    /// #[derive(Serialize)]
-    /// struct GooglePubSubMessage {
-    ///     #[serde(rename = "orderingKey")]
-    ///     ordering_key: &'static str,
-    /// }
-    ///
-    /// # struct PubSubPublish;
-    /// # impl PubSubPublish {
-    /// fn message_bindings(&self, _channel: &str) -> Bindings {
-    ///     let body = GooglePubSubMessage { ordering_key: "tenant" };
-    ///     match Binding::new("googlepubsub", "0.2.0", &body) {
-    ///         Ok(binding) => Bindings::new().with(binding),
-    ///         Err(_) => Bindings::new(),
-    ///     }
-    /// }
-    /// # }
-    /// # assert!(!PubSubPublish.message_bindings("orders").is_empty());
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(feature = "asyncapi")]
-    #[must_use]
-    fn message_bindings(&self, channel: &str) -> Bindings {
-        let _ = channel;
-        Bindings::new()
+    blanket { impl<C: ConnectedBroker, T: PublishPolicy<C>> LocalPublishPolicy<C> for T }
+    forward { <T as PublishPolicy<C>> }
+    docs { PublishPolicy }
+    types {
+        /// The live form this policy pairs into: a [`Publisher`] for a leaf policy, or the live
+        /// wiring form for a combinator stack (a typed publisher over a policy pairs into the same
+        /// typed publisher over the live leaf).
+        type Live;
     }
+    fns {
+        /// Pairs the policy with a connected broker, producing the live publisher.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`PairError`] when bringing the publisher alive requires broker work and that
+        /// work fails (most policies pair infallibly).
+        fn pair(self, connected: &C)
+            -> [impl Future<Output = Result<Self::Live, PairError>> @send { + Send }];
 
-    /// Where a client finds the address of a reply this policy publishes, as a runtime
-    /// expression.
-    ///
-    /// A broker that answers a request through a reply-to header names that header here:
-    /// `"$message.header#/reply-to"` is the specification's form, and the part after the `#` is
-    /// a JSON Pointer into the request's headers. The document then reports the reply channel
-    /// with `address: null` and puts the expression in the operation's `reply.address.location`,
-    /// so a reader knows the destination is decided per delivery and where to read it.
-    ///
-    /// It reaches the document only where a [`PublishTransform`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishTransform.html)
-    /// on the reply position declares
-    /// [`Destination = Names`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishTransform.html#associatedtype.Destination): that transform is
-    /// what actually redirects the reply, and without it the reply goes to the name the mount
-    /// site declared, which is what the document reports.
-    ///
-    /// The default is `None`: a broker whose replies carry no such address says nothing, and the
-    /// document keeps the declared name.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(feature = "asyncapi")]
-    /// # {
-    /// # struct NatsPublish;
-    /// # impl NatsPublish {
-    /// /// NATS replies go to the inbox a request names in its `reply-to` header.
-    /// fn reply_address_location(&self) -> Option<&'static str> {
-    ///     Some("$message.header#/reply-to")
-    /// }
-    /// # }
-    /// # }
-    /// ```
-    #[cfg(feature = "asyncapi")]
-    #[must_use]
-    fn reply_address_location(&self) -> Option<&'static str> {
-        None
+        #[cfg(feature = "asyncapi")]
+        #[must_use]
+        /// What a publish through this policy adds to its channel in the generated `AsyncAPI`
+        /// document.
+        ///
+        /// The publish-side mirror of
+        /// [`SubscriptionSource::channel_bindings`](crate::SubscriptionSource::channel_bindings),
+        /// and the same three rules bound it. The value is computed from the policy and the name it
+        /// is handed, because the document is built before anything connects, so a Kafka topic's
+        /// real partition count cannot come from here. A credential never goes in, for the reason
+        /// [`DescribeServer`](crate::DescribeServer) gives. And a protocol the specification has no
+        /// binding for goes in [`Binding::extension`](crate::bindings::Binding::extension).
+        ///
+        /// The policy answers for every position it is bound on: the reply of a `reply(..)`
+        /// registration, an
+        /// [`Out`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Out.html) slot, and
+        /// the publisher a dead-lettered delivery leaves through. A
+        /// [`Bound`](crate::bindable::Bound) token answers with the policy it carries, so a
+        /// cross-broker publish is described by the broker it reaches. The channel's `servers` list
+        /// does not follow it: that comes from the label the registration's own broker was
+        /// registered under, which is the only broker the runtime can name for a channel.
+        ///
+        /// `channel` is the destination the mount site resolved for that position - the reply
+        /// type's own name or the `reply("dest")` clause, the slot entry's name, the
+        /// `dead_letter("dlq")` declaration - and it is what the document reports as the channel's
+        /// `address`. An SNS topic and an SQS queue are named by their binding's required `name`
+        /// field, and this is where that name comes from: a policy declares a broker's settings and
+        /// never a destination. Where a naming transform decides the destination per delivery, the
+        /// document reports no address and the mount site's fallback name arrives here instead.
+        ///
+        /// The default says nothing, and a policy that says nothing changes no document.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// # #[cfg(feature = "asyncapi")]
+        /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+        /// use ruststream::asyncapi::{Binding, Bindings};
+        /// use serde::Serialize;
+        ///
+        /// #[derive(Serialize)]
+        /// struct SnsChannel {
+        ///     name: String,
+        /// }
+        ///
+        /// # struct SnsPublish;
+        /// # impl SnsPublish {
+        /// fn channel_bindings(&self, channel: &str) -> Bindings {
+        ///     let body = SnsChannel { name: channel.to_owned() };
+        ///     // A binding that fails to build is a binding the document goes without: a broker
+        ///     // never holds up a service over a description of itself.
+        ///     match Binding::new("sns", "0.1.0", &body) {
+        ///         Ok(binding) => Bindings::new().with(binding),
+        ///         Err(_) => Bindings::new(),
+        ///     }
+        /// }
+        /// # }
+        /// # assert!(!SnsPublish.channel_bindings("orders").is_empty());
+        /// # Ok(())
+        /// # }
+        /// ```
+        fn channel_bindings(&self, channel: &str) -> [Bindings] {
+            let _ = channel;
+            Bindings::new()
+        }
+
+        #[cfg(feature = "asyncapi")]
+        #[must_use]
+        /// What a publish through this policy adds to its `send` operation in the document.
+        ///
+        /// The producer's own settings live here rather than on the channel: a Kafka client id, an
+        /// MQTT `QoS`, an SQS delay. The rules of [`channel_bindings`](Self::channel_bindings)
+        /// apply unchanged, `channel` included: it is the same resolved destination.
+        ///
+        /// A reply has no `send` operation - it is the `reply` of the operation it answers, and the
+        /// specification gives that object no bindings - so what this returns reaches the document
+        /// from a slot and from a dead-letter destination only.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// # #[cfg(feature = "asyncapi")]
+        /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+        /// use ruststream::asyncapi::{Binding, Bindings};
+        /// use serde::Serialize;
+        ///
+        /// #[derive(Serialize)]
+        /// struct SqsOperation {
+        ///     queues: Vec<SqsQueue>,
+        /// }
+        ///
+        /// #[derive(Serialize)]
+        /// struct SqsQueue {
+        ///     name: String,
+        /// }
+        ///
+        /// # struct SqsPublish;
+        /// # impl SqsPublish {
+        /// fn operation_bindings(&self, channel: &str) -> Bindings {
+        ///     let body = SqsOperation { queues: vec![SqsQueue { name: channel.to_owned() }] };
+        ///     match Binding::new("sqs", "0.3.0", &body) {
+        ///         Ok(binding) => Bindings::new().with(binding),
+        ///         Err(_) => Bindings::new(),
+        ///     }
+        /// }
+        /// # }
+        /// # assert!(!SqsPublish.operation_bindings("orders").is_empty());
+        /// # Ok(())
+        /// # }
+        /// ```
+        fn operation_bindings(&self, channel: &str) -> [Bindings] {
+            let _ = channel;
+            Bindings::new()
+        }
+
+        #[cfg(feature = "asyncapi")]
+        #[must_use]
+        /// What a publish through this policy adds to the messages that leave through it.
+        ///
+        /// A Kafka record's key schema, a Pub/Sub ordering key. The rules of
+        /// [`channel_bindings`](Self::channel_bindings) apply unchanged, `channel` included: it is
+        /// the same resolved destination.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// # #[cfg(feature = "asyncapi")]
+        /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+        /// use ruststream::asyncapi::{Binding, Bindings};
+        /// use serde::Serialize;
+        ///
+        /// #[derive(Serialize)]
+        /// struct GooglePubSubMessage {
+        ///     #[serde(rename = "orderingKey")]
+        ///     ordering_key: &'static str,
+        /// }
+        ///
+        /// # struct PubSubPublish;
+        /// # impl PubSubPublish {
+        /// fn message_bindings(&self, _channel: &str) -> Bindings {
+        ///     let body = GooglePubSubMessage { ordering_key: "tenant" };
+        ///     match Binding::new("googlepubsub", "0.2.0", &body) {
+        ///         Ok(binding) => Bindings::new().with(binding),
+        ///         Err(_) => Bindings::new(),
+        ///     }
+        /// }
+        /// # }
+        /// # assert!(!PubSubPublish.message_bindings("orders").is_empty());
+        /// # Ok(())
+        /// # }
+        /// ```
+        fn message_bindings(&self, channel: &str) -> [Bindings] {
+            let _ = channel;
+            Bindings::new()
+        }
+
+        #[cfg(feature = "asyncapi")]
+        #[must_use]
+        /// Where a client finds the address of a reply this policy publishes, as a runtime
+        /// expression.
+        ///
+        /// A broker that answers a request through a reply-to header names that header here:
+        /// `"$message.header#/reply-to"` is the specification's form, and the part after the `#` is
+        /// a JSON Pointer into the request's headers. The document then reports the reply channel
+        /// with `address: null` and puts the expression in the operation's
+        /// `reply.address.location`, so a reader knows the destination is decided per delivery and
+        /// where to read it.
+        ///
+        /// It reaches the document only where a
+        /// [`PublishTransform`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishTransform.html)
+        /// on the reply position declares [`Destination =
+        /// Names`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishTransform.html#associatedtype.Destination):
+        /// that transform is what actually redirects the reply, and without it the reply goes to
+        /// the name the mount site declared, which is what the document reports.
+        ///
+        /// The default is `None`: a broker whose replies carry no such address says nothing, and
+        /// the document keeps the declared name.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// # #[cfg(feature = "asyncapi")]
+        /// # {
+        /// # struct NatsPublish;
+        /// # impl NatsPublish {
+        /// /// NATS replies go to the inbox a request names in its `reply-to` header.
+        /// fn reply_address_location(&self) -> Option<&'static str> {
+        ///     Some("$message.header#/reply-to")
+        /// }
+        /// # }
+        /// # }
+        /// ```
+        fn reply_address_location(&self) -> [Option<&'static str>] {
+            None
+        }
     }
 }
 
@@ -854,47 +895,63 @@ impl PairError {
     }
 }
 
-/// A connected broker that names its plain publish policy, so the runtime can build a default
-/// reply publisher when a `reply("dest")` handler is included without an explicit one.
-///
-/// Implement it alongside [`ConnectedBroker`](crate::ConnectedBroker) when the broker has a
-/// publish policy whose default configuration is usable as-is (most are). Brokers whose
-/// publishers always need explicit options simply do not implement it, and their users attach a
-/// policy at every registration.
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(feature = "json")]
-/// # mod demo {
-/// use ruststream::memory::prelude::*;
-/// use serde::{Deserialize, Serialize};
-///
-/// #[derive(Deserialize)]
-/// struct Order {
-///     id: u64,
-/// }
-///
-/// #[derive(Serialize, Outgoing)]
-/// struct Confirmed {
-///     id: u64,
-/// }
-///
-/// #[subscriber("orders", reply("orders.confirmed"))]
-/// async fn confirm(order: &Order) -> Confirmed {
-///     Confirmed { id: order.id }
-/// }
-///
-/// fn app() -> RustStream {
-///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         // No policy named: the reply leaves through the broker's default one.
-///         b.include(confirm);
-///     })
-/// }
-/// # }
-/// # fn main() {}
-/// ```
-pub trait DefaultPublish: ConnectedBroker {
-    /// The broker's plain publish policy, constructible with its defaults.
-    type Policy: PublishPolicy<Self> + Default + Send + 'static;
+crate::__contract_twin! {
+    send {
+        /// A connected broker that names its plain publish policy, so the runtime can build a
+        /// default reply publisher when a `reply("dest")` handler is included without an explicit
+        /// one.
+        ///
+        /// Implement it alongside [`ConnectedBroker`](crate::ConnectedBroker) when the broker has a
+        /// publish policy whose default configuration is usable as-is (most are). Brokers whose
+        /// publishers always need explicit options simply do not implement it, and their users
+        /// attach a policy at every registration.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// # #[cfg(feature = "json")]
+        /// # mod demo {
+        /// use ruststream::memory::prelude::*;
+        /// use serde::{Deserialize, Serialize};
+        ///
+        /// #[derive(Deserialize)]
+        /// struct Order {
+        ///     id: u64,
+        /// }
+        ///
+        /// #[derive(Serialize, Outgoing)]
+        /// struct Confirmed {
+        ///     id: u64,
+        /// }
+        ///
+        /// #[subscriber("orders", reply("orders.confirmed"))]
+        /// async fn confirm(order: &Order) -> Confirmed {
+        ///     Confirmed { id: order.id }
+        /// }
+        ///
+        /// fn app() -> RustStream {
+        ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        ///         // No policy named: the reply leaves through the broker's default one.
+        ///         b.include(confirm);
+        ///     })
+        /// }
+        /// # }
+        /// # fn main() {}
+        /// ```
+        pub trait DefaultPublish: ConnectedBroker
+    }
+    local {
+        #[doc = include_str!("local/default.md")]
+        pub trait LocalDefaultPublish: LocalConnectedBroker
+    }
+    blanket { impl<T: DefaultPublish> LocalDefaultPublish for T }
+    forward { <T as DefaultPublish> }
+    docs { DefaultPublish }
+    types {
+        /// The broker's plain publish policy, constructible with its defaults.
+        type Policy: [
+            @twin { PublishPolicy<Self> } { LocalPublishPolicy<Self> } + Default @send { + Send }
+                + 'static
+        ];
+    }
 }
