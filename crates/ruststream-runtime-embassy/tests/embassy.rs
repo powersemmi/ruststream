@@ -11,6 +11,7 @@
 use core::cell::Cell;
 use core::convert::Infallible;
 use core::future::ready;
+use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
 use std::alloc::System;
@@ -27,7 +28,7 @@ use ruststream_runtime::{
 };
 use ruststream_runtime::{
     Deserialized, Handle, Input, LocalBlanketLayer, OpenRoutes, Router, RunRoutes,
-    SoloDeserialized, subscriber,
+    SoloDeserialized, SubscriberSettings, subscriber,
 };
 use ruststream_runtime_embassy::frames::{
     Frame, FrameBroker, FrameDelivery, FrameSource, FrameSubscriber, Frames, Settlements,
@@ -47,6 +48,9 @@ const HANDLER_WAIT: Duration = Duration::from_secs(10);
 /// before it began, and the longest chain a step starts (the timer wakes the subscription task,
 /// which finishes the handler, settles and parks again) takes two; the rest is margin.
 const SETTLE_ROUNDS: usize = 8;
+
+/// The batch size of the app's batch subscription.
+const BURST: NonZeroUsize = NonZeroUsize::new(4).expect("four is not zero");
 
 /// What a device keeps in `static`s: the broker's channel, the shutdown, the runner's host, and
 /// what the test reads.
@@ -68,6 +72,11 @@ struct App {
     stop: Control,
     seen: AtomicU32,
     layered: AtomicU32,
+    /// The burst channel its batch subscription reads.
+    bursts: Frames,
+    /// The batches its batch handler took, and the readings in them.
+    batches: AtomicU32,
+    batched: AtomicU32,
     ended: Cell<bool>,
 }
 
@@ -142,11 +151,48 @@ impl<M, C, S, H: LocalHandler<M, C, S>> LocalHandler<M, C, S> for Counted<H> {
     }
 }
 
+/// The app's batch handler: counts the batches it took and the readings in them.
+struct CountBursts {
+    batches: &'static AtomicU32,
+    readings: &'static AtomicU32,
+}
+
+impl Handle<[Reading<'_>]> for CountBursts {
+    fn handle(
+        &self,
+        readings: &[Reading<'_>],
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> + Send {
+        self.batches.fetch_add(1, Ordering::Relaxed);
+        let count = u32::try_from(readings.len()).expect("a batch fits the counter");
+        self.readings.fetch_add(count, Ordering::Relaxed);
+        ready(Ok(()))
+    }
+}
+
 /// The app's routes, as a device service declares them.
-fn routes(seen: &'static AtomicU32, reached: &'static AtomicU32) -> impl OpenRoutes<FrameBroker> {
+fn routes(app: &'static App) -> impl OpenRoutes<FrameBroker> {
+    let bursts = CountBursts {
+        batches: &app.batches,
+        readings: &app.batched,
+    };
     Router::<FrameBroker, _, _, _, _>::local()
-        .layer(CountDeliveries { reached })
-        .include(subscriber(FrameSource::new("readings"), CountReadings { seen }).build())
+        .layer(CountDeliveries {
+            reached: &app.layered,
+        })
+        .include(
+            subscriber(
+                FrameSource::new("readings"),
+                CountReadings { seen: &app.seen },
+            )
+            .build(),
+        )
+        .include(
+            subscriber(FrameSource::bursts("bursts"), bursts)
+                .batch(BURST)
+                .build(),
+        )
 }
 
 /// The app's task: connects the broker, opens every route the router holds and runs them in one
@@ -154,7 +200,7 @@ fn routes(seen: &'static AtomicU32, reached: &'static AtomicU32) -> impl OpenRou
 #[embassy_executor::task]
 async fn app(broker: FrameBroker, app: &'static App, host: &'static CountDetached) {
     let connected = broker.connect().await.expect("the broker connects");
-    let opened = routes(&app.seen, &app.layered)
+    let opened = routes(app)
         .open(&connected)
         .await
         .expect("every route opens");
@@ -332,6 +378,8 @@ async fn check_the_app(app: &App) {
     passed("a router mounts a definition on a broker that is not Send");
     assert_eq!(layered, 2, "deliveries the router's layer saw");
     passed("the router's layer wraps its handlers");
+
+    check_the_bursts(app).await;
     assert_eq!(allocations, 0, "allocations on the router's delivery path");
     passed("the router's delivery path allocates nothing");
 
@@ -340,6 +388,36 @@ async fn check_the_app(app: &App) {
     assert!(app.ended.get(), "the app's run outlives shutdown");
     passed("shutdown ends the app's run");
 }
+
+/// Publishes three frames to the app's burst channel at once, and reads the batch its batch
+/// subscription took.
+async fn check_the_bursts(app: &App) {
+    let acked = app.settled.acked();
+    let burst = Region::new(ALLOCATOR);
+    for payload in [b"one".as_slice(), b"two", b"three"] {
+        app.bursts
+            .send(Frame::new(payload).expect("the payload fits a frame"))
+            .await;
+    }
+    settle().await;
+    let allocations = burst.change().allocations;
+    let taken = (
+        app.batches.load(Ordering::Relaxed),
+        app.batched.load(Ordering::Relaxed),
+        app.settled.acked() - acked,
+    );
+
+    assert_eq!(taken, (1, 3, 3), "batches, readings, acks of one burst");
+    passed("a batch subscription takes a burst as one batch and acks it");
+    // The form's own: the batch's deliveries collected, and the vector of values built from
+    // them, as on the multi-thread runner.
+    assert_eq!(allocations, BATCH_ALLOCATIONS, "allocations of one batch");
+    passed("a batch allocates what the form allocates on any runner");
+}
+
+/// What one batch of the self-deserializing form allocates on any runner: the deliveries it
+/// collects and the values it builds from them.
+const BATCH_ALLOCATIONS: usize = 2;
 
 fn main() {
     static PROBE: StaticCell<Probe> = StaticCell::new();
@@ -359,6 +437,9 @@ fn main() {
             stop: Control::new(),
             seen: AtomicU32::new(0),
             layered: AtomicU32::new(0),
+            bursts: Frames::new(),
+            batches: AtomicU32::new(0),
+            batched: AtomicU32::new(0),
             ended: Cell::new(false),
         },
     });
@@ -366,7 +447,8 @@ fn main() {
         |spawner: Spawner| {
             let subscriber = FrameSubscriber::new(&probe.frames, &probe.settled);
             spawner.spawn(subscription(subscriber, probe).expect("the subscription task is free"));
-            let broker = FrameBroker::new(&probe.app.frames, &probe.app.settled);
+            let broker = FrameBroker::new(&probe.app.frames, &probe.app.settled)
+                .with_bursts(&probe.app.bursts);
             spawner.spawn(app(broker, &probe.app, &probe.host).expect("the app task is free"));
             spawner.spawn(drive(probe).expect("the driver task is free"));
         },

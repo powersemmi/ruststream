@@ -142,7 +142,9 @@ pub(crate) type SourceBatch<B, S> = <SourceSubscriber<B, S> as BatchSubscriber>:
 // reach through this path is re-exported.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use batch::{BatchHandler, TakenBatch, batch_verdict, uniform_batch};
+pub use batch::{
+    BatchHandler, LocalBatch, LocalBatchHandler, TakenBatch, batch_verdict, uniform_batch,
+};
 #[cfg(feature = "alloc")]
 pub use context::{After, Context};
 #[cfg(feature = "alloc")]
@@ -291,9 +293,9 @@ pub use retry::{
 #[doc(hidden)]
 pub use router::{
     AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply,
-    MountSink, OpenLayered, OpenRoutes, Opened, OpenedRoute, PublishInjectMount, PublishMount,
-    RawReplyInjectMount, RawReplyMount, ReplyAttachment, RetryDestinationsDeclared, RouteMetadata,
-    RouteSubscription, RouterBroker, RouterCommit, RouterMount, RunRoutes,
+    MountSink, OpenLayered, OpenRoutes, Opened, OpenedBatchRoute, OpenedRoute, PublishInjectMount,
+    PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment, RetryDestinationsDeclared,
+    RouteMetadata, RouteSubscription, RouterBroker, RouterCommit, RouterMount, RunRoutes,
 };
 #[cfg(feature = "alloc")]
 pub use router::{
