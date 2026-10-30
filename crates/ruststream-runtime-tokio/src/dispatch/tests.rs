@@ -1,7 +1,6 @@
 use std::future;
 use std::future::ready;
 use std::mem;
-use std::sync::atomic::AtomicU8;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -43,7 +42,6 @@ fn numbered(position: usize) -> PlainMessage {
     PlainMessage {
         payload: Bytes::copy_from_slice(&position.to_be_bytes()),
         headers: HeaderMap::new(),
-        settled: Arc::new(AtomicU8::new(0)),
         settlement: Settlement::Accepted,
     }
 }
@@ -147,7 +145,6 @@ fn scripted(payloads: &[&'static str]) -> ScriptedSubscriber {
         Ok(PlainMessage {
             payload: Bytes::from_static(payload.as_bytes()),
             headers: HeaderMap::new(),
-            settled: Arc::new(AtomicU8::new(0)),
             settlement: Settlement::Accepted,
         })
     }));
@@ -672,7 +669,6 @@ async fn a_pool_whose_worker_died_stops_rather_than_shrinks() {
         .map(|payload| PlainMessage {
             payload: Bytes::from_static(payload.as_bytes()),
             headers: HeaderMap::new(),
-            settled: Arc::new(AtomicU8::new(0)),
             settlement: if *payload == "boom" {
                 Settlement::Panics
             } else {

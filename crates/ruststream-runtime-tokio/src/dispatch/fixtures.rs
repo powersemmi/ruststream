@@ -1,9 +1,7 @@
-//! The test doubles the dispatch loop's tests share: a delivery that records how it settled, and
-//! the context a loop dispatches under outside any app.
+//! The test doubles the dispatch loop's tests share: a delivery whose transport settles as the test
+//! says, and the context a loop dispatches under outside any app.
 
 use std::future::ready;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
 
 use bytes::Bytes;
 use tokio_util::task::TaskTracker;
@@ -33,14 +31,10 @@ impl Settlement {
     }
 }
 
-/// A delivery without native delayed redelivery: `supports_nack_after` stays at the trait
-/// default (`false`), and the default `nack_after` would error. It records how it was settled
-/// so a test can assert the fallback dropped it rather than calling `nack(true)`.
+/// A delivery whose transport settles the way its [`Settlement`] says.
 pub(super) struct PlainMessage {
     pub(super) payload: Bytes,
     pub(super) headers: HeaderMap,
-    // 0 = unset, 1 = nack(false) (dropped), 2 = nack(true) (requeued).
-    pub(super) settled: Arc<AtomicU8>,
     pub(super) settlement: Settlement,
 }
 
@@ -57,9 +51,7 @@ impl IncomingMessage for PlainMessage {
         ready(self.settlement.apply())
     }
 
-    fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
-        self.settled
-            .store(if requeue { 2 } else { 1 }, Ordering::SeqCst);
+    fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         ready(self.settlement.apply())
     }
 }
