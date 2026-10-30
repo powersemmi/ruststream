@@ -35,6 +35,7 @@ use crate::handler::LocalHandler;
 use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, ShutdownWait};
 use crate::lifecycle::BoxError;
 use crate::middleware::{LocalBlanketLayer, Stack};
+use crate::redelivery::{ScopeDelivery, open_local_route};
 use crate::{
     BuildBatchContext, BuildContext, LocalBatchSubscriber, LocalBroker, LocalConnected,
     LocalIncomingMessage, LocalSubscriber, LocalSubscriptionSource,
@@ -65,6 +66,7 @@ pub trait OpenRoutes<B: LocalBroker, State = ()> {
     fn open(
         self,
         connected: &LocalConnected<B>,
+        scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<Self::Opened, BoxError>>;
 }
 
@@ -105,6 +107,7 @@ pub trait OpenLayered<B: LocalBroker, State> {
         self,
         connected: &LocalConnected<B>,
         layers: &Layers,
+        scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>>;
 }
 
@@ -149,6 +152,7 @@ impl<B: LocalBroker, State> OpenLayered<B, State> for () {
         self,
         _connected: &LocalConnected<B>,
         _layers: &Layers,
+        _scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<(), BoxError>> {
         ready(Ok(()))
     }
@@ -181,11 +185,12 @@ where
         self,
         connected: &LocalConnected<B>,
         layers: &Layers,
+        scope: &ScopeDelivery,
     ) -> Result<Self::Opened<Layers>, BoxError> {
         // The list is built head first and the router pushes onto the head, so the tail holds
         // the registrations made first: they subscribe first.
-        let tail = self.1.open_layered(connected, layers).await?;
-        let head = self.0.open_layered(connected, layers).await?;
+        let tail = self.1.open_layered(connected, layers, scope).await?;
+        let head = self.0.open_layered(connected, layers, scope).await?;
         Ok((head, tail))
     }
 }
@@ -313,10 +318,11 @@ where
     fn open(
         self,
         connected: &LocalConnected<B>,
+        scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<Self::Opened, BoxError>> {
         let layers = self.layers;
         let routes = self.routes.balance();
-        async move { routes.open_layered(connected, &layers).await }
+        async move { routes.open_layered(connected, &layers, scope).await }
     }
 }
 
@@ -336,10 +342,11 @@ where
         self,
         connected: &LocalConnected<B>,
         layers: &Layers,
+        scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
         let composed = Stack::new(self.layers, layers.clone());
         let routes = self.routes.balance();
-        async move { routes.open_layered(connected, &composed).await }
+        async move { routes.open_layered(connected, &composed, scope).await }
     }
 }
 
@@ -408,8 +415,10 @@ where
         self,
         connected: &LocalConnected<B>,
         _layers: &Layers,
+        scope: &ScopeDelivery,
     ) -> Result<Self::Opened<Layers>, BoxError> {
         let name: Arc<str> = Arc::from(self.source.name());
+        let delivery = open_local_route(scope, &name);
         let subscriber = self
             .source
             .subscribe(connected)
@@ -420,7 +429,7 @@ where
             handler: LocalBatch(self.handler),
             name,
             batch_size: self.batch_size,
-            delivery: Delivery::unscoped(),
+            delivery,
             policies: self.policies,
         })
     }

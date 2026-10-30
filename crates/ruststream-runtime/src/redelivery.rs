@@ -794,6 +794,24 @@ fn announce<Cx>(
     }
 }
 
+/// The delivery context of a route the one-task fold opens under its broker's `scope`, with no
+/// retry path: under a harness it is noted as one more subscription of that broker, so its
+/// deliveries are recorded under the broker and the name it subscribed with.
+#[cfg_attr(not(feature = "testing"), allow(unused_variables))]
+pub(crate) fn open_local_route<Cx>(scope: &ScopeDelivery, name: &str) -> Delivery<Cx> {
+    #[cfg(feature = "testing")]
+    let routed = ScopeDelivery {
+        hooks: Arc::clone(&scope.hooks),
+        scope_id: scope.scope_id,
+        subscription: scope.hooks.subscribed(scope.scope_id, name),
+        #[cfg(feature = "poll-diagnostics")]
+        poll: scope.poll.clone(),
+    };
+    #[cfg(feature = "testing")]
+    let scope = &routed;
+    open_mounted_subscriber(scope, name)
+}
+
 /// The delivery context for a subscriber mounted without a source: nothing describes where a
 /// redelivery of it would be published, and no mount chain can bind the retry position on one, so
 /// there is no retry path to build.

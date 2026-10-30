@@ -9,10 +9,10 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 
-use crate::dispatch::Delivery;
 use crate::inject::{InjectHandler, LocalFromStartup, LocalInject, LocalInjectCall};
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
+use crate::redelivery::{ScopeDelivery, open_local_route};
 use crate::{
     BuildContext, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
     LocalSubscriptionSource,
@@ -45,6 +45,7 @@ where
     async fn open_route(
         self,
         connected: &LocalConnected<B>,
+        scope: &ScopeDelivery,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
@@ -55,6 +56,7 @@ where
             ..
         } = self;
         let name: Arc<str> = Arc::from(source.name());
+        let delivery = open_local_route(scope, &name);
         let subscriber = source
             .subscribe(connected)
             .await
@@ -73,7 +75,7 @@ where
             subscriber,
             handler,
             name,
-            delivery: Delivery::unscoped(),
+            delivery,
             policies,
         })
     }

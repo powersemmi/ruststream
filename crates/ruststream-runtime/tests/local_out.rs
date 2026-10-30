@@ -22,8 +22,8 @@ use ruststream_core::{
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
     Context, Deserialized, Halt, HandlerOutcome, Input, LocalDetach, LocalHandle, LocalOutEntry,
-    OpenRoutes, OutSlot, Outs, PublishedThrough, Reads, Router, RunRoutes, ShutdownWait,
-    SoloDeserialized, local_subscriber,
+    OpenRoutes, OutSlot, Outs, PublishedThrough, Reads, Router, RunRoutes, ScopeDelivery,
+    ShutdownWait, SoloDeserialized, local_subscriber,
 };
 use serde::Serialize;
 use tokio::sync::Notify;
@@ -168,7 +168,7 @@ async fn a_body_publishes_through_its_slot_to_a_local_broker() {
         .include(local_subscriber(LocalMemorySource::new("orders"), Mirror).build())
         .out(Audit, LocalMemoryPublish)
         .build()
-        .open(&connected)
+        .open(&connected, &ScopeDelivery::new())
         .await
         .expect("the route opens");
     let publisher = LocalMemoryPublish

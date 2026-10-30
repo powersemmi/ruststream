@@ -27,7 +27,7 @@ use ruststream_core::{
 };
 use ruststream_runtime::{
     Clock, Context, Delivery, DispatchFailure, FailurePolicies, HandlerOutcome, HeadersAtOnce,
-    INSTRUMENTED_BODY, LocalDetach, LocalHandler, run_sequential,
+    INSTRUMENTED_BODY, LocalDetach, LocalHandler, ScopeDelivery, run_sequential,
 };
 use ruststream_runtime::{
     Deserialized, Input, LocalBlanketLayer, LocalHandle, LocalOutEntry, MessageWire, OpenRoutes,
@@ -348,7 +348,7 @@ fn routes(app: &'static App) -> impl OpenRoutes<FrameBroker> {
 async fn app(broker: FrameBroker, app: &'static App) {
     let connected = broker.connect().await.expect("the broker connects");
     let opened = routes(app)
-        .open(&connected)
+        .open(&connected, &ScopeDelivery::new())
         .await
         .expect("every route opens");
     // The task's future is its static storage: embassy keeps it in place, so it is not boxed.
