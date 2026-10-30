@@ -3,7 +3,7 @@
 use core::num::NonZeroUsize;
 
 use crate::dispatch::Workers;
-use crate::{ConnectedBroker, SubscriptionSource};
+use crate::{LocalConnectedBroker, LocalSubscriptionSource};
 
 use super::SubscriberBuilder;
 #[cfg(doc)]
@@ -219,8 +219,8 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
     #[must_use]
     pub fn subscription_name<Conn>(&self) -> &str
     where
-        Conn: ConnectedBroker,
-        Src: SubscriptionSource<Conn>,
+        Conn: LocalConnectedBroker,
+        Src: LocalSubscriptionSource<Conn>,
     {
         self.source.name()
     }
