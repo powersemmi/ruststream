@@ -399,11 +399,11 @@ jobs:
         run: cargo llvm-cov --locked --no-report --workspace --all-features --no-fail-fast --tests
 
       # The summary is written before the gate's exit code propagates, so it shows up even on a
-      # failure.
+      # failure. Each report reads the packages the run covered, the whole workspace.
       - name: Coverage summary and gate
         run: |
           set +e
-          cargo llvm-cov report --summary-only --fail-under-lines "$COVERAGE_GATE" | tee coverage.txt
+          cargo llvm-cov report --workspace --summary-only --fail-under-lines "$COVERAGE_GATE" | tee coverage.txt
           rc=${PIPESTATUS[0]}
           {
             echo '## Coverage'
@@ -416,7 +416,7 @@ jobs:
 
       - name: Export lcov report
         if: "!cancelled()"
-        run: cargo llvm-cov report --lcov --output-path lcov.info
+        run: cargo llvm-cov report --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage report
         if: "!cancelled()"
