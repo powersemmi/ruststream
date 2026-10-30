@@ -1154,6 +1154,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             continuations: self.continuations,
         };
         let stopped = teardown.run().await;
+        // The handlers are done or aborted: the hooks they left waiting go with them.
+        self.hook_failures.stop().await;
         // The handlers are done, so a failure a hook left is in by now.
         self.hook_failures.raise();
         stopped

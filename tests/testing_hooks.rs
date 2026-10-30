@@ -8,13 +8,15 @@
 ))]
 
 use std::error::Error;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::future;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 use tokio::time;
 
 #[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq)]
@@ -277,6 +279,134 @@ async fn the_publish_waits_for_a_hook_that_awaits() -> Result<(), Box<dyn Error>
 
     assert_eq!(done.load(Ordering::SeqCst), 1);
     assert!(started.elapsed() >= Duration::from_secs(60));
+    Ok(())
+}
+
+/// What a hook that never completes shows the test: when it started, and when its future was
+/// dropped.
+#[derive(Default)]
+struct Hang {
+    entered: Notify,
+    dropping: Notify,
+    /// When set, the drop of the hook's future holds until the test meets it here.
+    hold: Option<Barrier>,
+    dropped: AtomicBool,
+    gone: Notify,
+}
+
+/// Held by the hook's future, so it is dropped with it.
+struct Held(Arc<Hang>);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.0.dropping.notify_one();
+        if let Some(hold) = &self.0.hold {
+            hold.wait();
+        }
+        self.0.dropped.store(true, Ordering::SeqCst);
+        self.0.gone.notify_one();
+    }
+}
+
+/// The body of a hook that never completes.
+async fn hang(state: Arc<Hang>) {
+    let _held = Held(Arc::clone(&state));
+    state.entered.notify_one();
+    future::pending::<()>().await;
+}
+
+/// Registers a hook that never completes on the calls of `orders`.
+fn hang_on_call(tb: &TestApp<()>, state: Hang) -> Arc<Hang> {
+    let state = Arc::new(state);
+    let hook = Arc::clone(&state);
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .on_call(async move |_| hang(Arc::clone(&hook)).await);
+    state
+}
+
+/// Publishes an order and goes on once the hook it triggers has started: the publish itself waits
+/// for the hook, which never ends, and is dropped here.
+async fn publish_until_hung(tb: &TestApp<()>, state: &Hang) {
+    tokio::select! {
+        sent = tb.broker::<MemoryBroker>().message(&Order { id: 1 }).publish() => {
+            panic!("the publish returned while its hook still waits: {sent:?}");
+        }
+        () = state.entered.notified() => {}
+    }
+}
+
+/// A hook that never completes is stopped with the handler the shutdown timeout aborted, and
+/// `shutdown` returns only once the hook is gone.
+#[tokio::test(start_paused = true)]
+async fn shutdown_stops_a_hook_whose_handler_it_aborted() -> Result<(), Box<dyn Error>> {
+    let tb = TestApp::start(app().shutdown_timeout(Duration::from_secs(5))).await?;
+    let state = hang_on_call(
+        &tb,
+        Hang {
+            hold: Some(Barrier::new(2)),
+            ..Hang::default()
+        },
+    );
+    publish_until_hung(&tb, &state).await;
+
+    let shutdown = tb.shutdown();
+    tokio::pin!(shutdown);
+    // The hook is being dropped and is held there: the shutdown has nothing left to wait for
+    // but the hook, so the paused clock moves on only while the shutdown waits for it.
+    tokio::select! {
+        biased;
+        stopped = &mut shutdown => panic!("shutdown returned before the hook was dropped: {stopped:?}"),
+        () = state.dropping.notified() => {}
+    }
+    tokio::select! {
+        biased;
+        stopped = &mut shutdown => panic!("shutdown returned while the hook was dropping: {stopped:?}"),
+        () = time::sleep(Duration::from_secs(60)) => {}
+    }
+    if let Some(hold) = &state.hold {
+        hold.wait();
+    }
+    shutdown.await?;
+
+    assert!(
+        state.dropped.load(Ordering::SeqCst),
+        "the hook still runs after shutdown returned",
+    );
+    Ok(())
+}
+
+/// A hook stops when the publish waiting for it is dropped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hook_stops_with_the_publish_that_waits_for_it() -> Result<(), Box<dyn Error>> {
+    let tb = TestApp::start(app()).await?;
+    let state = Arc::new(Hang::default());
+    let hook = Arc::clone(&state);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("orders")
+        .on_publish(async move |_| hang(Arc::clone(&hook)).await);
+
+    publish_until_hung(&tb, &state).await;
+
+    // The bound only turns a hook that is never dropped into a failure instead of a hang.
+    time::timeout(Duration::from_secs(10), state.gone.notified())
+        .await
+        .map_err(|_| "the hook still runs after the publish waiting for it was dropped")?;
+    Ok(())
+}
+
+/// A harness dropped without a shutdown stops the hooks still running.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropping_the_harness_stops_its_hooks() -> Result<(), Box<dyn Error>> {
+    let tb = TestApp::start(app()).await?;
+    let state = hang_on_call(&tb, Hang::default());
+    publish_until_hung(&tb, &state).await;
+
+    drop(tb);
+
+    time::timeout(Duration::from_secs(10), state.gone.notified())
+        .await
+        .map_err(|_| "the hook still runs after the harness was dropped")?;
     Ok(())
 }
 

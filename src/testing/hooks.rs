@@ -13,6 +13,8 @@ use std::thread;
 
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
 use super::coordinator::Coordinator;
@@ -109,6 +111,10 @@ pub(crate) struct Hooks {
     publishes: Mutex<Vec<OnPublish>>,
     /// The first panic a hook raised, held for the test's task to raise again.
     failed: Mutex<Option<Box<dyn Any + Send>>>,
+    /// The hook threads still running, so a shutdown returns only once they are gone.
+    running: TaskTracker,
+    /// Cancelled once the test ends: every hook still running is dropped where it waits.
+    stopped: CancellationToken,
 }
 
 /// An `on_call` hook, with the handle it was registered on.
@@ -226,6 +232,14 @@ impl Hooks {
         }))
     }
 
+    /// Stops every hook still running and waits until each is dropped, so nothing of a hook runs
+    /// once the harness is shut down.
+    async fn stop(&self) {
+        self.stopped.cancel();
+        self.running.close();
+        self.running.wait().await;
+    }
+
     /// Raises again, in the caller's task, the first panic a hook raised.
     pub(crate) fn raise_failure(&self) {
         let failed = lock(&self.failed).take();
@@ -304,16 +318,40 @@ impl DuePublish {
 /// Why a thread: a hook's future is not `Send` (see [`HookFuture`]), and every task that sees an
 /// event is. `Handle::block_on` on a plain thread keeps the hook on the test's runtime, its clock
 /// included, and lets a paused clock advance while the hook waits on a timer.
+///
+/// The hooks are dropped where they wait as soon as the caller stops waiting for them (a shutdown
+/// timeout aborted the dispatch that ran them) or the test ends ([`HookFailures::stop`]), so no
+/// hook outlives the harness.
 async fn on_hook_thread<Run>(coordinator: &Coordinator, hooks: Run)
 where
     Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send + 'static,
 {
     let runtime = Handle::current();
     let owned = coordinator.clone();
-    let (done, finished) = oneshot::channel();
+    let (mut done, finished) = oneshot::channel();
+    let running = coordinator.hooks().running.token();
+    let stopped = coordinator.hooks().stopped.clone();
     thread::spawn(move || {
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| runtime.block_on(hooks(&owned))));
-        let _ = done.send(outcome);
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            runtime.block_on(async {
+                tokio::select! {
+                    () = hooks(&owned) => true,
+                    () = done.closed() => false,
+                    () = stopped.cancelled() => false,
+                }
+            })
+        }));
+        match outcome {
+            Ok(true) => {
+                let _ = done.send(Ok(()));
+            }
+            Ok(false) => {}
+            Err(payload) => {
+                let _ = done.send(Err(payload));
+            }
+        }
+        // Released last, once the hooks' future and what it captured are dropped.
+        drop(running);
     });
     if let Ok(Err(payload)) = finished.await {
         lock(&coordinator.hooks().failed).get_or_insert(payload);
@@ -330,6 +368,11 @@ impl HookFailures {
         Self(coordinator)
     }
 
+    /// Stops the hooks still running and waits until they are gone.
+    pub(crate) async fn stop(&self) {
+        self.0.hooks().stop().await;
+    }
+
     /// Raises the failure a hook left, if any.
     pub(crate) fn raise(self) {
         self.0.hooks().raise_failure();
@@ -339,8 +382,10 @@ impl HookFailures {
 // Why a destructor that panics: a test that ends by dropping the harness has no other place left
 // where a hook's failed assertion can fail it, and passing a test whose check failed is the
 // defect. It raises only a failure that is pending and only when no panic is unwinding already.
+// The hooks still running are told to stop first; a destructor cannot wait for them to go.
 impl Drop for HookFailures {
     fn drop(&mut self) {
+        self.0.hooks().stopped.cancel();
         if !thread::panicking() {
             self.0.hooks().raise_failure();
         }

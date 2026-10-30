@@ -596,11 +596,13 @@ impl SubscriberAssertions<'_> {
     /// [`TestApp::start_live`](super::TestApp::start_live) run hooks.
     ///
     /// The harness awaits the hooks of a call before the publish that caused it returns, so a hook
-    /// that never completes hangs that publish; the test's own timeout is the guard. A hook runs
-    /// on a thread of its own inside the test's runtime, its clock included. A panic inside it, a
-    /// failed assertion included, is raised again from the publish, `settle` or `advance` that
-    /// drove the call, or else from [`TestApp::shutdown`](super::TestApp::shutdown) or the
-    /// harness being dropped.
+    /// that never completes hangs that publish; the test's own timeout is the guard. A hook still
+    /// running when the harness shuts down or is dropped is stopped where it waits, and
+    /// [`TestApp::shutdown`](super::TestApp::shutdown) returns once it is gone. A hook runs on a
+    /// thread of its own inside the test's runtime, its clock included. A panic inside it, a failed
+    /// assertion included, is raised again from the publish, `settle` or `advance` that drove the
+    /// call, or else from [`TestApp::shutdown`](super::TestApp::shutdown) or the harness being
+    /// dropped.
     ///
     /// # Examples
     ///
@@ -1025,7 +1027,9 @@ impl<T: 'static> PublishedAssertions<T> {
     ///
     /// The harness awaits the hooks of a publish before the test's publish that caused it
     /// returns, so a hook that never completes hangs that publish; the test's own timeout is the
-    /// guard. A hook runs on a thread of its own inside the test's runtime, its clock included. A
+    /// guard. A hook still running when the harness shuts down or is dropped is stopped where it
+    /// waits, and [`TestApp::shutdown`](super::TestApp::shutdown) returns once it is gone. A hook
+    /// runs on a thread of its own inside the test's runtime, its clock included. A
     /// panic inside it, a failed assertion included, is raised again from the publish, `settle`
     /// or `advance` that drove the event, or else from
     /// [`TestApp::shutdown`](super::TestApp::shutdown) or the harness being dropped.
