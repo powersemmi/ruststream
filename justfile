@@ -63,6 +63,8 @@ check:
     RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --target thumbv6m-none-eabi
     RUSTFLAGS="" cargo build -p ruststream-runtime-embassy --target thumbv7em-none-eabihf
+    RUSTFLAGS="" cargo build -p ruststream-memory --no-default-features --features embassy \
+        --target thumbv7em-none-eabihf
     # Rustdoc sees what rustc cannot: broken intra-doc links and redundant targets. CI gates on
     # it, so a link to an item a refactor removed must fail here rather than three jobs later.
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps

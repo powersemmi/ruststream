@@ -253,6 +253,8 @@ jobs:
           cargo build --locked -p ruststream-runtime --no-default-features \
             --target thumbv6m-none-eabi
           cargo build --locked -p ruststream-runtime-embassy --target thumbv7em-none-eabihf
+          cargo build --locked -p ruststream-memory --no-default-features --features embassy \
+            --target thumbv7em-none-eabihf
 
       # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
       # It also rewrites the manifests while it runs, which is why this is the last step and the
