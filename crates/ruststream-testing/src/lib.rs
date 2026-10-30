@@ -5,8 +5,14 @@
 //! [`ruststream::testing`](https://docs.rs/ruststream/latest/ruststream/testing/), whose overview
 //! teaches it.
 
+#[cfg(feature = "embassy")]
+pub mod embedded;
+#[cfg(feature = "tokio")]
 mod handle;
+#[cfg(feature = "tokio")]
 mod harness;
 
+#[cfg(feature = "tokio")]
 pub use handle::{BrokerHandle, InjectSink};
+#[cfg(feature = "tokio")]
 pub use harness::{TestApp, TestBrokers};
