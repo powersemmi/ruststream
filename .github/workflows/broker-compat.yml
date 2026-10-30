@@ -92,6 +92,14 @@ jobs:
         run: |
           sed -i 's#^ruststream = { version = "[^"]*"#ruststream = { path = "../core"#' broker/Cargo.toml
           grep '^ruststream = ' broker/Cargo.toml
+          # A member built on another broker crate (a benchmark or an example over a second
+          # transport) takes that crate from crates.io, which asks for the core from there too.
+          # The patch sends it to the same checkout, so the graph holds one core.
+          # The lock drops the copy it pinned in the checked step below, so a resolution failure
+          # reaches the report like any other.
+          mkdir -p broker/.cargo
+          printf '[patch.crates-io]\nruststream = { path = "%s/core" }\n' "$GITHUB_WORKSPACE" \
+            >> broker/.cargo/config.toml
 
       - name: Build the broker against the core
         id: check
@@ -104,6 +112,15 @@ jobs:
           status=0
           log="$RUNNER_TEMP/check.log"
           : > "$log"
+          # The lock drops the registry copy of the core the patch above replaced.
+          if grep -A2 '^name = "ruststream"$' Cargo.lock | grep -q '^source = "registry+'; then
+            echo "\$ cargo update -p ruststream (the registry copy)" >> "$log"
+            if ! cargo update -p 'registry+https://github.com/rust-lang/crates.io-index#ruststream' \
+              2>>"$log"; then
+              cat "$log"
+              exit 1
+            fi
+          fi
           # The unpublished members (benchmarks, examples) are built with their own features: a
           # benchmark refuses the `testing` feature on purpose, and every-feature builds are a
           # property of the published crates, which is what the broker's own gates check too.
