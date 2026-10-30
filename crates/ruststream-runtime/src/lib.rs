@@ -80,7 +80,7 @@ pub use batch::{BatchHandler, TakenBatch, batch_verdict, uniform_batch};
 pub use context::{After, Context};
 #[doc(hidden)]
 pub use dispatch::{
-    Delivery, Slot as DeliverySlot, Turn, dispatch, placed, run_batch, run_sequential,
+    Delivery, Lent, Slot as DeliverySlot, Turn, dispatch, placed, run_batch, run_sequential,
 };
 pub use dispatch::{Placement, RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};

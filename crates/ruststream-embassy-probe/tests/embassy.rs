@@ -96,9 +96,9 @@ async fn subscription(subscriber: FrameSubscriber, probe: &'static Probe) {
         &probe.stop,
         Arc::from("readings"),
         Arc::new(()),
-        &delivery,
-        &*probe.host,
+        (&delivery, &*probe.host),
         failure,
+        (),
     )
     .await;
     probe.ended.set(true);

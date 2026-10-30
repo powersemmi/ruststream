@@ -20,7 +20,6 @@ use ruststream_runtime::{
 };
 
 pub(crate) use crate::detach::Hosted;
-use crate::detach::OnThread;
 use crate::shutdown::Shutdown;
 use crate::{BatchSubscriber, IncomingMessage, Subscriber};
 pub(crate) use threads::StartThreadError;
@@ -44,20 +43,9 @@ where
     St: Send + Sync + 'static,
 {
     let consuming = shutdown.consuming();
-    tokio::spawn(async move {
-        let _consuming = consuming;
-        run_sequential(
-            subscriber,
-            handler,
-            shutdown,
-            name,
-            state,
-            &hosted.delivery,
-            &hosted.host,
-            failure,
-        )
-        .await;
-    })
+    tokio::spawn(run_sequential(
+        subscriber, handler, shutdown, name, state, hosted, failure, consuming,
+    ))
 }
 
 /// Waits for whichever comes first: a finished worker off `tasks`, or `shutdown`.
@@ -164,7 +152,7 @@ where
         |own| {
             let shared = Arc::clone(&shared);
             let delivery = shared.hosted.delivery.on_thread();
-            let host = OnThread::new(shared.hosted.host.tasks().clone(), own);
+            let host = shared.hosted.host.on_thread(own);
             // One encode buffer per thread, for the reason the sequential loop has one.
             let mut encode = BytesMut::new();
             async move |msg: S::Message| {
@@ -423,7 +411,7 @@ where
     let threads = Threads::start(&shared.name, workers.count().get(), false, |own| {
         let shared = Arc::clone(&shared);
         let delivery = shared.hosted.delivery.on_thread();
-        let host = OnThread::new(shared.hosted.host.tasks().clone(), own);
+        let host = shared.hosted.host.on_thread(own);
         let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
         let mut encode = BytesMut::new();
         async move |batch: S::Batch| {

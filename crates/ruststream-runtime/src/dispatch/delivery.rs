@@ -9,6 +9,7 @@ use crate::IncomingMessage;
 use crate::RetryDeclaration;
 #[cfg(doc)]
 use crate::context::Context;
+use crate::host::Detach;
 #[cfg(feature = "tokio")]
 use crate::main_runtime::MainRuntime;
 #[cfg(feature = "poll-diagnostics")]
@@ -232,6 +233,48 @@ impl<M> Slot<M> {
     /// Panics if called twice; see [`Slot::get`].
     pub(crate) fn take(&mut self) -> M {
         self.0.take().expect(SETTLED)
+    }
+}
+
+/// What a runner lends a subscription's loop: its publish context and the runner's own handle,
+/// held however the runner shares them with the loop's other parts.
+#[doc(hidden)]
+pub trait Lent<C> {
+    /// The runner's handle the loop hands its leftovers to.
+    type Host: Detach;
+
+    /// The publish context every delivery of the subscription runs under.
+    fn delivery(&self) -> &Delivery<C>;
+
+    /// The runner's handle.
+    fn host(&self) -> &Self::Host;
+}
+
+impl<C, Shared: Lent<C>> Lent<C> for Arc<Shared> {
+    type Host = Shared::Host;
+
+    #[inline]
+    fn delivery(&self) -> &Delivery<C> {
+        (**self).delivery()
+    }
+
+    #[inline]
+    fn host(&self) -> &Self::Host {
+        (**self).host()
+    }
+}
+
+impl<C, Host: Detach> Lent<C> for (&Delivery<C>, &Host) {
+    type Host = Host;
+
+    #[inline]
+    fn delivery(&self) -> &Delivery<C> {
+        self.0
+    }
+
+    #[inline]
+    fn host(&self) -> &Host {
+        self.1
     }
 }
 

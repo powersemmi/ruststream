@@ -28,7 +28,7 @@ use crate::testing::coordinator::{
 };
 #[cfg(feature = "testing")]
 use crate::testing::hooks::DueCall;
-pub use delivery::{Delivery, Slot};
+pub use delivery::{Delivery, Lent, Slot};
 pub(crate) use settle::settle_outcome;
 pub use workers::{Placement, Workers};
 
@@ -93,7 +93,8 @@ macro_rules! observed {
 
 /// Drives `subscriber` through `handler` until `shutdown` is signalled or the stream ends: the
 /// sequential loop a runner spawns for a subscription. Each delivery is given a [`Context`] built
-/// from `name`, the message headers, shared `state`, and the `delivery` publish context.
+/// from `name`, the message headers, shared `state`, and the publish context `lent` holds;
+/// `held` lives as long as the loop (a runner's guard on its shutdown count, say).
 // The parts are independent and each runner passes its own; bundling them into a struct would
 // hide that.
 // Written over the local twins of the contract, so the future is `Send` exactly where the types
@@ -101,15 +102,15 @@ macro_rules! observed {
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
-pub async fn run_sequential<S, H, C, St, Signal, Host>(
+pub async fn run_sequential<S, H, C, St, Signal, Lending, Held>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: Signal,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: &Delivery<C>,
-    host: &Host,
+    lent: Lending,
     failure: DispatchFailure<Signal>,
+    held: Held,
 ) where
     S: LocalSubscriber,
     S::Message: Sync,
@@ -117,8 +118,13 @@ pub async fn run_sequential<S, H, C, St, Signal, Host>(
     // See `dispatch`.
     C: BuildContext<S::Message> + Send + Sync + 'static,
     Signal: ShutdownWait + Halt,
-    Host: Detach,
+    Lending: Lent<C>,
 {
+    // Owned by the loop itself, so a runner spawns this future as it is, with no future of its
+    // own around it: the loop is the task.
+    let _held = held;
+    let delivery = lent.delivery();
+    let host = lent.host();
     let mut stream = std::pin::pin!(subscriber.stream());
     let mut cancelled = std::pin::pin!(shutdown.cancelled());
     // One encode buffer for the whole loop: a reply that leaves through a publisher which
