@@ -166,7 +166,7 @@ where
             async move |msg: S::Message| {
                 let mut slot = Slot::new(msg);
                 dispatch(
-                    &*shared.handler,
+                    &shared.handler,
                     &mut slot,
                     &mut encode,
                     &shared.name,

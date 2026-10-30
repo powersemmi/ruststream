@@ -4,7 +4,11 @@
 //! The channel locks with `NoopRawMutex`, so it is not `Sync`, and the subscriber that holds its
 //! receiver is not `Send`. The delivery counts its settlement in the subscription's cells, so it
 //! is neither `Send` nor `Sync`. The subscriber and its delivery therefore implement only the
-//! `Local*` contract twins, and the body reaches them through those alone.
+//! `Local*` contract twins, and the body reaches them through those alone. [`FrameBroker`] is the
+//! same channel as a broker an app registers, with [`FrameSource`] its subscription.
+
+// The broker's futures hold its `!Send` forms on purpose: that is what the body is held to here.
+#![allow(clippy::future_not_send)]
 
 use core::cell::Cell;
 use core::convert::Infallible;
@@ -15,7 +19,11 @@ use core::task::{Context, Poll};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, Receiver};
 use futures_core::Stream;
-use ruststream_core::{AckError, HeaderMap, LocalIncomingMessage, LocalSubscriber};
+use ruststream_core::{
+    AckError, BrokerMoves, HeaderMap, LocalBroker, LocalConnectedBroker, LocalIncomingMessage,
+    LocalSubscriber, LocalSubscriptionSource,
+};
+use ruststream_runtime::IntoSource;
 
 /// The largest payload a frame holds.
 pub const PAYLOAD: usize = 64;
@@ -146,4 +154,92 @@ impl LocalIncomingMessage for FrameDelivery {
 /// Adds one: the executor's one thread settles a subscription's deliveries.
 fn count(counter: &Cell<u32>) {
     counter.set(counter.get() + 1);
+}
+
+/// The stand-in as a broker an app registers: the channel its one subscription receives from.
+///
+/// Its connected form opens [`FrameSource`]; neither form is `Send`, as the deliveries are not.
+#[derive(Debug)]
+pub struct FrameBroker {
+    frames: &'static Frames,
+    settled: &'static Settlements,
+}
+
+impl FrameBroker {
+    /// A broker over `frames`, recording its settlements in `settled`. Performs no I/O.
+    #[must_use]
+    pub const fn new(frames: &'static Frames, settled: &'static Settlements) -> Self {
+        Self { frames, settled }
+    }
+}
+
+/// The connected form of a [`FrameBroker`].
+#[derive(Debug)]
+pub struct FrameConnected {
+    frames: &'static Frames,
+    settled: &'static Settlements,
+}
+
+impl LocalBroker for FrameBroker {
+    type Error = Infallible;
+    type Connected = FrameConnected;
+
+    fn connect(self) -> impl Future<Output = Result<FrameConnected, Infallible>> {
+        ready(Ok(FrameConnected {
+            frames: self.frames,
+            settled: self.settled,
+        }))
+    }
+}
+
+impl LocalConnectedBroker for FrameConnected {
+    type Error = Infallible;
+    type Closed = ();
+
+    fn shutdown(self) -> impl Future<Output = Result<(), Infallible>> {
+        ready(Ok(()))
+    }
+}
+
+/// The descriptor of the broker's one subscription, named `name`.
+#[derive(Debug, Clone, Copy)]
+pub struct FrameSource {
+    name: &'static str,
+}
+
+impl FrameSource {
+    /// The subscription, named `name` in the app's diagnostics.
+    #[must_use]
+    pub const fn new(name: &'static str) -> Self {
+        Self { name }
+    }
+}
+
+impl LocalSubscriptionSource<FrameConnected> for FrameSource {
+    type Subscriber = FrameSubscriber;
+    // A frame the handler retries goes back on the channel by the device's own logic, not by a
+    // copy this process publishes.
+    type Copies = BrokerMoves;
+
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn subscribe(
+        self,
+        connected: &FrameConnected,
+    ) -> impl Future<Output = Result<FrameSubscriber, Infallible>> {
+        ready(Ok(FrameSubscriber::new(
+            connected.frames,
+            connected.settled,
+        )))
+    }
+}
+
+impl IntoSource for FrameSource {
+    type Source = Self;
+
+    fn into_source(self) -> Self {
+        self
+    }
 }

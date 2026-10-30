@@ -95,7 +95,7 @@ async fn work<Message, Body, Cx, State>(
     while let Some(msg) = inbox.recv().await {
         let mut slot = Slot::new(msg);
         dispatch(
-            &*shared.handler,
+            &shared.handler,
             &mut slot,
             &mut encode,
             &shared.name,

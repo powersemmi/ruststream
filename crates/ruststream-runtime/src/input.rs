@@ -26,7 +26,7 @@ use crate::codec::{Codec, CodecError};
 use crate::handle::{Input, Solo, SoloSet};
 use crate::in_messages::DecodeSet;
 use crate::metadata::IncomingMessageMetadata;
-use crate::{Carries, IncomingMessage, Subscriber, SubscriptionSource};
+use crate::{Carries, IncomingMessage, LocalIncomingMessage, Subscriber, SubscriptionSource};
 
 #[cfg(feature = "testing")]
 use super::context::Context;
@@ -299,7 +299,7 @@ impl<DecodeCodec, F: Send + Sync + 'static> DecodeWith<DecodeCodec> for Provided
 impl<DecodeCodec, F, M> Materialize<DecodeCodec, M> for Provided<F>
 where
     F: Send + Sync + 'static,
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
 {
     type Held<'m>
         = ()

@@ -124,7 +124,7 @@ macro_rules! observed {
 #[allow(clippy::too_many_arguments)]
 pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     mut subscriber: S,
-    handler: Arc<H>,
+    handler: H,
     shutdown: Signal,
     name: Arc<str>,
     state: Arc<St>,
@@ -164,7 +164,7 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
                 // call expression makes the loop build it on the stack and copy it into
                 // its own state on every delivery.
                 let handling = core::pin::pin!(dispatch(
-                    &*handler,
+                    &handler,
                     &mut slot,
                     &mut encode,
                     &name,
@@ -776,7 +776,7 @@ mod tests {
         };
 
         dispatch(
-            &read_header,
+            &Arc::new(read_header),
             &mut slot,
             &mut BytesMut::new(),
             "readings",

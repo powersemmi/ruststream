@@ -15,6 +15,7 @@
 
 mod builder;
 mod builders;
+mod fold;
 mod form_eager;
 mod form_out;
 mod form_publish;
@@ -34,6 +35,8 @@ pub use builders::RouterCommit;
 pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOut, RouterWith};
 // The typed default-reply token is machinery, but the macro expansion names it in generated
 // types (the default attach of a sealed reply definition), so it is public and hidden.
+#[doc(hidden)]
+pub use fold::{OpenRoutes, OpenedRoute, RunRoutes};
 #[doc(hidden)]
 pub use mount::DefaultReply;
 pub use mount::IncludeDef;
@@ -58,13 +61,13 @@ use routes::{BatchRoute, SubscribeRoute};
 use routes_inject::{BatchInjectRoute, InjectRoute};
 use routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 
-pub(crate) use crate::{SourceBatch, SourceMessage};
+pub(crate) use crate::{LocalConnected, LocalSourceMessage, SourceBatch, SourceMessage};
 
 /// The route a [`SubscriberDef`] `D` mounted on source `S` (decoded with `C`) becomes. Names the
 /// otherwise unwieldy registration type.
 pub(crate) type TypedRoute<B, S, D, C> = SubscribeRoute<
     S,
-    Typed<SourceMessage<B, S>, <D as SubscriberDef>::Input, C, <D as SubscriberDef>::Handler>,
+    Typed<LocalSourceMessage<B, S>, <D as SubscriberDef>::Input, C, <D as SubscriberDef>::Handler>,
     <D as SubscriberDef>::Context,
 >;
 
