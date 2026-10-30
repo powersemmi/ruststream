@@ -34,10 +34,11 @@ use crate::{
 mod position;
 
 pub use position::{
-    AdmitsAt, AdmitsSlotAt, BatchTransformLast, BindAt, CodecAt, CodecLast, MapPolicyAt,
-    MapPolicyLast, MountOffer, NamedStep, NoOutBound, OutAttachment, OutPosition, PositionOptions,
-    ReplyLast, ReplyOffer, ReplyOpen, ReplyStep, SlotCodec, SlotPolicy, TransactionalLast,
-    TransformAt, TransformLast,
+    AdmitsAt, AdmitsSlotAt, AnyTransform, BatchTransformLast, BindAt, CodecAt, CodecLast,
+    MapPolicyAt, MapPolicyLast, MountOffer, NamedStep, NoOutBound, OutAttachment, OutPosition,
+    PositionOptions, ReplyLast, ReplyOffer, ReplyOpen, ReplyProbe, ReplyStep, SlotCodec,
+    SlotPolicy, SlotProbe, TransactionalLast, TransformAt, TransformLast, TransformPosition,
+    TransformProbe,
 };
 
 /// A slot marker: the identity of one [`Out`](super::Out) injection.

@@ -36,8 +36,9 @@ pub use destination::{
 use crate::publish::{CallCodec, PublishTransformStack, Reads, UnnamedCodec};
 use crate::router::{AttachRetry, Router, RouterCommit, RouterWith};
 use crate::slot::{
-    AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoReply,
-    OutAttachment, OutSlot, Reply, ReplyLast, SlotPos, TransactionalLast, TransformLast,
+    AdmitsAt, AnyTransform, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep,
+    NoReply, OutAttachment, OutSlot, Reply, ReplyLast, SlotPos, TransactionalLast, TransformLast,
+    TransformPosition,
 };
 
 /// The marker of a registration's deferred-retry slot: `.out(Retry, policy)` names the publish
@@ -350,6 +351,12 @@ impl<N, Under, Policy, Layers, Enc, Mount, Def, B, Dest> AdmitsAt<N, RetryPos, M
 {
 }
 
+impl<Under, Policy, Layers, Enc, Def, B, Dest> TransformPosition<RetryPos, Def, B>
+    for Retried<Under, OutAttachment<Retry, Policy, Layers, Enc>, Dest>
+{
+    type Probe = AnyTransform;
+}
+
 impl<Under, Policy, Layers, Enc, Dest> MapPolicyLast<RetryPos>
     for Retried<Under, OutAttachment<Retry, Policy, Layers, Enc>, Dest>
 {
@@ -449,6 +456,22 @@ impl<N, Under, Attachment, Dest, Mount, Def, B, const POS: usize>
 where
     Under: AdmitsAt<N, SlotPos<POS>, Mount, Def, B>,
 {
+}
+
+impl<Under, Attachment, Dest, Def, B> TransformPosition<ReplyLast, Def, B>
+    for Retried<Under, Attachment, Dest>
+where
+    Under: TransformPosition<ReplyLast, Def, B>,
+{
+    type Probe = Under::Probe;
+}
+
+impl<Under, Attachment, Dest, Def, B, const POS: usize> TransformPosition<SlotPos<POS>, Def, B>
+    for Retried<Under, Attachment, Dest>
+where
+    Under: TransformPosition<SlotPos<POS>, Def, B>,
+{
+    type Probe = Under::Probe;
 }
 
 impl<N, Under, Attachment, Dest> BatchTransformLast<N, ReplyLast>

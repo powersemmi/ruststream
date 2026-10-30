@@ -23,39 +23,3 @@ help: the following other types implement trait `SubscriptionSource<C>`
    | impl<C: Subscribe> SubscriptionSource<C> for Name {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Name` implements `SubscriptionSource<C>`
    = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`
-
-error[E0277]: `Unnamed<Name>` does not open a subscription on `ConnectedMemoryBroker`
-  --> tests/ui/subscriber_unnamed_mount.rs:21:10
-   |
-21 |         .with_broker(MemoryBroker::new(), |b| b.include(handle));
-   |          ^^^^^^^^^^^ not a subscription source for this broker
-   |
-   = help: the trait `SubscriptionSource<ConnectedMemoryBroker>` is not implemented for `Unnamed<Name>`
-   = note: a subscriber left unnamed carries `Unnamed<..>` until the mount site names it: `b.include(handle.name("orders"))`
-   = note: otherwise the source belongs to a different broker than the one being mounted on
-help: the following other types implement trait `SubscriptionSource<C>`
-  --> crates/ruststream-memory/src/pattern.rs
-   |
-   | impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemoryPattern {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPattern` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
-   |
-  ::: crates/ruststream-memory/src/subscriber.rs
-   |
-   | impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySource` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
-   |
-  ::: crates/ruststream-core/src/subscription/sources.rs
-   |
-   | impl<C: Subscribe> SubscriptionSource<C> for Name {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Name` implements `SubscriptionSource<C>`
-   = note: required for `ruststream_runtime::router::routes::SubscribeRoute<Unnamed<Name>, Typed<_, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), handle>>>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
-   = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<Unnamed<Name>, Typed<_, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), handle>>>, ())` to implement `RouterDef<MemoryBroker>`
-   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Unnamed<Name>, Typed<_, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), handle>>>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
-note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
-  --> crates/ruststream-runtime-tokio/src/app/service.rs
-   |
-   |     pub fn with_broker<R, F, Chain>(
-   |            ----------- required by a bound in this associated function
-...
-   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`

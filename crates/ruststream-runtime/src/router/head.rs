@@ -56,6 +56,81 @@ impl<Route, Tail: SplitHead> SplitHead for (Route, Tail) {
     }
 }
 
+/// Hands a mount's output through a projection of the bound the mount needs, on a scope's chain
+/// alone.
+///
+/// A mount whose bound fails reports it at the `include` that wrote it. Its output is read
+/// through the projection that bound provides (the witness), so on a failed bound the output has
+/// no type and the compiler says nothing more about the chain built on it. The poison applies
+/// only to a list that ends in a [`ChainHead`], where the broker is known: a [`Router`] built on
+/// its own ends in `()`, passes the output through unchanged and keeps inferring its broker from
+/// the place it is returned to. Machinery; never named directly.
+#[doc(hidden)]
+pub trait PoisonAt {
+    /// The mount's output, through the witness on a scope's chain.
+    type Out<Witness, Out>;
+
+    /// Hands the output over as that type.
+    fn poison<Witness, Out>(out: Out) -> Self::Out<Witness, Out>;
+}
+
+impl PoisonAt for () {
+    type Out<Witness, Out> = Out;
+
+    fn poison<Witness, Out>(out: Out) -> Out {
+        out
+    }
+}
+
+impl<Route, Tail: PoisonAt> PoisonAt for (Route, Tail) {
+    type Out<Witness, Out> = Tail::Out<Witness, Out>;
+
+    fn poison<Witness, Out>(out: Out) -> Self::Out<Witness, Out> {
+        Tail::poison::<Witness, Out>(out)
+    }
+}
+
+impl<Pre> PoisonAt for ChainHead<Pre> {
+    type Out<Witness, Out> = <Witness as Poisoned<Out>>::Out;
+
+    fn poison<Witness, Out>(out: Out) -> Self::Out<Witness, Out> {
+        Witness::pass(out)
+    }
+}
+
+// A router answers for its route list: its chain steps read their output through it.
+impl<B, Routes: PoisonAt, RouteCodec, RouteLayers, RoutePipe> PoisonAt
+    for Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
+{
+    type Out<Witness, Out> = Routes::Out<Witness, Out>;
+
+    fn poison<Witness, Out>(out: Out) -> Self::Out<Witness, Out> {
+        Routes::poison::<Witness, Out>(out)
+    }
+}
+
+/// Carries an output through any witness: what [`PoisonAt`] reads a scope chain's output
+/// through. Machinery; never named directly.
+#[doc(hidden)]
+pub trait Poisoned<Out> {
+    /// The output, unchanged.
+    type Out;
+
+    /// Hands it over.
+    fn pass(out: Out) -> Self::Out;
+}
+
+impl<Witness, Out> Poisoned<Out> for Witness {
+    type Out = Out;
+
+    fn pass(out: Out) -> Out {
+        out
+    }
+}
+
+/// The output of a mount on the route list `Routes`, read through `Witness` on a scope's chain.
+pub(crate) type ScopeOut<Routes, Witness, Out> = <Routes as PoisonAt>::Out<Witness, Out>;
+
 // The head names no retry position of its own, so it answers for nothing a `.to(..)` could owe.
 impl<Pre> RetryDestinationsDeclared for ChainHead<Pre> {}
 

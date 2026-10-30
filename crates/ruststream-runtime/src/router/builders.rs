@@ -30,10 +30,12 @@ use crate::retry::{
 };
 use crate::slot::{
     AdmitsAt, BatchTransformLast, CodecLast, MapPolicyLast, NamedStep, NoOutBound, OutPosition,
-    Reply, ReplyLast, ReplyStep, TransactionalLast, TransformLast,
+    Reply, ReplyLast, ReplyStep, TransactionalLast, TransformLast, TransformPosition,
+    TransformProbe,
 };
 
 use super::builder::RouterBroker;
+use super::head::PoisonAt;
 use super::local::{PoolFits, RouterPipe};
 use super::mount::RouterMount;
 use super::routes::RetryDestinationsDeclared;
@@ -54,6 +56,11 @@ pub trait RouterCommit<Mount, R, Def>: Sized {
 
     fn commit(self, def: Def, router: R) -> Self::Out;
 }
+
+/// What a transform declares about the destination at the position a chain named last: the
+/// witness the `.transform(..)` step reads its output through.
+type TransformWitness<Attach, N, Last, Def, B> =
+    <<Attach as TransformPosition<Last, Def, B>>::Probe as TransformProbe<N>>::Witness;
 
 /// A mount chain over one registration's attachment.
 ///
@@ -427,12 +434,24 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     pub fn transform<N>(
         self,
         transform: N,
-    ) -> RouterWith<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>
+    ) -> <R as PoisonAt>::Out<
+        TransformWitness<Attach, N, Last, Def, R::Broker>,
+        RouterWith<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>,
+    >
     where
-        R: RouterBroker,
-        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def, R::Broker>,
+        R: RouterBroker + PoisonAt,
+        Attach: TransformLast<N, Last, Step: NamedStep>
+            + AdmitsAt<N, Last, Mount, Def, R::Broker>
+            + TransformPosition<Last, Def, R::Broker>,
+        <Attach as TransformPosition<Last, Def, R::Broker>>::Probe: TransformProbe<N>,
     {
-        RouterWith::new(self.def, self.attach.transform_last(transform), self.router)
+        // Read through the transform at its position, so on a scope's chain a transform that does
+        // not fit leaves the chain with no type, and the step above is the one error.
+        R::poison(RouterWith::new(
+            self.def,
+            self.attach.transform_last(transform),
+            self.router,
+        ))
     }
 
     /// Composes a [`BatchPublishTransform`](crate::BatchPublishTransform) onto every

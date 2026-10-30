@@ -25,9 +25,9 @@ help: `Subscribing` implements trait `ruststream::runtime::RouterMount<R, Def>`
    | | where
    | |     B: Broker + 'static,
 ...  |
-   | |     Def::Handler: 'static,
    | |     RoutePipe: PublishPipeline,
-   | |_______________________________^ `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>`
+   | |     Routes: PoisonAt,
+   | |_____________________^ `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>`
    = note: required for `ruststream_runtime::input::Carried<Row>` to implement `ruststream_runtime::input::Materialize<ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`
    = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
 
