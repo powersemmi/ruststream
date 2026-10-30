@@ -60,8 +60,9 @@ use crate::{
             this capability through the `Buffered` adapter (see `BatchSubscriber` and `Buffered`)"
 )]
 pub trait BatchSubscriber: Subscriber {
-    /// Container yielded by [`batches`]. Implementations choose between [`Vec`], custom
-    /// iterators, or anything else that yields the underlying [`Subscriber::Message`].
+    /// Container yielded by [`batches`]. Implementations choose between
+    /// [`Vec`](alloc::vec::Vec), custom iterators, or anything else that yields the underlying
+    /// [`Subscriber::Message`].
     ///
     /// [`batches`]: Self::batches
     type Batch: IntoIterator<Item = <Self as Subscriber>::Message> + Send;

@@ -11,6 +11,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::error::Error;
 use core::fmt;
 
 use ruststream::prelude::*;
@@ -74,7 +75,7 @@ impl fmt::Display for ShortReading {
     }
 }
 
-impl core::error::Error for ShortReading {}
+impl Error for ShortReading {}
 
 fn write_reading(reading: &Reading, buf: &mut BytesMut) {
     buf.extend_from_slice(&reading.celsius.to_be_bytes());
