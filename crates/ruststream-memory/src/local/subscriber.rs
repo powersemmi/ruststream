@@ -538,6 +538,28 @@ mod tests {
         });
     }
 
+    #[test]
+    fn every_requeue_counts_one_more_delivery() {
+        block_on(async {
+            let (connected, mut subscriber) = open("cmd").await;
+            publish(&connected, "cmd", b"open").await;
+            let mut stream = pin!(subscriber.stream());
+            let mut counts = Vec::new();
+            for _ in 0..2 {
+                let delivery = waiting(&mut stream).unwrap();
+                counts.push(delivery.redelivery_count());
+                delivery.nack(true).await.unwrap();
+            }
+            let dropped = waiting(&mut stream).unwrap();
+            counts.push(dropped.redelivery_count());
+            drop(dropped);
+            let last = waiting(&mut stream).unwrap();
+            counts.push(last.redelivery_count());
+            last.ack().await.unwrap();
+            assert_eq!(counts, [Some(1), Some(2), Some(3), Some(4)]);
+        });
+    }
+
     struct Counting(AtomicUsize);
 
     impl Wake for Counting {
