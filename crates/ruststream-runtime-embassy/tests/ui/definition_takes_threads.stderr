@@ -1,0 +1,29 @@
+error[E0277]: `SubscriberBuilder<Sealed<HandleValue<SoloDeserialized<Reading<'_>>, (), (), (), Log>>, LocalMemorySource, (Fixed, Open, Open, Open)>` sets a worker count, which the embedded runner fixes at the mount site
+  --> tests/ui/definition_takes_threads.rs:44:13
+   |
+43 |           b.include(
+   |             ------- required by a bound introduced by this call
+44 | /             subscriber(LocalMemorySource::new("readings"), Log)
+45 | |                 .threads(nonzero!(2))
+46 | |                 .build(),
+   | |________________________^ unsatisfied trait bound
+   |
+   = help: the trait `ruststream_runtime::PoolFits<LocalPipeline>` is not implemented for `SubscriberBuilder<Sealed<HandleValue<SoloDeserialized<Reading<'_>>, (), (), (), Log>>, LocalMemorySource, (Fixed, Open, Open, Open)>`
+   = note: on EmbeddedApp write `.include(def).pool::<N>()` or `.keyed::<N>()`; `threads(n)` runs only on the tokio runtime
+note: the method call chain might not have had the expected associated types
+  --> tests/ui/definition_takes_threads.rs:46:18
+   |
+44 |             subscriber(LocalMemorySource::new("readings"), Log)
+   |             --------------------------------------------------- this expression has type `SubscriberBuilder<HandleValue<SoloDeserialized<Reading<'static>>, (), (), (), Log>, LocalMemorySource, (Open, Open, Open, Open)>`
+45 |                 .threads(nonzero!(2))
+   |                  -------------------- `Declared::Settings` is `SubscriberBuilder<HandleValue<SoloDeserialized<Reading<'_>>, (), (), (), Log>, LocalMemorySource, (Fixed, Open, Open, Open)>` here
+46 |                 .build(),
+   |                  ^^^^^^^ `Declared::Settings` changed to `SubscriberBuilder<Sealed<HandleValue<SoloDeserialized<Reading<'_>>, (), (), (), Log>>, LocalMemorySource, (Fixed, Open, Open, Open)>` here
+note: required by a bound in `ruststream_runtime::router::include::<impl Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>>::include`
+  --> $WORKSPACE/crates/ruststream-runtime/src/router/include.rs
+   |
+   |     pub fn include<D>(self, def: D) -> <D::Form as RouterMount<Self, D::Settings>>::Out
+   |            ------- required by a bound in this associated function
+...
+   |         D::Settings: PoolFits<RoutePipe>,
+   |                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `ruststream_runtime::router::include::<impl Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>>::include`
