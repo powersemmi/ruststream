@@ -13,7 +13,7 @@ use ruststream_core::LocalBroker;
 use ruststream_runtime::{BoxError, Identity, LocalPipeline, Router, RunRoutes};
 use thiserror::Error;
 
-use crate::control::Control;
+use crate::control::{Control, LoopSignal};
 use crate::hooks::{HookList, Hooks, NoHooks};
 use crate::host::AppHost;
 use crate::mounts::{BrokerMount, CloseAll, MountChain, StartMounts};
@@ -447,7 +447,7 @@ where
             outcome
         };
         let serve = async {
-            opened.run(control, &state, &host).await;
+            opened.run(LoopSignal::new(control), &state, &host).await;
             // Every loop has ended, so nothing detaches more work: the host finishes what it holds.
             host.close();
         };
