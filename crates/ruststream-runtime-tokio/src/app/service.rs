@@ -23,6 +23,7 @@ use crate::testing::TestHooks;
 use crate::{BoxError, BrokerCell, BrokerLifecycle};
 use crate::{Identity, Stack};
 use crate::{PublishIdentity, PublishLayer, PublishStack};
+use ruststream_runtime::Detach;
 
 use super::health::SubscriptionEnd;
 use super::scope::BrokerScope;
@@ -883,6 +884,9 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         } = scope;
         self.after_startup.extend(startup_hooks);
         let (starters, handlers) = sink.into_parts();
+        // One handle on the app's continuation tracker for every subscription of this scope:
+        // each subscription clones it rather than allocating its own.
+        let host: Arc<dyn Detach> = Arc::new(Tracked::new(self.continuations.clone()));
         for (bound, meta) in starters.into_iter().zip(handlers) {
             let slot = Arc::clone(&slot);
             // A live harness waits only for what reaches a subscription the app mounts, and tells
@@ -893,7 +897,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             // uses it to scope recorded deliveries per broker.
             let tasks = self.continuations.clone();
             let scope_delivery = Arc::new(ScopeDelivery::new(
-                Arc::new(Tracked::new(tasks.clone())),
+                Arc::clone(&host),
                 #[cfg(feature = "testing")]
                 self.test_hooks.clone(),
                 #[cfg(feature = "testing")]
