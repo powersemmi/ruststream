@@ -14,6 +14,7 @@
   ],
   "rules": [
     "Import `ruststream::prelude::*` in a service, or the broker crate's own prelude, which re-exports it; the broker and the codec stay explicit choices.",
+    "The runtime is a cargo feature of `ruststream`: `tokio` (the default) or `embassy` for a device, and enabling both is a compile error; a crate with `default-features = false` enables one, and a broker crate on tokio enables `tokio`.",
     "Declare a handler as an `async fn` under `#[subscriber(..)]` whose first parameter is `&T` for one message or `&[T]` for a batch; mount it with `b.include(handler)` inside `with_broker`, and a batch handler with `.batch(n)`.",
     "A reply type derives `Outgoing`: `#[outgoing(name = \"..\")]` fixes its destination and the subscriber writes the bare `reply`; a type with no name takes `reply(\"dest\")` at the mount site (a declared name wins, and startup warns).",
     "Publish from inside a handler through an `Out(out): Out<impl Publisher>` parameter bound at the mount site with `.out(marker, policy).build()`; a handler signature never names a broker's publisher type.",
