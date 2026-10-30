@@ -37,6 +37,8 @@ pub use builder::{AttachDeclaration, AttachRetry, RouterBroker};
 pub use builders::RouterCommit;
 pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOut, RouterWith};
 pub use local::LocalPipeline;
+#[doc(hidden)]
+pub use local::{PoolFits, RouterPipe, TakesWorkers};
 // The typed default-reply token is machinery, but the macro expansion names it in generated
 // types (the default attach of a sealed reply definition), so it is public and hidden.
 #[doc(hidden)]

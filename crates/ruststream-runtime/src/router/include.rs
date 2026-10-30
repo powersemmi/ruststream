@@ -15,6 +15,7 @@
 use crate::LocalBroker;
 
 use super::builder::Router;
+use super::local::PoolFits;
 use super::mount::RouterMount;
 use crate::settings::Declared;
 
@@ -62,6 +63,7 @@ impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     pub fn include<D>(self, def: D) -> <D::Form as RouterMount<Self, D::Settings>>::Out
     where
         D: Declared,
+        D::Settings: PoolFits<RoutePipe>,
         D::Form: RouterMount<Self, D::Settings>,
     {
         <D::Form as RouterMount<Self, D::Settings>>::begin(def.declare(), self)
