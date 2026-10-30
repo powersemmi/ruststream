@@ -27,6 +27,10 @@ heapless.workspace = true
 futures = { workspace = true, features = ["alloc"] }
 thiserror.workspace = true
 tracing.workspace = true
+bytes.workspace = true
+embassy-futures.workspace = true
+# The keyed lanes' hasher: 32-bit FNV-1a, no state and no allocation; heapless already depends on it.
+hash32 = { version = "0.3", default-features = false }
 
 [dev-dependencies]
 # The thread-mode executor of the `std` platform: the executor a device runs, hosted on a thread.
@@ -45,7 +49,6 @@ ruststream-memory = { workspace = true, features = ["embassy"] }
 # Counts the process's allocations so the test reads what one delivery made: four atomic
 # counters per allocation, in the test binary only.
 stats_alloc = "0.1.10"
-bytes.workspace = true
 
 # The executor owns the thread it runs on, and the mock clock is one per process, so the test is a
 # binary of its own with no test harness: it passes when the executor returns.
@@ -58,6 +61,12 @@ harness = false
 [[test]]
 name = "app"
 path = "tests/app.rs"
+harness = false
+
+# The constant worker pool and keyed lanes on the executor and the mock clock.
+[[test]]
+name = "lanes"
+path = "tests/lanes.rs"
 harness = false
 
 [lints]

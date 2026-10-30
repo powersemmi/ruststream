@@ -29,6 +29,7 @@ mod detach;
 pub mod frames;
 mod hooks;
 mod host;
+mod lanes;
 mod mounts;
 
 pub use app::{EmbeddedApp, Mounts, Parts, RunError, Scope};
@@ -37,6 +38,9 @@ pub use control::{Control, Health, Stopping};
 pub use detach::CountDetached;
 #[doc(hidden)]
 pub use hooks::{HookList, Hooks, NoHooks};
+pub use lanes::MountSteps;
+#[doc(hidden)]
+pub use lanes::{EmbeddedPlan, Keyed, Lanes, OneLane, Pool, Room, SoFar};
 pub use mounts::MountChain;
 #[doc(hidden)]
 pub use mounts::{BrokerMount, CloseAll, StartMounts};
