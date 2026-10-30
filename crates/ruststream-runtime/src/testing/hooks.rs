@@ -148,8 +148,8 @@ pub struct Hooks {
     pending: Mutex<Vec<PendingHooks>>,
 }
 
-/// The hooks of one event, handed to the harness that polls the app
-/// ([`HookRunner::InPlace`]): the harness turns them into a future and polls it beside the app.
+/// The hooks of one event, handed to the harness that polls an app running as one future: the
+/// harness turns them into a future and polls it beside the app.
 // Machinery the harness crate drives, hidden from the docs; it holds an erased closure.
 #[allow(missing_debug_implementations)]
 pub struct PendingHooks {
