@@ -94,7 +94,7 @@ fn four(messages: usize) -> Pending {
     common::built(runtime, latch, broker, app, messages, 0)
 }
 
-#[library_benchmark(config = common::config(0, 28))]
+#[library_benchmark(config = common::config(0, 27))]
 #[bench::first(one(1))]
 #[bench::base(one(MESSAGES))]
 #[bench::twice(one(2 * MESSAGES))]
@@ -102,7 +102,7 @@ fn service_one(app: Pending) {
     common::start_and_drain(app);
 }
 
-#[library_benchmark(config = common::config(0, 28))]
+#[library_benchmark(config = common::config(0, 27))]
 #[bench::first(four(1))]
 #[bench::base(four(MESSAGES))]
 #[bench::twice(four(2 * MESSAGES))]
