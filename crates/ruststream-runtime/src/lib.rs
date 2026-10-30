@@ -296,7 +296,7 @@ pub use retry::{
 #[doc(hidden)]
 pub use router::{
     AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply,
-    MountSink, OpenLayered, OpenRoutes, Opened, OpenedBatchRoute, OpenedRoute, PoolFits,
+    LayerFits, MountSink, OpenLayered, OpenRoutes, Opened, OpenedBatchRoute, OpenedRoute, PoolFits,
     PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
     RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker, RouterCommit,
     RouterMount, RouterPipe, RunRoutes, RunsBatches, TakesWorkers,

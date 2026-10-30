@@ -252,7 +252,7 @@ impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 /// ```
 ///
 /// The metrics and OpenTelemetry layers wrap the multi-thread runner's handlers only, so a local
-/// router that names one does not open:
+/// router does not take one:
 ///
 /// ```compile_fail
 /// # use std::convert::Infallible;

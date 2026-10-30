@@ -12,6 +12,7 @@ use crate::batch::BatchDef;
 use crate::input::{Materialize, Provided};
 use crate::lifecycle::BoxError;
 use crate::middleware::Identity;
+use crate::middleware::LocalBlanketLayer;
 use crate::publish::{Outgoing, PublishIdentity, PublishPipeline, SendThrough};
 use crate::settings::{BatchSized, DefMountCodec, MountsWith, Sequential};
 use crate::subscriber_def::SubscriberDef;
@@ -195,7 +196,26 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe> RouterPipe
 )]
 pub trait TakesWorkers {}
 
+// The help that would list the pipelines this holds for names the multi-thread runner's machinery,
+// which a local chain's author has no use for.
+#[diagnostic::do_not_recommend]
 impl<Pipe: PublishPipeline> TakesWorkers for Pipe {}
+
+/// A router-scope layer that fits the chain's runner: any layer on the multi-thread runner's
+/// chain, and a [`LocalBlanketLayer`] on a local chain. Machinery; never named directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` runs on the tokio runtime",
+    label = "this layer does not wrap a local router's handlers",
+    note = "a layer on a router started with `Router::local()` implements `LocalBlanketLayer`"
+)]
+pub trait LayerFits<Pipe> {}
+
+#[diagnostic::do_not_recommend]
+impl<Layer, Pipe: PublishPipeline> LayerFits<Pipe> for Layer {}
+
+#[diagnostic::do_not_recommend]
+impl<Layer: LocalBlanketLayer, Pipe> LayerFits<LocalPipeline<Pipe>> for Layer {}
 
 // A local chain's replies and slot publishes go straight to the broker: the publish layers of
 // the multi-thread runner's app do not reach it.
