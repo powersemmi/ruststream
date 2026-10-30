@@ -193,7 +193,7 @@ pub use handler::IntoOutcome;
 pub use handler::{Handler, HandlerOutcome, LocalHandler};
 pub use host::{Clock, ShutdownWait};
 #[doc(hidden)]
-pub use host::{Detach, Halt};
+pub use host::{Detach, Halt, LocalDetach};
 #[cfg(feature = "tokio")]
 pub use main_runtime::MainRuntime;
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
