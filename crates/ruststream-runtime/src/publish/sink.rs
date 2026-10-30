@@ -1,7 +1,7 @@
 //! The two positions a publish builder resolves against the surface it started from: the byte
 //! sink that finally takes the message, and the codec that encodes a value into it.
 
-use std::error::Error as StdError;
+use core::error::Error as StdError;
 
 use crate::codec::Codec;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]

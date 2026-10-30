@@ -1,6 +1,7 @@
 //! Handler abstraction and the [`HandlerOutcome`] settlement unit returned to the router.
 
-use std::{convert::Infallible, fmt, pin::Pin, sync::Arc, time::Duration};
+use alloc::sync::Arc;
+use core::{convert::Infallible, fmt, pin::Pin, time::Duration};
 
 use super::context::Context;
 
@@ -504,7 +505,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use core::time::Duration;
 
     use super::{HandlerOutcome, HandlerResult, IntoOutcome};
 

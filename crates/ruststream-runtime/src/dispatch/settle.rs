@@ -1,8 +1,8 @@
 //! Settling a delivery by its handler's outcome: the ack, the nack, and the copies the runtime
 //! publishes for a retry or a dead letter.
 
-use std::sync::Arc;
-use std::time::Duration;
+use alloc::sync::Arc;
+use core::time::Duration;
 
 use bytes::Bytes;
 use tracing::warn;
@@ -548,10 +548,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::future::ready;
+    use core::future::ready;
+    use core::sync::atomic::{AtomicU8, Ordering};
     use std::io;
     use std::sync::LazyLock;
-    use std::sync::atomic::{AtomicU8, Ordering};
 
     use futures::{StreamExt, poll};
     use tokio::sync::mpsc;
@@ -749,7 +749,7 @@ mod tests {
         assert_eq!(settled.load(Ordering::SeqCst), 1);
 
         // Nothing is republished before the delay elapses.
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         assert!(poll!(stream.next()).is_pending());
 
         time::advance(Duration::from_secs(30)).await;
@@ -789,7 +789,7 @@ mod tests {
         time::advance(Duration::from_secs(30)).await;
         task::yield_now().await;
 
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         let redelivered = stream
             .next()
             .await
@@ -826,7 +826,7 @@ mod tests {
         task::yield_now().await;
 
         // The original is still the broker's to redeliver, so a deferred copy would duplicate it.
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         assert!(poll!(stream.next()).is_pending());
     }
 
@@ -853,7 +853,7 @@ mod tests {
         time::advance(Duration::from_secs(1)).await;
         task::yield_now().await;
 
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         let redelivered = stream.next().await.unwrap().unwrap();
         assert_eq!(redelivered.headers().get_str(RETRY_COUNT_HEADER), Some("5"));
     }
@@ -897,7 +897,7 @@ mod tests {
         let host = Tracked(TaskTracker::new());
 
         let msg = {
-            let mut stream = std::pin::pin!(sub.stream());
+            let mut stream = core::pin::pin!(sub.stream());
             stream.next().await.unwrap().unwrap()
         };
         assert!(msg.supports_nack_after());
@@ -915,7 +915,7 @@ mod tests {
         time::advance(Duration::from_secs(5)).await;
         task::yield_now().await;
 
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         let redelivered = stream.next().await.unwrap().unwrap();
         // Native redelivery keeps the original payload and adds no retry-count header.
         assert_eq!(redelivered.payload(), b"native");

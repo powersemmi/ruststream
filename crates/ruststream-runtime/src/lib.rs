@@ -11,6 +11,8 @@
 //! - [`testing`], the broker contract of the test harness, as part of
 //!   [`ruststream::testing`](https://docs.rs/ruststream/latest/ruststream/testing/).
 
+extern crate alloc;
+
 // The contract, under the names the runtime's modules reach it by (`crate::Broker`,
 // `crate::bindable`, ...).
 #[allow(clippy::wildcard_imports)]

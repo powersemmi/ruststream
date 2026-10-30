@@ -1,9 +1,9 @@
 // Every fixture below sits behind the feature whose surface it exercises, so the imports they
 // need follow them rather than the file.
 #[cfg(feature = "json")]
-use std::fmt;
+use alloc::sync::Arc;
 #[cfg(feature = "json")]
-use std::sync::Arc;
+use core::fmt;
 
 #[cfg(feature = "json")]
 use crate::PublishPolicy;
@@ -13,7 +13,7 @@ use crate::Publisher;
 use crate::codec::Codec;
 
 #[cfg(feature = "json")]
-use std::convert::Infallible;
+use core::convert::Infallible;
 #[cfg(feature = "json")]
 use std::sync::Mutex;
 
@@ -38,9 +38,9 @@ use crate::{BytesMut, Lend, PayloadForm};
 /// refuses to pair.
 #[cfg(feature = "json")]
 mod fixtures {
+    use core::future::ready;
+    use core::sync::atomic::{AtomicUsize, Ordering};
     use std::collections::HashMap;
-    use std::future::ready;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use thiserror::Error;
 
@@ -170,7 +170,7 @@ fn capture_events() -> (Arc<Mutex<Vec<String>>>, DefaultGuard) {
 #[cfg(feature = "json")]
 #[tokio::test]
 async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
-    use std::future::{pending, ready};
+    use core::future::{pending, ready};
 
     use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
 
@@ -208,7 +208,7 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
 
     let scope = PendingCommit.begin().await.expect("begin failed");
     {
-        let mut commit = std::pin::pin!(scope.commit());
+        let mut commit = core::pin::pin!(scope.commit());
         assert!(
             futures::poll!(commit.as_mut()).is_pending(),
             "the stub commit must hold the cancellation window open",
@@ -232,7 +232,7 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
 #[cfg(feature = "json")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dyn_stack_walks_its_layers_then_the_static_tail() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     use futures::StreamExt;
 
@@ -279,7 +279,7 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
         .expect("publish through the dynamic stack failed");
 
     assert_eq!(hits.load(Ordering::SeqCst), 11, "each layer must run once");
-    let mut stream = std::pin::pin!(subscriber.stream());
+    let mut stream = core::pin::pin!(subscriber.stream());
     let msg = stream
         .next()
         .await
@@ -435,7 +435,7 @@ async fn an_unencodable_reply_stops_both_reply_paths() {
         "the codec error must reach the caller: {batched}",
     );
 
-    let mut stream = std::pin::pin!(subscriber.stream());
+    let mut stream = core::pin::pin!(subscriber.stream());
     assert!(
         futures::poll!(stream.next()).is_pending(),
         "nothing may reach the broker when encoding fails",
@@ -470,7 +470,7 @@ async fn a_plain_wiring_publishes_each_reply_and_names_its_codec() {
         .await
         .expect("publishing a batch of replies failed");
 
-    let mut stream = std::pin::pin!(subscriber.stream());
+    let mut stream = core::pin::pin!(subscriber.stream());
     let mut sent = Vec::new();
     for _ in 0..3 {
         let msg = stream
@@ -549,7 +549,7 @@ async fn a_publisher_scope_holds_its_publishes_until_the_commit() {
         "an unsettled scope reports itself open",
     );
 
-    let mut stream = std::pin::pin!(subscriber.stream());
+    let mut stream = core::pin::pin!(subscriber.stream());
     assert!(
         futures::poll!(stream.next()).is_pending(),
         "a scoped publish stays invisible until the commit",
@@ -569,7 +569,7 @@ async fn a_publisher_scope_holds_its_publishes_until_the_commit() {
 #[cfg(feature = "json")]
 #[tokio::test]
 async fn a_refused_begin_fails_the_batch_before_the_first_reply() {
-    use std::sync::atomic::Ordering;
+    use core::sync::atomic::Ordering;
 
     use fixtures::Rigged;
 
@@ -608,7 +608,7 @@ async fn a_refused_begin_fails_the_batch_before_the_first_reply() {
 #[cfg(feature = "json")]
 #[tokio::test]
 async fn a_failed_reply_aborts_the_whole_batch() {
-    use std::sync::atomic::Ordering;
+    use core::sync::atomic::Ordering;
 
     use fixtures::{Rigged, unencodable};
 
@@ -645,7 +645,7 @@ async fn a_failed_reply_aborts_the_whole_batch() {
 #[cfg(feature = "json")]
 #[tokio::test]
 async fn a_failed_abort_is_logged_rather_than_propagated() {
-    use std::sync::atomic::Ordering;
+    use core::sync::atomic::Ordering;
 
     use fixtures::{Rigged, unencodable};
 
@@ -698,7 +698,7 @@ async fn a_failed_abort_is_logged_rather_than_propagated() {
 #[cfg(feature = "json")]
 #[tokio::test]
 async fn a_refused_commit_fails_the_batch() {
-    use std::sync::atomic::Ordering;
+    use core::sync::atomic::Ordering;
 
     use fixtures::Rigged;
 
@@ -782,7 +782,7 @@ async fn an_owned_transaction_encodes_and_discards_on_abort() {
     txn.publish("owned", &3_u32).await.expect("publish failed");
     txn.abort().await.expect("abort failed");
 
-    let mut stream = std::pin::pin!(subscriber.stream());
+    let mut stream = core::pin::pin!(subscriber.stream());
     assert!(
         futures::poll!(stream.next()).is_pending(),
         "an aborted buffer never reaches the bus",
@@ -870,8 +870,8 @@ async fn a_refused_owned_transaction_reports_the_publisher_error() {
 /// and the sink is handed exactly what the steps left there - nothing at all when none ran.
 #[tokio::test]
 async fn the_options_position_starts_empty_and_reaches_the_sink() {
-    use std::convert::Infallible;
-    use std::future::ready;
+    use core::convert::Infallible;
+    use core::future::ready;
     use std::sync::Mutex;
 
     use crate::{Lend, OutgoingMessage, Publisher};

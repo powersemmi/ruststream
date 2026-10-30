@@ -8,9 +8,9 @@
 //! element-by-element against a matching extra tuple, and a single handler adapter serves
 //! every combination - fully monomorphized, nothing to check on the hot path.
 
-use std::fmt;
-use std::future::ready;
-use std::marker::PhantomData;
+use core::fmt;
+use core::future::ready;
+use core::marker::PhantomData;
 
 use crate::{Broker, Connected, IncomingMessage, PairError};
 
@@ -367,7 +367,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::future::ready;
+    use core::future::ready;
 
     use super::{InjectCall, InjectDef, InjectHandler};
     use crate::Name;

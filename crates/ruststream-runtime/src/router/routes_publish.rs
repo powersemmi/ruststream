@@ -7,10 +7,10 @@
 //! handler at startup. A router-mounted publishing handler therefore picks up the app-wide
 //! [`publish_layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.publish_layer) chain.
 
-use std::any::type_name;
-use std::fmt;
-use std::num::NonZeroUsize;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::any::type_name;
+use core::fmt;
+use core::num::NonZeroUsize;
 
 use serde::Serialize;
 

@@ -1,6 +1,6 @@
 //! What the chain fixed so far, read back by a broker's own mount step.
 
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 
 use crate::dispatch::Workers;
 use crate::{ConnectedBroker, SubscriptionSource};

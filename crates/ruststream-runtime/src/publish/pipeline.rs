@@ -1,6 +1,7 @@
 //! The publish pipeline: the static layer chain and its opt-in dynamic counterpart.
 
-use std::{fmt, sync::Arc};
+use alloc::sync::Arc;
+use core::fmt;
 
 use super::{Outgoing, PublishFut};
 use crate::lifecycle::BoxError;

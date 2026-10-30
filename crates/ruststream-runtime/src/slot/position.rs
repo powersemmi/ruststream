@@ -1,8 +1,8 @@
 //! The include-site attachment of one `Out` slot and the steps that ride a chain's last-named
 //! position: `.transform(..)`, `.codec(..)`, policy edits and the transactional reply.
 
-use std::borrow::Cow;
-use std::marker::PhantomData;
+use alloc::borrow::Cow;
+use core::marker::PhantomData;
 
 use super::{BindSlot, DestinationOffer, OutSlot, Reply, SlotPos, WithSource};
 use crate::codec::Codec;

@@ -6,7 +6,7 @@
 //! still in the documented state, so the opt-out is a compile-time exit rather than a runtime
 //! switch. Without the feature the state still exists but demands nothing and produces nothing.
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use crate::metadata::OutgoingMessageMetadata;
 #[cfg(feature = "asyncapi")]

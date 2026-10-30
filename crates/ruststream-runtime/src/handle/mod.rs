@@ -99,7 +99,7 @@ pub use verdict::{Batched, OneByOne, VerdictFamily};
 /// converted source with every setting open.
 pub type ValueBuilder<Def, Src> = SubscriberBuilder<Def, <Src as IntoSource>::Source, AllOpen>;
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use crate::{Name, Unnamed};
 

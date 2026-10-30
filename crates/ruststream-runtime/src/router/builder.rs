@@ -1,10 +1,10 @@
 //! The [`Router`] builder: chaining registrations, codecs and layers, and mounting the result.
 
-use std::fmt;
-use std::marker::PhantomData;
+use core::fmt;
+use core::marker::PhantomData;
 
-use std::borrow::Cow;
-use std::num::NonZeroU32;
+use alloc::borrow::Cow;
+use core::num::NonZeroU32;
 
 use crate::{Broker, Connected, PublishPolicy, Publisher, RetryDeclaration, Subscriber};
 

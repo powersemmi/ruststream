@@ -1,7 +1,7 @@
 //! Transaction scopes over a publisher, borrowed and owned.
 
-use std::fmt;
-use std::marker::PhantomData;
+use core::fmt;
+use core::marker::PhantomData;
 
 use bytes::BytesMut;
 use serde::Serialize;

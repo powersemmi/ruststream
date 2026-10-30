@@ -6,9 +6,9 @@
 //! a `serde` model, [`Deserialized`] for one that reads its own bytes), the set picks the variant
 //! by its rule, and the generated document lists one message per variant.
 
-use std::any::type_name;
-use std::fmt;
-use std::hash::Hash;
+use core::any::type_name;
+use core::fmt;
+use core::hash::Hash;
 
 use serde::de::DeserializeOwned;
 use thiserror::Error;

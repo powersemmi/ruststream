@@ -33,10 +33,10 @@
 mod forward;
 mod read;
 
-use std::borrow::Cow;
-use std::fmt;
-use std::marker::PhantomData;
-use std::num::NonZeroUsize;
+use alloc::borrow::Cow;
+use core::fmt;
+use core::marker::PhantomData;
+use core::num::NonZeroUsize;
 
 use crate::codec::Codec;
 use crate::{FromName, StartAt, Unnamed};

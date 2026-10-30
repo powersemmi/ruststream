@@ -1,6 +1,6 @@
-use std::future::ready;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use alloc::sync::Arc;
+use core::future::ready;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::StreamExt;
 use tokio_util::task::TaskTracker;
@@ -122,7 +122,7 @@ async fn a_batch_reply_answers_for_the_whole_delivered_batch() {
     }
 
     // Every element of the batch was acked, so nothing comes back.
-    let mut stream = std::pin::pin!(input.stream());
+    let mut stream = core::pin::pin!(input.stream());
     assert!(futures::poll!(stream.next()).is_pending());
 }
 
@@ -153,7 +153,7 @@ async fn handler_error_publishes_nothing_and_settles_the_batch() {
     handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     // Nothing was published, and the whole input batch is back for redelivery.
-    let mut reply_stream = std::pin::pin!(replies.stream());
+    let mut reply_stream = core::pin::pin!(replies.stream());
     assert!(futures::poll!(reply_stream.next()).is_pending());
     let redelivered = pull_batch(&mut input).await;
     assert_eq!(redelivered.len(), 2);
@@ -233,10 +233,10 @@ async fn a_fully_undecodable_batch_never_reaches_the_handler() {
     handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    let mut reply_stream = std::pin::pin!(replies.stream());
+    let mut reply_stream = core::pin::pin!(replies.stream());
     assert!(futures::poll!(reply_stream.next()).is_pending());
     // Both elements were dropped by the decode policy, so nothing comes back either.
-    let mut input_stream = std::pin::pin!(input.stream());
+    let mut input_stream = core::pin::pin!(input.stream());
     assert!(futures::poll!(input_stream.next()).is_pending());
 }
 

@@ -1,12 +1,12 @@
 //! What the dispatch copies of a batch for the test harness: nothing while no harness watches,
 //! and one clone of each value a batch lends while one does.
 
-use std::convert::Infallible;
-use std::future::ready;
-use std::num::NonZeroUsize;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::vec;
+use alloc::sync::Arc;
+use alloc::vec;
+use core::convert::Infallible;
+use core::future::ready;
+use core::num::NonZeroUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bytes::BytesMut;
 use futures::{Stream, stream};

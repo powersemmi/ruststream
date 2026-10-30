@@ -6,9 +6,9 @@
 //! handle is live by construction and a "not ready" state is never representable inside the
 //! handler.
 
-use std::fmt;
-use std::num::NonZeroUsize;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::fmt;
+use core::num::NonZeroUsize;
 
 use crate::{
     BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, SubscriptionSource,
