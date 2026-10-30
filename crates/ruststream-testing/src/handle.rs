@@ -181,7 +181,7 @@ impl<'a> BrokerHandle<'a> {
     /// }
     ///
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .with_broker(MemoryBroker::new(), |b| { b.include(handle) });
+    ///     .with_broker(MemoryBroker::new(), |b| b.include(handle));
     /// let tb = TestApp::start(app).await?;
     ///
     /// tb.broker::<MemoryBroker>()

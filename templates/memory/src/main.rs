@@ -15,7 +15,5 @@ use ruststream::memory::prelude::*;
 #[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("{{project-name}}", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include_router(routes::orders());
-        })
+        .with_broker(MemoryBroker::new(), |b| b.include_router(routes::orders()))
 }
