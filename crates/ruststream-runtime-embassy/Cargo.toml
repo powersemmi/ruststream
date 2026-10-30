@@ -92,5 +92,12 @@ name = "routes"
 path = "tests/routes.rs"
 harness = false
 
+# `retry_after` with copies kept in a store of the mount site's capacity, on the mock clock: a
+# binary of its own, as above.
+[[test]]
+name = "retry"
+path = "tests/retry.rs"
+harness = false
+
 [lints]
 workspace = true

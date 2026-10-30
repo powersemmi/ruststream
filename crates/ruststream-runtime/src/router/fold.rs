@@ -33,17 +33,15 @@ use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handle::Deserialized;
 use crate::handler::LocalHandler;
 use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, ShutdownWait};
-use crate::input::Materialize;
 use crate::lifecycle::BoxError;
 use crate::middleware::{LocalBlanketLayer, Stack};
-use crate::typed::{LocalTyped, Typed};
 use crate::{
     BuildBatchContext, BuildContext, LocalBatchSubscriber, LocalBroker, LocalConnected,
     LocalIncomingMessage, LocalSubscriber, LocalSubscriptionSource,
 };
 
 use super::builder::Router;
-use super::routes::{BatchRoute, SubscribeRoute};
+use super::routes::BatchRoute;
 
 /// A finished router's routes, opened against the connected broker into one list.
 ///
@@ -342,46 +340,6 @@ where
         let composed = Stack::new(self.layers, layers.clone());
         let routes = self.routes.balance();
         async move { routes.open_layered(connected, &composed).await }
-    }
-}
-
-impl<B, State, Source, M, Input, DecodeCodec, Inner, Cx> OpenLayered<B, State>
-    for SubscribeRoute<Source, Typed<M, Input, DecodeCodec, Inner>, Cx>
-where
-    B: LocalBroker,
-    Source: LocalSubscriptionSource<LocalConnected<B>>,
-    Source::Subscriber: LocalSubscriber<Message = M>,
-    M: LocalIncomingMessage,
-    Input: Materialize<DecodeCodec, M>,
-    Inner: LocalHandler<Input::Target, Cx, State>,
-    Cx: BuildContext<M> + Send + Sync + 'static,
-{
-    type Opened<Layers: LocalBlanketLayer + Clone> = OpenedRoute<
-        Source::Subscriber,
-        LocalTyped<Typed<M, Input, DecodeCodec, Inner>>,
-        Cx,
-        Layers,
-    >;
-
-    async fn open_layered<Layers: LocalBlanketLayer + Clone>(
-        self,
-        connected: &LocalConnected<B>,
-        layers: &Layers,
-    ) -> Result<Self::Opened<Layers>, BoxError> {
-        let name: Arc<str> = Arc::from(self.source.name());
-        let subscriber = self
-            .source
-            .subscribe(connected)
-            .await
-            .map_err(|err| -> BoxError { Box::new(err) })?;
-        Ok(OpenedRoute {
-            subscriber,
-            handler: LocalTyped(self.handler),
-            layers: layers.clone(),
-            name,
-            delivery: Delivery::unscoped(),
-            policies: self.policies,
-        })
     }
 }
 

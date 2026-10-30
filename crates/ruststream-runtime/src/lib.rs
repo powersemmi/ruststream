@@ -203,6 +203,9 @@ pub use handler::{Handler, HandlerOutcome, LocalHandler};
 pub use host::{Clock, ShutdownWait};
 #[doc(hidden)]
 pub use host::{Detach, Halt, HostDetach, LocalDetach, OnOneThread};
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use host::{Keeping, KeptCopies, NoKept};
 #[cfg(feature = "tokio")]
 pub use main_runtime::MainRuntime;
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
@@ -291,8 +294,9 @@ pub use publishing::{LocalPublishing, PublishingHandler};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use redelivery::{
-    CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere, RetryPairing,
-    RetrySetup, ScopeDelivery, open_mounted_subscriber,
+    AddressedCopy, CopiesAddressed, CopyPathAddress, CopyPathPairing, CopyPublisher, KeepCopies,
+    KeptAddress, NoCopies, NoCopyPath, PairCopies, PublishesCopiesHere, RetryPairing, RetrySetup,
+    ScopeDelivery, open_mounted_subscriber,
 };
 #[cfg(feature = "alloc")]
 pub use retry::Retry;

@@ -21,6 +21,10 @@ use crate::redelivery::DeferredRetry;
 use crate::testing::coordinator::{Coordinator, in_harness_scope};
 use crate::{AckError, HeaderMap, LocalIncomingMessage, OutgoingMessage, RetryDeclaration, Str};
 
+mod keep;
+
+use keep::keep_copy;
+
 /// Parses the current [`RETRY_COUNT_HEADER`] value, defaulting to zero when absent or malformed.
 fn current_retry_count(headers: &HeaderMap) -> u64 {
     headers
@@ -157,7 +161,7 @@ where
     // The broker moves this subscription's deliveries itself: its requeue is what an immediate
     // retry is, and the declaration is the broker's to apply, so no cap is read here, as on the
     // native delayed path.
-    let Some(retry) = delivery.retry.as_ref() else {
+    let Some(path) = copy_path(delivery, host) else {
         return slot.take().nack(true).await;
     };
     match redelivery_of(slot.get(), &delivery.declaration) {
@@ -167,13 +171,12 @@ where
             slot.take().nack(true).await
         }
         Redelivery::Subscription => {
-            let destination = retry.destination.clone();
-            publish_copy(
+            send_copy(
                 slot,
                 name,
-                destination,
+                Target::Subscription,
                 None,
-                retry,
+                path,
                 delivery,
                 host,
                 build_cx,
@@ -189,7 +192,7 @@ where
                 name,
                 destination,
                 at_cap,
-                retry,
+                path,
                 delivery,
                 host,
                 build_cx,
@@ -197,6 +200,83 @@ where
             .await
         }
         Redelivery::Reject => reject_spent(slot, name).await,
+    }
+}
+
+/// The way a copy of a failed delivery leaves: the subscription's erased retry publisher, or
+/// the store of copies the runner's host keeps in place.
+enum CopyPath<'a, C, Kept> {
+    /// A copy published through the registration's retry publisher, its timer the runner's
+    /// detached work.
+    Erased(&'a DeferredRetry<C>),
+    /// A copy written into a record of the host's store, published from there.
+    Kept(&'a Kept),
+}
+
+/// Where one copy goes.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Target<'a> {
+    /// Back to the subscription: the destination the mount site or the descriptor named.
+    Subscription,
+    /// To the declared dead-letter destination.
+    DeadLetter(&'a str),
+}
+
+/// The copy path of this delivery: the registration's retry publisher where it has one, the
+/// host's store of kept copies otherwise; `None` where the broker moves the delivery itself.
+fn copy_path<'a, C, Host: HostDetach>(
+    delivery: &'a Delivery<C>,
+    host: &'a Host,
+) -> Option<CopyPath<'a, C, Host::Kept>> {
+    if let Some(retry) = delivery.retry.as_ref() {
+        return Some(CopyPath::Erased(retry));
+    }
+    host.kept().map(CopyPath::Kept)
+}
+
+/// Sends a copy of the delivery to `target` along `path`, now or after `delay`.
+///
+/// # Errors
+///
+/// See [`publish_copy`] and [`keep_copy`].
+// Each part is the delivery's own or the runner's; bundling them would hide which is which.
+#[allow(clippy::too_many_arguments)]
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
+async fn send_copy<M, C, Host>(
+    slot: &mut Slot<M>,
+    name: &str,
+    target: Target<'_>,
+    delay: Option<Duration>,
+    path: CopyPath<'_, C, Host::Kept>,
+    delivery: &Delivery<C>,
+    host: &Host,
+    build_cx: fn(&M) -> C,
+) -> Result<(), AckError>
+where
+    M: LocalIncomingMessage,
+    C: Send + Sync + 'static,
+    Host: HostDetach,
+{
+    match path {
+        CopyPath::Erased(retry) => {
+            let destination = match target {
+                Target::Subscription => retry.destination.clone(),
+                Target::DeadLetter(destination) => Some(Arc::from(destination)),
+            };
+            publish_copy(
+                slot,
+                name,
+                destination,
+                delay,
+                retry,
+                delivery,
+                host,
+                build_cx,
+            )
+            .await
+        }
+        CopyPath::Kept(kept) => keep_copy(slot, name, target, delay, kept).await,
     }
 }
 
@@ -270,8 +350,8 @@ where
         // republishing the delivery increments the header the cap counts with where the transport
         // counts nothing; a broker that moves a spent delivery itself applies the declaration
         // itself.
-        if let Some(retry) = delivery.retry.as_ref()
-            && delivery.declaration.max_attempts().is_some()
+        if delivery.declaration.max_attempts().is_some()
+            && let Some(path) = copy_path(delivery, host)
         {
             match redelivery_of(slot.get(), &delivery.declaration) {
                 // Under a cap a destination takes only the spent deliveries.
@@ -281,7 +361,7 @@ where
                         name,
                         destination,
                         true,
-                        retry,
+                        path,
                         delivery,
                         host,
                         build_cx,
@@ -304,19 +384,18 @@ where
         return accepted;
     }
 
-    let Some(retry) = delivery.retry.as_ref() else {
+    let Some(path) = copy_path(delivery, host) else {
         return requeue_now(slot, name, &delivery.declaration).await;
     };
 
     match redelivery_of(slot.get(), &delivery.declaration) {
         Redelivery::Subscription => {
-            let destination = retry.destination.clone();
-            publish_copy(
+            send_copy(
                 slot,
                 name,
-                destination,
+                Target::Subscription,
                 Some(delay),
-                retry,
+                path,
                 delivery,
                 host,
                 build_cx,
@@ -334,7 +413,7 @@ where
                 name,
                 destination,
                 at_cap,
-                retry,
+                path,
                 delivery,
                 host,
                 build_cx,
@@ -387,7 +466,7 @@ async fn dead_letter<M, C, Host>(
     name: &str,
     destination: &str,
     at_cap: bool,
-    retry: &DeferredRetry<C>,
+    path: CopyPath<'_, C, Host::Kept>,
     delivery: &Delivery<C>,
     host: &Host,
     build_cx: fn(&M) -> C,
@@ -400,13 +479,12 @@ where
     if at_cap {
         warn_at_cap(name, attempt_of(slot.get()), Some(destination));
     }
-    let destination = Arc::from(destination);
-    publish_copy(
+    send_copy(
         slot,
         name,
-        Some(destination),
+        Target::DeadLetter(destination),
         None,
-        retry,
+        path,
         delivery,
         host,
         build_cx,

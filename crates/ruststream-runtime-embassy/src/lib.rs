@@ -26,6 +26,7 @@ extern crate alloc;
 mod app;
 mod clock;
 mod control;
+mod copies;
 mod detach;
 pub mod frames;
 mod hooks;
@@ -42,7 +43,7 @@ pub use detach::CountDetached;
 pub use hooks::{HookList, Hooks, NoHooks};
 pub use lanes::MountSteps;
 #[doc(hidden)]
-pub use lanes::{EmbeddedPlan, Keyed, Lanes, OneLane, Pool, Room, SoFar};
+pub use lanes::{EmbeddedPlan, Keyed, Lanes, NoRoom, OneLane, Pool, Room, SoFar};
 pub use mounts::MountChain;
 #[doc(hidden)]
 pub use mounts::{BrokerMount, CloseAll, StartMounts};
