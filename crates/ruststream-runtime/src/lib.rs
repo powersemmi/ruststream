@@ -31,6 +31,7 @@ mod batch_inject;
 mod batch_publishing;
 mod buffered;
 mod context;
+mod detach;
 mod dispatch;
 mod dynstack;
 mod extract;
@@ -89,11 +90,19 @@ pub use buffered::{Buffered, BufferedSubscriber};
 // crates is internal machinery now: the modules stay, but only what the crate's own mounts
 // reach through this path is re-exported.
 #[doc(hidden)]
-pub use batch::{batch_verdict, uniform_batch};
+pub use batch::{BatchHandler, TakenBatch, batch_verdict, uniform_batch};
 pub use context::{After, Context};
+#[doc(hidden)]
+pub use dispatch::{
+    Delivery, Slot as DeliverySlot, Turn, dispatch, placed, run_batch, run_sequential,
+};
 pub use dispatch::{Placement, RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use extract::{Ctx, CtxKey, FromContext, FromRef, Headers, State};
+#[doc(hidden)]
+pub use extract::{CtxKeySeal, ReadKey};
+#[doc(hidden)]
+pub use failure::DispatchFailure;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
 pub use handle::{
@@ -118,7 +127,9 @@ pub use handle::{
 pub use handler::IntoOutcome;
 pub use handler::{Handler, HandlerOutcome};
 pub use host::{Clock, ShutdownWait};
-pub use main_runtime::MainRuntime;
+#[doc(hidden)]
+pub use host::{Detach, Halt};
+pub use main_runtime::{MainRuntime, MainRuntimeExt};
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 #[doc(hidden)]
@@ -184,7 +195,7 @@ pub use publish::message_of;
 #[doc(hidden)]
 pub use redelivery::{
     CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere, RetryPairing,
-    RetrySetup,
+    RetrySetup, ScopeDelivery,
 };
 pub use retry::Retry;
 #[doc(hidden)]
@@ -197,9 +208,9 @@ pub use retry::{
 #[doc(hidden)]
 pub use router::{
     AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply,
-    PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
-    RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker, RouterCommit,
-    RouterMount,
+    MountSink, Opened, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount,
+    ReplyAttachment, RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker,
+    RouterCommit, RouterMount,
 };
 pub use router::{
     IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,

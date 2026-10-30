@@ -18,10 +18,9 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::error;
 
-use super::{
-    Delivery, DispatchFailure, Handler, Shutdown, Slot, Turn, Workers, dispatch, lane_of,
-    log_worker_exit,
-};
+use super::spawn::{lane_of, log_worker_exit};
+use super::{Delivery, DispatchFailure, Handler, Slot, Turn, Workers, dispatch};
+use crate::shutdown::Shutdown;
 use crate::{BuildContext, IncomingMessage, Subscriber};
 
 /// What the loop shares with every worker it starts, behind one reference count taken once per
@@ -31,7 +30,7 @@ pub(super) struct Shared<Body, State, Cx> {
     pub(super) name: Arc<str>,
     pub(super) state: Arc<State>,
     pub(super) delivery: Arc<Delivery<Cx>>,
-    pub(super) failure: DispatchFailure,
+    pub(super) failure: DispatchFailure<Shutdown>,
 }
 
 /// How a worker says it is free for the next delivery: its index, sent back to the loop.
@@ -177,7 +176,7 @@ pub(super) fn spawn_dispatch_pool<Sub, Body, Cx, State>(
     name: Arc<str>,
     state: Arc<State>,
     delivery: Arc<Delivery<Cx>>,
-    failure: DispatchFailure,
+    failure: DispatchFailure<Shutdown>,
     workers: Workers,
 ) -> JoinHandle<()>
 where

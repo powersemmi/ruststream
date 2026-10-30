@@ -21,6 +21,7 @@ mod form_publish;
 pub mod forms;
 mod include;
 mod mount;
+mod mount_sink;
 mod routes;
 mod routes_inject;
 mod routes_publish;
@@ -43,6 +44,8 @@ pub use mount::{
     BatchPublishInjectMount, BatchPublishMount, PublishInjectMount, PublishMount,
     RawReplyInjectMount, RawReplyMount, ReplyAttachment, RouterMount,
 };
+#[doc(hidden)]
+pub use mount_sink::{MountSink, Opened};
 #[doc(hidden)]
 pub use routes::{RetryDestinationsDeclared, RouteMetadata, RouteSubscription};
 pub use routes::{RouterDef, RouterHandlers};

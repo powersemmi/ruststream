@@ -26,11 +26,11 @@ use crate::slot::{NoReply, OutAttachment, SlotCodec};
 
 use super::MergedRouter;
 use super::builders::RouterWith;
+use super::mount_sink::MountSink;
 use super::routes::{
     BatchRoute, DeclaredRoute, HandleRoute, MountRoute, RetriedRoute, RetryDestinationsDeclared,
     RouteMeta, RouteMetadata, RouteSubscription, RouterDef, RouterHandlers, SubscribeRoute,
 };
-use super::sink::RouterSink;
 
 mod mount;
 
@@ -820,15 +820,16 @@ where
     Routes: RouterDef<B, State, Pipe>,
     Layers: BlanketLayer + Clone + Send + Sync + 'static,
 {
-    fn mount<G, PP>(
+    fn mount<G, PP, Sink>(
         self,
         global: &G,
         pipeline: &PP,
         _retry_pipeline: &RetryPipeline,
-        sink: &mut RouterSink<B, State>,
+        sink: &mut Sink,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
+        Sink: MountSink<B, State>,
     {
         let composed = ComposedBlanket {
             outer: global.clone(),
@@ -860,20 +861,21 @@ where
     // A whole router is many registrations, each with its own context; nothing here reads one.
     type Context = ();
 
-    fn mount_one<G, PP>(
+    fn mount_one<G, PP, Sink>(
         self,
         global: &G,
         pipeline: &PP,
         // A merged router carries its own publish path down to its own registrations, so what
         // reaches it here only travels on to the `RouterDef` impl, which ignores it in turn.
         retry_pipeline: &RetryPipeline,
-        sink: &mut RouterSink<B, State>,
+        sink: &mut Sink,
         // A whole router is many registrations, and a retry position or declaration belongs to
         // one, so neither binds here: `RetryOpen` is not implemented for a router.
         _setup: RetrySetup<B, ()>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
+        Sink: MountSink<B, State>,
     {
         RouterDef::<B, State, RetryPipeline>::mount(self, global, pipeline, retry_pipeline, sink);
     }

@@ -12,6 +12,7 @@ use crate::{Broker, DescribeServer, ServerSpec};
 use tokio_util::task::TaskTracker;
 
 use crate::bindable::ConnectedSlot;
+use crate::detach::Tracked;
 use crate::lifecycle::{BoxError, BrokerCell, BrokerLifecycle};
 use crate::metadata::HandlerMetadata;
 use crate::middleware::{Identity, Stack};
@@ -890,8 +891,9 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             let subscription = self.test_hooks.subscribed(self.brokers.len(), &meta.name);
             // The scope id is the index this broker will occupy once pushed below; the harness
             // uses it to scope recorded deliveries per broker.
+            let tasks = self.continuations.clone();
             let scope_delivery = Arc::new(ScopeDelivery::new(
-                self.continuations.clone(),
+                Arc::new(Tracked::new(tasks.clone())),
                 #[cfg(feature = "testing")]
                 self.test_hooks.clone(),
                 #[cfg(feature = "testing")]
@@ -907,7 +909,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
                     .expect("connected slot mutex poisoned")
                     .clone()
                     .expect("brokers connect before subscriptions open");
-                bound(connected, state, scope_delivery, shutdown)
+                bound(connected, state, scope_delivery, tasks, shutdown)
             }));
             // The scope's label is the name of this broker's AsyncAPI server, so every channel
             // the scope mounts can say which server it lives on.

@@ -267,7 +267,9 @@ pub enum Outcome {
 /// One delivery inside a recorded handler call: the payload the handler saw, the value its
 /// delivery lent where the handler took one ([`Carries`](crate::Carries)), and how the
 /// dispatcher settled it (`None` when a fail-fast panic left the message unsettled).
-pub(crate) struct Delivered {
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct Delivered {
     pub(crate) raw: Bytes,
     /// A clone of the carried value, taken only on the carried lane: that value never was bytes,
     /// so the payload cannot stand for it.

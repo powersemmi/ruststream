@@ -16,10 +16,10 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use thiserror::Error;
-use tokio_util::task::TaskTracker;
 use tracing::info;
 
 use crate::dispatch::Delivery;
+use crate::host::Detach;
 use crate::lifecycle::{BoxError, BoxFuture};
 use crate::metadata::{HandlerMetadata, PublishDescription};
 #[cfg(feature = "poll-diagnostics")]
@@ -508,9 +508,11 @@ impl<B: Broker + 'static, Cx: Send + Sync + 'static> RetryPairing<B, Cx> {
 /// The deferred retry is a registration's own, so it is not here: this is what the whole scope
 /// shares with each of its subscriptions, plus, under the `testing` feature, which subscription
 /// of the app it is.
-pub(crate) struct ScopeDelivery {
-    /// App-wide tracker for post-settle continuations, so a graceful shutdown drains them.
-    tasks: TaskTracker,
+#[doc(hidden)]
+pub struct ScopeDelivery {
+    /// The runner that runs what a delivery leaves behind, tracked app-wide so a graceful
+    /// shutdown drains it.
+    host: Arc<dyn Detach>,
     /// The harness's recording-and-quiescence hooks for this scope.
     #[cfg(feature = "testing")]
     hooks: Arc<TestHooks>,
@@ -526,17 +528,27 @@ pub(crate) struct ScopeDelivery {
     poll: PollDiagnostics,
 }
 
+impl fmt::Debug for ScopeDelivery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ScopeDelivery")
+            .field("host", &self.host)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ScopeDelivery {
     /// The scope context every subscription of one broker dispatches under.
-    pub(crate) fn new(
-        tasks: TaskTracker,
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new(
+        host: Arc<dyn Detach>,
         #[cfg(feature = "testing")] hooks: Arc<TestHooks>,
         #[cfg(feature = "testing")] scope_id: usize,
         #[cfg(feature = "testing")] subscription: usize,
         #[cfg(feature = "poll-diagnostics")] poll: PollDiagnostics,
     ) -> Self {
         Self {
-            tasks,
+            host,
             #[cfg(feature = "testing")]
             hooks,
             #[cfg(feature = "testing")]
@@ -554,9 +566,9 @@ impl ScopeDelivery {
         &self.poll
     }
 
-    /// The tracker post-settle continuations are spawned onto.
-    pub(crate) fn tasks(&self) -> &TaskTracker {
-        &self.tasks
+    /// The runner post-settle continuations are handed to.
+    pub(crate) fn host(&self) -> &Arc<dyn Detach> {
+        &self.host
     }
 
     /// The harness hooks this scope dispatches under.

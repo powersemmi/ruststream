@@ -21,8 +21,8 @@ use crate::{
 };
 
 use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
-use crate::dispatch::{Workers, spawn_dispatch_workers};
-use crate::failure::{DispatchFailure, FailurePolicies};
+use crate::dispatch::Workers;
+use crate::failure::FailurePolicies;
 use crate::inject::FromStartup;
 use crate::input::{DecodeWith, Materialize};
 use crate::lifecycle::BoxError;
@@ -34,16 +34,18 @@ use crate::publish::{
 use crate::publishing::{
     EncodeReply, PublishingCall, PublishingDef, PublishingHandler, warn_ignored_reply_name,
 };
-use crate::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
+use crate::redelivery::{
+    CopyPathAddress, CopyPathPairing, RetrySetup, ScopeDelivery, open_subscription,
+};
 use crate::retry::RetryOpen;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::paired;
 
 use super::SourceMessage;
+use super::mount_sink::MountSink;
 use super::routes::{
     MountRoute, RouteMeta, RouteMetadata, RouteSubscription, impl_destination_declared,
 };
-use super::sink::RouterSink;
 use crate::Serialized;
 
 /// What the reply position's transform stack does to the destination, projected against the
@@ -239,16 +241,17 @@ where
 {
     type Context = Def::Context;
 
-    fn mount_one<G, PP>(
+    fn mount_one<G, PP, Sink>(
         self,
         global: &G,
         pipeline: &PP,
         retry_pipeline: &RetryPipeline,
-        sink: &mut RouterSink<B, State>,
+        sink: &mut Sink,
         setup: RetrySetup<B, Def::Context>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
+        Sink: MountSink<B, State>,
     {
         let Self {
             source,
@@ -260,12 +263,10 @@ where
             policies,
             workers,
         } = self;
-        // The apply-and-push tail: `BlanketLayer::apply` is an RPITIT whose hidden type cannot
-        // be named, so the wrapped handler cannot leave the startup factory; apply and spawn
-        // stay in one block instead.
+        // The wrapped handler's type borrows the layer it was applied through, so it cannot leave
+        // the startup factory: the runner applies `global` where it spawns the loop.
         let global = global.clone();
         let pipeline = pipeline.clone();
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
         // The reply's own description: the mount chain fixed the codec and the transforms, so
         // what the document says about the reply channel is settled here, once.
         meta.describe_reply(|channel| {
@@ -277,59 +278,47 @@ where
             )
         });
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
-        sink.push_raw(
-            Box::new(move |connected, state, scope, shutdown| {
-                Box::pin(async move {
-                    warn_ignored_reply_name(
-                        &name,
-                        type_name::<Def::Reply>(),
-                        def.reply_name(),
-                        def.ignored_reply_name(),
-                    );
-                    let pairing = publisher.pair(connected.as_ref());
-                    #[cfg(feature = "testing")]
-                    let (publisher, origin) = paired(connected.as_ref(), pairing).await;
-                    #[cfg(not(feature = "testing"))]
-                    let publisher = pairing.await;
-                    let publisher = publisher.map_err(BoxError::from)?;
-                    let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
-                        source,
-                        connected.as_ref(),
-                        &scope,
-                        &name,
-                        setup,
-                    )
-                    .await?;
-                    let injections =
-                        Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
-                            .await
-                            .map_err(BoxError::from)?;
-                    let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
-                        PublishingHandler {
-                            def,
-                            codec,
-                            publisher,
-                            pipeline,
-                            injections,
-                            decode: policies.decode,
-                            #[cfg(feature = "testing")]
-                            origin,
-                        },
-                    );
-                    let failure = DispatchFailure::new(policies, shutdown.clone());
-                    Ok(spawn_dispatch_workers(
-                        subscriber,
-                        Arc::new(handler),
-                        shutdown,
-                        name,
-                        state,
-                        delivery,
-                        failure,
-                        workers,
-                    )?)
-                })
-            }),
+        sink.push_workers(
             meta,
+            policies,
+            workers,
+            global,
+            async move |connected: Arc<Connected<B>>, scope: Arc<ScopeDelivery>, name: Arc<str>| {
+                warn_ignored_reply_name(
+                    &name,
+                    type_name::<Def::Reply>(),
+                    def.reply_name(),
+                    def.ignored_reply_name(),
+                );
+                let pairing = publisher.pair(connected.as_ref());
+                #[cfg(feature = "testing")]
+                let (publisher, origin) = paired(connected.as_ref(), pairing).await;
+                #[cfg(not(feature = "testing"))]
+                let publisher = pairing.await;
+                let publisher = publisher.map_err(BoxError::from)?;
+                let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
+                    source,
+                    connected.as_ref(),
+                    &scope,
+                    &name,
+                    setup,
+                )
+                .await?;
+                let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
+                    .await
+                    .map_err(BoxError::from)?;
+                let handler = PublishingHandler {
+                    def,
+                    codec,
+                    publisher,
+                    pipeline,
+                    injections,
+                    decode: policies.decode,
+                    #[cfg(feature = "testing")]
+                    origin,
+                };
+                Ok((subscriber, handler, delivery))
+            },
         );
     }
 }
@@ -361,16 +350,17 @@ where
 {
     type Context = Def::Context;
 
-    fn mount_one<G, PP>(
+    fn mount_one<G, PP, Sink>(
         self,
         global: &G,
         pipeline: &PP,
         retry_pipeline: &RetryPipeline,
-        sink: &mut RouterSink<B, State>,
+        sink: &mut Sink,
         setup: RetrySetup<B, Def::Context>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
+        Sink: MountSink<B, State>,
     {
         let Self {
             source,
@@ -382,70 +372,57 @@ where
             policies,
             workers,
         } = self;
-        // See the encoded route's tail for why apply and spawn stay in one block. The pipeline
-        // travels along for shape, though a byte-for-byte reply never runs it.
+        // See the encoded route for why the runner applies `global`. The pipeline travels along
+        // for shape, though a byte-for-byte reply never runs it.
         let global = global.clone();
         let pipeline = pipeline.clone();
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
         // A byte-for-byte reply carries its own wire format and no transform stack, so the
         // position names no media type and settles no destination of its own.
         meta.describe_reply(|channel| {
             PublishDescription::of::<Connected<B>, ReplySource>(&publisher, None, false, channel)
         });
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
-        sink.push_raw(
-            Box::new(move |connected, state, scope, shutdown| {
-                Box::pin(async move {
-                    warn_ignored_reply_name(
-                        &name,
-                        type_name::<Def::Reply>(),
-                        def.reply_name(),
-                        def.ignored_reply_name(),
-                    );
-                    let pairing = publisher.pair(connected.as_ref());
-                    #[cfg(feature = "testing")]
-                    let (publisher, origin) = paired(connected.as_ref(), pairing).await;
-                    #[cfg(not(feature = "testing"))]
-                    let publisher = pairing.await;
-                    let publisher = publisher.map_err(BoxError::from)?;
-                    let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
-                        source,
-                        connected.as_ref(),
-                        &scope,
-                        &name,
-                        setup,
-                    )
-                    .await?;
-                    let injections =
-                        Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
-                            .await
-                            .map_err(BoxError::from)?;
-                    let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
-                        PublishingHandler {
-                            def,
-                            codec,
-                            publisher,
-                            pipeline,
-                            injections,
-                            decode: policies.decode,
-                            #[cfg(feature = "testing")]
-                            origin,
-                        },
-                    );
-                    let failure = DispatchFailure::new(policies, shutdown.clone());
-                    Ok(spawn_dispatch_workers(
-                        subscriber,
-                        Arc::new(handler),
-                        shutdown,
-                        name,
-                        state,
-                        delivery,
-                        failure,
-                        workers,
-                    )?)
-                })
-            }),
+        sink.push_workers(
             meta,
+            policies,
+            workers,
+            global,
+            async move |connected: Arc<Connected<B>>, scope: Arc<ScopeDelivery>, name: Arc<str>| {
+                warn_ignored_reply_name(
+                    &name,
+                    type_name::<Def::Reply>(),
+                    def.reply_name(),
+                    def.ignored_reply_name(),
+                );
+                let pairing = publisher.pair(connected.as_ref());
+                #[cfg(feature = "testing")]
+                let (publisher, origin) = paired(connected.as_ref(), pairing).await;
+                #[cfg(not(feature = "testing"))]
+                let publisher = pairing.await;
+                let publisher = publisher.map_err(BoxError::from)?;
+                let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
+                    source,
+                    connected.as_ref(),
+                    &scope,
+                    &name,
+                    setup,
+                )
+                .await?;
+                let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
+                    .await
+                    .map_err(BoxError::from)?;
+                let handler = PublishingHandler {
+                    def,
+                    codec,
+                    publisher,
+                    pipeline,
+                    injections,
+                    decode: policies.decode,
+                    #[cfg(feature = "testing")]
+                    origin,
+                };
+                Ok((subscriber, handler, delivery))
+            },
         );
     }
 }
@@ -477,16 +454,17 @@ where
 {
     type Context = Def::Context;
 
-    fn mount_one<G, PP>(
+    fn mount_one<G, PP, Sink>(
         self,
         _global: &G,
         pipeline: &PP,
         retry_pipeline: &RetryPipeline,
-        sink: &mut RouterSink<B, State>,
+        sink: &mut Sink,
         setup: RetrySetup<B, Def::Context>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
+        Sink: MountSink<B, State>,
     {
         // Batch handlers are not wrapped by the per-message global stack, but they do pick up the
         // app's publish pipeline for their replies, so this whole mount is shared with the scope
@@ -515,9 +493,20 @@ where
         });
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         let subscription = meta.name.clone();
-        sink.push_injected_batch::<_, _, _, _, Def::Context>(
-            source,
-            async move |connected: Arc<Connected<B>>, subscriber| {
+        sink.push_batch::<_, _, _, _, Def::Context>(
+            meta,
+            policies,
+            workers,
+            batch_size,
+            async move |connected: Arc<Connected<B>>, scope: Arc<ScopeDelivery>, name: Arc<str>| {
+                let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
+                    source,
+                    connected.as_ref(),
+                    &scope,
+                    &name,
+                    setup,
+                )
+                .await?;
                 warn_ignored_reply_name(
                     &subscription,
                     type_name::<Def::Reply>(),
@@ -543,13 +532,8 @@ where
                     #[cfg(feature = "testing")]
                     origin,
                 };
-                Ok((subscriber, handler))
+                Ok((subscriber, handler, delivery))
             },
-            meta,
-            policies,
-            workers,
-            batch_size,
-            setup,
         );
     }
 }

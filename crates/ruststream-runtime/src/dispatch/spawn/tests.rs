@@ -4,13 +4,17 @@ use std::mem;
 use std::sync::atomic::AtomicU8;
 use std::time::Duration;
 
+use bytes::Bytes;
 use futures::{StreamExt, stream};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-use super::fixtures::{PlainMessage, Settlement};
+use super::super::fixtures::{PlainMessage, Settlement};
 use super::*;
+use crate::HeaderMap;
+use crate::context::Context;
+use crate::handler::HandlerOutcome;
 use crate::testkit::log_capture;
 
 use crate::AckError;
@@ -156,7 +160,7 @@ fn scripted(payloads: &[&'static str]) -> ScriptedSubscriber {
     ScriptedSubscriber { items }
 }
 
-fn dispatch_failure() -> DispatchFailure {
+fn dispatch_failure() -> DispatchFailure<Shutdown> {
     DispatchFailure::new(FailurePolicies::default(), Shutdown::new())
 }
 
@@ -173,6 +177,7 @@ async fn dispatched_under(workers: Workers, payloads: &[&'static str]) -> Vec<By
         Arc::new(Delivery::empty()),
         dispatch_failure(),
         workers,
+        &TaskTracker::new(),
     )
     .expect("the dispatch starts");
 
@@ -283,6 +288,7 @@ where
             Arc::new(Delivery::empty()),
             dispatch_failure(),
             workers,
+            &TaskTracker::new(),
         )
         .expect("the dispatch starts")
     }
@@ -307,6 +313,7 @@ where
             dispatch_failure(),
             workers,
             crate::nonzero!(1usize),
+            &TaskTracker::new(),
         )
         .expect("the dispatch starts")
     }
@@ -634,6 +641,7 @@ async fn an_aborted_loop_takes_its_running_workers_down() {
             Arc::new(Delivery::empty()),
             dispatch_failure(),
             form,
+            &TaskTracker::new(),
         )
         .expect("the dispatch starts");
         running.recv().await.expect("the handler started");
@@ -691,6 +699,7 @@ async fn a_pool_whose_worker_died_stops_rather_than_shrinks() {
         Arc::new(Delivery::empty()),
         dispatch_failure(),
         WORKER_FORMS[1],
+        &TaskTracker::new(),
     )
     .expect("the dispatch starts");
     // The keyed lanes and the sequential loop stop on a worker that is gone; a pool that kept

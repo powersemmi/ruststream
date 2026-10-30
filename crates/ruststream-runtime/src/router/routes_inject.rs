@@ -15,22 +15,24 @@ use crate::{
 };
 
 use crate::batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
-use crate::dispatch::{Workers, spawn_dispatch_workers};
-use crate::failure::{DispatchFailure, FailurePolicies};
+use crate::dispatch::Workers;
+use crate::failure::FailurePolicies;
 use crate::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
 use crate::input::{DecodeWith, Materialize};
 use crate::lifecycle::BoxError;
 use crate::metadata::HandlerMetadata;
 use crate::middleware::BlanketLayer;
 use crate::publish::PublishPipeline;
-use crate::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
+use crate::redelivery::{
+    CopyPathAddress, CopyPathPairing, RetrySetup, ScopeDelivery, open_subscription,
+};
 use crate::retry::RetryOpen;
 
 use super::SourceMessage;
+use super::mount_sink::MountSink;
 use super::routes::{
     MountRoute, RouteMeta, RouteMetadata, RouteSubscription, impl_destination_declared,
 };
-use super::sink::RouterSink;
 
 /// One registration whose handler takes startup injections: an attached publish policy pairing
 /// into an [`Out`](crate::Out) parameter. An implementation detail of
@@ -161,16 +163,17 @@ where
 {
     type Context = Def::Context;
 
-    fn mount_one<G, PP>(
+    fn mount_one<G, PP, Sink>(
         self,
         global: &G,
         _pipeline: &PP,
         retry_pipeline: &RetryPipeline,
-        sink: &mut RouterSink<B, State>,
+        sink: &mut Sink,
         setup: RetrySetup<B, Def::Context>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
+        Sink: MountSink<B, State>,
     {
         let Self {
             source,
@@ -181,49 +184,36 @@ where
             policies,
             workers,
         } = self;
-        // The apply-and-push tail: the handler only exists once the injections resolve, and
-        // `BlanketLayer::apply` returns an unnameable `impl Handler<..>`, so the wrapped handler
-        // cannot be returned out of a factory closure; apply and spawn stay in one block.
+        // The handler only exists once the injections resolve, and the wrapped handler's type
+        // borrows the layer it was applied through, so the runner applies `global` where it
+        // spawns the loop.
         let global = global.clone();
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
-        sink.push_raw(
-            Box::new(move |connected, state, scope, shutdown| {
-                Box::pin(async move {
-                    let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
-                        source,
-                        connected.as_ref(),
-                        &scope,
-                        &name,
-                        setup,
-                    )
-                    .await?;
-                    let injections =
-                        Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
-                            .await
-                            .map_err(BoxError::from)?;
-                    let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
-                        InjectHandler {
-                            def,
-                            codec,
-                            injections,
-                            decode: policies.decode,
-                        },
-                    );
-                    let failure = DispatchFailure::new(policies, shutdown.clone());
-                    Ok(spawn_dispatch_workers(
-                        subscriber,
-                        Arc::new(handler),
-                        shutdown,
-                        name,
-                        state,
-                        delivery,
-                        failure,
-                        workers,
-                    )?)
-                })
-            }),
+        sink.push_workers(
             meta,
+            policies,
+            workers,
+            global,
+            async move |connected: Arc<Connected<B>>, scope: Arc<ScopeDelivery>, name: Arc<str>| {
+                let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
+                    source,
+                    connected.as_ref(),
+                    &scope,
+                    &name,
+                    setup,
+                )
+                .await?;
+                let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
+                    .await
+                    .map_err(BoxError::from)?;
+                let handler = InjectHandler {
+                    def,
+                    codec,
+                    injections,
+                    decode: policies.decode,
+                };
+                Ok((subscriber, handler, delivery))
+            },
         );
     }
 }
@@ -249,16 +239,17 @@ where
 {
     type Context = Def::Context;
 
-    fn mount_one<G, PP>(
+    fn mount_one<G, PP, Sink>(
         self,
         _global: &G,
         _pipeline: &PP,
         retry_pipeline: &RetryPipeline,
-        sink: &mut RouterSink<B, State>,
+        sink: &mut Sink,
         setup: RetrySetup<B, Def::Context>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
+        Sink: MountSink<B, State>,
     {
         // Per-message layers cannot wrap a whole-batch handler, so no layer applies here.
         let Self {
@@ -272,9 +263,20 @@ where
             batch_size,
         } = self;
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
-        sink.push_injected_batch::<_, _, _, _, Def::Context>(
-            source,
-            async move |connected: Arc<Connected<B>>, subscriber| {
+        sink.push_batch::<_, _, _, _, Def::Context>(
+            meta,
+            policies,
+            workers,
+            batch_size,
+            async move |connected: Arc<Connected<B>>, scope: Arc<ScopeDelivery>, name: Arc<str>| {
+                let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
+                    source,
+                    connected.as_ref(),
+                    &scope,
+                    &name,
+                    setup,
+                )
+                .await?;
                 let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                     .await
                     .map_err(BoxError::from)?;
@@ -284,13 +286,8 @@ where
                     injections,
                     decode: policies.decode,
                 };
-                Ok((subscriber, handler))
+                Ok((subscriber, handler, delivery))
             },
-            meta,
-            policies,
-            workers,
-            batch_size,
-            setup,
         );
     }
 }

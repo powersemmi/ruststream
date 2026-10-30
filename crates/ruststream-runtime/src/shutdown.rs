@@ -9,6 +9,7 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, error};
 
 use super::app::{HealthReport, SubscriptionEnd};
+use crate::host::{Halt, ShutdownWait};
 
 /// What every dispatch loop stops on, in the two forms a loop asks for, plus the reason where a
 /// failure raised it.
@@ -187,6 +188,30 @@ impl Shutdown {
     #[must_use]
     pub fn peek_failure(&self) -> Option<String> {
         self.state.failure.lock().ok()?.clone()
+    }
+}
+
+impl ShutdownWait for Shutdown {
+    type Wait<'a> = WaitForCancellationFuture<'a>;
+
+    #[inline]
+    fn is_cancelled(&self) -> bool {
+        Self::is_cancelled(self)
+    }
+
+    #[inline]
+    fn cancelled(&self) -> WaitForCancellationFuture<'_> {
+        Self::cancelled(self)
+    }
+}
+
+impl Halt for Shutdown {
+    fn fail(&self, subscription: &str, reason: &str) {
+        self.signal(subscription, reason);
+    }
+
+    fn stream_ended(&self, subscription: &str) {
+        Self::stream_ended(self, subscription);
     }
 }
 

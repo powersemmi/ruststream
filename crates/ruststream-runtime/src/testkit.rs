@@ -7,6 +7,40 @@
 //! This module is `#[cfg(test)]` and everything in it is `pub(crate)`: nothing here is part of the
 //! published surface. The user-facing test harness is [`crate::testing`].
 
+use std::fmt;
+use std::time::Duration;
+
+use tokio::time;
+use tokio_util::task::TaskTracker;
+
+use crate::host::Detach;
+use crate::lifecycle::BoxFuture;
+
+/// The runner a delivery built by a unit test hands its leftovers to: tasks on the test's own
+/// runtime, tracked by `0`, so a test can wait for them or count them.
+pub(crate) struct Tracked(pub(crate) TaskTracker);
+
+impl fmt::Debug for Tracked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tracked")
+            .field("pending_continuations", &self.0.len())
+            .finish()
+    }
+}
+
+impl Detach for Tracked {
+    fn detach(&self, work: BoxFuture<'static, ()>) {
+        drop(self.0.spawn(work));
+    }
+
+    fn detach_after(&self, delay: Duration, work: BoxFuture<'static, ()>) {
+        drop(self.0.spawn(async move {
+            time::sleep(delay).await;
+            work.await;
+        }));
+    }
+}
+
 /// Records the fields of every tracing event emitted while the guard is alive, so a test can
 /// assert on a diagnostic's content rather than on its mere existence.
 ///

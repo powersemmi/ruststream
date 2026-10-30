@@ -3,8 +3,9 @@
 use std::{fmt, num::NonZeroUsize, sync::Arc};
 
 use tokio::task::JoinHandle;
+use tokio_util::task::TaskTracker;
 
-use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber};
 
 use crate::batch::BatchHandler;
 use crate::dispatch::{Workers, spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers};
@@ -12,22 +13,23 @@ use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::Handler;
 use crate::lifecycle::{BoxError, BoxFuture};
 use crate::metadata::HandlerMetadata;
-use crate::redelivery::{
-    CopyPathAddress, RetrySetup, ScopeDelivery, open_mounted_subscriber, open_subscription,
-};
+use crate::middleware::BlanketLayer;
+use crate::redelivery::{ScopeDelivery, open_mounted_subscriber};
 use crate::shutdown::Shutdown;
 
-use super::{SourceBatch, SourceMessage};
+use super::mount_sink::{MountSink, Opened};
 
 /// A deferred registration: given the broker's connected form (produced by
 /// [`Broker::connect`](crate::Broker::connect) at startup), shared state, the scope's publish
-/// context and the shutdown signal, it opens the subscription and spawns the dispatch task. The
-/// source and handler are captured and type-erased.
+/// context, the app's tracker of what deliveries leave behind and the shutdown signal, it opens
+/// the subscription and spawns the dispatch task. The source and handler are captured and
+/// type-erased.
 pub(crate) type BoundStarter<B, State> = Box<
     dyn FnOnce(
             Arc<Connected<B>>,
             Arc<State>,
             Arc<ScopeDelivery>,
+            TaskTracker,
             Shutdown,
         ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
         + Send,
@@ -62,22 +64,29 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         }
     }
 
-    /// Erases an already-created subscriber and its handler into a starter.
-    pub(crate) fn push_handle<S, H, Cx>(
+    pub(crate) fn into_parts(self) -> (Vec<BoundStarter<B, State>>, Vec<HandlerMetadata>) {
+        (self.starters, self.handlers)
+    }
+}
+
+impl<B: Broker + 'static, State: Send + Sync + 'static> MountSink<B, State>
+    for RouterSink<B, State>
+{
+    fn push_handle<Sub, Body, Cx>(
         &mut self,
-        subscriber: S,
-        handler: H,
+        subscriber: Sub,
+        handler: Body,
         meta: HandlerMetadata,
         policies: FailurePolicies,
     ) where
-        S: Subscriber + Send + 'static,
-        Cx: crate::BuildContext<S::Message> + Send + Sync + 'static,
-        H: Handler<S::Message, Cx, State> + 'static,
+        Sub: Subscriber + Send + 'static,
+        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        Body: Handler<Sub::Message, Cx, State> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters
-            .push(Box::new(move |_connected, state, scope, shutdown| {
+        self.starters.push(Box::new(
+            move |_connected, state, scope, _tasks, shutdown| {
                 Box::pin(async move {
                     // No descriptor to ask where a copy of a delivery would go, and no mount chain
                     // that can bind one here, so this mount carries no retry path at all.
@@ -87,150 +96,84 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                         subscriber, handler, shutdown, name, state, delivery, failure,
                     ))
                 })
-            }));
+            },
+        ));
         self.handlers.push(meta);
     }
 
-    /// Erases a source and its batch handler into a starter driving
-    /// [`BatchSubscriber::batches`]; the subscription opens against the connected broker. `Cx`
-    /// is the definition's subscription-scoped batch context, passed explicitly because the
-    /// adapter handlers are generic over it.
-    // See `spawn_dispatch_workers`: each piece is the registration's own and bundling them would
-    // hide that.
+    // See the trait: each part is the registration's own.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn push_subscribe_batch<S, H, Cx>(
+    fn push_workers<Open, Opening, Sub, Body, Cx, Global>(
         &mut self,
-        source: S,
-        handler: H,
+        meta: HandlerMetadata,
+        policies: FailurePolicies,
+        workers: Workers,
+        global: Global,
+        open: Open,
+    ) where
+        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
+        Opening: Future<Output = Result<Opened<Sub, Body, Cx>, BoxError>> + Send,
+        Sub: Subscriber + Send + 'static,
+        Sub::Message: Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        State: Send + Sync + 'static,
+        Body: Handler<Sub::Message, Cx, State> + 'static,
+        Global: BlanketLayer + Send + 'static,
+    {
+        let name: Arc<str> = Arc::from(meta.name.as_ref());
+        self.starters.push(Box::new(
+            move |connected: Arc<Connected<B>>, state, scope, tasks, shutdown| {
+                Box::pin(async move {
+                    let (subscriber, handler, delivery) =
+                        open(connected, scope, Arc::clone(&name)).await?;
+                    // `BlanketLayer::apply` is an RPITIT whose hidden type borrows the layer, so
+                    // the wrapped handler cannot leave this future: apply and spawn stay in one
+                    // block.
+                    let handler = global.apply::<Sub::Message, Cx, State, Body>(handler);
+                    let failure = DispatchFailure::new(policies, shutdown.clone());
+                    Ok(spawn_dispatch_workers(
+                        subscriber,
+                        Arc::new(handler),
+                        shutdown,
+                        name,
+                        state,
+                        delivery,
+                        failure,
+                        workers,
+                        &tasks,
+                    )?)
+                })
+            },
+        ));
+        self.handlers.push(meta);
+    }
+
+    fn push_batch<Open, Opening, Sub, Body, Cx>(
+        &mut self,
         meta: HandlerMetadata,
         policies: FailurePolicies,
         workers: Workers,
         batch_size: NonZeroUsize,
-        setup: RetrySetup<B, Cx>,
+        open: Open,
     ) where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: BatchSubscriber + Send + 'static,
-        S::Copies: CopyPathAddress<Connected<B>, S>,
-        SourceMessage<B, S>: Send + 'static,
-        Cx: crate::BuildBatchContext<SourceMessage<B, S>> + Send + Sync + 'static,
-        H: BatchHandler<SourceBatch<B, S>, Cx, State> + 'static,
+        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
+        Opening: Future<Output = Result<Opened<Sub, Body, Cx>, BoxError>> + Send,
+        Sub: BatchSubscriber + Send + 'static,
+        Sub::Message: Send + 'static,
+        Sub::Batch: 'static,
+        Cx: Send + Sync + 'static,
+        Body: BatchHandler<Sub::Batch, Cx, State> + 'static,
     {
-        let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, scope, shutdown| {
+            move |connected: Arc<Connected<B>>, state, scope, tasks, shutdown| {
                 Box::pin(async move {
-                    let (subscriber, delivery) = open_subscription::<B, _, _>(
-                        source,
-                        connected.as_ref(),
-                        &scope,
-                        &name,
-                        setup,
-                    )
-                    .await?;
+                    let (subscriber, handler, delivery) =
+                        open(connected, scope, Arc::clone(&name)).await?;
                     let failure = DispatchFailure::new(policies, shutdown.clone());
                     // Turbofish: the adapter handlers are generic over the batch context, so
                     // the pushed definition's own context names it.
                     Ok(spawn_batch_dispatch::<_, _, Cx, _>(
-                        subscriber, handler, shutdown, name, state, delivery, failure, workers,
-                        batch_size,
-                    )?)
-                })
-            },
-        ));
-        self.handlers.push(meta);
-    }
-
-    /// Erases a source and its handler into a starter dispatching under the `workers` policy;
-    /// the subscription opens against the connected broker.
-    pub(crate) fn push_subscribe_workers<S, H, Cx>(
-        &mut self,
-        source: S,
-        handler: H,
-        meta: HandlerMetadata,
-        policies: FailurePolicies,
-        workers: Workers,
-        setup: RetrySetup<B, Cx>,
-    ) where
-        S: SubscriptionSource<Connected<B>> + Send + 'static,
-        S::Subscriber: Send + 'static,
-        S::Copies: CopyPathAddress<Connected<B>, S>,
-        SourceMessage<B, S>: Send + Sync + 'static,
-        Cx: crate::BuildContext<SourceMessage<B, S>> + Send + Sync + 'static,
-        H: Handler<SourceMessage<B, S>, Cx, State> + 'static,
-    {
-        let handler = Arc::new(handler);
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, scope, shutdown| {
-                Box::pin(async move {
-                    let (subscriber, delivery) = open_subscription::<B, _, _>(
-                        source,
-                        connected.as_ref(),
-                        &scope,
-                        &name,
-                        setup,
-                    )
-                    .await?;
-                    let failure = DispatchFailure::new(policies, shutdown.clone());
-                    Ok(spawn_dispatch_workers(
-                        subscriber, handler, shutdown, name, state, delivery, failure, workers,
-                    )?)
-                })
-            },
-        ));
-        self.handlers.push(meta);
-    }
-
-    /// Pushes a fully custom starter, for the one mount the factory helpers cannot express:
-    /// applying a [`BlanketLayer`](crate::BlanketLayer) inside the startup closure
-    /// (its RPITIT return captures the layer borrow, so the applied handler cannot leave a
-    /// factory closure).
-    pub(crate) fn push_raw(&mut self, starter: BoundStarter<B, State>, meta: HandlerMetadata) {
-        self.starters.push(starter);
-        self.handlers.push(meta);
-    }
-
-    /// The batch counterpart of [`push_injected_workers`](Self::push_injected_workers): the
-    /// factory resolves the injections off the opened subscriber, then the loop drives
-    /// [`BatchSubscriber::batches`].
-    // See `push_subscribe_batch`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn push_injected_batch<Source, MakeHandler, HandlerFut, NewHandler, HandlerCx>(
-        &mut self,
-        source: Source,
-        make_handler: MakeHandler,
-        meta: HandlerMetadata,
-        policies: FailurePolicies,
-        workers: Workers,
-        batch_size: NonZeroUsize,
-        setup: RetrySetup<B, HandlerCx>,
-    ) where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
-        Source::Copies: CopyPathAddress<Connected<B>, Source>,
-        SourceMessage<B, Source>: Send + 'static,
-        MakeHandler: FnOnce(Arc<Connected<B>>, Source::Subscriber) -> HandlerFut + Send + 'static,
-        HandlerFut: Future<Output = Result<(Source::Subscriber, NewHandler), BoxError>> + Send,
-        HandlerCx: crate::BuildBatchContext<SourceMessage<B, Source>> + Send + Sync + 'static,
-        NewHandler: BatchHandler<SourceBatch<B, Source>, HandlerCx, State> + 'static,
-    {
-        let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, scope, shutdown| {
-                Box::pin(async move {
-                    let (subscriber, delivery) = open_subscription::<B, _, _>(
-                        source,
-                        connected.as_ref(),
-                        &scope,
-                        &name,
-                        setup,
-                    )
-                    .await?;
-                    let (subscriber, handler) =
-                        make_handler(Arc::clone(&connected), subscriber).await?;
-                    let failure = DispatchFailure::new(policies, shutdown.clone());
-                    Ok(spawn_batch_dispatch::<_, _, HandlerCx, _>(
                         subscriber,
                         Arc::new(handler),
                         shutdown,
@@ -240,14 +183,11 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                         failure,
                         workers,
                         batch_size,
+                        &tasks,
                     )?)
                 })
             },
         ));
         self.handlers.push(meta);
-    }
-
-    pub(crate) fn into_parts(self) -> (Vec<BoundStarter<B, State>>, Vec<HandlerMetadata>) {
-        (self.starters, self.handlers)
     }
 }

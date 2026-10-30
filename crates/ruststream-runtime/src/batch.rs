@@ -287,7 +287,8 @@ pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetad
 
 /// One batch as its handler takes it: what its context is built from, and what the harness
 /// records of it when the handler panics before settling anything.
-pub(crate) trait TakenBatch<C>: Send {
+#[doc(hidden)]
+pub trait TakenBatch<C>: Send {
     /// The batch's context, or `None` for a batch with nothing in it: such a batch runs nothing.
     fn context(&self) -> Option<C>;
 
@@ -323,7 +324,8 @@ where
 /// The dispatch-side consumer of one batch the subscription delivered: decode, run the handler,
 /// settle every delivery. The batch counterpart of [`Handler`](super::Handler) at the
 /// raw-message level.
-pub(crate) trait BatchHandler<Batch, C = (), S = ()>: Send + Sync {
+#[doc(hidden)]
+pub trait BatchHandler<Batch, C = (), S = ()>: Send + Sync {
     /// The buffer the decoded batch is built in.
     ///
     /// A dispatch loop keeps one and lends it to every batch it hands over, so the slice the

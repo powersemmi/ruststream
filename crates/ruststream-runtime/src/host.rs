@@ -1,12 +1,18 @@
-//! What a runner lends the shared delivery body: its clock and the wait on the app's shutdown.
+//! What a runner lends the shared delivery body: its clock, the wait on the app's shutdown, the
+//! way a loop reports a failure, and where the work a delivery leaves behind runs.
 //!
 //! The delivery body (decode, middleware, the handler, the reply, the settlement) is the same on
 //! every runtime. What differs is where it runs: who spawns it, which clock its timers read, and
 //! how a parked loop learns that the app is stopping. A runner crate implements these traits for
 //! its runtime and spawns the body; the body is generic over them, so a timer is the runtime's
 //! own future and a shutdown check is the runtime's own flag, with nothing boxed between them.
+//! What runs off the delivery path (a fail-fast, a continuation, a deferred copy) goes through
+//! the object-safe [`Halt`] and [`Detach`].
 
+use core::fmt;
 use core::time::Duration;
+
+use crate::lifecycle::BoxFuture;
 
 /// A runtime's clock: the time it reads and the timers it arms.
 ///
@@ -157,4 +163,36 @@ pub trait ShutdownWait {
     /// Cancel-safe: dropping the future between polls loses nothing, and a signal raised while
     /// no wait exists is still seen by [`is_cancelled`](Self::is_cancelled).
     fn cancelled(&self) -> Self::Wait<'_>;
+}
+
+/// What a running body reports to the app it runs in: a failure that stops the service, and a
+/// subscription whose stream ended.
+///
+/// Object-safe, so a delivery's context holds it behind a reference without a type parameter of
+/// its own; it is called only on a fail-fast and at the end of a stream, never per delivery. The
+/// runner implements it on its shutdown.
+#[doc(hidden)]
+pub trait Halt: Sync {
+    /// Records `reason` against `subscription` (the first one recorded wins) and starts the
+    /// service's teardown.
+    fn fail(&self, subscription: &str, reason: &str);
+
+    /// Reports that the stream of `subscription` ended: nothing more where the service is
+    /// stopping, the app's configured reaction otherwise.
+    fn stream_ended(&self, subscription: &str);
+}
+
+/// Work a delivery leaves behind, handed to the runner that runs it: an `and_after`
+/// continuation, a post-settle hook, the timer of a deferred retry copy.
+///
+/// The runner tracks what it is handed, so a graceful shutdown waits for it. The work arrives
+/// boxed because the continuations a handler returns already are; the delayed form takes the
+/// delay rather than a timer, so the runner arms it on its own clock.
+#[doc(hidden)]
+pub trait Detach: Send + Sync + fmt::Debug {
+    /// Runs `work` beside the delivery that left it.
+    fn detach(&self, work: BoxFuture<'static, ()>);
+
+    /// Runs `work` once `delay` has passed on the runner's clock.
+    fn detach_after(&self, delay: Duration, work: BoxFuture<'static, ()>);
 }

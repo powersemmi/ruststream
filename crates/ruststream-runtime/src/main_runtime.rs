@@ -1,11 +1,22 @@
 //! [`MainRuntime`]: the app's runtime as a handler reaches it, and the explicit way to send work
 //! there from a dedicated thread.
 
+use std::cell::OnceCell;
+
 use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle};
 
+use crate::context::Context;
+use crate::extract::{CtxKey, CtxKeySeal, ReadKey};
+
+thread_local! {
+    /// The app's runtime, on a dedicated thread of a `threads(n)` subscription: set once, before
+    /// the thread's own runtime starts, and read by every handler on the thread that asks for it.
+    static MAIN: OnceCell<Handle> = const { OnceCell::new() };
+}
+
 /// The runtime the app runs on, as a handler reaches it: `Ctx(main): Ctx<MainRuntime>` as a
-/// parameter, or [`Context::main_runtime`](super::Context::main_runtime).
+/// parameter, or [`ctx.main_runtime()`](MainRuntimeExt::main_runtime).
 ///
 /// A handler on dedicated threads (`threads(n)`) runs on its own thread, and so does everything
 /// it leaves behind: a plain `tokio::spawn`, a timer, an `and_after` continuation, an `after(..)`
@@ -50,16 +61,25 @@ use tokio::task::{JoinError, JoinHandle};
 pub struct MainRuntime(Handle);
 
 impl MainRuntime {
-    /// The runtime the calling task runs on: a subscription captures it when it opens, inside
-    /// the app's startup.
+    /// The app's runtime as the calling handler sees it: the one its dedicated thread recorded,
+    /// or, on any other placement, the runtime the handler runs on, which is the app's.
+    ///
+    /// # Panics
+    ///
+    /// Panics outside a tokio runtime; a handler always runs inside one.
     pub(crate) fn current() -> Self {
-        Self(Handle::current())
+        Self(
+            MAIN.with(|main| main.get().cloned())
+                .unwrap_or_else(Handle::current),
+        )
     }
 
-    /// Wraps `handle`.
-    #[cfg(test)]
-    pub(crate) const fn new(handle: Handle) -> Self {
-        Self(handle)
+    /// Records `main` as the app's runtime for every handler on the calling thread: the first
+    /// thing a dedicated thread does, before its own runtime starts.
+    pub(crate) fn enter_thread(main: Handle) {
+        MAIN.with(|slot| {
+            let _ = slot.set(main);
+        });
     }
 
     /// Starts `future` as a task of the app's runtime and returns its handle; the handler does
@@ -69,7 +89,7 @@ impl MainRuntime {
     ///
     /// ```
     /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, HandlerOutcome};
+    /// use ruststream::runtime::{Context, HandlerOutcome, MainRuntimeExt};
     ///
     /// async fn notify(_id: u64) {}
     ///
@@ -102,7 +122,7 @@ impl MainRuntime {
     ///
     /// ```
     /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, HandlerOutcome};
+    /// use ruststream::runtime::{Context, HandlerOutcome, MainRuntimeExt};
     ///
     /// async fn lookup(id: u64) -> u64 {
     ///     id * 2
@@ -133,7 +153,7 @@ impl MainRuntime {
     ///
     /// ```
     /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, HandlerOutcome};
+    /// use ruststream::runtime::{Context, HandlerOutcome, MainRuntimeExt};
     ///
     /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerOutcome {
     ///     // The app's runtime metrics, read from a handler on a thread of its own.
@@ -149,5 +169,52 @@ impl MainRuntime {
     #[must_use]
     pub const fn as_handle(&self) -> &Handle {
         &self.0
+    }
+}
+
+impl CtxKeySeal for MainRuntime {}
+
+impl CtxKey for MainRuntime {
+    type Value = Self;
+}
+
+impl<C> ReadKey<C> for MainRuntime {
+    #[inline]
+    fn read<S>(_ctx: &Context<'_, C, S>) -> Self {
+        Self::current()
+    }
+}
+
+/// The app's runtime from a handler's [`Context`]: `ctx.main_runtime()`.
+///
+/// Part of the prelude, so a handler that imports it calls the method on its context as it would
+/// an inherent one.
+pub trait MainRuntimeExt {
+    /// The runtime the app runs on: the one explicit way from a handler on dedicated threads
+    /// (`threads(n)`) to send work to the app's runtime (see [`MainRuntime`]). On any other
+    /// placement the handler already runs there.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::IncomingMessage;
+    /// use ruststream::runtime::{Context, HandlerOutcome, MainRuntimeExt};
+    ///
+    /// async fn notify(_id: u64) {}
+    ///
+    /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerOutcome {
+    ///     // The notification leaves the handler's thread; the handler does not wait for it.
+    ///     ctx.main_runtime().spawn(notify(7));
+    ///     HandlerOutcome::ack()
+    /// }
+    /// ```
+    #[must_use]
+    fn main_runtime(&self) -> MainRuntime;
+}
+
+impl<C, S> MainRuntimeExt for Context<'_, C, S> {
+    #[inline]
+    fn main_runtime(&self) -> MainRuntime {
+        MainRuntime::current()
     }
 }

@@ -20,7 +20,6 @@ use crate::ContextField;
 use super::context::Context;
 use super::failure::FailurePolicy;
 use super::handler::HandlerOutcome;
-use super::main_runtime::MainRuntime;
 
 /// A value resolved from the per-delivery [`Context`] and shared state, ready to be passed to a
 /// handler as a parameter.
@@ -236,7 +235,9 @@ where
 pub struct Ctx<K: CtxKey>(pub K::Value);
 
 /// A key the [`Ctx`] extractor takes: every [`ContextField`], which reads the broker's
-/// per-delivery context, and [`MainRuntime`], which binds the app's runtime.
+/// per-delivery context, and the runner's own keys, such as
+/// [`MainRuntime`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.MainRuntime.html),
+/// which binds the app's runtime.
 ///
 /// Sealed: a new key implements [`ContextField`].
 ///
@@ -264,7 +265,7 @@ pub struct Ctx<K: CtxKey>(pub K::Value);
 /// # }
 /// # fn main() {}
 /// ```
-pub trait CtxKey: sealed::Sealed {
+pub trait CtxKey: CtxKeySeal {
     /// The owned value the extractor binds.
     type Value: Send + 'static;
 }
@@ -273,18 +274,26 @@ impl<K: ContextField> CtxKey for K {
     type Value = K::Value;
 }
 
-impl CtxKey for MainRuntime {
-    type Value = Self;
+/// The seal of [`CtxKey`]: implemented by every [`ContextField`] and by the keys a runner
+/// defines.
+#[doc(hidden)]
+pub trait CtxKeySeal {}
+
+impl<K: ContextField> CtxKeySeal for K {}
+
+/// How a [`Ctx`] key reads its value out of a delivery's context: a [`ContextField`] reads the
+/// broker's per-delivery context, a runner's key reads what the runner provides.
+#[doc(hidden)]
+pub trait ReadKey<C>: CtxKey {
+    /// The value this key binds for the delivery `ctx` describes.
+    fn read<S>(ctx: &Context<'_, C, S>) -> Self::Value;
 }
 
-mod sealed {
-    use super::{ContextField, MainRuntime};
-
-    pub trait Sealed {}
-
-    impl<K: ContextField> Sealed for K {}
-
-    impl Sealed for MainRuntime {}
+impl<K: ContextField> ReadKey<K::Context> for K {
+    #[inline]
+    fn read<S>(ctx: &Context<'_, K::Context, S>) -> K::Value {
+        K::default().read(ctx.cx_ref())
+    }
 }
 
 impl<K: CtxKey> fmt::Debug for Ctx<K>
@@ -296,23 +305,9 @@ where
     }
 }
 
-impl<S, K> FromContext<K::Context, S> for Ctx<K>
+impl<C, S, K> FromContext<C, S> for Ctx<K>
 where
-    K: ContextField,
-    K::Context: Send,
-    S: Sync,
-{
-    type Rejection = Infallible;
-    fn from_context(
-        ctx: &mut Context<'_, K::Context, S>,
-    ) -> impl Future<Output = Result<Self, Infallible>> + Send {
-        let value = K::default().read(ctx.cx_ref());
-        async move { Ok(Self(value)) }
-    }
-}
-
-impl<C, S> FromContext<C, S> for Ctx<MainRuntime>
-where
+    K: ReadKey<C>,
     C: Send,
     S: Sync,
 {
@@ -320,7 +315,7 @@ where
     fn from_context(
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = Result<Self, Infallible>> + Send {
-        let value = ctx.main_runtime().clone();
+        let value = K::read(ctx);
         async move { Ok(Self(value)) }
     }
 }

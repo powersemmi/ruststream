@@ -11,7 +11,7 @@ use crate::handler::Handler;
 use crate::metadata::HandlerMetadata;
 use crate::middleware::{BlanketLayer, Identity};
 use crate::publish::{PublishIdentity, PublishPipeline};
-use crate::router::{RouterDef, RouterSink};
+use crate::router::{MountSink, RouterDef, RouterSink};
 
 use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
 

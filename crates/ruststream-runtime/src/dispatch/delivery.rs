@@ -3,15 +3,9 @@
 
 use std::fmt;
 use std::sync::Arc;
-#[cfg(test)]
-use std::sync::LazyLock;
+use std::time::Duration;
 
 #[cfg(test)]
-use tokio::runtime::Builder;
-#[cfg(test)]
-use tokio::runtime::Handle;
-#[cfg(test)]
-use tokio::runtime::Runtime;
 use tokio_util::task::TaskTracker;
 
 #[cfg(doc)]
@@ -19,7 +13,8 @@ use crate::IncomingMessage;
 use crate::RetryDeclaration;
 #[cfg(doc)]
 use crate::context::Context;
-use crate::main_runtime::MainRuntime;
+use crate::host::Detach;
+use crate::lifecycle::BoxFuture;
 #[cfg(all(test, feature = "poll-diagnostics"))]
 use crate::poll_diagnostics::PollDiagnostics;
 #[cfg(feature = "poll-diagnostics")]
@@ -29,12 +24,15 @@ use crate::redelivery::ErasedRetryPublisher;
 use crate::redelivery::{DeferredRetry, ScopeDelivery};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::TestHooks;
+#[cfg(test)]
+use crate::testkit::Tracked;
 
 /// Per-subscription publish context threaded into every delivery's [`Context`]: the
-/// broker-agnostic `retry_after` fallback of this registration and the app-wide tracker for
-/// post-settle continuations.
-/// An `and_after` continuation is spawned onto `tasks` so a graceful shutdown drains it.
-pub(crate) struct Delivery<C = ()> {
+/// broker-agnostic `retry_after` fallback of this registration and the runner that runs what a
+/// delivery leaves behind. An `and_after` continuation is handed to the runner, which tracks it
+/// so a graceful shutdown drains it.
+#[doc(hidden)]
+pub struct Delivery<C = ()> {
     /// The retry path of this subscription: the publisher a copy of a delivery leaves through,
     /// with the destination the mount site or the descriptor named. `None` where the broker moves
     /// the delivery itself, in which case a `NackAfter` on a transport with no native delayed
@@ -43,20 +41,10 @@ pub(crate) struct Delivery<C = ()> {
     /// What the mount site declared with `max_attempts(..)` and `dead_letter(..)`. Read only
     /// where the runtime is the one moving the delivery.
     pub(crate) declaration: RetryDeclaration,
-    /// Per-scope task tracker for post-settle `and_after` continuations. The
-    /// dispatcher spawns each element's continuation onto it after settling, so a graceful
-    /// shutdown drains them.
-    pub(crate) tasks: TaskTracker,
-    /// The runtime the app connected its brokers on, captured when the subscription opens. A
-    /// handler reaches it through [`Context::main_runtime`](crate::context::Context::main_runtime)
-    /// to send work there. What the delivery leaves behind (a continuation, the timer of a
-    /// delayed retry copy) does not run here: it runs where the delivery runs, which under
-    /// `threads(n)` is the dedicated thread's runtime (see [`Delivery::spawn_after`]).
-    pub(crate) runtime: MainRuntime,
-    /// On a dedicated thread (`threads(n)`), the thread's own tracker: the thread waits for what
-    /// its deliveries left behind before it ends, so a shutdown does not drop it with the
-    /// thread's runtime. `None` everywhere else.
-    pub(crate) thread_tasks: Option<TaskTracker>,
+    /// The runner that runs what a delivery leaves behind (a continuation, a post-settle hook,
+    /// the timer of a deferred retry copy), where the delivery runs: the subscription's own, or
+    /// under `threads(n)` the dedicated thread's, which waits for it before it ends.
+    pub(crate) host: Arc<dyn Detach>,
     /// The harness's recording-and-quiescence hooks for this scope. Empty (uninstalled) outside a
     /// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) run, so the per-delivery read is a single atomic load.
     #[cfg(feature = "testing")]
@@ -85,10 +73,7 @@ impl<C> Delivery<C> {
         Self {
             retry,
             declaration,
-            tasks: scope.tasks().clone(),
-            // A subscription opens inside the app's startup, on the runtime it connected on.
-            runtime: MainRuntime::current(),
-            thread_tasks: None,
+            host: Arc::clone(scope.host()),
             #[cfg(feature = "testing")]
             hooks: Arc::clone(scope.hooks()),
             #[cfg(feature = "testing")]
@@ -107,9 +92,7 @@ impl<C> Delivery<C> {
         Self {
             retry,
             declaration: RetryDeclaration::new(),
-            tasks,
-            runtime: MainRuntime::new(test_runtime()),
-            thread_tasks: None,
+            host: Arc::new(Tracked(tasks)),
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
@@ -161,30 +144,29 @@ impl<C> Delivery<C> {
 }
 
 impl<C> Delivery<C> {
-    /// Spawns work the delivery leaves behind (a continuation, a post-settle hook, the timer of a
-    /// deferred copy) on the runtime the delivery runs on, tracked so a graceful shutdown waits
-    /// for it.
-    pub(crate) fn spawn_after<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        match &self.thread_tasks {
-            None => drop(self.tasks.spawn(work)),
-            Some(own) => drop(self.tasks.spawn(own.track_future(work))),
-        }
+    /// Hands work the delivery leaves behind (a continuation, a post-settle hook) to the runner,
+    /// which runs it where the delivery runs, tracked so a graceful shutdown waits for it.
+    pub(crate) fn spawn_after(&self, work: BoxFuture<'static, ()>) {
+        self.host.detach(work);
     }
 
-    /// The same context for one dedicated thread, whose leftovers `own` tracks as well.
-    pub(super) fn on_thread(&self, own: TaskTracker) -> Self {
+    /// Hands the runner work to run once `delay` has passed: the timer of a deferred copy.
+    pub(crate) fn spawn_later(&self, delay: Duration, work: BoxFuture<'static, ()>) {
+        self.host.detach_after(delay, work);
+    }
+
+    /// The same context for one dedicated thread, whose runner `host` runs what the thread's
+    /// deliveries leave behind.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn on_thread(&self, host: Arc<dyn Detach>) -> Self {
         Self {
             retry: self.retry.as_ref().map(|retry| DeferredRetry {
                 publisher: Arc::clone(&retry.publisher),
                 destination: retry.destination.clone(),
             }),
             declaration: self.declaration.clone(),
-            tasks: self.tasks.clone(),
-            runtime: self.runtime.clone(),
-            thread_tasks: Some(own),
+            host,
             #[cfg(feature = "testing")]
             hooks: Arc::clone(&self.hooks),
             #[cfg(feature = "testing")]
@@ -197,19 +179,6 @@ impl<C> Delivery<C> {
     }
 }
 
-/// The runtime a delivery context built by a unit test answers `main_runtime` with: the test's
-/// own where it runs inside one, and a shared idle one where a synchronous test builds a context.
-#[cfg(test)]
-fn test_runtime() -> Handle {
-    static IDLE: LazyLock<Runtime> = LazyLock::new(|| {
-        Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("a current-thread runtime builds")
-    });
-    Handle::try_current().unwrap_or_else(|_| IDLE.handle().clone())
-}
-
 impl<C> fmt::Debug for Delivery<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Delivery")
@@ -218,7 +187,7 @@ impl<C> fmt::Debug for Delivery<C> {
                 &self.retry.as_ref().map(|retry| &retry.destination),
             )
             .field("declaration", &self.declaration)
-            .field("pending_continuations", &self.tasks.len())
+            .field("host", &self.host)
             .finish_non_exhaustive()
     }
 }
@@ -235,14 +204,17 @@ impl<C> fmt::Debug for Delivery<C> {
 /// slot is never empty on the dispatch path: the sequential loop's one slot is filled by the poll
 /// that takes a delivery off the stream and emptied by the settle, and a pooled worker's is filled
 /// where it is declared; taking the delivery is the last thing that happens to it.
-pub(crate) struct Slot<M>(Option<M>);
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct Slot<M>(Option<M>);
 
 /// What a slot says when it is read after the settle has taken the delivery.
 const SETTLED: &str = "the delivery has already been settled";
 
 impl<M> Slot<M> {
     /// The slot holding `msg`.
-    pub(crate) const fn new(msg: M) -> Self {
+    #[doc(hidden)]
+    pub const fn new(msg: M) -> Self {
         Self(Some(msg))
     }
 

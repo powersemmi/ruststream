@@ -6,7 +6,6 @@
 pub use ruststream_runtime::ConnectedSlot;
 #[doc(hidden)]
 pub use ruststream_runtime::IntoOutcome;
-pub use ruststream_runtime::MainRuntime;
 pub use ruststream_runtime::Out;
 pub use ruststream_runtime::Retry;
 #[doc(hidden)]
@@ -111,6 +110,7 @@ pub use ruststream_runtime::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{IncludeMount, ScopeCommit};
+pub use ruststream_runtime::{MainRuntime, MainRuntimeExt};
 pub use ruststream_runtime::{Placement, RETRY_COUNT_HEADER, Workers};
 #[cfg(feature = "poll-diagnostics")]
 pub use ruststream_runtime::{PollDiagnostics, PollReport};

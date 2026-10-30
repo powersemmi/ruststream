@@ -5,18 +5,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use tokio::time;
 use tracing::warn;
 
 #[cfg(feature = "testing")]
 use super::harness_scope;
 use super::{Delivery, RETRY_COUNT_HEADER, Slot};
+#[cfg(doc)]
+use crate::IncomingMessage;
 use crate::handler::HandlerResult;
 use crate::publish::PublishContext;
 use crate::redelivery::DeferredRetry;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Coordinator, in_harness_scope};
-use crate::{AckError, HeaderMap, IncomingMessage, OutgoingMessage, RetryDeclaration, Str};
+use crate::{AckError, HeaderMap, LocalIncomingMessage, OutgoingMessage, RetryDeclaration, Str};
 
 /// Parses the current [`RETRY_COUNT_HEADER`] value, defaulting to zero when absent or malformed.
 fn current_retry_count(headers: &HeaderMap) -> u64 {
@@ -38,7 +39,7 @@ pub(crate) async fn settle_outcome<M, C>(
     delivery: &Delivery<C>,
     build_cx: fn(&M) -> C,
 ) where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     C: Send + Sync + 'static,
 {
     let ack_result = match outcome {
@@ -85,13 +86,13 @@ enum Redelivery<'a> {
 /// both. A transport that counts its deliveries answers for all of them, the ones a delay or a
 /// requeue brought round included. The header starts absent and is incremented on every copy
 /// published for the delivery, so the first delivery counts as one either way.
-fn attempt_of<M: IncomingMessage>(msg: &M) -> u64 {
+fn attempt_of<M: LocalIncomingMessage>(msg: &M) -> u64 {
     msg.redelivery_count()
         .unwrap_or_else(|| current_retry_count(msg.headers()) + 1)
 }
 
 /// Reads the registration's declaration against this delivery.
-fn redelivery_of<'d, M: IncomingMessage>(
+fn redelivery_of<'d, M: LocalIncomingMessage>(
     msg: &M,
     declaration: &'d RetryDeclaration,
 ) -> Redelivery<'d> {
@@ -135,7 +136,7 @@ async fn settle_retry<M, C>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     C: Send + Sync + 'static,
 {
     if delivery.declaration.declares_nothing() {
@@ -221,7 +222,7 @@ async fn settle_nack_after<M, C>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     C: Send + Sync + 'static,
 {
     if slot.get().supports_nack_after() {
@@ -290,7 +291,7 @@ where
 /// # Errors
 ///
 /// Returns the [`AckError`] from the requeue.
-async fn requeue_now<M: IncomingMessage>(
+async fn requeue_now<M: LocalIncomingMessage>(
     slot: &mut Slot<M>,
     name: &str,
     declaration: &RetryDeclaration,
@@ -327,7 +328,7 @@ async fn dead_letter<M, C>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     C: Send + Sync + 'static,
 {
     if at_cap {
@@ -351,7 +352,10 @@ where
 /// # Errors
 ///
 /// Returns the [`AckError`] from the rejection.
-async fn reject_spent<M: IncomingMessage>(slot: &mut Slot<M>, name: &str) -> Result<(), AckError> {
+async fn reject_spent<M: LocalIncomingMessage>(
+    slot: &mut Slot<M>,
+    name: &str,
+) -> Result<(), AckError> {
     warn_at_cap(name, attempt_of(slot.get()), None);
     slot.take().nack(false).await
 }
@@ -400,7 +404,7 @@ async fn publish_copy<M, C>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     C: Send + Sync + 'static,
 {
     let publisher = Arc::clone(&retry.publisher);
@@ -474,10 +478,7 @@ where
     }
     // The timer is the delivery's own work, so it runs where the delivery ran; being tracked, a
     // graceful shutdown waits for it and the copy leaves before the broker closes.
-    delivery.spawn_after(async move {
-        time::sleep(delay).await;
-        republish.await;
-    });
+    delivery.spawn_later(delay, Box::pin(republish));
     Ok(())
 }
 
@@ -491,10 +492,17 @@ mod tests {
     use futures::{StreamExt, poll};
     use tokio::sync::mpsc;
     use tokio::task;
+    use tokio::time;
     use tokio_util::task::TaskTracker;
 
     use super::super::fixtures::{PlainMessage, RejectingPublisher, Settlement};
-    use super::*;
+    // Named one by one rather than globbed: the module bounds the local twins of the contract,
+    // and these tests drive the deliveries through the `Send` traits a broker implements.
+    use super::{
+        AckError, Arc, Bytes, Delivery, Duration, HandlerResult, HeaderMap, OutgoingMessage,
+        RETRY_COUNT_HEADER, RetryDeclaration, Slot, settle_nack_after, settle_outcome,
+    };
+    use crate::IncomingMessage;
     use crate::redelivery::bare_retry_publisher;
     use crate::{Lend, Publisher, Subscriber};
     use ruststream::memory::MemoryBroker;
