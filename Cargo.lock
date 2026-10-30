@@ -1616,8 +1616,12 @@ version = "0.7.7"
 dependencies = [
  "bytes",
  "bytes-utils",
+ "embassy-futures",
+ "embassy-sync",
  "futures",
+ "futures-core",
  "ruststream",
+ "ruststream-conformance",
  "ruststream-core",
  "ruststream-runtime",
  "schemars",
