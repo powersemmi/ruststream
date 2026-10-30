@@ -1,0 +1,11 @@
+error: a batch handler takes no `Out` parameter on the embassy runtime; publish from a handler that takes one message at a time
+  --> tests/ui/subscriber_local_forms.rs:19:54
+   |
+19 | async fn bill(readings: &[Reading<'_>], Out(_audit): Out<impl Publisher, Audit>) -> HandlerOutcome {
+   |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: a handler with an `Out` parameter does not reply on the embassy runtime; publish the reply through a slot of its own
+  --> tests/ui/subscriber_local_forms.rs:25:82
+   |
+25 | async fn answer(question: &Reading<'_>, Out(_audit): Out<impl Publisher, Audit>) -> Answer {
+   |                                                                                  ^^^^^^^^^

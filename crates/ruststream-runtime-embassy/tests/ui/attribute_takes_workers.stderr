@@ -1,20 +1,20 @@
-error[E0277]: `SubscriberBuilder<Sealed<HandleValue<SoloDeserialized<Reading<'_>>, (), (), (), log, ruststream::runtime::Probed>>, LocalMemorySource, (Fixed, Open, Open, Open)>` sets a worker count, which the embedded runner fixes at the mount site
-  --> tests/ui/attribute_takes_workers.rs:16:55
+error[E0277]: `SubscriberBuilder<log, LocalMemorySource, (Fixed, Open, Open, Open)>` sets a worker count, which the embedded runner fixes at the mount site
+  --> tests/ui/attribute_takes_workers.rs:19:19
    |
-16 |     EmbeddedApp::new().with_broker(bus, |b| b.include(log.name("readings")))
-   |                                               ------- ^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
-   |                                               |
-   |                                               required by a bound introduced by this call
+19 |         b.include(log.name("readings")).out(Audit, LocalMemoryPublish)
+   |           ------- ^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |           |
+   |           required by a bound introduced by this call
    |
-   = help: the trait `ruststream_runtime::router::local::PoolFits<ruststream_runtime::router::local::LocalPipeline>` is not implemented for `SubscriberBuilder<Sealed<HandleValue<SoloDeserialized<Reading<'_>>, (), (), (), log, ruststream::runtime::Probed>>, LocalMemorySource, (Fixed, Open, Open, Open)>`
+   = help: the trait `ruststream_runtime::router::local::PoolFits<LocalPipeline>` is not implemented for `SubscriberBuilder<log, LocalMemorySource, (Fixed, Open, Open, Open)>`
    = note: on EmbeddedApp write `.include(def).pool::<N>()` or `.keyed::<N>()`; `threads(n)` runs only on the tokio runtime
 note: the method call chain might not have had the expected associated types
-  --> tests/ui/attribute_takes_workers.rs:16:59
+  --> tests/ui/attribute_takes_workers.rs:19:23
    |
-16 |     EmbeddedApp::new().with_broker(bus, |b| b.include(log.name("readings")))
-   |                                                       --- ^^^^^^^^^^^^^^^^ `Declared::Settings` is `SubscriberBuilder<Sealed<HandleValue<SoloDeserialized<Reading<'static>>, (), (), (), log, Probed>>, LocalMemorySource, (Fixed, Open, Open, Open)>` here
-   |                                                       |
-   |                                                       this expression has type `log`
+19 |         b.include(log.name("readings")).out(Audit, LocalMemoryPublish)
+   |                   --- ^^^^^^^^^^^^^^^^ `Declared::Settings` is `SubscriberBuilder<log, LocalMemorySource, (Fixed, Open, Open, Open)>` here
+   |                   |
+   |                   this expression has type `log`
 note: required by a bound in `ruststream_runtime::router::include::<impl Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>>::include`
   --> $WORKSPACE/crates/ruststream-runtime/src/router/include.rs
    |
