@@ -1,0 +1,31 @@
+[package]
+name = "ruststream-runtime-tokio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The tokio runner of the RustStream messaging framework: the app's lifecycle, spawning, worker pools, dedicated threads and the clock; services use it through `ruststream`."
+keywords = ["messaging", "async", "tokio", "broker", "ruststream"]
+categories = ["asynchronous", "network-programming"]
+readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+
+[dependencies]
+ruststream-runtime.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+# The doc examples are a service's code, so they import the facade. A path dependency without a
+# version is dropped on publish.
+ruststream = { path = "../..", features = ["macros", "memory", "json", "testing"] }
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

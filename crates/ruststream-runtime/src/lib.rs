@@ -37,6 +37,7 @@ mod extract;
 mod failure;
 mod handle;
 mod handler;
+mod host;
 mod in_messages;
 mod inject;
 mod input;
@@ -116,6 +117,7 @@ pub use handle::{
 #[doc(hidden)]
 pub use handler::IntoOutcome;
 pub use handler::{Handler, HandlerOutcome};
+pub use host::{Clock, ShutdownWait};
 pub use main_runtime::MainRuntime;
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]

@@ -189,6 +189,11 @@ pub mod runtime;
 
 pub use runtime::RustStream;
 
+/// Time for service code: the sleep that runs on the app's clock, which the test harness moves.
+pub mod time {
+    pub use ruststream_runtime_tokio::time::sleep;
+}
+
 /// Attribute macro that turns an `async fn` into a mountable subscriber definition.
 ///
 /// Available with the `macros` feature. See [`ruststream_macros::subscriber`].

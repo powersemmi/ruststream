@@ -193,7 +193,7 @@ jobs:
           CARGO_HTTP_MULTIPLEXING: "false"
         run: |
           cargo publish --locked --dry-run --all-features -p ruststream-macros -p ruststream-core \
-            -p ruststream-runtime -p ruststream-memory -p ruststream-asyncapi \
+            -p ruststream-runtime -p ruststream-runtime-tokio -p ruststream-memory -p ruststream-asyncapi \
             -p ruststream-observability -p ruststream-testing -p ruststream-conformance \
             -p ruststream-cli -p ruststream
 

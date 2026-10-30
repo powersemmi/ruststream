@@ -2,6 +2,7 @@
 members = [
     "crates/ruststream-core",
     "crates/ruststream-runtime",
+    "crates/ruststream-runtime-tokio",
     "crates/ruststream-memory",
     "crates/ruststream-asyncapi",
     "crates/ruststream-observability",
@@ -69,6 +70,7 @@ ruststream-macros = { version = "=0.7.7", path = "crates/ruststream-macros" }
 # The crates the facade re-exports, pinned exactly for the same reason as the macros crate.
 ruststream-core = { version = "=0.7.7", path = "crates/ruststream-core" }
 ruststream-runtime = { version = "=0.7.7", path = "crates/ruststream-runtime" }
+ruststream-runtime-tokio = { version = "=0.7.7", path = "crates/ruststream-runtime-tokio" }
 ruststream-memory = { version = "=0.7.7", path = "crates/ruststream-memory" }
 ruststream-asyncapi = { version = "=0.7.7", path = "crates/ruststream-asyncapi" }
 ruststream-observability = { version = "=0.7.7", path = "crates/ruststream-observability" }
@@ -981,6 +983,7 @@ otel = ["dep:ruststream-observability", "ruststream-observability/otel"]
 [dependencies]
 ruststream-core = { workspace = true, features = ["std"] }
 ruststream-runtime.workspace = true
+ruststream-runtime-tokio.workspace = true
 ruststream-memory = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }

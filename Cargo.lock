@@ -1230,6 +1230,7 @@ dependencies = [
  "ruststream-memory",
  "ruststream-observability",
  "ruststream-runtime",
+ "ruststream-runtime-tokio",
  "ruststream-testing",
  "schemars",
  "serde",
@@ -1395,6 +1396,16 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "ruststream-runtime-tokio"
+version = "0.7.7"
+dependencies = [
+ "ruststream",
+ "ruststream-runtime",
+ "serde",
+ "tokio",
 ]
 
 [[package]]

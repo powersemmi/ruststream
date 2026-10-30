@@ -82,6 +82,7 @@ pub use ruststream_runtime::{Bindable, Bound, BrokerRegistration};
 pub use ruststream_runtime::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 #[doc(hidden)]
 pub use ruststream_runtime::{CapsBatches, DefinitionInputCodec, MountsWith};
+pub use ruststream_runtime::{Clock, ShutdownWait};
 pub use ruststream_runtime::{
     CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,
 };
@@ -122,5 +123,6 @@ pub use ruststream_runtime::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{batch_verdict, uniform_batch};
+pub use ruststream_runtime_tokio::Tokio;
 
 pub mod cli;
