@@ -101,9 +101,7 @@ mod tests {
 
     /// A worker that counts how often it is polled and reads its mailbox until the lane ends.
     async fn counted(mailbox: &Mailbox<u32>, polls: &Cell<u32>) {
-        let mut next = pin!(async {
-            while mailbox.receive().await.is_some() {}
-        });
+        let mut next = pin!(async { while mailbox.receive().await.is_some() {} });
         poll_fn(|cx| {
             polls.set(polls.get() + 1);
             next.as_mut().poll(cx)

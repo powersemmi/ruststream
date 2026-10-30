@@ -290,6 +290,9 @@ fn keyed(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
     })
 }
 
+// Four workers each hold a delivery's whole dispatch, so the app's future is as large as four
+// handlers in flight: an embassy task holds it in place, and nothing moves it.
+#[allow(clippy::large_futures)]
 #[embassy_executor::task]
 async fn run_pooled(stand: &'static Stand) {
     pooled(stand)
