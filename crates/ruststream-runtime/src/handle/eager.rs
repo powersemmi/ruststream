@@ -11,7 +11,7 @@ use core::{any, fmt};
 use tracing::warn;
 
 use crate::batch::{BatchDef, BatchResult, SliceHandler};
-use crate::context::Context;
+use crate::context::{Context, MarkingContext};
 use crate::failure::FailurePolicy;
 use crate::handler::{Handler, HandlerOutcome};
 use crate::router::IncludeDef;
@@ -29,7 +29,7 @@ use super::value::{HandleValue, Sealed};
 /// settled by the subscriber's decode policy, exactly as a codec decode failure is.
 pub(crate) fn construct<'p, F, C, S>(
     payload: &'p [u8],
-    ctx: &mut Context<'_, C, S>,
+    ctx: MarkingContext<'_, '_, C, S>,
 ) -> Result<F::Output<'p>, HandlerOutcome>
 where
     F: Deserialized,

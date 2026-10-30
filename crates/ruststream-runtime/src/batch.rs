@@ -824,7 +824,7 @@ mod settle;
 pub(crate) use carried::{CarriedBatch, SourceCarriesBatch};
 pub use local::{LocalBatch, LocalBatchHandler};
 use settle::settle_split_batch;
-pub(crate) use settle::{LentValues, settle_batch, settle_lent_batch};
+pub(crate) use settle::{LentValues, lent_nothing, settle_batch, settle_lent_batch};
 
 #[cfg(all(test, feature = "json"))]
 mod tests;

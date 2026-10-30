@@ -27,7 +27,8 @@ use super::super::host::Detach;
 #[cfg(feature = "otel")]
 use super::record_batch_size;
 use super::{
-    BatchHandler, LentValues, SliceHandler, TakenBatch, rejection, reported, settle_lent_batch,
+    BatchHandler, LentValues, SliceHandler, TakenBatch, lent_nothing, rejection, reported,
+    settle_lent_batch,
 };
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Delivered;
@@ -173,7 +174,7 @@ where
     fn take(batch: Batch) -> Self::Taken {
         Lent {
             batch,
-            recorded: LentValues::default(),
+            recorded: lent_nothing(),
             _lane: PhantomData,
         }
     }

@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use tracing::warn;
 
 use super::batch::rejection;
-use super::context::Context;
+use super::context::{Context, MarkingContext};
 use super::failure::FailurePolicy;
 use super::handler::{Handler, HandlerOutcome, LocalHandler};
 use super::input::{Decoded, Materialize, REPORTED};
@@ -166,7 +166,7 @@ where
 pub(crate) fn refused<Input, Decoder, M, Cx, St>(
     msg: &M,
     decode: FailurePolicy,
-    ctx: &mut Context<'_, Cx, St>,
+    ctx: MarkingContext<'_, '_, Cx, St>,
 ) -> Option<HandlerOutcome>
 where
     Input: Materialize<Decoder, M>,
@@ -184,7 +184,7 @@ where
 fn refuse<Input, Decoder, M, Cx, St>(
     err: &CodecError,
     decode: FailurePolicy,
-    ctx: &mut Context<'_, Cx, St>,
+    ctx: MarkingContext<'_, '_, Cx, St>,
 ) -> HandlerOutcome
 where
     Input: Materialize<Decoder, M>,
@@ -208,7 +208,7 @@ where
 pub(crate) fn unmaterialized<Input, Decoder, M, Cx, St>(
     err: &CodecError,
     decode: FailurePolicy,
-    ctx: &mut Context<'_, Cx, St>,
+    ctx: MarkingContext<'_, '_, Cx, St>,
 ) -> HandlerOutcome
 where
     Input: Materialize<Decoder, M>,

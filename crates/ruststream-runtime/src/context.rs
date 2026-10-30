@@ -866,5 +866,15 @@ impl<C, S> After<'_, '_, C, S> {
     }
 }
 
+/// How a decode adapter holds the delivery's context: mutably in a build that reads the
+/// decode-failure mark (the harness's classification under `testing`, the consume layer's counter
+/// under `otel`), shared in one that has no reader and so writes no mark.
+#[cfg(any(feature = "testing", feature = "otel"))]
+pub(crate) type MarkingContext<'r, 'a, C, S> = &'r mut Context<'a, C, S>;
+
+/// See the marking counterpart: with no reader of the mark, the adapter only reads the context.
+#[cfg(not(any(feature = "testing", feature = "otel")))]
+pub(crate) type MarkingContext<'r, 'a, C, S> = &'r Context<'a, C, S>;
+
 #[cfg(test)]
 mod tests;

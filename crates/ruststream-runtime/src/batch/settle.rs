@@ -115,7 +115,7 @@ pub(crate) async fn settle_batch<M, C, Host>(
         subscription,
         delivery,
         host,
-        LentValues::default(),
+        lent_nothing(),
     )
     .await;
 }
@@ -146,9 +146,23 @@ fn checked_outcomes(
 #[cfg(feature = "testing")]
 pub(crate) type LentValues = Vec<RecordedValue>;
 
-/// See the `testing` counterpart: without the harness there is nothing to record.
+/// See the `testing` counterpart: without the harness there is nothing to record. A unit struct
+/// rather than `()`, so a form that lends nothing hands it on as a value like any other.
 #[cfg(not(feature = "testing"))]
-pub(crate) type LentValues = ();
+#[derive(Debug)]
+pub(crate) struct LentValues;
+
+/// The record of a batch that lent its handler no values.
+#[cfg(feature = "testing")]
+pub(crate) const fn lent_nothing() -> LentValues {
+    Vec::new()
+}
+
+/// See the `testing` counterpart.
+#[cfg(not(feature = "testing"))]
+pub(crate) const fn lent_nothing() -> LentValues {
+    LentValues
+}
 
 /// [`settle_batch`] for a batch that lent its handler the values its deliveries carry: the
 /// harness records each value beside the delivery it belongs to.
@@ -171,7 +185,7 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
     #[cfg(feature = "testing")]
     let mut batch = BatchLog::of(&accepted, lent);
     #[cfg(not(feature = "testing"))]
-    let () = lent;
+    let LentValues = lent;
     match result {
         BatchResult::Uniform(mut outcome) => {
             let after = outcome.take_after();
@@ -271,7 +285,7 @@ impl BatchLog {
                 .enumerate()
                 .filter(|(index, _)| rejected.binary_search_by_key(index, |&(at, _)| at).is_err())
                 .map(|(_, msg)| msg),
-            LentValues::default(),
+            lent_nothing(),
         )
     }
 
