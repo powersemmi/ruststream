@@ -1,8 +1,8 @@
 //! The error the test harness returns: the dispatch reports it while driving a reaction, and
 //! `TestApp` returns it from every step.
 
-use std::error;
-use std::time::Duration;
+use core::error;
+use core::time::Duration;
 
 use thiserror::Error;
 

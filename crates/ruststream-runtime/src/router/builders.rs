@@ -20,10 +20,10 @@
 //! error at the next use. A [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) drives the same chain
 //! through a guard that commits when the statement ends.
 
-use std::borrow::Cow;
-use std::fmt;
-use std::marker::PhantomData;
-use std::num::NonZeroU32;
+use alloc::borrow::Cow;
+use core::fmt;
+use core::marker::PhantomData;
+use core::num::NonZeroU32;
 
 use crate::retry::{
     CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DestinationLast, DestinationOpen, Retry,

@@ -1,8 +1,8 @@
 //! What one subscription dispatches under, and the slot one delivery waits in on its way to
 //! the settle.
 
-use std::fmt;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::fmt;
 
 #[cfg(doc)]
 use crate::IncomingMessage;
@@ -280,7 +280,7 @@ impl<C, Host: Detach> Lent<C> for (&Delivery<C>, &Host) {
 
 #[cfg(test)]
 mod tests {
-    use std::future::ready;
+    use core::future::ready;
 
     use bytes::BytesMut;
 

@@ -5,8 +5,8 @@
 //! [drops](FailurePolicy::Drop) the one bad message rather than letting any producer take the
 //! consumer down.
 
-use std::any::Any;
-use std::time::Duration;
+use core::any::Any;
+use core::time::Duration;
 
 use super::handler::HandlerResult;
 #[cfg(doc)]

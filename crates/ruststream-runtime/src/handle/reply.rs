@@ -2,7 +2,7 @@
 //! through the publishing machinery, with the policy the chain attached (or the broker's
 //! default) committed right at `include`.
 
-use std::any::type_name;
+use core::any::type_name;
 
 use crate::batch::BatchResult;
 use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};

@@ -1,6 +1,6 @@
 //! The live reply sink: a byte publisher paired with a codec and its transform stacks.
 
-use std::fmt;
+use core::fmt;
 
 use serde::Serialize;
 

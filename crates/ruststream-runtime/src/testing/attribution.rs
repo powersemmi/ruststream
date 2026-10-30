@@ -6,9 +6,9 @@
 //! harness therefore copies them at that hand-over, next to the message, and the assertions read
 //! them back per message.
 
-use std::any::{Any, type_name};
-use std::fmt;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::any::{Any, type_name};
+use core::fmt;
 
 use crate::RawMessage;
 

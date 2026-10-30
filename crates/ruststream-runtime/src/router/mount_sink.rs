@@ -1,7 +1,7 @@
 //! What a mount pushes its registrations into: the runner's collector of subscription starters.
 
-use std::num::NonZeroUsize;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::num::NonZeroUsize;
 
 use crate::batch::BatchHandler;
 use crate::dispatch::{Delivery, Workers};

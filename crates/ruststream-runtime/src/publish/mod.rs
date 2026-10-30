@@ -7,7 +7,7 @@
 //! (content-type, schema id), or observe it (publish metrics). The chain is symmetric to the
 //! consume-side static [`Stack`](super::Stack).
 
-use std::pin::Pin;
+use core::pin::Pin;
 
 use crate::lifecycle::BoxError;
 pub use crate::outgoing::{Outgoing, OutgoingName};

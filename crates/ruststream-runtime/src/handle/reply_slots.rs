@@ -2,7 +2,7 @@
 //! in one signature. The chain's reply attach seeds the include-site binder, which still takes
 //! one `.out(marker, policy)` per slot.
 
-use std::any::type_name;
+use core::any::type_name;
 
 use crate::batch::BatchResult;
 use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};

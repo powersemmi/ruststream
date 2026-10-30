@@ -7,7 +7,7 @@
 //! its own definition pair because the handler consumes a slice and returns a
 //! [`BatchResult`], not a per-message [`HandlerOutcome`](super::HandlerOutcome).
 
-use std::fmt;
+use core::fmt;
 
 use crate::{BuildBatchContext, IncomingMessage};
 
@@ -178,8 +178,8 @@ where
 
 #[cfg(all(test, feature = "json"))]
 mod tests {
-    use std::future::ready;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use core::future::ready;
+    use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use futures::StreamExt;
@@ -301,7 +301,7 @@ mod tests {
 
         assert_eq!(*seen.lock().unwrap(), [10, 20]);
         // The uniform Ack settled both deliveries, so neither comes back.
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         assert!(futures::poll!(stream.next()).is_pending());
     }
 
@@ -332,7 +332,7 @@ mod tests {
         handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         assert!(futures::poll!(stream.next()).is_pending());
     }
 }

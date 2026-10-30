@@ -7,8 +7,8 @@
 //! whole value stays pure declaration - it pairs with the connected broker at startup, like any
 //! other [`PublishPolicy`].
 
-use std::fmt;
-use std::marker::PhantomData;
+use core::fmt;
+use core::marker::PhantomData;
 
 use super::{
     BatchPublishTransformStack, BatchTransformIdentity, CallCodec, PublishCodec,
@@ -433,7 +433,7 @@ where
 
 #[cfg(all(test, feature = "json", feature = "asyncapi"))]
 mod tests {
-    use std::collections::BTreeMap;
+    use alloc::collections::BTreeMap;
 
     use super::{RawReplyWiring, ReplyWiring, TransactionalReply};
     use crate::bindings::{Binding, Bindings};

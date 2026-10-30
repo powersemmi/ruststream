@@ -2,8 +2,8 @@
 //! through the ordinary subscriber and batch machinery, with the body adapted to the dispatch
 //! contracts here.
 
-use std::marker::PhantomData;
-use std::{any, fmt};
+use core::marker::PhantomData;
+use core::{any, fmt};
 
 use tracing::warn;
 

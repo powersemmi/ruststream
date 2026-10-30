@@ -7,7 +7,7 @@
 //! passed in here. Both use the same [`Layer`](super::Layer) / [`HandlerExt`](super::HandlerExt)
 //! machinery, just at different inputs.
 
-use std::{fmt, marker::PhantomData};
+use core::{fmt, marker::PhantomData};
 
 use crate::IncomingMessage;
 use crate::codec::{Codec, CodecError};
@@ -187,7 +187,7 @@ where
 
 #[cfg(all(test, feature = "json"))]
 mod tests {
-    use std::future::ready;
+    use core::future::ready;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},

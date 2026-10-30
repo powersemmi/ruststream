@@ -10,7 +10,8 @@
 //! raw deliveries (`DynStack<M>`, middleware bound `M: IncomingMessage`) or decoded values
 //! (`DynStack<T>`).
 
-use std::{fmt, pin::Pin, sync::Arc};
+use alloc::sync::Arc;
+use core::{fmt, pin::Pin};
 
 use super::context::Context;
 use super::handler::{Handler, HandlerOutcome};

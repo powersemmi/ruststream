@@ -9,7 +9,7 @@
 //! reply codec). The destination name comes from the macro; the publisher and codec come from
 //! the chain.
 
-use std::{any, error, fmt};
+use core::{any, error, fmt};
 
 use bytes::BytesMut;
 use serde::Serialize;
@@ -473,7 +473,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::future::ready;
+    use core::future::ready;
 
     use super::{PublishingCall, PublishingDef, publishing_metadata};
     use crate::HeaderMap;
@@ -548,7 +548,7 @@ mod tests {
     /// subscriber listens.
     #[cfg(feature = "json")]
     mod diagnostics {
-        use std::future::ready;
+        use core::future::ready;
 
         use super::ManualPub;
         use crate::codec::JsonCodec;

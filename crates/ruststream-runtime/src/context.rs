@@ -10,13 +10,13 @@
 //! [`headers_mut`](Context::headers_mut), so a delivery whose handler and middleware never touch
 //! the headers pays neither the broker's accessor nor a clone.
 
-use std::cell::OnceCell;
-use std::fmt;
 #[cfg(feature = "testing")]
-use std::mem;
-use std::pin::Pin;
+use alloc::sync::Arc;
+use core::cell::OnceCell;
+use core::fmt;
 #[cfg(feature = "testing")]
-use std::sync::Arc;
+use core::mem;
+use core::pin::Pin;
 
 use bytes::BytesMut;
 

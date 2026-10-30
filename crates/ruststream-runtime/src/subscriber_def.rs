@@ -103,7 +103,7 @@ pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> Ha
 
 #[cfg(test)]
 mod tests {
-    use std::future::ready;
+    use core::future::ready;
 
     use super::{SubscriberDef, subscriber_metadata};
     use crate::HeaderMap;

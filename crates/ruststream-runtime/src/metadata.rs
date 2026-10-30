@@ -1,6 +1,7 @@
 //! Handler metadata collected by the router and consumed by `ruststream-asyncapi`.
 
-use std::{any::type_name, borrow::Cow, marker::PhantomData};
+use alloc::borrow::Cow;
+use core::{any::type_name, marker::PhantomData};
 
 #[cfg(feature = "asyncapi")]
 use crate::bindings::{PublishBindings, SubscriptionBindings};

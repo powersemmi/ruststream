@@ -11,9 +11,9 @@
 //! copying, or boxing appears on the delivery path: the provided and carried forms borrow
 //! straight out of the delivery on every broker.
 
-use std::any::type_name;
-use std::fmt;
-use std::marker::PhantomData;
+use core::any::type_name;
+use core::fmt;
+use core::marker::PhantomData;
 
 use serde::de::DeserializeOwned;
 

@@ -8,10 +8,10 @@
 //! [`Handler`](super::Handler) counterpart, and [`TypedBatch`] the [`Typed`](super::Typed) decode
 //! adapter.
 
-use std::iter;
+use core::iter;
+use core::{any, fmt, marker::PhantomData};
 #[cfg(feature = "otel")]
 use std::sync::LazyLock;
-use std::{any, fmt, marker::PhantomData};
 
 #[cfg(feature = "otel")]
 use opentelemetry::metrics::Histogram;

@@ -1,11 +1,11 @@
 //! The per-subscriber dispatch loop: pulls messages off one subscriber and invokes its handler
 //! until shutdown is signalled or the stream ends. The runner spawns it, on the runtime it owns.
 
-use std::any::Any;
-use std::panic::AssertUnwindSafe;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context as TaskContext, Poll};
+use alloc::sync::Arc;
+use core::any::Any;
+use core::panic::AssertUnwindSafe;
+use core::pin::Pin;
+use core::task::{Context as TaskContext, Poll};
 
 #[cfg(feature = "testing")]
 use bytes::Bytes;
@@ -125,8 +125,8 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held>(
     let _held = held;
     let delivery = lent.delivery();
     let host = lent.host();
-    let mut stream = std::pin::pin!(subscriber.stream());
-    let mut cancelled = std::pin::pin!(shutdown.cancelled());
+    let mut stream = core::pin::pin!(subscriber.stream());
+    let mut cancelled = core::pin::pin!(shutdown.cancelled());
     // One encode buffer for the whole loop: a reply that leaves through a publisher which
     // reads the payload is written into this one every time, so the subscription allocates
     // it once and never again.
@@ -142,7 +142,7 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held>(
                 // context, the handler's own state and the settle path, and awaiting the
                 // call expression makes the loop build it on the stack and copy it into
                 // its own state on every delivery.
-                let handling = std::pin::pin!(dispatch(
+                let handling = core::pin::pin!(dispatch(
                     &*handler,
                     &mut slot,
                     &mut encode,

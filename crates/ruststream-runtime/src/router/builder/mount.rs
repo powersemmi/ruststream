@@ -1,7 +1,7 @@
 //! Mounting one handler definition on its source: the `include` forms' shared tails, each
 //! building the route its form dispatches through.
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 

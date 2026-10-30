@@ -11,7 +11,7 @@
 //! declared it, which is the same rule a reply follows: a declared destination and a naming
 //! transform are mutually exclusive.
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use crate::Publisher;
 use crate::publish::{

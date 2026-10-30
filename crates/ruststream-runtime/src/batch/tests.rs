@@ -1,7 +1,7 @@
-use std::future::ready;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use core::future::ready;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use core::time::Duration;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
 
 use bytes::Bytes;
 use futures::StreamExt;
@@ -56,7 +56,7 @@ async fn per_element_outcomes_settle_individually() {
     for msg in redelivered {
         msg.ack().await.unwrap();
     }
-    let mut stream = std::pin::pin!(sub.stream());
+    let mut stream = core::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
 }
 
@@ -165,7 +165,7 @@ async fn per_element_outcomes_carry_delays() {
     let batch = pull_batch(&mut sub).await;
     handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
-    let mut stream = std::pin::pin!(sub.stream());
+    let mut stream = core::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
     time::advance(Duration::from_secs(5)).await;
     task::yield_now().await;
@@ -339,7 +339,7 @@ async fn fail_fast_decode_tears_down_and_drops_the_element() {
     assert_eq!(*seen.lock().unwrap(), [1]);
 
     // The undecodable element was dropped, not requeued into the same failure.
-    let mut stream = std::pin::pin!(sub.stream());
+    let mut stream = core::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
 }
 
@@ -669,7 +669,7 @@ async fn deferred_copies(
     sub: &mut MemorySubscriber,
     expected: usize,
 ) -> Vec<(Vec<u8>, Option<String>)> {
-    let mut stream = std::pin::pin!(sub.stream());
+    let mut stream = core::pin::pin!(sub.stream());
     let mut copies = Vec::with_capacity(expected);
     for _ in 0..expected {
         let msg = time::timeout(DEFER * 100, stream.next())
