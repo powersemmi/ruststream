@@ -8,7 +8,9 @@ use core::marker::PhantomData;
 use alloc::borrow::Cow;
 use core::num::NonZeroU32;
 
-use crate::{Broker, Connected, PublishPolicy, Publisher, RetryDeclaration, Subscriber};
+use crate::{
+    Broker, Connected, LocalBroker, PublishPolicy, Publisher, RetryDeclaration, Subscriber,
+};
 
 use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
@@ -101,7 +103,7 @@ pub struct Router<B, Routes = (), C = (), Layers = Identity, Pipe = PublishIdent
     pub(super) _broker: PhantomData<fn() -> B>,
 }
 
-impl<B: Broker + 'static> Default for Router<B> {
+impl<B: LocalBroker + 'static> Default for Router<B> {
     fn default() -> Self {
         Self {
             routes: (),
@@ -119,7 +121,7 @@ impl<B, Routes, C, Layers, Pipe> fmt::Debug for Router<B, Routes, C, Layers, Pip
     }
 }
 
-impl<B: Broker + 'static> Router<B, ()> {
+impl<B: LocalBroker + 'static> Router<B, ()> {
     /// Creates an empty router decoding with the [`DefaultCodec`](crate::codec::DefaultCodec).
     #[must_use]
     pub fn new() -> Self {
@@ -127,7 +129,7 @@ impl<B: Broker + 'static> Router<B, ()> {
     }
 }
 
-impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
+impl<B: LocalBroker + 'static, RouteCodec, RouteLayers, RoutePipe>
     Router<B, (), RouteCodec, RouteLayers, RoutePipe>
 {
     /// Adds a router-scope middleware layer, wrapping every handler in this router when the
@@ -151,7 +153,9 @@ impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
     }
 }
 
-impl<B: Broker + 'static, RouteCodec, RoutePipe> Router<B, (), RouteCodec, Identity, RoutePipe> {
+impl<B: LocalBroker + 'static, RouteCodec, RoutePipe>
+    Router<B, (), RouteCodec, Identity, RoutePipe>
+{
     /// The empty chain a [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) drives one registration
     /// through: the scope's codec and its publish pipeline, with no router-scope layers of its
     /// own (the app's stack wraps at the drain, as it does for any router).
@@ -167,7 +171,7 @@ impl<B: Broker + 'static, RouteCodec, RoutePipe> Router<B, (), RouteCodec, Ident
     }
 }
 
-impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
+impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Sets the codec that subsequent `include` calls decode with, replacing the default.

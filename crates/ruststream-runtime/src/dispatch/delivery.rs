@@ -354,6 +354,7 @@ mod tests {
         let host = Tracked(TaskTracker::new());
         let ack_anything =
             |_: &PlainMessage<[u8; BULK]>, _: &mut Context<'_>| ready(HandlerOutcome::ack());
+        let ack_anything = Arc::new(ack_anything);
         let dispatching = dispatch(
             &ack_anything,
             &mut slot,

@@ -4,7 +4,9 @@
 use alloc::borrow::ToOwned;
 use core::marker::PhantomData;
 
-use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, Connected, LocalBroker, LocalSubscriptionSource, SubscriptionSource,
+};
 
 use crate::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch, batch_metadata};
 use crate::batch_inject::{BatchInjectDef, batch_inject_metadata};
@@ -21,13 +23,13 @@ use crate::router::routes_inject::{BatchInjectRoute, InjectRoute};
 use crate::router::routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 use crate::router::{
     BatchInjectedRouter, BatchPublishingRouter, IncludedBatchRouter, IncludedCarriedBatchRouter,
-    IncludedRawBatchRouter, IncludedRouter, InjectedRouter, PublishingRouter, RawReplyRouter,
-    SourceMessage,
+    IncludedRawBatchRouter, IncludedRouter, InjectedRouter, LocalConnected, LocalSourceMessage,
+    PublishingRouter, RawReplyRouter, SourceMessage,
 };
 
 use super::Router;
 
-impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
+impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Mounts a definition on `source`, decoding with `codec`. The shared tail of the plain and
@@ -39,16 +41,15 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         codec: DecodeCodec,
     ) -> IncludedRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
+        Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
         Def: SubscriberDef,
-        Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
+        Def::Input: Materialize<DecodeCodec, LocalSourceMessage<B, Source>>,
         Def::Handler: 'static,
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def)
-            .materialized_with::<Def::Input, DecodeCodec, SourceMessage<B, Source>>()
-            .describing::<Connected<B>, _>(&source);
+            .materialized_with::<Def::Input, DecodeCodec, LocalSourceMessage<B, Source>>()
+            .describing::<LocalConnected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let handler = Typed::over(codec, def.into_handler()).on_decode_failure(policies.decode);
@@ -71,6 +72,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         codec: DecodeCodec,
     ) -> IncludedBatchRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
+        B: Broker,
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
         Def: BatchDef + BatchSized,
@@ -107,6 +109,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         def: Def,
     ) -> IncludedRawBatchRouter<B, Source, Def, F, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
+        B: Broker,
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
         Def: BatchDef<Input = Provided<F>> + BatchSized,
@@ -140,6 +143,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         def: Def,
     ) -> IncludedCarriedBatchRouter<B, Source, Def, T, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
+        B: Broker,
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
         Def: BatchDef<Input = Carried<T>> + BatchSized,
@@ -187,6 +191,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Routes,
     >
     where
+        B: Broker,
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Send + 'static,
         Def: InjectDef + 'static,
@@ -229,6 +234,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Routes,
     >
     where
+        B: Broker,
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
         Def: BatchInjectDef + BatchSized + 'static,
@@ -282,6 +288,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Routes,
     >
     where
+        B: Broker,
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
         Def: BatchPublishingDef + BatchSized + 'static,
@@ -337,6 +344,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Routes,
     >
     where
+        B: Broker,
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Send + 'static,
         Def: PublishingDef + 'static,
@@ -386,6 +394,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Routes,
     >
     where
+        B: Broker,
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Send + 'static,
         Def: PublishingDef + 'static,

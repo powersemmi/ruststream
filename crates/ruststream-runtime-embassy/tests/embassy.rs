@@ -9,6 +9,9 @@
 #![allow(clippy::future_not_send)]
 
 use core::cell::Cell;
+use core::convert::Infallible;
+use core::future::ready;
+use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
 use std::alloc::System;
 use std::sync::Arc;
@@ -16,13 +19,17 @@ use std::sync::Arc;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
+use ruststream_core::LocalBroker;
 use ruststream_core::LocalIncomingMessage;
 use ruststream_runtime::{
     Clock, Context, Delivery, DispatchFailure, FailurePolicies, HandlerOutcome, HeadersAtOnce,
     LocalHandler, run_sequential,
 };
+use ruststream_runtime::{
+    Deserialized, Handle, Input, OpenRoutes, Router, RunRoutes, SoloDeserialized, subscriber,
+};
 use ruststream_runtime_embassy::frames::{
-    Frame, FrameDelivery, FrameSubscriber, Frames, Settlements,
+    Frame, FrameBroker, FrameDelivery, FrameSource, FrameSubscriber, Frames, Settlements,
 };
 use ruststream_runtime_embassy::{Control, CountDetached, EmbassyClock, Health};
 use static_cell::StaticCell;
@@ -50,6 +57,74 @@ struct Probe {
     handled: Cell<u32>,
     ended: Cell<bool>,
     checked: Cell<bool>,
+    app: App,
+}
+
+/// The second broker's statics: an app whose subscription a `Router` mounts.
+struct App {
+    frames: Frames,
+    settled: Settlements,
+    stop: Control,
+    seen: AtomicU32,
+    ended: Cell<bool>,
+}
+
+/// A reading as the device's handler takes it: a view over the frame's bytes, decoded by no
+/// codec.
+struct Reading<'a>(&'a [u8]);
+
+impl Deserialized for Reading<'_> {
+    type Output<'a> = Reading<'a>;
+    type Error = Infallible;
+
+    fn from_payload(payload: &[u8]) -> Result<Reading<'_>, Infallible> {
+        Ok(Reading(payload))
+    }
+}
+
+impl Input for Reading<'_> {
+    type Axis = SoloDeserialized<Reading<'static>>;
+}
+
+/// The app's handler: counts the readings it saw, and drops an empty one.
+struct CountReadings {
+    seen: &'static AtomicU32,
+}
+
+impl Handle<Reading<'_>> for CountReadings {
+    fn handle(
+        &self,
+        reading: &Reading<'_>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> + Send {
+        let verdict = if reading.0.is_empty() {
+            Err(HandlerOutcome::drop())
+        } else {
+            self.seen.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        };
+        ready(verdict)
+    }
+}
+
+/// The app's routes, as a device service declares them.
+fn routes(seen: &'static AtomicU32) -> impl OpenRoutes<FrameBroker> {
+    Router::<FrameBroker>::new()
+        .include(subscriber(FrameSource::new("readings"), CountReadings { seen }).build())
+}
+
+/// The app's task: connects the broker, opens every route the router holds and runs them in one
+/// future until the app's control stops it.
+#[embassy_executor::task]
+async fn app(broker: FrameBroker, app: &'static App, host: &'static CountDetached) {
+    let connected = broker.connect().await.expect("the broker connects");
+    let opened = routes(&app.seen)
+        .open(&connected)
+        .await
+        .expect("every route opens");
+    opened.run(&app.stop, &Arc::new(()), host).await;
+    app.ended.set(true);
 }
 
 /// The payload a device's handler cannot use: it drops the frame at once.
@@ -80,12 +155,9 @@ impl LocalHandler<FrameDelivery> for WaitOnClock {
 /// The subscription's task: concrete, as every embassy task is, over the generic body.
 #[embassy_executor::task]
 async fn subscription(subscriber: FrameSubscriber, probe: &'static Probe) {
-    // The body takes its handler in the `Arc` a multi-thread runner shares it in; on one thread
-    // it is a refcount touched once, at startup.
-    #[allow(clippy::arc_with_non_send_sync)]
-    let handler = Arc::new(WaitOnClock {
+    let handler = WaitOnClock {
         handled: &probe.handled,
-    });
+    };
     let delivery = Delivery::<()>::unscoped();
     let failure = DispatchFailure::new(FailurePolicies::default(), &probe.stop);
     run_sequential(
@@ -198,7 +270,37 @@ async fn drive(probe: &'static Probe) {
     assert_eq!(probe.host.detached(), 0, "work detached by the delivery");
     passed("shutdown ends the loop, with nothing failed or detached");
 
+    check_the_app(&probe.app).await;
     probe.checked.set(true);
+}
+
+/// Publishes to the app a `Router` mounted, and reads what its subscription did.
+async fn check_the_app(app: &App) {
+    let delivery_path = Region::new(ALLOCATOR);
+    app.frames
+        .send(Frame::new(b"reading").expect("the payload fits a frame"))
+        .await;
+    settle().await;
+    app.frames
+        .send(Frame::new(b"").expect("the payload fits a frame"))
+        .await;
+    settle().await;
+    let allocations = delivery_path.change().allocations;
+    let settled = (
+        app.seen.load(Ordering::Relaxed),
+        app.settled.acked(),
+        app.settled.nacked(),
+    );
+
+    assert_eq!(settled, (1, 1, 1), "seen, acked, nacked through the router");
+    passed("a router mounts a definition on a broker that is not Send");
+    assert_eq!(allocations, 0, "allocations on the router's delivery path");
+    passed("the router's delivery path allocates nothing");
+
+    app.stop.stop();
+    settle().await;
+    assert!(app.ended.get(), "the app's run outlives shutdown");
+    passed("shutdown ends the app's run");
 }
 
 fn main() {
@@ -213,11 +315,20 @@ fn main() {
         handled: Cell::new(0),
         ended: Cell::new(false),
         checked: Cell::new(false),
+        app: App {
+            frames: Frames::new(),
+            settled: Settlements::new(),
+            stop: Control::new(),
+            seen: AtomicU32::new(0),
+            ended: Cell::new(false),
+        },
     });
     EXECUTOR.init(Executor::new()).run_until(
         |spawner: Spawner| {
             let subscriber = FrameSubscriber::new(&probe.frames, &probe.settled);
             spawner.spawn(subscription(subscriber, probe).expect("the subscription task is free"));
+            let broker = FrameBroker::new(&probe.app.frames, &probe.app.settled);
+            spawner.spawn(app(broker, &probe.app, &probe.host).expect("the app task is free"));
             spawner.spawn(drive(probe).expect("the driver task is free"));
         },
         || probe.checked.get(),
