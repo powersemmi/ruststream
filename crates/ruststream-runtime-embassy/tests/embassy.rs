@@ -25,7 +25,7 @@ use ruststream_core::LocalIncomingMessage;
 use ruststream_core::{BytesMut, CallerName, OutgoingDestination};
 use ruststream_runtime::{
     Clock, Context, Delivery, DispatchFailure, FailurePolicies, HandlerOutcome, HeadersAtOnce,
-    LocalDetach, LocalHandler, run_sequential,
+    INSTRUMENTED_BODY, LocalDetach, LocalHandler, run_sequential,
 };
 use ruststream_runtime::{
     Deserialized, Handle, Input, LocalBlanketLayer, OpenRoutes, ReplyShape, Router, RunRoutes,
@@ -468,6 +468,34 @@ async fn check_the_app(app: &App) {
 /// subscription took.
 async fn check_the_bursts(app: &App) {
     let acked = app.settled.acked();
+    let first = burst(app).await;
+    let taken = (
+        app.batches.load(Ordering::Relaxed),
+        app.batched.load(Ordering::Relaxed),
+        app.settled.acked() - acked,
+    );
+    let second = burst(app).await;
+    println!("allocations of the first batch: {first}, of the second: {second}");
+
+    assert_eq!(taken, (1, 3, 3), "batches, readings, acks of one burst");
+    passed("a batch subscription takes a burst as one batch and acks it");
+    // The form's own: the batch's deliveries collected, and the vector of values built from
+    // them, as on the multi-thread runner. The second batch is the steady state: what the first
+    // initialized once is not on it.
+    if INSTRUMENTED_BODY {
+        // The harness's and OpenTelemetry's records ride every batch of such a build.
+        println!(
+            "skipped: the body of this build records batches for the harness or OpenTelemetry"
+        );
+    } else {
+        assert_eq!(second, BATCH_ALLOCATIONS, "allocations of one batch");
+        passed("a batch allocates what the form allocates on any runner");
+    }
+}
+
+/// Publishes three frames to the app's burst channel at once and lets the app take them,
+/// counting what that allocated.
+async fn burst(app: &App) -> usize {
     let burst = Region::new(ALLOCATOR);
     for payload in [b"one".as_slice(), b"two", b"three"] {
         app.bursts
@@ -475,19 +503,7 @@ async fn check_the_bursts(app: &App) {
             .await;
     }
     settle().await;
-    let allocations = burst.change().allocations;
-    let taken = (
-        app.batches.load(Ordering::Relaxed),
-        app.batched.load(Ordering::Relaxed),
-        app.settled.acked() - acked,
-    );
-
-    assert_eq!(taken, (1, 3, 3), "batches, readings, acks of one burst");
-    passed("a batch subscription takes a burst as one batch and acks it");
-    // The form's own: the batch's deliveries collected, and the vector of values built from
-    // them, as on the multi-thread runner.
-    assert_eq!(allocations, BATCH_ALLOCATIONS, "allocations of one batch");
-    passed("a batch allocates what the form allocates on any runner");
+    burst.change().allocations
 }
 
 /// Sends a request to the app's reply subscription, and reads the reply it published.
