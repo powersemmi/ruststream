@@ -33,6 +33,8 @@
 mod forward;
 mod read;
 
+pub use forward::CloneSource;
+
 use alloc::borrow::Cow;
 use core::fmt;
 use core::marker::PhantomData;
@@ -115,7 +117,9 @@ pub struct SubscriberBuilder<Def, Src, State, DefCodec = ()> {
     _state: PhantomData<fn() -> State>,
 }
 
-impl<Def, Src> SubscriberBuilder<Def, Src, AllOpen> {
+// The descriptor's `Clone` is asked where the builder is made, so a descriptor without it is
+// named at that call rather than behind the form's mount at `include`.
+impl<Def, Src: CloneSource> SubscriberBuilder<Def, Src, AllOpen> {
     /// The builder over `def` subscribing on `source`, with every setting still open.
     ///
     /// Called by the `#[subscriber]` expansion; a hand-written definition that wants the same

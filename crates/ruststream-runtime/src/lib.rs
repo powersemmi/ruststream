@@ -334,7 +334,7 @@ pub use settings::{
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith, Sequential};
+pub use settings::{CapsBatches, CloneSource, DefinitionInputCodec, MountsWith, Sequential};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use slot::{

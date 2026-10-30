@@ -5,7 +5,7 @@ use alloc::borrow::Cow;
 use core::fmt;
 use core::marker::PhantomData;
 
-use crate::settings::{CapsBatches, SubscriberBuilder};
+use crate::settings::{CapsBatches, CloneSource, SubscriberBuilder};
 
 use super::axis::{Batch, BatchCarried, BatchDeserialized, BatchPair, BatchSet, Input};
 use super::docs::{Docs, Documented, Probed, ProbedDocs, Undocumented};
@@ -126,7 +126,7 @@ pub fn subscriber<Src, In, R, O, C, S, H>(
     body: H,
 ) -> FreshChain<In::Axis, R, O, C, H, Src>
 where
-    Src: IntoSource,
+    Src: IntoSource<Source: CloneSource>,
     In: ?Sized + Input,
     H: Handle<In, R, O, C, S>,
 {
@@ -171,7 +171,7 @@ pub fn local_subscriber<Src, In, R, O, C, S, H>(
     body: H,
 ) -> FreshChain<In::Axis, R, O, C, H, Src>
 where
-    Src: IntoSource,
+    Src: IntoSource<Source: CloneSource>,
     In: ?Sized + Input,
     H: LocalHandle<In, R, O, C, S>,
 {
