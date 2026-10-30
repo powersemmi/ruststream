@@ -42,7 +42,7 @@ pub use builder::{AttachDeclaration, AttachRetry, RouterBroker};
 pub use builders::RouterCommit;
 pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOut, RouterWith};
 #[doc(hidden)]
-pub use head::{ChainHead, PoisonAt, Poisoned, SplitHead};
+pub use head::{ChainHead, Plain, Poison, PoisonAt, PoisonMode, Poisoned, SplitHead};
 pub use local::LocalPipeline;
 #[doc(hidden)]
 pub use local::{LayerFits, PoolFits, RouterPipe, TakesWorkers};

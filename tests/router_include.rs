@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use common::{Order, Receipt};
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
-    AppInfo, Context, Handler, HandlerOutcome, Layer, Router, RustStream, SubscriberSettings,
+    AppInfo, Context, ForReply, Handler, HandlerOutcome, Layer, Outgoing, PublishContext,
+    PublishTransform, Reads, Router, RouterDef, RustStream, SubscriberSettings,
     layers::TracingLayer,
 };
 use ruststream::testing::TestApp;
@@ -170,4 +171,58 @@ async fn a_mount_chain_goes_on_to_the_next_include() {
         .published::<Receipt>("rc-out")
         .assert_called_once()
         .with(&Receipt { id: 7 });
+}
+
+#[subscriber("rg-in", reply("rg-out"))]
+async fn rg_confirm(o: &Order) -> Receipt {
+    Receipt { id: o.id }
+}
+
+/// A reply transform that stamps every reply it sees.
+struct StampReply;
+
+impl<C, Options> PublishTransform<ForReply<C>, Options> for StampReply {
+    type Destination = Reads;
+
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        _cx: &PublishContext<'_, C>,
+    ) {
+        out.headers_mut().insert("x-stamp", b"1".to_vec());
+    }
+}
+
+/// A router a module builds and returns behind `impl RouterDef`, the way a service splits its
+/// routes across files.
+fn returned_routes() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
+    Router::<MemoryBroker>::new().include(ri_plain)
+}
+
+/// A router returned from a function grows at the caller: another mount, and a reply transform
+/// on it, chain onto the routes the function built.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_returned_router_takes_more_mounts() {
+    let router = returned_routes()
+        .include(rg_confirm)
+        .out_reply(MemoryPublish)
+        .transform(StampReply)
+        .include(ri_batch.batch(nonzero!(64)));
+
+    let app = RustStream::new(AppInfo::new("grow", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup failed");
+    drive_all(&tb, &["ri-plain", "ri-batch"]).await;
+    tb.message(&Order { id: 9 })
+        .to("rg-in")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("rg-out")
+        .assert_called_once()
+        .with(&Receipt { id: 9 })
+        .with_header("x-stamp", b"1");
 }

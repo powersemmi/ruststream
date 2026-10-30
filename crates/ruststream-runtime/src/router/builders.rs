@@ -35,7 +35,7 @@ use crate::slot::{
 };
 
 use super::builder::RouterBroker;
-use super::head::PoisonAt;
+use super::head::{PoisonAt, ScopeOut};
 use super::local::{PoolFits, RouterPipe};
 use super::mount::RouterMount;
 use super::routes::RetryDestinationsDeclared;
@@ -434,7 +434,8 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     pub fn transform<N>(
         self,
         transform: N,
-    ) -> <R as PoisonAt>::Out<
+    ) -> ScopeOut<
+        R,
         TransformWitness<Attach, N, Last, Def, R::Broker>,
         RouterWith<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>,
     >

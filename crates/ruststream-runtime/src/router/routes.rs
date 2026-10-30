@@ -23,6 +23,7 @@ use crate::retry::DestinationDeclared;
 use crate::retry::RetryOpen;
 use crate::{CopyPath, RetryDeclaration};
 
+use super::head::{Plain, PoisonAt};
 use super::mount_sink::MountSink;
 use super::{SourceBatch, SourceMessage};
 
@@ -531,7 +532,9 @@ where
 /// own down to its registrations, and the parameter defaults to
 /// [`PublishIdentity`](crate::PublishIdentity), which is the path of a router built
 /// without publish middleware - so `RouterDef<B>` names what a builder function returns.
-pub trait RouterDef<B: Broker, State = (), RetryPipeline = PublishIdentity> {
+pub trait RouterDef<B: Broker, State = (), RetryPipeline = PublishIdentity>:
+    PoisonAt<Mode = Plain> + RetryDestinationsDeclared
+{
     /// Applies `global` to every registration and pushes it into `sink`. Called by `include_router`.
     #[doc(hidden)]
     fn mount<G, PP, Sink>(
@@ -578,7 +581,7 @@ impl RouterHandlers for () {
 impl<B, Head, Tail, State, RetryPipeline> RouterDef<B, State, RetryPipeline> for (Head, Tail)
 where
     B: Broker + 'static,
-    Head: MountRoute<B, State, RetryPipeline>,
+    Head: MountRoute<B, State, RetryPipeline> + RetryDestinationsDeclared,
     Tail: RouterDef<B, State, RetryPipeline>,
 {
     fn mount<G, PP, Sink>(

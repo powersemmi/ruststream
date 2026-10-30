@@ -64,17 +64,44 @@ impl<Route, Tail: SplitHead> SplitHead for (Route, Tail) {
 /// no type and the compiler says nothing more about the chain built on it. The poison applies
 /// only to a list that ends in a [`ChainHead`], where the broker is known: a [`Router`] built on
 /// its own ends in `()`, passes the output through unchanged and keeps inferring its broker from
-/// the place it is returned to. Machinery; never named directly.
+/// the place it is returned to. Every [`RouterDef`](super::RouterDef) passes it through, so a
+/// router returned behind `impl RouterDef` keeps growing at its caller. Machinery; never named
+/// directly.
 #[doc(hidden)]
 pub trait PoisonAt {
-    /// The mount's output, through the witness on a scope's chain.
+    /// Whether the list reads a mount's output through its witness.
+    type Mode: PoisonMode;
+
+    /// Hands the output over as the type the mode reads it as.
+    fn poison<Witness, Out>(out: Out) -> ScopeOut<Self, Witness, Out> {
+        <Self::Mode as PoisonMode>::poison::<Witness, Out>(out)
+    }
+}
+
+/// How a route list reads a mount's output: [`Plain`] as it is, [`Poison`] through the witness.
+/// Machinery; never named directly.
+#[doc(hidden)]
+pub trait PoisonMode {
+    /// The mount's output, as this mode reads it.
     type Out<Witness, Out>;
 
     /// Hands the output over as that type.
     fn poison<Witness, Out>(out: Out) -> Self::Out<Witness, Out>;
 }
 
-impl PoisonAt for () {
+/// The mode of a list that ends in `()`: the output passes unchanged. Machinery; never named
+/// directly.
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum Plain {}
+
+/// The mode of a scope's chain: the output is read through the witness. Machinery; never named
+/// directly.
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum Poison {}
+
+impl PoisonMode for Plain {
     type Out<Witness, Out> = Out;
 
     fn poison<Witness, Out>(out: Out) -> Out {
@@ -82,15 +109,7 @@ impl PoisonAt for () {
     }
 }
 
-impl<Route, Tail: PoisonAt> PoisonAt for (Route, Tail) {
-    type Out<Witness, Out> = Tail::Out<Witness, Out>;
-
-    fn poison<Witness, Out>(out: Out) -> Self::Out<Witness, Out> {
-        Tail::poison::<Witness, Out>(out)
-    }
-}
-
-impl<Pre> PoisonAt for ChainHead<Pre> {
+impl PoisonMode for Poison {
     type Out<Witness, Out> = <Witness as Poisoned<Out>>::Out;
 
     fn poison<Witness, Out>(out: Out) -> Self::Out<Witness, Out> {
@@ -98,15 +117,23 @@ impl<Pre> PoisonAt for ChainHead<Pre> {
     }
 }
 
+impl PoisonAt for () {
+    type Mode = Plain;
+}
+
+impl<Route, Tail: PoisonAt> PoisonAt for (Route, Tail) {
+    type Mode = Tail::Mode;
+}
+
+impl<Pre> PoisonAt for ChainHead<Pre> {
+    type Mode = Poison;
+}
+
 // A router answers for its route list: its chain steps read their output through it.
 impl<B, Routes: PoisonAt, RouteCodec, RouteLayers, RoutePipe> PoisonAt
     for Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 {
-    type Out<Witness, Out> = Routes::Out<Witness, Out>;
-
-    fn poison<Witness, Out>(out: Out) -> Self::Out<Witness, Out> {
-        Routes::poison::<Witness, Out>(out)
-    }
+    type Mode = Routes::Mode;
 }
 
 /// Carries an output through any witness: what [`PoisonAt`] reads a scope chain's output
@@ -129,7 +156,8 @@ impl<Witness, Out> Poisoned<Out> for Witness {
 }
 
 /// The output of a mount on the route list `Routes`, read through `Witness` on a scope's chain.
-pub(crate) type ScopeOut<Routes, Witness, Out> = <Routes as PoisonAt>::Out<Witness, Out>;
+pub(crate) type ScopeOut<Routes, Witness, Out> =
+    <<Routes as PoisonAt>::Mode as PoisonMode>::Out<Witness, Out>;
 
 // The head names no retry position of its own, so it answers for nothing a `.to(..)` could owe.
 impl<Pre> RetryDestinationsDeclared for ChainHead<Pre> {}
