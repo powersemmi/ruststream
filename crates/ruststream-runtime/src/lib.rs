@@ -302,6 +302,11 @@ pub use router::{
     RouterMount, RouterPipe, RunRoutes, RunsBatches, TakesWorkers,
 };
 #[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use router::{
+    Dispatched, LocalDispatch, LocalPlanned, LocalRoute, OpenedDispatch, SequentialPlan,
+};
+#[cfg(feature = "alloc")]
 pub use router::{
     IncludeDef, LocalPipeline, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut,
     RouterPublishing, RouterPublishingOut, RouterWith, forms,
