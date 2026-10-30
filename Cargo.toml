@@ -12,7 +12,7 @@ members = [
     "crates/ruststream-macros",
     "crates/ruststream-example-suite",
     "crates/ruststream-no-std-probe",
-    "crates/ruststream-embassy-probe",
+    "crates/ruststream-runtime-embassy",
 ]
 # `templates/` holds cargo-generate scaffolds (rendered by `cargo generate`, not built here): their
 # sources carry `{{project-name}}` placeholders that are not valid Rust/TOML until rendered, so they
@@ -64,6 +64,15 @@ tracing = "0.1.29"
 quanta = "0.13.0"
 pin-project-lite = "0.2"
 
+# The embedded runner. Every one builds without `std`; a device binary picks the executor's
+# platform and the time driver, a host test picks `platform-std` and the mock driver.
+embassy-executor = "0.10"
+embassy-futures = "0.1.2"
+embassy-sync = "0.8"
+embassy-time = "0.5.1"
+# Fixed-capacity collections: the embedded runner's headers, frames and pending stores.
+heapless = { version = "0.9", default-features = false }
+
 # Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
 # release for release (a loose range let a partial `cargo update` pair a new core with an old
 # macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
@@ -72,6 +81,7 @@ ruststream-macros = { version = "=0.7.7", path = "crates/ruststream-macros" }
 ruststream-core = { version = "=0.7.7", path = "crates/ruststream-core" }
 ruststream-runtime = { version = "=0.7.7", path = "crates/ruststream-runtime" }
 ruststream-runtime-tokio = { version = "=0.7.7", path = "crates/ruststream-runtime-tokio" }
+ruststream-runtime-embassy = { version = "=0.7.7", path = "crates/ruststream-runtime-embassy" }
 ruststream-memory = { version = "=0.7.7", path = "crates/ruststream-memory" }
 ruststream-asyncapi = { version = "=0.7.7", path = "crates/ruststream-asyncapi" }
 ruststream-observability = { version = "=0.7.7", path = "crates/ruststream-observability" }

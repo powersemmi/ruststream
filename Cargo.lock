@@ -1610,23 +1610,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ruststream-embassy-probe"
-version = "0.0.0"
-dependencies = [
- "critical-section",
- "embassy-executor",
- "embassy-futures",
- "embassy-sync",
- "embassy-time",
- "futures-core",
- "heapless",
- "ruststream-core",
- "ruststream-runtime",
- "static_cell",
- "stats_alloc",
-]
-
-[[package]]
 name = "ruststream-example-suite"
 version = "0.0.0"
 dependencies = [
@@ -1716,6 +1699,23 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "ruststream-runtime-embassy"
+version = "0.7.7"
+dependencies = [
+ "critical-section",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync",
+ "embassy-time",
+ "futures-core",
+ "heapless",
+ "ruststream-core",
+ "ruststream-runtime",
+ "static_cell",
+ "stats_alloc",
 ]
 
 [[package]]
