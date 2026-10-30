@@ -7,7 +7,7 @@ error[E0277]: the subscription `MemorySource` does not carry `Row`
    = help: the trait `ruststream_runtime::input::SourceCarries<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
    = note: mount it on a subscription whose deliveries implement `Carries<Row>`; a `Row` that arrives as bytes derives `Deserialize` instead and rides the codec
 help: the trait `ruststream::runtime::IncludeMount<'_, B, Layers, C, State, Pipeline, Def>` is conditionally implemented for `Subscribing`
-  --> crates/ruststream-runtime/src/app/include/mod.rs
+  --> crates/ruststream-runtime-tokio/src/app/include/mod.rs
    |
    | /         impl<'s, B, Layers, C, State, Pipeline, Def>
    | |             IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form

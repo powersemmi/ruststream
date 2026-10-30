@@ -48,7 +48,7 @@ use crate::host::Halt;
 #[non_exhaustive]
 pub enum FailurePolicy {
     /// Log a loud error naming the subscription, then initiate a graceful app shutdown and make
-    /// [`run`](super::RustStream::run) return `Err`, so an orchestrator restarts the service and
+    /// [`run`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.run) return `Err`, so an orchestrator restarts the service and
     /// the failure lands in the logs. The default for a handler panic. Only takes effect under an
     /// unwinding panic profile; with `panic = "abort"` the process is already gone and there is
     /// nothing to catch.

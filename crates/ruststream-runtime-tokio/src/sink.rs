@@ -5,19 +5,13 @@ use std::{fmt, num::NonZeroUsize, sync::Arc};
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 
-use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber};
-
-use crate::batch::BatchHandler;
-use crate::dispatch::{Workers, spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers};
-use crate::failure::{DispatchFailure, FailurePolicies};
-use crate::handler::Handler;
-use crate::lifecycle::{BoxError, BoxFuture};
-use crate::metadata::HandlerMetadata;
-use crate::middleware::BlanketLayer;
-use crate::redelivery::{ScopeDelivery, open_mounted_subscriber};
+use crate::dispatch::{spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers};
 use crate::shutdown::Shutdown;
-
-use super::mount_sink::{MountSink, Opened};
+use crate::{
+    BatchHandler, BatchSubscriber, BlanketLayer, BoxError, BoxFuture, Broker, BuildContext,
+    Connected, DispatchFailure, FailurePolicies, Handler, HandlerMetadata, MountSink, Opened,
+    ScopeDelivery, Subscriber, Workers, open_mounted_subscriber,
+};
 
 /// A deferred registration: given the broker's connected form (produced by
 /// [`Broker::connect`](crate::Broker::connect) at startup), shared state, the scope's publish

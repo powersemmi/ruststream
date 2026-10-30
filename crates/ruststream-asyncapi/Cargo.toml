@@ -18,6 +18,7 @@ all-features = true
 [dependencies]
 ruststream-core = { workspace = true, features = ["asyncapi"] }
 ruststream-runtime = { workspace = true, features = ["asyncapi"] }
+ruststream-runtime-tokio.workspace = true
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde_norway.workspace = true

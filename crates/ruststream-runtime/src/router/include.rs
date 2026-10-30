@@ -3,7 +3,7 @@
 //! `include` mounts every definition form, single-message and batch alike - an attribute
 //! definition and a value one (`subscriber(..)`, `batch(..)`, ...) the same way; which machinery
 //! runs is picked by the definition's form token ([`IncludeDef::Form`]), exactly as on a
-//! [`BrokerScope`](crate::BrokerScope). Forms that take a publish policy hand back a
+//! [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html). Forms that take a publish policy hand back a
 //! mount chain; because a router is a consuming builder, the chain commits through an explicit
 //! terminal (`.build()`, after an `.out(marker, policy)` per position) and returns the grown
 //! router.
@@ -28,13 +28,13 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// A batch definition's subscriber must implement
     /// [`BatchSubscriber`](crate::BatchSubscriber) - natively, or through
-    /// the [`Buffered`](crate::Buffered) adapter; router and app middleware wrap per-message
+    /// the [`Buffered`](https://docs.rs/ruststream/latest/ruststream/struct.Buffered.html) adapter; router and app middleware wrap per-message
     /// handlers and do not apply to batch registrations.
     ///
     /// Decoding uses the chain's codec when one was set with
     /// [`with_codec`](Router::with_codec), else the
     /// [`DefaultCodec`](crate::codec::DefaultCodec). The router-level counterpart of
-    /// [`BrokerScope::include`](crate::BrokerScope::include).
+    /// [`BrokerScope::include`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.include).
     ///
     /// # Examples
     ///

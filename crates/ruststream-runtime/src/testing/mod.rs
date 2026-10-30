@@ -34,10 +34,10 @@ pub use broker::{
 #[doc(hidden)]
 pub use broker::{LivePublish, live_publish};
 #[cfg(feature = "testing")]
-#[doc(hidden)]
-pub use coordinator::LiveSubscription;
-#[cfg(feature = "testing")]
 pub use coordinator::{Coordinator, Outcome};
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use coordinator::{LiveSubscription, TestHooks};
 #[cfg(feature = "testing")]
 pub use error::TestError;
 #[cfg(feature = "testing")]

@@ -27,8 +27,8 @@ use crate::nonzero;
 use crate::publish::PublishIdentity;
 use crate::publishing::PublishingDef;
 use crate::settings::{BatchSized, SubscriberBuilder, SubscriberSettings};
-use crate::shutdown::Shutdown;
 use crate::subscriber_def::SubscriberDef;
+use crate::testkit::Shutdown;
 use crate::testkit::batch::{publish_payloads, pull_batch};
 use crate::{
     Broker, BuildBatchContext, CallerName, HeaderMap, Name, OutSlot, OutgoingDestination,

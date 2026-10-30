@@ -44,10 +44,8 @@ use tokio::task::coop::consume_budget;
 use tokio_util::task::TaskTracker;
 use tracing::error;
 
-use super::Turn;
-use super::spawn::lane_of;
+use super::{Shutdown, Turn, lane_of};
 use crate::main_runtime::MainRuntime;
-use crate::shutdown::Shutdown;
 
 /// The entries of each thread's ring: enough that a thread finishing a delivery finds the next
 /// one waiting while the loop reads on, few enough that the read-ahead stays small.

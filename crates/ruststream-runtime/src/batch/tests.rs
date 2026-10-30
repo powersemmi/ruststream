@@ -10,10 +10,10 @@ use tokio_util::task::TaskTracker;
 
 use super::super::dispatch::{Delivery, RETRY_COUNT_HEADER};
 use super::super::input::Decoded;
-use super::super::shutdown::Shutdown;
 use super::*;
 use crate::codec::{CodecError, JsonCodec};
 use crate::redelivery::bare_retry_publisher;
+use crate::testkit::Shutdown;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 use crate::testkit::log_capture;
 use crate::{AckError, HeaderMap, Name, Subscriber, SubscriptionSource};

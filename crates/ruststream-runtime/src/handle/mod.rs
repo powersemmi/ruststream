@@ -59,8 +59,6 @@ mod verdict;
 
 #[cfg(all(test, feature = "json", feature = "asyncapi"))]
 mod matrix_tests;
-#[cfg(all(test, feature = "json", feature = "asyncapi"))]
-mod parity_tests;
 
 use crate::settings::{AllOpen, SubscriberBuilder};
 #[doc(hidden)]

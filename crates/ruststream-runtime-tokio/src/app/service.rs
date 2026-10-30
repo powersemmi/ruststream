@@ -6,23 +6,23 @@ use std::{
 };
 
 use crate::bindable::BrokerRegistration;
-use crate::codec::Codec;
 use crate::{Broker, DescribeServer, ServerSpec};
+use ruststream_runtime::codec::Codec;
 
 use tokio_util::task::TaskTracker;
 
+use crate::HandlerMetadata;
+#[cfg(feature = "poll-diagnostics")]
+use crate::PollDiagnostics;
+use crate::ScopeDelivery;
 use crate::bindable::ConnectedSlot;
 use crate::detach::Tracked;
-use crate::lifecycle::{BoxError, BrokerCell, BrokerLifecycle};
-use crate::metadata::HandlerMetadata;
-use crate::middleware::{Identity, Stack};
-#[cfg(feature = "poll-diagnostics")]
-use crate::poll_diagnostics::PollDiagnostics;
-use crate::publish::{PublishIdentity, PublishLayer, PublishStack};
-use crate::redelivery::ScopeDelivery;
-use crate::router::RouterSink;
+use crate::sink::RouterSink;
 #[cfg(feature = "testing")]
-use crate::testing::coordinator::TestHooks;
+use crate::testing::TestHooks;
+use crate::{BoxError, BrokerCell, BrokerLifecycle};
+use crate::{Identity, Stack};
+use crate::{PublishIdentity, PublishLayer, PublishStack};
 
 use super::health::SubscriptionEnd;
 use super::scope::BrokerScope;
@@ -638,7 +638,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// broker is then held for lifecycle management. Call this once per broker.
     ///
     /// The scope carries no codec of its own, so macro handlers mounted with `b.include(handle)`
-    /// decode with the [`DefaultCodec`](crate::codec::DefaultCodec). To decode with another codec
+    /// decode with the [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec). To decode with another codec
     /// scope-wide, use [`with_broker_codec`](Self::with_broker_codec).
     ///
     /// The first call moves the builder to the [`Wired`] phase: the state, the middleware stack,
@@ -666,7 +666,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     }
 
     /// Registers a broker with a scope-wide `codec`, replacing the
-    /// [`DefaultCodec`](crate::codec::DefaultCodec) a codec-less scope decodes with.
+    /// [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec) a codec-less scope decodes with.
     ///
     /// `build` receives a [`BrokerScope`] whose [`include`](BrokerScope::include) family reads
     /// the same as on a codec-less scope (`b.include(handle)`) but decodes with `codec`. A
@@ -738,7 +738,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// [`server(label, spec)`](Self::server) entry for the same label takes precedence.
     ///
     /// Like [`with_broker`](Self::with_broker), the scope decodes with the
-    /// [`DefaultCodec`](crate::codec::DefaultCodec); use
+    /// [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec); use
     /// [`with_broker_labeled_codec`](Self::with_broker_labeled_codec) to name another.
     ///
     /// # Examples
@@ -913,10 +913,8 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             }));
             // The scope's label is the name of this broker's AsyncAPI server, so every channel
             // the scope mounts can say which server it lives on.
-            self.handlers.push(HandlerMetadata {
-                server: label.clone().map(Cow::Owned),
-                ..meta
-            });
+            self.handlers
+                .push(meta.at_server(label.clone().map(Cow::Owned)));
         }
         self.brokers.push(RegisteredBroker {
             lifecycle: Box::new(BrokerCell { broker, slot }),

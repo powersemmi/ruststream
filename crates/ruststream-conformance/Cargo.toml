@@ -17,11 +17,17 @@ all-features = true
 
 [features]
 # The checks on the document a broker's descriptors and bindings produce.
-asyncapi = ["dep:ruststream-asyncapi", "dep:serde_json", "ruststream-runtime/asyncapi"]
+asyncapi = [
+    "dep:ruststream-asyncapi",
+    "dep:ruststream-runtime-tokio",
+    "dep:serde_json",
+    "ruststream-runtime/asyncapi",
+]
 
 [dependencies]
 ruststream-core = { workspace = true, features = ["testing"] }
 ruststream-runtime = { workspace = true, features = ["testing"] }
+ruststream-runtime-tokio = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 bytes = { workspace = true, features = ["std"] }
 inventory.workspace = true

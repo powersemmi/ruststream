@@ -38,7 +38,7 @@ use crate::{
 /// change its signature. Spelling the entry is for pinning it to a concrete live value.
 ///
 /// `Pipe` is that publish path: the app's own publish pipeline (the
-/// [`publish_layer`](crate::RustStream::publish_layer) chain) with the slot's
+/// [`publish_layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.publish_layer) chain) with the slot's
 /// `.transform(..)` steps composed on top. It is [`PublishIdentity`] - nothing in the way, the
 /// bare leaf call - until a mount site names either.
 ///
@@ -503,7 +503,7 @@ where
 ///
 /// The three projections are the include site's business, so nothing the mount does reaches the
 /// body's signature: a `.transform(..)` on the slot, an app-wide
-/// [`publish_layer`](crate::RustStream::publish_layer), a `.codec(..)` override, or a
+/// [`publish_layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.publish_layer), a `.codec(..)` override, or a
 /// different broker behind the policy all land in [`Pipe`](Self::Pipe) and [`Enc`](Self::Enc)
 /// and leave the `where` clause alone.
 ///

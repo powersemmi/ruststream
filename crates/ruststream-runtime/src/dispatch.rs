@@ -30,7 +30,6 @@ use crate::testing::coordinator::{
 use crate::testing::hooks::DueCall;
 pub use delivery::{Delivery, Slot};
 pub(crate) use settle::settle_outcome;
-pub(crate) use spawn::{spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers};
 pub use workers::{Placement, Workers};
 
 /// Header carrying the framework's own retry count.
@@ -600,8 +599,5 @@ mod delivery;
 mod fixtures;
 #[cfg(all(test, feature = "testing"))]
 mod harness_tests;
-mod pool;
 mod settle;
-mod spawn;
-mod threads;
 mod workers;

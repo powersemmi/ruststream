@@ -347,7 +347,9 @@ pub struct TestHooks {
 
 impl TestHooks {
     /// A hooks slot that is never installed: the production / no-harness path.
-    pub(crate) fn detached() -> Self {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn detached() -> Self {
         Self {
             coordinator: OnceLock::new(),
             subscriptions: Mutex::new(Vec::new()),
@@ -358,7 +360,8 @@ impl TestHooks {
     /// returns the subscription's identity. Two subscriptions may report one name (two
     /// subscriptions on one Pulsar topic both report the topic), so the name does not identify
     /// one.
-    pub(crate) fn subscribed(&self, scope_id: usize, name: &str) -> usize {
+    #[doc(hidden)]
+    pub fn subscribed(&self, scope_id: usize, name: &str) -> usize {
         let mut subscriptions = self
             .subscriptions
             .lock()

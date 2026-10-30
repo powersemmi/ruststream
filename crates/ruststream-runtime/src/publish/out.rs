@@ -8,7 +8,7 @@
 //! the slot it was named on and with the app's pipeline underneath it ([`SlotTransforms`],
 //! composed by [`LowerOutTransforms`]), and the entry sends through the whole path
 //! ([`OutPipeline`]). A slot that names no transform in an app that adds no
-//! [`publish_layer`](crate::RustStream::publish_layer) keeps
+//! [`publish_layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.publish_layer) keeps
 //! [`PublishIdentity`] there, which sends the message straight to the leaf - the same call the
 //! entry made before any of this existed.
 //!
@@ -209,7 +209,7 @@ impl<P: Publisher> Publisher for NamedDestinationSend<P> {
 /// The publish path of one [`Out`](crate::Out) slot, as the entry sends through it.
 ///
 /// A slot entry carries the path its mount site composed - the app-wide
-/// [`publish_layer`](crate::RustStream::publish_layer) chain, with the slot's own
+/// [`publish_layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.publish_layer) chain, with the slot's own
 /// `.transform(..)` steps above it - and this is how a publish travels it. `W` is the slot's
 /// wired live value, which is what fixes the broker's per-message options the transforms write.
 /// It is implemented for exactly the three shapes a mount can compose: [`PublishIdentity`]

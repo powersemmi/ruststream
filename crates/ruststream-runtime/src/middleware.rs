@@ -66,7 +66,7 @@ pub trait Layer<H> {
 ///
 /// [`Layer`] is checked per concrete handler (`L: Layer<H>`). That bound cannot be discharged when
 /// the handler types are hidden, which is exactly the case for a [`Router`](super::Router) mounted
-/// through [`include_router`](super::BrokerScope::include_router): its handlers are erased behind
+/// through [`include_router`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.include_router): its handlers are erased behind
 /// [`RouterDef`](super::RouterDef). `BlanketLayer` carries the wrapping as a generic method, so a
 /// layer that applies uniformly (logging, metrics) can wrap every router handler from one bound.
 ///
@@ -169,7 +169,7 @@ pub trait HandlerExt<M, C = (), S = ()>: Handler<M, C, S> + Sized {
 impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 
 /// The identity [`Layer`]: returns the handler unchanged. The default global stack on
-/// [`RustStream`](super::RustStream).
+/// [`RustStream`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Identity;
 
@@ -195,7 +195,7 @@ impl BlanketLayer for Identity {
 
 /// Composes two layers into one: `inner` is applied first (innermost), `outer` wraps it.
 ///
-/// Built by chaining [`RustStream::layer`](super::RustStream::layer); you rarely name it directly.
+/// Built by chaining [`RustStream::layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.layer); you rarely name it directly.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Stack<Inner, Outer> {
     inner: Inner,

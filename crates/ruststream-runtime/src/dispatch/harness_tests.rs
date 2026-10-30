@@ -16,8 +16,8 @@ use crate::batch::CarriedBatch;
 use crate::context::Context;
 use crate::failure::FailurePolicies;
 use crate::handler::HandlerOutcome;
-use crate::shutdown::Shutdown;
 use crate::testing::coordinator::Coordinator;
+use crate::testkit::Shutdown;
 use crate::{
     AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, NamedCopies, Subscriber,
     SubscriptionSource,

@@ -17,7 +17,7 @@
 //! A [`Router`](super::Router) is a consuming builder, so the chain commits through an explicit
 //! terminal, [`build`](RouterWith::build): `Drop` cannot return the router the registration grew
 //! into. A chain left unfinished never becomes a router, so a forgotten `.build()` is a compile
-//! error at the next use. A [`BrokerScope`](crate::BrokerScope) drives the same chain
+//! error at the next use. A [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) drives the same chain
 //! through a guard that commits when the statement ends.
 
 use std::borrow::Cow;
@@ -488,7 +488,8 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// state that could carry the question: `.to(name)` is written after `out_retry(policy)`, and
     /// by then the guard would already have had to be committable. That surface takes the startup
     /// refusal instead, and this is the commit it uses.
-    pub(crate) fn commit_chain(self) -> <Attach as RouterCommit<Mount, R, Def>>::Out
+    #[doc(hidden)]
+    pub fn commit_chain(self) -> <Attach as RouterCommit<Mount, R, Def>>::Out
     where
         Attach: RouterCommit<Mount, R, Def>,
     {

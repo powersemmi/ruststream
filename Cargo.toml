@@ -969,6 +969,7 @@ logging = [
 cli = ["dep:anyhow", "ruststream-cli/tool"]
 poll-diagnostics = [
     "ruststream-runtime/poll-diagnostics",
+    "ruststream-runtime-tokio/poll-diagnostics",
     "ruststream-observability?/poll-diagnostics",
 ]
 testing = [
@@ -976,6 +977,7 @@ testing = [
     "dep:ruststream-testing",
     "ruststream-core/testing",
     "ruststream-runtime/testing",
+    "ruststream-runtime-tokio/testing",
     "ruststream-memory?/testing",
 ]
 otel = ["dep:ruststream-observability", "ruststream-observability/otel"]

@@ -1,5 +1,5 @@
 //! Object-safe erasure of the broker lifecycle ladder, so
-//! [`RustStream`](super::RustStream) can hold brokers of different concrete types in one
+//! [`RustStream`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html) can hold brokers of different concrete types in one
 //! collection.
 //!
 //! Only the ladder transitions (`connect`, `shutdown`) are erased here; they run once per broker
@@ -11,7 +11,7 @@
 
 #[cfg(feature = "testing")]
 use std::any::{Any, TypeId};
-use std::{any::type_name, error::Error as StdError, pin::Pin, sync::Arc};
+use std::{any::type_name, error::Error as StdError, fmt, pin::Pin, sync::Arc};
 
 use crate::bindable::ConnectedSlot;
 use crate::{Broker, ConnectedBroker};
@@ -80,9 +80,20 @@ pub trait ConnectedLifecycle: Send + Sync {
 }
 
 /// The typed unconnected broker paired with the slot its connected form will be published into.
-pub(crate) struct BrokerCell<B: Broker> {
-    pub(crate) broker: B,
-    pub(crate) slot: ConnectedSlot<B>,
+#[doc(hidden)]
+pub struct BrokerCell<B: Broker> {
+    /// The broker, before it connects.
+    pub broker: B,
+    /// Where its connected form is published once it has.
+    pub slot: ConnectedSlot<B>,
+}
+
+impl<B: Broker> fmt::Debug for BrokerCell<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BrokerCell")
+            .field("broker", &type_name::<B>())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<B: Broker + 'static> BrokerLifecycle for BrokerCell<B> {

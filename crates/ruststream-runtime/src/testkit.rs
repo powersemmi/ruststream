@@ -8,12 +8,13 @@
 //! published surface. The user-facing test harness is [`crate::testing`].
 
 use std::fmt;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use tokio::time;
 use tokio_util::task::TaskTracker;
 
-use crate::host::Detach;
+use crate::host::{Detach, Halt};
 use crate::lifecycle::BoxFuture;
 
 /// The runner a delivery built by a unit test hands its leftovers to: tasks on the test's own
@@ -39,6 +40,42 @@ impl Detach for Tracked {
             work.await;
         }));
     }
+}
+
+/// The shutdown a unit test hands the body: it records the failure a fail-fast raised it with, the
+/// first one winning, as the runner's shutdown does.
+#[derive(Debug, Default)]
+pub(crate) struct Shutdown(Mutex<Option<String>>);
+
+impl Shutdown {
+    /// A shutdown nothing has raised yet.
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether a fail-fast raised it.
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.peek_failure().is_some()
+    }
+
+    /// The first failure recorded, naming its subscription.
+    pub(crate) fn peek_failure(&self) -> Option<String> {
+        self.0
+            .lock()
+            .expect("the failure slot is never poisoned")
+            .clone()
+    }
+}
+
+impl Halt for Shutdown {
+    fn fail(&self, subscription: &str, reason: &str) {
+        self.0
+            .lock()
+            .expect("the failure slot is never poisoned")
+            .get_or_insert_with(|| format!("{subscription}: {reason}"));
+    }
+
+    fn stream_ended(&self, _subscription: &str) {}
 }
 
 /// Records the fields of every tracing event emitted while the guard is alive, so a test can

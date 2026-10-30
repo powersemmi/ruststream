@@ -20,10 +20,14 @@
 //! as statements, `|b| { b.include(handle); }`.
 
 mod guard;
+// Every spelling, mounted on this surface and on the router's. The JSON codec and the document
+// schemas it mounts with come with the facade the tests reach the in-memory broker through.
+#[cfg(test)]
+mod parity_tests;
 
 use crate::Broker;
-use crate::middleware::Identity;
-use crate::router::{Router, RouterMount, forms};
+use crate::Identity;
+use crate::{Router, RouterMount, forms};
 
 use super::scope::BrokerScope;
 use crate::Declared;
@@ -190,7 +194,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     ///
     /// Decoding uses the scope codec when one was set
     /// ([`with_broker_codec`](crate::RustStream::with_broker_codec)), else the
-    /// [`DefaultCodec`](crate::codec::DefaultCodec).
+    /// [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec).
     pub fn include<'s, D>(
         &'s mut self,
         def: D,

@@ -7,8 +7,8 @@ use std::time::Duration;
 use tokio::time;
 use tokio_util::task::TaskTracker;
 
-use crate::host::Detach;
-use crate::lifecycle::BoxFuture;
+use crate::BoxFuture;
+use crate::Detach;
 
 /// The runner of a subscription on the app's runtime: what its deliveries leave behind is a task
 /// of the app's tracker, which the teardown drains.

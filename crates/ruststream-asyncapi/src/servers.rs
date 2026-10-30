@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use ruststream_runtime::App;
+use ruststream_runtime_tokio::App;
 
 use super::spec::{Reference, Server};
 

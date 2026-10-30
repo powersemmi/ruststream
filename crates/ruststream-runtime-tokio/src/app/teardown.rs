@@ -9,8 +9,8 @@ use tokio::time::Instant;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
-use crate::lifecycle::{BoxError, BoxFuture, ConnectedLifecycle};
 use crate::shutdown::Shutdown;
+use crate::{BoxError, BoxFuture, ConnectedLifecycle};
 
 use super::{LifecycleHook, RustStreamError};
 

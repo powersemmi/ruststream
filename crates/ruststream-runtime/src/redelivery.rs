@@ -773,10 +773,9 @@ fn announce<Cx>(
 /// The delivery context for a subscriber mounted without a source: nothing describes where a
 /// redelivery of it would be published, and no mount chain can bind the retry position on one, so
 /// there is no retry path to build.
-pub(crate) fn open_mounted_subscriber<Cx>(
-    scope: &ScopeDelivery,
-    subscription: &str,
-) -> Arc<Delivery<Cx>> {
+#[doc(hidden)]
+#[must_use]
+pub fn open_mounted_subscriber<Cx>(scope: &ScopeDelivery, subscription: &str) -> Arc<Delivery<Cx>> {
     Arc::new(Delivery::for_subscription(
         scope,
         subscription,

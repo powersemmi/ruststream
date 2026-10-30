@@ -1,6 +1,7 @@
-//! The application runtime of [RustStream](https://docs.rs/ruststream): the `RustStream` app
-//! builder, the router and its mount chain, the dispatch, the publish pipeline, the codecs and the
-//! in-process dispatch the test harness drives.
+//! The delivery body of [RustStream](https://docs.rs/ruststream), shared by every runner: the
+//! router and its mount chain, the dispatch, the publish pipeline, the codecs and the in-process
+//! dispatch the test harness drives. A runner crate (`ruststream-runtime-tokio`) owns the app's
+//! lifecycle and spawns this body on its runtime.
 //!
 //! Services and broker crates use these items through the `ruststream` facade, which re-exports
 //! them under the paths its documentation teaches:
@@ -25,13 +26,10 @@ mod testkit;
 #[doc(hidden)]
 pub use inventory;
 
-mod app;
 mod batch;
 mod batch_inject;
 mod batch_publishing;
-mod buffered;
 mod context;
-mod detach;
 mod dispatch;
 mod dynstack;
 mod extract;
@@ -43,7 +41,6 @@ mod in_messages;
 mod inject;
 mod input;
 mod lifecycle;
-mod main_runtime;
 mod metadata;
 mod middleware;
 #[cfg(feature = "poll-diagnostics")]
@@ -59,7 +56,6 @@ mod schema_doc;
 #[doc(hidden)]
 pub use schema_doc::{join_headers, schema_json};
 mod settings;
-mod shutdown;
 mod slot;
 mod subscriber_def;
 mod typed;
@@ -74,18 +70,6 @@ pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as Subscriber>::Me
 /// The batch that subscriber yields, where it batches. See [`SourceSubscriber`].
 pub(crate) type SourceBatch<B, S> = <SourceSubscriber<B, S> as BatchSubscriber>::Batch;
 
-#[cfg(feature = "testing")]
-#[doc(hidden)]
-pub use app::TestParts;
-pub use app::{
-    App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
-    RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
-};
-#[doc(hidden)]
-pub use app::{ConnectedEntry, LifecycleHook, RegisteredBroker, ShutdownHooks, Starter, Teardown};
-#[doc(hidden)]
-pub use app::{IncludeMount, ScopeCommit};
-pub use buffered::{Buffered, BufferedSubscriber};
 // The definition-trait dispatch SPI the retired legacy emission used to implement in user
 // crates is internal machinery now: the modules stay, but only what the crate's own mounts
 // reach through this path is re-exported.
@@ -129,7 +113,6 @@ pub use handler::{Handler, HandlerOutcome};
 pub use host::{Clock, ShutdownWait};
 #[doc(hidden)]
 pub use host::{Detach, Halt};
-pub use main_runtime::{MainRuntime, MainRuntimeExt};
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 #[doc(hidden)]
@@ -152,7 +135,7 @@ pub use input::{Provided, TypedLane};
 #[doc(hidden)]
 pub use lifecycle::InProcessConnect;
 #[doc(hidden)]
-pub use lifecycle::{BoxError, BoxFuture, BrokerLifecycle, ConnectedLifecycle};
+pub use lifecycle::{BoxError, BoxFuture, BrokerCell, BrokerLifecycle, ConnectedLifecycle};
 pub use metadata::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
     OutgoingMessageMetadata,
@@ -195,7 +178,7 @@ pub use publish::message_of;
 #[doc(hidden)]
 pub use redelivery::{
     CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere, RetryPairing,
-    RetrySetup, ScopeDelivery,
+    RetrySetup, ScopeDelivery, open_mounted_subscriber,
 };
 pub use retry::Retry;
 #[doc(hidden)]
@@ -214,7 +197,7 @@ pub use router::{
 };
 pub use router::{
     IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
-    RouterPublishingOut, RouterSink, RouterWith, forms,
+    RouterPublishingOut, RouterWith, forms,
 };
 pub use settings::{
     AllOpen, BatchSized, BatchStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
@@ -222,8 +205,6 @@ pub use settings::{
 };
 #[doc(hidden)]
 pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith};
-#[doc(hidden)]
-pub use shutdown::Shutdown;
 #[doc(hidden)]
 pub use slot::{
     AdmitsAt, AdmitsSlotAt, BatchTransformLast, BindAt, BindSlot, Both, CodecAt, CodecLast,

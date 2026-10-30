@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::HandlerMetadata;
 use crate::ServerSpec;
-use crate::metadata::HandlerMetadata;
 
 use super::{AppInfo, RunningApp, RustStream, RustStreamError};
 

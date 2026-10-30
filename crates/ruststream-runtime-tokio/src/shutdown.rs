@@ -9,7 +9,7 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, error};
 
 use super::app::{HealthReport, SubscriptionEnd};
-use crate::host::{Halt, ShutdownWait};
+use crate::{Halt, ShutdownWait};
 
 /// What every dispatch loop stops on, in the two forms a loop asks for, plus the reason where a
 /// failure raised it.

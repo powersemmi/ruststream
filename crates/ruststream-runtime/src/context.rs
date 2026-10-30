@@ -566,7 +566,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// Post-settle hooks are at-most-once: the message is already settled before any hook runs, so
     /// a hook that panics, or that is lost when the process crashes, never causes a redelivery and
     /// never blocks the next delivery. A graceful shutdown drains in-flight hooks (bounded by the
-    /// app's [`shutdown_timeout`](super::RustStream::shutdown_timeout)); an aborted shutdown may
+    /// app's [`shutdown_timeout`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.shutdown_timeout)); an aborted shutdown may
     /// drop them.
     ///
     /// # Examples

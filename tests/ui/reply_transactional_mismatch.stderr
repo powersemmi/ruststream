@@ -28,7 +28,7 @@ help: the following other types implement trait `TransactionalPublisher`
    = note: 1 redundant requirement hidden
    = note: required for `RouterWith<ruststream::runtime::BatchPublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Fixed)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>>, ()), ruststream::runtime::ReplyLast>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
 note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transactional`
-  --> crates/ruststream-runtime/src/app/include/guard.rs
+  --> crates/ruststream-runtime-tokio/src/app/include/guard.rs
    |
    |     pub fn transactional(
    |            ------------- required by a bound in this associated function

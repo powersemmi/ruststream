@@ -5,7 +5,7 @@
 //! the live reply publisher only exists once the broker connects, so mounting captures the
 //! pieces in a starter that pairs the publisher, resolves the startup injections and builds the
 //! handler at startup. A router-mounted publishing handler therefore picks up the app-wide
-//! [`publish_layer`](crate::RustStream::publish_layer) chain.
+//! [`publish_layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.publish_layer) chain.
 
 use std::any::type_name;
 use std::fmt;

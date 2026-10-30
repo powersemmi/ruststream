@@ -10,8 +10,9 @@ use ruststream_core::OutgoingDestination;
 use ruststream_core::{Lend, OutgoingMessage, RawMessage};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use ruststream_runtime::codec::{Codec, DefaultCodec};
+use ruststream_runtime::message_of;
 use ruststream_runtime::{HeadersUnset, MessageBody, PublishBuilder, PublishSink, UnnamedCodec};
-use ruststream_runtime::{Shutdown, message_of};
+use ruststream_runtime_tokio::Shutdown;
 
 use ruststream_runtime::testing::Coordinator;
 use ruststream_runtime::testing::PublishTarget;

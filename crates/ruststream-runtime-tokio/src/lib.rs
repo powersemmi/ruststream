@@ -9,7 +9,39 @@
 //!   [`ruststream::runtime`](https://docs.rs/ruststream/latest/ruststream/runtime/);
 //! - [`time`] as [`ruststream::time`](https://docs.rs/ruststream/latest/ruststream/time/).
 
+// The contract and the shared body, under the names the runner's modules reach them by
+// (`crate::Broker`, `crate::Router`, ...).
+#[allow(clippy::wildcard_imports)]
+use ruststream_core::*;
+#[allow(clippy::wildcard_imports)]
+use ruststream_runtime::*;
+
+mod app;
+mod buffered;
 mod clock;
+mod detach;
+mod dispatch;
+mod main_runtime;
+mod shutdown;
+mod sink;
+#[cfg(test)]
+mod testkit;
 pub mod time;
 
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use app::TestParts;
+pub use app::{
+    App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
+    RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
+};
+#[doc(hidden)]
+pub use app::{ConnectedEntry, LifecycleHook, RegisteredBroker, ShutdownHooks, Starter, Teardown};
+#[doc(hidden)]
+pub use app::{IncludeMount, ScopeCommit};
+pub use buffered::{Buffered, BufferedSubscriber};
 pub use clock::Tokio;
+pub use main_runtime::{MainRuntime, MainRuntimeExt};
+#[doc(hidden)]
+pub use shutdown::Shutdown;
+pub use sink::RouterSink;

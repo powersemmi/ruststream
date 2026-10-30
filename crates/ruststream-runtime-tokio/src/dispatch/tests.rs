@@ -10,16 +10,10 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-use super::super::fixtures::{PlainMessage, Settlement};
+use super::fixtures::{PlainMessage, Settlement, Unscoped};
 use super::*;
-use crate::HeaderMap;
-use crate::context::Context;
-use crate::handler::HandlerOutcome;
 use crate::testkit::log_capture;
-
-use crate::AckError;
-use crate::SubscriptionEnd;
-use crate::failure::FailurePolicies;
+use crate::{Context, FailurePolicies, HandlerOutcome, HeaderMap, SubscriptionEnd};
 
 #[derive(Debug, thiserror::Error)]
 #[error("subscriber stream failed")]
@@ -708,95 +702,4 @@ async fn a_pool_whose_worker_died_stops_rather_than_shrinks() {
         .await
         .expect("the pool kept dispatching on one worker of two")
         .expect("dispatch task should not panic");
-}
-
-/// A delivery whose size is its own: `BULK` is what makes one message type bigger than another,
-/// and both settle through a ready future, so what a dispatch future holds of the delivery is the
-/// only thing that can make it grow.
-struct SizedMessage<const BULK: usize> {
-    headers: HeaderMap,
-    /// The delivery's bytes, held inline the way a broker's message holds its record: this is
-    /// what makes one message type bigger than another.
-    bulk: [u8; BULK],
-}
-
-impl<const BULK: usize> SizedMessage<BULK> {
-    fn new() -> Self {
-        Self {
-            headers: HeaderMap::new(),
-            bulk: [0; BULK],
-        }
-    }
-}
-
-impl<const BULK: usize> IncomingMessage for SizedMessage<BULK> {
-    fn payload(&self) -> &[u8] {
-        &self.bulk
-    }
-
-    fn headers(&self) -> &HeaderMap {
-        &self.headers
-    }
-
-    // The delivery is dropped here rather than carried into the settle future: what a settle
-    // costs is the broker's business, and this one makes it nothing, so the only thing that can
-    // make a dispatch future grow with `BULK` is the dispatch itself.
-    fn ack(self) -> impl Future<Output = Result<(), AckError>> {
-        ready(Ok(()))
-    }
-
-    fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
-        ready(Ok(()))
-    }
-}
-
-/// Acks whatever arrives, for any delivery size.
-struct AckAnything;
-
-impl<C, St, const BULK: usize> Handler<SizedMessage<BULK>, C, St> for AckAnything
-where
-    C: Send,
-    St: Send + Sync,
-{
-    fn handle(
-        &self,
-        _msg: &SizedMessage<BULK>,
-        _ctx: &mut Context<'_, C, St>,
-    ) -> impl Future<Output = HandlerOutcome> + Send {
-        ready(HandlerOutcome::ack())
-    }
-}
-
-/// The size of the future one delivery of `SizedMessage<BULK>` is dispatched through.
-fn dispatch_future_size<const BULK: usize>() -> usize {
-    let state = ();
-    let delivery: Delivery<()> = Delivery::empty();
-    let failure = dispatch_failure();
-    let mut encode = BytesMut::new();
-    let mut slot = Slot::new(SizedMessage::<BULK>::new());
-    let dispatching = dispatch(
-        &AckAnything,
-        &mut slot,
-        &mut encode,
-        "orders",
-        &state,
-        &delivery,
-        &failure,
-    );
-    size_of_val(&dispatching)
-}
-
-#[test]
-fn the_dispatch_future_holds_a_pointer_to_the_delivery_rather_than_the_delivery() {
-    let small = dispatch_future_size::<0>();
-    let large = dispatch_future_size::<4096>();
-
-    assert_eq!(
-        small, large,
-        "the dispatch future grew with the delivery, so it carries the value",
-    );
-    assert!(
-        large < size_of::<SizedMessage<4096>>(),
-        "the dispatch future is at least as large as the delivery it dispatches: {large} bytes",
-    );
 }

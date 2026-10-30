@@ -19,8 +19,6 @@ pub(super) enum Settlement {
     Unsupported,
     /// The transport does settle, but the broker rejected this one.
     Rejected,
-    /// The broker's settlement panics: a fault of the transport, past the handler's guard.
-    Panics,
 }
 
 impl Settlement {
@@ -29,7 +27,6 @@ impl Settlement {
             Self::Accepted => Ok(()),
             Self::Unsupported => Err(AckError::Unsupported),
             Self::Rejected => Err(AckError::Timeout),
-            Self::Panics => panic!("the broker's settlement panicked"),
         }
     }
 }

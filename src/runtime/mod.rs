@@ -37,10 +37,6 @@ pub use ruststream_runtime::{
     AllOpen, BatchSized, BatchStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
-pub use ruststream_runtime::{
-    App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
-    RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
-};
 #[doc(hidden)]
 pub use ruststream_runtime::{
     AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply,
@@ -106,11 +102,8 @@ pub use ruststream_runtime::{
 };
 pub use ruststream_runtime::{
     IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
-    RouterPublishingOut, RouterSink, RouterWith, forms,
+    RouterPublishingOut, RouterWith, forms,
 };
-#[doc(hidden)]
-pub use ruststream_runtime::{IncludeMount, ScopeCommit};
-pub use ruststream_runtime::{MainRuntime, MainRuntimeExt};
 pub use ruststream_runtime::{Placement, RETRY_COUNT_HEADER, Workers};
 #[cfg(feature = "poll-diagnostics")]
 pub use ruststream_runtime::{PollDiagnostics, PollReport};
@@ -124,5 +117,12 @@ pub use ruststream_runtime::{
 #[doc(hidden)]
 pub use ruststream_runtime::{batch_verdict, uniform_batch};
 pub use ruststream_runtime_tokio::Tokio;
+pub use ruststream_runtime_tokio::{
+    App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
+    RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
+};
+#[doc(hidden)]
+pub use ruststream_runtime_tokio::{IncludeMount, ScopeCommit};
+pub use ruststream_runtime_tokio::{MainRuntime, MainRuntimeExt, RouterSink};
 
 pub mod cli;

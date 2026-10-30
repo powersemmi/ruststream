@@ -11,9 +11,8 @@ use tokio::time;
 use ruststream_core::OutgoingDestination;
 use ruststream_core::{Broker, DefaultPublish, PublishPolicy, Publisher};
 use ruststream_runtime::message_of;
-use ruststream_runtime::{
-    HeadersUnset, MessageBody, OutSlot, PublishBuilder, RustStreamError, UnnamedCodec,
-};
+use ruststream_runtime::{HeadersUnset, MessageBody, OutSlot, PublishBuilder, UnnamedCodec};
+use ruststream_runtime_tokio::RustStreamError;
 
 use ruststream_runtime::testing::{
     LivePublish, PublishedAssertions, TestError, TestableRegistration, live_publish,
@@ -56,7 +55,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     }
 
     /// Addresses the broker registered under `label` (see
-    /// [`with_broker_labeled`](ruststream_runtime::RustStream::with_broker_labeled)).
+    /// [`with_broker_labeled`](ruststream_runtime_tokio::RustStream::with_broker_labeled)).
     ///
     /// # Panics
     ///
@@ -309,7 +308,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         }
     }
 
-    /// The result the real [`run`](ruststream_runtime::RustStream::run) would return: `Ok` while the
+    /// The result the real [`run`](ruststream_runtime_tokio::RustStream::run) would return: `Ok` while the
     /// service is healthy, or [`RustStreamError::Dispatch`] once a fail-fast failure tore it down.
     ///
     /// # Errors

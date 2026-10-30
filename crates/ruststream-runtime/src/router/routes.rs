@@ -524,10 +524,10 @@ where
 /// A mountable group of handler registrations.
 ///
 /// Mounting applies the app's global [`BlanketLayer`] to each handler and registers it, so the
-/// app-wide [`layer`](crate::RustStream::layer) stack reaches router handlers.
+/// app-wide [`layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.layer) stack reaches router handlers.
 /// Implemented by [`Router`](crate::Router) and its internal registration list; you
 /// obtain one from a builder and pass it to
-/// [`include_router`](crate::BrokerScope::include_router). You do not implement it.
+/// [`include_router`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.include_router). You do not implement it.
 ///
 /// `State` is the app's shared-state type: a router whose handlers read typed state is
 /// `RouterDef<B, State>` only for that `State`, while a state-agnostic router is generic over it, so it

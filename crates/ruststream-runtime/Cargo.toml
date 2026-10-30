@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-description = "The application runtime of the RustStream messaging framework: router, dispatch, publishing and codecs; services use it through `ruststream`."
+description = "The delivery body of the RustStream messaging framework, shared by every runner: router, dispatch, publishing and codecs; services use it through `ruststream`."
 keywords = ["messaging", "async", "broker", "pubsub", "ruststream"]
 categories = ["asynchronous", "network-programming"]
 readme = "../../README.md"
@@ -26,7 +26,7 @@ metrics = []
 # The decode-failure flag and the batch-size histogram the OpenTelemetry layers read.
 otel = ["dep:opentelemetry"]
 # The in-process dispatch the test harness drives, and the broker contract of that harness.
-testing = ["dep:inventory", "tokio/test-util", "ruststream-core/testing"]
+testing = ["dep:inventory", "dep:tokio", "dep:tokio-util", "tokio/test-util", "ruststream-core/testing"]
 poll-diagnostics = ["dep:quanta", "dep:pin-project-lite"]
 
 [dependencies]
@@ -34,12 +34,12 @@ ruststream-core.workspace = true
 bytes = { workspace = true, features = ["std"] }
 bytes-utils = { workspace = true, features = ["std"] }
 futures.workspace = true
-rtrb.workspace = true
 serde = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-tokio.workspace = true
-tokio-util.workspace = true
 tracing.workspace = true
+# The harness's coordinator steps a reaction on tokio; the delivery body names no runtime.
+tokio = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
 quanta = { workspace = true, optional = true }
 pin-project-lite = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true, features = ["std"] }
@@ -54,8 +54,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1"
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
-# The doc examples serve health over HTTP and decode a Protobuf message on a byte lane.
-axum = "0.8"
+tokio-util = { version = "0.7.10", features = ["rt"] }
+# The doc examples decode a Protobuf message on a byte lane.
 prost = "0.14"
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std", "registry"] }
 # The doc examples are a service's code, so they import the facade; the unit tests reach the

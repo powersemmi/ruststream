@@ -555,7 +555,7 @@ impl ClosedMemoryBroker {
 impl<Log: LogMode> DescribeServer for MemoryBroker<Log> {
     /// The in-memory broker has no network address, so it describes itself as an in-process server
     /// over the `"memory"` protocol. Registered with
-    /// [`with_broker_labeled`](ruststream_runtime::RustStream::with_broker_labeled), the label is its
+    /// [`with_broker_labeled`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.with_broker_labeled), the label is its
     /// stable identity, letting a service mount several memory brokers with disjoint routing and
     /// address each one by name.
     fn describe_server(&self) -> ServerSpec {

@@ -7,10 +7,10 @@
 //! returns an opaque [`RouterDef`] rather than naming that type.
 //!
 //! Bind it to a broker by passing it to
-//! [`BrokerScope::include_router`](crate::BrokerScope::include_router) inside
-//! [`RustStream::with_broker`](crate::RustStream::with_broker). Nothing connects or
+//! [`BrokerScope::include_router`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.include_router) inside
+//! [`RustStream::with_broker`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.with_broker). Nothing connects or
 //! subscribes until the application runs. Unlike a hand-rolled callback group, the app's global
-//! [`layer`](crate::RustStream::layer) stack DOES reach router handlers: each is wrapped
+//! [`layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.layer) stack DOES reach router handlers: each is wrapped
 //! with the app's [`BlanketLayer`](crate::BlanketLayer) global when the router is mounted.
 
 mod builder;
@@ -25,7 +25,6 @@ mod mount_sink;
 mod routes;
 mod routes_inject;
 mod routes_publish;
-mod sink;
 
 pub use builder::Router;
 #[doc(hidden)]
@@ -49,7 +48,6 @@ pub use mount_sink::{MountSink, Opened};
 #[doc(hidden)]
 pub use routes::{RetryDestinationsDeclared, RouteMetadata, RouteSubscription};
 pub use routes::{RouterDef, RouterHandlers};
-pub use sink::RouterSink;
 
 use crate::Connected;
 use crate::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch};

@@ -18,9 +18,10 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::error;
 
-use super::spawn::{lane_of, log_worker_exit};
-use super::{Delivery, DispatchFailure, Handler, Slot, Turn, Workers, dispatch};
-use crate::shutdown::Shutdown;
+use super::{
+    Delivery, DispatchFailure, Handler, Shutdown, Slot, Turn, Workers, dispatch, lane_of,
+    log_worker_exit,
+};
 use crate::{BuildContext, IncomingMessage, Subscriber};
 
 /// What the loop shares with every worker it starts, behind one reference count taken once per
@@ -122,7 +123,7 @@ struct Started<Message> {
     crew: Crew,
 }
 
-/// Starts `workers.count` workers over `shared`, reporting when free unless they are keyed lanes.
+/// Starts `workers.count()` workers over `shared`, reporting when free unless they are keyed lanes.
 fn start<Message, Body, Cx, State>(
     shared: &Arc<Shared<Body, State, Cx>>,
     workers: Workers,
@@ -133,7 +134,7 @@ where
     Cx: BuildContext<Message> + Send + Sync + 'static,
     State: Send + Sync + 'static,
 {
-    let count = workers.count.get();
+    let count = workers.count().get();
     // Every worker is free at the start, so the queue of free ones is seeded with all of them;
     // it never holds more.
     let (free_side, free) = mpsc::channel(count);
@@ -141,14 +142,14 @@ where
     let mut crew = Crew(Vec::with_capacity(count));
     for index in 0..count {
         let (inbox_side, inbox) = mpsc::channel(1);
-        let idle = (!workers.by_key).then(|| Idle {
+        let idle = (!workers.by_key()).then(|| Idle {
             index,
             loop_side: free_side.clone(),
         });
         let shared = Arc::clone(shared);
         crew.0.push(tokio::spawn(work(shared, inbox, idle)));
         inboxes.push(inbox_side);
-        if !workers.by_key {
+        if !workers.by_key() {
             // Room for every worker was made above, and nothing has taken any yet.
             let _ = free_side.try_send(index);
         }
@@ -160,7 +161,7 @@ where
     }
 }
 
-/// Spawns the loop of a subscription with `workers.count` workers: a pool that hands each
+/// Spawns the loop of a subscription with `workers.count()` workers: a pool that hands each
 /// delivery to a free worker, or, with `by_key`, lanes that hand it to the worker its key hashes
 /// to.
 ///
@@ -189,8 +190,8 @@ where
     let consuming = shutdown.consuming();
     tokio::spawn(async move {
         let _consuming = consuming;
-        let count = workers.count.get();
-        let keyed = workers.by_key;
+        let count = workers.count().get();
+        let keyed = workers.by_key();
         let shared = Arc::new(Shared {
             handler,
             name,

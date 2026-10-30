@@ -178,7 +178,7 @@ pub use ruststream_core::{
 };
 
 pub use ruststream_core::nonzero;
-pub use ruststream_runtime::{Buffered, BufferedSubscriber};
+pub use ruststream_runtime_tokio::{Buffered, BufferedSubscriber};
 
 pub mod codec;
 

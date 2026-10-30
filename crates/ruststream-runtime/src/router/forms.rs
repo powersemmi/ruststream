@@ -1,7 +1,7 @@
 //! Form tokens for [`IncludeDef`](super::IncludeDef): which mounting machinery a definition uses.
 //!
 //! A definition names its form once, and both registration surfaces (a
-//! [`Router`](super::Router) chain and a [`BrokerScope`](crate::BrokerScope)) dispatch
+//! [`Router`](super::Router) chain and a [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html)) dispatch
 //! on that token, so `include(def)` reads the same wherever it is written.
 
 /// A plain subscriber (`#[subscriber("in")]`).

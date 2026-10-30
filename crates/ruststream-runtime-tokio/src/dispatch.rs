@@ -1,5 +1,5 @@
 //! The tokio half of the dispatch: the tasks a subscription's loop runs in, its worker pool and
-//! its dedicated threads, all driving the shared body of [`dispatch`](super::dispatch).
+//! its dedicated threads, all driving the shared delivery body of `ruststream-runtime`.
 
 use std::future::poll_fn;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -14,19 +14,17 @@ use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio_util::task::TaskTracker;
 use tracing::error;
 
-use crate::{BatchSubscriber, IncomingMessage, Subscriber};
-
-use super::super::batch::BatchHandler;
-use super::super::detach::OnThread;
-use super::super::failure::DispatchFailure;
-use super::super::handler::Handler;
-use super::super::shutdown::Shutdown;
-use super::pool;
-pub(crate) use super::threads::StartThreadError;
-use super::threads::Threads;
-use super::{
-    Delivery, Placement, Slot, Turn, Workers, dispatch, placed, run_batch, run_sequential,
+use ruststream_runtime::DeliverySlot as Slot;
+use ruststream_runtime::{
+    BatchHandler, Delivery, DispatchFailure, Handler, Placement, Turn, Workers, dispatch, placed,
+    run_batch, run_sequential,
 };
+
+use crate::detach::OnThread;
+use crate::shutdown::Shutdown;
+use crate::{BatchSubscriber, IncomingMessage, Subscriber};
+pub(crate) use threads::StartThreadError;
+use threads::Threads;
 
 /// Spawns a task that drives `subscriber` through `handler` until `shutdown` is triggered or the
 /// stream terminates: [`run_sequential`] on the app's runtime, counted as consuming while it runs.
@@ -57,13 +55,13 @@ where
 
 /// Waits for whichever comes first: a finished worker off `tasks`, or `shutdown`.
 ///
-/// [`turn_into`](super::turn_into)'s counterpart for a full pool, in the same order and over the same pinned token
+/// The sequential loop's turn's counterpart for a full pool, in the same order and over the same pinned token
 /// future: a worker that has already finished is reaped without the token's waiter list being
 /// touched. `Ended` answers an empty set, which a full pool cannot be.
 ///
 /// # Cancel safety
 ///
-/// Cancel-safe, like [`turn_into`](super::turn_into): a `JoinSet` keeps its finished workers across polls, and the
+/// Cancel-safe, like the sequential loop's turn: a `JoinSet` keeps its finished workers across polls, and the
 /// registration a parked poll made with the waiter list outlives that poll.
 pub(super) async fn reap<Wait, Done>(
     tasks: &mut JoinSet<Done>,
@@ -81,7 +79,7 @@ where
     .await
 }
 
-/// Spawns a task that drives `subscriber` through `handler` with `workers.count` long-lived
+/// Spawns a task that drives `subscriber` through `handler` with `workers.count()` long-lived
 /// workers: a pool that hands each delivery to a free worker, or with `by_key` lanes that hand it
 /// to the worker its key hashes to (see [`pool`]).
 ///
@@ -115,7 +113,7 @@ where
             subscriber, handler, shutdown, name, state, delivery, failure,
         ));
     }
-    if matches!(workers.placement, Placement::Threads) {
+    if matches!(workers.placement(), Placement::Threads) {
         return spawn_dispatch_threads(
             subscriber, handler, shutdown, name, state, delivery, failure, workers, tasks,
         );
@@ -154,27 +152,32 @@ where
         delivery,
         failure,
     });
-    let threads = Threads::start(&shared.name, workers.count.get(), workers.by_key, |own| {
-        let shared = Arc::clone(&shared);
-        let delivery = shared
-            .delivery
-            .on_thread(Arc::new(OnThread::new(tasks.clone(), own)));
-        // One encode buffer per thread, for the reason the sequential loop has one.
-        let mut encode = BytesMut::new();
-        async move |msg: S::Message| {
-            let mut slot = Slot::new(msg);
-            dispatch(
-                &*shared.handler,
-                &mut slot,
-                &mut encode,
-                &shared.name,
-                &shared.state,
-                &delivery,
-                &shared.failure,
-            )
-            .await;
-        }
-    })?;
+    let threads = Threads::start(
+        &shared.name,
+        workers.count().get(),
+        workers.by_key(),
+        |own| {
+            let shared = Arc::clone(&shared);
+            let delivery = shared
+                .delivery
+                .on_thread(Arc::new(OnThread::new(tasks.clone(), own)));
+            // One encode buffer per thread, for the reason the sequential loop has one.
+            let mut encode = BytesMut::new();
+            async move |msg: S::Message| {
+                let mut slot = Slot::new(msg);
+                dispatch(
+                    &*shared.handler,
+                    &mut slot,
+                    &mut encode,
+                    &shared.name,
+                    &shared.state,
+                    &delivery,
+                    &shared.failure,
+                )
+                .await;
+            }
+        },
+    )?;
     let consuming = shutdown.consuming();
     Ok(tokio::spawn(async move {
         let _consuming = consuming;
@@ -214,7 +217,7 @@ pub(super) fn log_worker_exit<Done>(joined: Result<Done, JoinError>) -> Option<D
 /// [`BatchSubscriber::batches`] item per invocation, until `shutdown` is triggered or the stream
 /// terminates. The handler owns the batch's deliveries and settles each of them.
 ///
-/// With a non-sequential `workers` policy, up to `workers.count` batches are in flight at once,
+/// With a non-sequential `workers` policy, up to `workers.count()` batches are in flight at once,
 /// each in its own task; keyed lanes do not apply at batch granularity (the macro rejects
 /// `by_key` on batch forms), so a keyed policy degrades to the plain pool.
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
@@ -239,7 +242,7 @@ where
     St: Send + Sync + 'static,
 {
     let workers = placed(workers, &delivery);
-    if matches!(workers.placement, Placement::Threads) {
+    if matches!(workers.placement(), Placement::Threads) {
         return spawn_batch_threads(
             subscriber, handler, shutdown, name, state, delivery, failure, workers, batch_size,
             tasks,
@@ -260,7 +263,7 @@ where
 }
 
 /// The loop of a batch subscription on the app's runtime: one batch at a time where the policy
-/// is sequential, up to `workers.count` at once on a pool of workers otherwise.
+/// is sequential, up to `workers.count()` at once on a pool of workers otherwise.
 async fn batch_loop<S, H, C, St>(
     mut subscriber: S,
     shared: &pool::Shared<H, St, C>,
@@ -292,7 +295,7 @@ async fn batch_loop<S, H, C, St>(
         if shutdown.is_cancelled() {
             break;
         }
-        if tasks.len() >= workers.count.get() {
+        if tasks.len() >= workers.count().get() {
             // The pool is full: reap a finished worker before polling for more.
             match reap(&mut tasks, cancelled.as_mut()).await {
                 Turn::Delivery(joined) => spare.extend(log_worker_exit(joined)),
@@ -413,7 +416,7 @@ where
         delivery,
         failure,
     });
-    let threads = Threads::start(&shared.name, workers.count.get(), false, |own| {
+    let threads = Threads::start(&shared.name, workers.count().get(), false, |own| {
         let shared = Arc::clone(&shared);
         let delivery = shared
             .delivery
@@ -449,4 +452,8 @@ where
 }
 
 #[cfg(test)]
+mod fixtures;
+mod pool;
+#[cfg(test)]
 mod tests;
+mod threads;
