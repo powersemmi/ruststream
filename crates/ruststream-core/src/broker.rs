@@ -230,6 +230,15 @@ crate::__contract_twin! {
         /// ```
         ///
         /// [`connect`]: Self::connect
+        #[diagnostic::on_unimplemented(
+            message = "`{Self}` is not a `Broker`",
+            label = "not a broker this runtime runs",
+            note = "this runtime moves a broker, its deliveries and their futures across threads, \
+                    so it runs brokers whose types are `Send` and implement `Broker`",
+            note = "a broker whose client holds `Rc` or `RefCell` implements `LocalBroker` alone; \
+                    to run here, keep the client's shared state in `Arc` and `Mutex` and implement \
+                    `Broker`"
+        )]
         pub trait Broker: Send + Sync + Sized
     }
     local {
