@@ -1,19 +1,11 @@
 //! [`MainRuntime`]: the app's runtime as a handler reaches it, and the explicit way to send work
 //! there from a dedicated thread.
 
-use std::cell::OnceCell;
-
 use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle};
 
 #[cfg(doc)]
 use crate::context::Context;
-
-thread_local! {
-    /// The app's runtime, on a dedicated thread of a `threads(n)` subscription: set once, before
-    /// the thread's own runtime starts, and read by every handler on the thread that asks for it.
-    static MAIN: OnceCell<Handle> = const { OnceCell::new() };
-}
 
 /// The runtime the app runs on, as a handler reaches it: `Ctx(main): Ctx<MainRuntime>` as a
 /// parameter, or [`Context::main_runtime`].
@@ -61,27 +53,10 @@ thread_local! {
 pub struct MainRuntime(Handle);
 
 impl MainRuntime {
-    /// The app's runtime as the calling handler sees it: the one its dedicated thread recorded,
-    /// or, on any other placement, the runtime the handler runs on, which is the app's.
-    ///
-    /// # Panics
-    ///
-    /// Panics when called outside the context of a Tokio runtime, as
-    /// [`Handle::current`] does; a handler always runs inside one.
-    pub(crate) fn current() -> Self {
-        Self(
-            MAIN.with(|main| main.get().cloned())
-                .unwrap_or_else(Handle::current),
-        )
-    }
-
-    /// Records `main` as the app's runtime for every handler on the calling thread: the first
-    /// thing a runner's dedicated thread does, before its own runtime starts.
-    #[doc(hidden)]
-    pub fn enter_thread(main: Handle) {
-        MAIN.with(|slot| {
-            let _ = slot.set(main);
-        });
+    /// The runtime the calling task runs on, where it runs on one: a subscription captures it
+    /// when it opens, inside the app's startup.
+    pub(crate) fn try_current() -> Option<Self> {
+        Handle::try_current().ok().map(Self)
     }
 
     /// Starts `future` as a task of the app's runtime and returns its handle; the handler does

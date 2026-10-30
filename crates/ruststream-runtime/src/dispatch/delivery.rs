@@ -9,6 +9,8 @@ use crate::IncomingMessage;
 use crate::RetryDeclaration;
 #[cfg(doc)]
 use crate::context::Context;
+#[cfg(feature = "tokio")]
+use crate::main_runtime::MainRuntime;
 #[cfg(feature = "poll-diagnostics")]
 use crate::poll_diagnostics::PollDiagnostics;
 #[cfg(feature = "poll-diagnostics")]
@@ -33,6 +35,12 @@ pub struct Delivery<C = ()> {
     /// What the mount site declared with `max_attempts(..)` and `dead_letter(..)`. Read only
     /// where the runtime is the one moving the delivery.
     pub(crate) declaration: RetryDeclaration,
+    /// The runtime the app runs on, captured where the subscription opens, inside the app's
+    /// startup: a handler reaches it through
+    /// [`Context::main_runtime`](crate::context::Context::main_runtime) to send work there.
+    /// `None` for a subscription a runner opened outside any Tokio runtime.
+    #[cfg(feature = "tokio")]
+    pub(crate) runtime: Option<MainRuntime>,
     /// The harness's recording-and-quiescence hooks for this scope. Empty (uninstalled) outside a
     /// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) run, so the per-delivery read is a single atomic load.
     #[cfg(feature = "testing")]
@@ -61,6 +69,8 @@ impl<C> Delivery<C> {
         Self {
             retry,
             declaration,
+            #[cfg(feature = "tokio")]
+            runtime: MainRuntime::try_current(),
             #[cfg(feature = "testing")]
             hooks: Arc::clone(scope.hooks()),
             #[cfg(feature = "testing")]
@@ -80,6 +90,8 @@ impl<C> Delivery<C> {
         Self {
             retry: None,
             declaration: RetryDeclaration::new(),
+            #[cfg(feature = "tokio")]
+            runtime: MainRuntime::try_current(),
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
@@ -141,6 +153,8 @@ impl<C> Delivery<C> {
                 destination: retry.destination.clone(),
             }),
             declaration: self.declaration.clone(),
+            #[cfg(feature = "tokio")]
+            runtime: self.runtime.clone(),
             #[cfg(feature = "testing")]
             hooks: Arc::clone(&self.hooks),
             #[cfg(feature = "testing")]

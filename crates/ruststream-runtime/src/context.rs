@@ -201,10 +201,6 @@ pub struct Context<'a, C = (), S = ()> {
     /// record; `None` everywhere else, and always outside a harness run.
     #[cfg(feature = "testing")]
     carried: Option<RecordedValue>,
-    /// The app's runtime, read off the runner the first time the handler asks for it: a delivery
-    /// that never asks pays for the empty cell alone.
-    #[cfg(feature = "tokio")]
-    main: OnceCell<MainRuntime>,
 }
 
 impl<C, S> fmt::Debug for Context<'_, C, S> {
@@ -243,8 +239,6 @@ impl<'a, C, S> Context<'a, C, S> {
             decode_failed: false,
             #[cfg(feature = "testing")]
             carried: None,
-            #[cfg(feature = "tokio")]
-            main: OnceCell::new(),
         }
     }
 
@@ -381,8 +375,9 @@ impl<'a, C, S> Context<'a, C, S> {
     ///
     /// # Panics
     ///
-    /// Panics when called outside the context of a Tokio runtime, as Tokio's `Handle::current`
-    /// does; a handler always runs inside one.
+    /// Panics where the subscription opened outside the context of a Tokio runtime, as Tokio's
+    /// `Handle::current` does there; a subscription the Tokio runner starts always opens inside
+    /// one.
     ///
     /// # Examples
     ///
@@ -401,7 +396,10 @@ impl<'a, C, S> Context<'a, C, S> {
     #[cfg(feature = "tokio")]
     #[must_use]
     pub fn main_runtime(&self) -> &MainRuntime {
-        self.main.get_or_init(MainRuntime::current)
+        self.delivery
+            .runtime
+            .as_ref()
+            .expect("the subscription opened outside the context of a Tokio runtime")
     }
 
     /// The delivery's own headers, taken off the broker on the first call and kept for the rest

@@ -38,14 +38,13 @@ use futures::Stream;
 use futures::task::AtomicWaker;
 use rtrb::{Consumer, Producer, RingBuffer};
 use thiserror::Error;
-use tokio::runtime::{Builder, Handle, Runtime};
+use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
 use tokio::task::coop::consume_budget;
 use tokio_util::task::TaskTracker;
 use tracing::error;
 
 use super::{Shutdown, Turn, lane_of};
-use crate::MainRuntime;
 
 /// The entries of each thread's ring: enough that a thread finishing a delivery finds the next
 /// one waiting while the loop reads on, few enough that the read-ahead stays small.
@@ -342,7 +341,6 @@ fn start_thread<Work, Fut>(
     subscription: &str,
     index: usize,
     runtime: Runtime,
-    main: Option<Handle>,
     work: Work,
 ) -> Result<Member, StartThreadError>
 where
@@ -356,10 +354,6 @@ where
     thread::Builder::new()
         .name(name)
         .spawn(move || {
-            // A handler on this thread reaches the app's runtime through `MainRuntime`.
-            if let Some(main) = main {
-                MainRuntime::enter_thread(main);
-            }
             runtime.block_on(async move {
                 let work = work();
                 tokio::select! {
@@ -397,18 +391,16 @@ impl<Item: Send + 'static> Threads<Item> {
     /// `each` builds for it, handed the thread's own tracker: what the handler spawns through it
     /// the thread waits for before it ends. Everything that can fail happens here, before the
     /// subscription's loop runs: a runtime or a thread that cannot start refuses the subscription.
-    pub(super) fn start<Each, Serve>(
+    pub(super) fn start<Each, Handle>(
         subscription: &str,
         count: usize,
         keyed: bool,
         mut each: Each,
     ) -> Result<Self, StartThreadError>
     where
-        Each: FnMut(TaskTracker) -> Serve,
-        Serve: AsyncFnMut(Item) + Send + 'static,
+        Each: FnMut(TaskTracker) -> Handle,
+        Handle: AsyncFnMut(Item) + Send + 'static,
     {
-        // The app's runtime, recorded on every thread for the handlers that send work back to it.
-        let main = Handle::try_current().ok();
         let signals = Arc::new(Signals::new(count));
         let mut rings = Vec::with_capacity(count);
         let mut crew = Crew(Vec::with_capacity(count));
@@ -429,7 +421,6 @@ impl<Item: Send + 'static> Threads<Item> {
                 subscription,
                 index,
                 runtime,
-                main.clone(),
                 async move || {
                     work(signals, index, consumer, handle).await;
                     // The ring is drained; what its deliveries left behind (a continuation, a
