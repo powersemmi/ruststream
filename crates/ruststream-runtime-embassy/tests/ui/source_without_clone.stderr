@@ -48,9 +48,9 @@ help: `RawSubscribing` implements trait `ruststream_runtime::RouterMount<R, Def>
    | |     for forms::RawSubscribing
    | | where
 ...  |
-   | |     F: Send + Sync + 'static,
    | |     RoutePipe: PublishPipeline,
-   | |_______________________________^ `ruststream_runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>`
+   | |     Routes: PoisonAt,
+   | |_____________________^ `ruststream_runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>`
 note: the method call chain might not have had the expected associated types
   --> tests/ui/source_without_clone.rs:73:85
    |
