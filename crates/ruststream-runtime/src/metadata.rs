@@ -1,6 +1,9 @@
 //! Handler metadata collected by the router and consumed by `ruststream-asyncapi`.
 
 use alloc::borrow::Cow;
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::{any::type_name, marker::PhantomData};
 
 #[cfg(feature = "asyncapi")]
@@ -766,6 +769,7 @@ impl HandlerMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn builder_tail_attaches_every_optional_detail() {

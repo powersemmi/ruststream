@@ -1,6 +1,7 @@
 //! Poll-time diagnostics (`poll-diagnostics` feature): how long each subscription's handler
 //! computes between two `.await` points, sampled on every Nth poll.
 
+use alloc::vec::Vec;
 use core::num::NonZeroU32;
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -685,6 +686,7 @@ fn quantile_ns(buckets: &[u64; BUCKETS], q: f64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
 
     /// `new` and `Default` both give the documented defaults.
     #[test]

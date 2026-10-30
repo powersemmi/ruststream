@@ -9,6 +9,9 @@
 //! reply codec). The destination name comes from the macro; the publisher and codec come from
 //! the chain.
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::{any, error, fmt};
 
 use bytes::BytesMut;
@@ -473,6 +476,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::borrow::ToOwned;
+    use alloc::format;
     use core::future::ready;
 
     use super::{PublishingCall, PublishingDef, publishing_metadata};
@@ -548,6 +553,7 @@ mod tests {
     /// subscriber listens.
     #[cfg(feature = "json")]
     mod diagnostics {
+        use alloc::string::String;
         use core::future::ready;
 
         use super::ManualPub;

@@ -7,6 +7,8 @@
 //! switch. Without the feature the state still exists but demands nothing and produces nothing.
 
 use alloc::borrow::Cow;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 use crate::metadata::OutgoingMessageMetadata;
 #[cfg(feature = "asyncapi")]

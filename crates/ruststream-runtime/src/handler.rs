@@ -1,5 +1,6 @@
 //! Handler abstraction and the [`HandlerOutcome`] settlement unit returned to the router.
 
+use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::{convert::Infallible, fmt, pin::Pin, time::Duration};
 
@@ -505,6 +506,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
     use core::time::Duration;
 
     use super::{HandlerOutcome, HandlerResult, IntoOutcome};

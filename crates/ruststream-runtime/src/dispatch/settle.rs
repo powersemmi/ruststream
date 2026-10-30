@@ -1,6 +1,7 @@
 //! Settling a delivery by its handler's outcome: the ack, the nack, and the copies the runtime
 //! publishes for a retry or a dead letter.
 
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use core::time::Duration;
 
@@ -548,6 +549,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::borrow::ToOwned;
     use core::future::ready;
     use core::sync::atomic::{AtomicU8, Ordering};
     use std::io;

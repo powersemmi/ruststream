@@ -2,6 +2,8 @@
 // which the compiler checks whether or not a test constructs one.
 #![allow(dead_code)]
 
+use alloc::string::ToString;
+use alloc::vec;
 use std::collections::HashMap;
 
 use serde::Serialize;

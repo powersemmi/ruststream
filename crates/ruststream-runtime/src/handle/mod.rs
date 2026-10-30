@@ -61,6 +61,7 @@ mod verdict;
 mod matrix_tests;
 
 use crate::settings::{AllOpen, SubscriberBuilder};
+use alloc::string::String;
 #[doc(hidden)]
 pub use axis::{
     Axis, AxisDocs, Batch, BatchCarried, BatchPair, BatchedAxis, DecodeOutcome, Solo, SoloAxis,

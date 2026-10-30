@@ -433,6 +433,7 @@ where
 
 #[cfg(all(test, feature = "json", feature = "asyncapi"))]
 mod tests {
+    use alloc::borrow::ToOwned;
     use alloc::collections::BTreeMap;
 
     use super::{RawReplyWiring, ReplyWiring, TransactionalReply};

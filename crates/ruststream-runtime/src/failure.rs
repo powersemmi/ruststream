@@ -5,6 +5,11 @@
 //! [drops](FailurePolicy::Drop) the one bad message rather than letting any producer take the
 //! consumer down.
 
+#[cfg(feature = "std")]
+use alloc::borrow::ToOwned;
+#[cfg(feature = "std")]
+use alloc::string::String;
+#[cfg(feature = "std")]
 use core::any::Any;
 use core::time::Duration;
 
@@ -183,6 +188,7 @@ impl<Signal> DispatchFailure<Signal> {
     }
 }
 
+#[cfg(feature = "std")]
 /// Renders the payload of a caught panic as a human-readable reason, recovering the message a
 /// `panic!` / `unwrap` / `expect` carries (`&str` or `String`) and falling back to a placeholder
 /// for anything else.

@@ -7,6 +7,8 @@
 //! This module is `#[cfg(test)]` and everything in it is `pub(crate)`: nothing here is part of the
 //! published surface. The user-facing test harness is [`crate::testing`].
 
+use alloc::format;
+use alloc::string::String;
 use core::time::Duration;
 use std::sync::Mutex;
 
@@ -80,6 +82,11 @@ impl Halt for Shutdown {
 /// It compiles where its callers do: with a tracing subscriber and the in-memory broker their
 /// modules need.
 pub(crate) mod log_capture {
+    use alloc::borrow::ToOwned;
+    use alloc::format;
+    use alloc::string::String;
+    use alloc::string::ToString;
+    use alloc::vec::Vec;
     use core::fmt::Debug;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, Once};
@@ -170,6 +177,7 @@ pub(crate) mod log_capture {
 /// and the in-memory broker and codec their modules need.
 #[cfg(feature = "json")]
 pub(crate) mod unreadable {
+    use alloc::vec::Vec;
     use core::future::ready;
 
     use crate::codec::CodecError;
@@ -256,6 +264,7 @@ pub(crate) mod delivery {
 /// them back as one batch.
 #[cfg(feature = "json")]
 pub(crate) mod batch {
+    use alloc::vec::Vec;
     use core::num::NonZeroUsize;
 
     use futures::StreamExt;

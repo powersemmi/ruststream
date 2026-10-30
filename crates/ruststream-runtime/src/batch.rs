@@ -8,6 +8,9 @@
 //! [`Handler`](super::Handler) counterpart, and [`TypedBatch`] the [`Typed`](super::Typed) decode
 //! adapter.
 
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::iter;
 use core::{any, fmt, marker::PhantomData};
 #[cfg(feature = "otel")]

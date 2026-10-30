@@ -20,15 +20,15 @@ all-features = true
 testing = ["ruststream-runtime/testing", "ruststream-core/testing"]
 
 [dependencies]
-ruststream-core.workspace = true
-ruststream-runtime.workspace = true
+ruststream-core = { workspace = true, features = ["std"] }
+ruststream-runtime = { workspace = true, features = ["std"] }
 bytes = { workspace = true, features = ["std"] }
 bytes-utils = { workspace = true, features = ["std"] }
-futures.workspace = true
+futures = { workspace = true, features = ["std", "async-await", "executor"] }
 serde = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 tokio.workspace = true
-tracing.workspace = true
+tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

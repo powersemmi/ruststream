@@ -8,6 +8,8 @@
 //! [`OutgoingDestination`] declaration, so an under-specified publish does not compile.
 
 use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::String;
 use core::error::Error as StdError;
 use core::fmt;
 use core::marker::PhantomData;

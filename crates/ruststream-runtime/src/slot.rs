@@ -17,6 +17,7 @@
 //!   a registration commits only when no `MissingSlot` remains, so a forgotten binding is a
 //!   compile error naming the slot.
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 use core::time::Duration;
 

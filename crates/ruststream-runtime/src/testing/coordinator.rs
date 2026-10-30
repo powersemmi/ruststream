@@ -11,7 +11,11 @@
 //!   standstill before returning: every enqueue into a subscriber increments the counter, every
 //!   completed dispatch decrements it.
 
+use alloc::borrow::ToOwned;
+use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::any::Any;
 use core::fmt;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -689,6 +693,8 @@ impl Coordinator {
 
 #[cfg(test)]
 mod tests {
+    use alloc::boxed::Box;
+    use alloc::format;
     use bytes::Bytes;
 
     use super::*;

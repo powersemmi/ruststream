@@ -7,6 +7,8 @@
 //! them back per message.
 
 use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::any::{Any, type_name};
 use core::fmt;
 
@@ -267,6 +269,8 @@ fn pair_by_payload(log: &[RawMessage], records: &[&PublishedEntry]) -> Vec<Messa
 mod tests {
     use super::{MessageOptions, PublishedEntry, RecordedOptions, RuntimePublish, Span, attribute};
     use crate::RawMessage;
+    use alloc::borrow::ToOwned;
+    use alloc::vec::Vec;
 
     fn message(payload: &[u8]) -> RawMessage {
         RawMessage::new("orders".to_owned(), payload.to_vec())
