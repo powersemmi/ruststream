@@ -5,29 +5,52 @@
 //! [`ruststream::memory`](https://docs.rs/ruststream/latest/ruststream/memory/), whose overview
 //! teaches it.
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(feature = "embassy")]
+extern crate alloc;
+
+#[cfg(feature = "embassy")]
+pub mod local;
+
+#[cfg(feature = "std")]
 mod broker;
+#[cfg(feature = "std")]
 mod capability;
+#[cfg(feature = "std")]
 mod log;
+#[cfg(feature = "std")]
 mod pattern;
+#[cfg(feature = "std")]
 mod subscriber;
 
+#[cfg(feature = "std")]
 pub use broker::{
     ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish,
     MemoryPublisher, MemoryRequest,
 };
+#[cfg(feature = "std")]
 pub use capability::{
     MemoryBatchContext, MemoryContext, MemoryPosition, MemoryRequester, MemorySeeker,
     MemoryTransaction, PARTITION_KEY_HEADER, Position, RequestError, SeekHandle,
 };
+#[cfg(feature = "std")]
 use log::LogState;
+#[cfg(feature = "std")]
 pub use log::{Discarding, LogMode, Retaining, Retention};
+#[cfg(feature = "std")]
 pub use pattern::{MemoryPattern, PatternError, Routing};
+#[cfg(feature = "std")]
 use pattern::{Pattern, PatternGroup, PatternReach};
+#[cfg(feature = "std")]
 use subscriber::SubscriptionShared;
+#[cfg(feature = "std")]
 pub use subscriber::{MemoryMessage, MemorySource, MemorySubscriber};
 
 #[cfg(feature = "testing")]
+#[cfg(feature = "std")]
 use std::sync::OnceLock;
+#[cfg(feature = "std")]
 use std::{
     collections::HashMap,
     num::NonZeroU64,
@@ -37,12 +60,17 @@ use std::{
     },
 };
 
+#[cfg(feature = "std")]
 use bytes::Bytes;
+#[cfg(feature = "std")]
 use ruststream_core::{BytesMut, HeaderMap, OutgoingMessage};
 #[cfg(feature = "testing")]
+#[cfg(feature = "std")]
 use ruststream_runtime::testing::Coordinator;
+#[cfg(feature = "std")]
 use tokio::sync::{Notify, mpsc};
 
+#[cfg(feature = "std")]
 type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 
 /// A message a transaction holds until it settles.
@@ -53,12 +81,14 @@ type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 /// outlives the call that wrote it; a publish that goes straight to the bus lends its name
 /// instead.
 #[derive(Clone)]
+#[cfg(feature = "std")]
 struct MemoryOutbound {
     name: String,
     payload: Bytes,
     headers: HeaderMap,
 }
 
+#[cfg(feature = "std")]
 impl From<OutgoingMessage<'_, BytesMut>> for MemoryOutbound {
     fn from(msg: OutgoingMessage<'_, BytesMut>) -> Self {
         // The publish hands over both the buffer it produced and the map it filled, so the bus
@@ -80,6 +110,7 @@ impl From<OutgoingMessage<'_, BytesMut>> for MemoryOutbound {
 /// [`IncomingMessage::headers`], [`MemoryMessage::name`]), so nothing needs the fields to be
 /// counted apart, and a hand-over - the fanout copy per subscriber, a requeue, a replay off the
 /// publish log - is one atomic increment instead of three.
+#[cfg(feature = "std")]
 struct DeliveryInner {
     name: Arc<str>,
     payload: Bytes,
@@ -91,6 +122,7 @@ struct DeliveryInner {
 /// Cloning one is a reference count on the shared block; what sits beside it is per copy rather
 /// than per message, which is what a requeue and a replay change.
 #[derive(Clone)]
+#[cfg(feature = "std")]
 struct MemoryDelivery {
     shared: Arc<DeliveryInner>,
     /// Zero-based index of this message in its name's publish log. Stable across requeues, so
@@ -106,6 +138,7 @@ struct MemoryDelivery {
     deliveries: NonZeroU64,
 }
 
+#[cfg(feature = "std")]
 impl MemoryDelivery {
     /// The same delivery on its way back to the subscriber it came from.
     fn redelivered(mut self) -> Self {
@@ -122,11 +155,13 @@ impl MemoryDelivery {
 ///
 /// The routing rule outlives a shutdown, because it is the broker's setting rather than a
 /// registration: a revived bus routes the way the broker was built to.
+#[cfg(feature = "std")]
 enum Bus {
     Live(Registry),
     ShutDown(Routing),
 }
 
+#[cfg(feature = "std")]
 impl Default for Bus {
     fn default() -> Self {
         Self::Live(Registry::new(Routing::default()))
@@ -141,12 +176,14 @@ impl Default for Bus {
 /// it, so a publish to a name someone reads allocates nothing for the name. The patterns sit
 /// beside the map rather than in it, so a broker with none of them spends one emptiness check on
 /// them per publish.
+#[cfg(feature = "std")]
 struct Registry {
     names: HashMap<Arc<str>, Vec<Sender>>,
     patterns: Vec<PatternGroup>,
     routing: Routing,
 }
 
+#[cfg(feature = "std")]
 impl Registry {
     fn new(routing: Routing) -> Self {
         Self {
@@ -167,6 +204,7 @@ impl Registry {
     }
 }
 
+#[cfg(feature = "std")]
 struct MemoryState {
     subscribers: Mutex<Bus>,
     /// What the broker keeps of what it published, keyed by the shared delivery name so an
@@ -183,6 +221,7 @@ struct MemoryState {
     coordinator: OnceLock<Coordinator>,
 }
 
+#[cfg(feature = "std")]
 impl MemoryState {
     /// The state of a broker that keeps no log.
     fn discarding() -> Self {
@@ -517,6 +556,7 @@ impl MemoryState {
 }
 
 #[cfg(test)]
+#[cfg(feature = "std")]
 mod tests {
     use futures::{FutureExt, StreamExt};
     use ruststream_core::{
