@@ -24,9 +24,10 @@ use crate::{IncomingMessage, MessageInfo};
 /// The enum is the handler's input: the set decodes one delivery into the variant it picks, and
 /// the generated document lists every variant's model as a message of the subscription, with
 /// that model's own name, description, headers and content type. The variant is picked left to
-/// right by default, by the function `#[in_messages(discriminate = path)]` names, or by the
-/// header `#[in_messages(header = "..")]` names with one `#[in_messages(value = "..")]` per
-/// variant.
+/// right by default, by the function `#[in_messages(discriminate = path)]` names, by the
+/// [`CodecDiscriminator`] type `#[in_messages(discriminate_with_codec = Type)]` names, which
+/// reads the decode codec beside the delivery, or by the header `#[in_messages(header = "..")]`
+/// names with one `#[in_messages(value = "..")]` per variant.
 ///
 /// # Examples
 ///
@@ -204,6 +205,166 @@ pub trait InMessages: Sized + Send + Sync + 'static {
     /// The models of the set, in the order of the variants, as the generated document lists
     /// them.
     fn incoming() -> Vec<IncomingMessageMetadata>;
+}
+
+/// Picks the variant of a message set from the decode codec and the delivery, for a set
+/// declared with `#[in_messages(discriminate_with_codec = Type)]`.
+///
+/// `Kind` is the set's kind enum (`OrderEventKind` for `OrderEvent`), and `DecodeCodec` is the
+/// codec of the scope or router the set mounts under. [`kind`](Self::kind) returns `Some(kind)`
+/// to decode that variant, or `None`, which fails the delivery with a decode error naming the
+/// set. An impl that bounds the codec makes the set mount only under codecs that satisfy the
+/// bound: a set mounted under a codec that cannot answer is a compile error at the mount site.
+/// The call is static, so a delivery pays nothing beyond the discriminator's own work.
+///
+/// A set picked this way implements the decode of every codec its discriminator accepts, not
+/// [`InMessages`] itself: it is a handler input everywhere a set is, and it does not satisfy a
+/// `T: InMessages` bound.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::codec::{Codec, CodecError, JsonCodec};
+/// use ruststream::memory::prelude::*;
+/// use serde::de::DeserializeOwned;
+/// use serde::{Deserialize, Serialize};
+///
+/// /// What a registry codec answers beside decoding: the record a schema id stands for.
+/// pub trait RecordNames: Codec {
+///     fn record_name(&self, schema: &[u8]) -> Option<&'static str>;
+/// }
+///
+/// /// JSON whose records are named by the registry the codec holds.
+/// #[derive(Clone)]
+/// pub struct Registry;
+///
+/// impl Codec for Registry {
+///     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
+///         JsonCodec.encode(value)
+///     }
+///
+///     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
+///         JsonCodec.decode(bytes)
+///     }
+/// }
+///
+/// impl RecordNames for Registry {
+///     fn record_name(&self, schema: &[u8]) -> Option<&'static str> {
+///         match schema {
+///             b"1" => Some("OrderCreated"),
+///             b"2" => Some("OrderShipped"),
+///             _ => None,
+///         }
+///     }
+/// }
+///
+/// /// An order was placed.
+/// #[derive(Deserialize, MessageInfo)]
+/// struct OrderCreated {
+///     id: u64,
+/// }
+///
+/// /// An order was shipped: the same shape, so only the registry tells the two apart.
+/// #[derive(Deserialize, MessageInfo)]
+/// struct OrderShipped {
+///     id: u64,
+/// }
+///
+/// #[derive(InMessages)]
+/// #[in_messages(discriminate_with_codec = ByRecord)]
+/// enum OrderEvent {
+///     Created(OrderCreated),
+///     Shipped(OrderShipped),
+/// }
+///
+/// /// Picks the variant by the record the registry names for the `schema` header.
+/// struct ByRecord;
+///
+/// impl<DecodeCodec: RecordNames> CodecDiscriminator<OrderEventKind, DecodeCodec> for ByRecord {
+///     fn kind<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Option<OrderEventKind> {
+///         match codec.record_name(msg.headers().get("schema")?)? {
+///             "OrderCreated" => Some(OrderEventKind::Created),
+///             "OrderShipped" => Some(OrderEventKind::Shipped),
+///             _ => None,
+///         }
+///     }
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn on_event(event: &OrderEvent) -> HandlerOutcome {
+///     match event {
+///         OrderEvent::Created(created) => tracing::info!(created.id, "created"),
+///         OrderEvent::Shipped(shipped) => tracing::info!(shipped.id, "shipped"),
+///     }
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker_codec(
+///         MemoryBroker::new(),
+///         Registry,
+///         |b| {
+///             b.include(on_event);
+///         },
+///     )
+/// }
+/// # }
+/// # fn main() {}
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot pick a variant of `{Kind}` with the codec `{DecodeCodec}`",
+    label = "the set's discriminator does not accept this codec",
+    note = "a set declared with `#[in_messages(discriminate_with_codec = {Self})]` decodes only \
+            under the codecs `{Self}` implements `CodecDiscriminator<{Kind}, _>` for: mount it \
+            in a scope or router whose codec does"
+)]
+pub trait CodecDiscriminator<Kind, DecodeCodec> {
+    /// The kind of the variant to decode, or `None` when the delivery names none of the set.
+    fn kind<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Option<Kind>;
+}
+
+/// The decode of a message set under one codec: what the handler input of a set reads.
+///
+/// Every [`InMessages`] set implements it for every codec. A set declared with
+/// `#[in_messages(discriminate_with_codec = ..)]` implements it alone, for the codecs its
+/// [`CodecDiscriminator`] accepts. Machinery behind the derive; never named in user code.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "the message set `{Self}` does not decode with the codec `{DecodeCodec}`",
+    label = "mounted under `{DecodeCodec}` here",
+    note = "a set declared with `#[in_messages(discriminate_with_codec = ..)]` decodes only under \
+            the codecs its discriminator implements `CodecDiscriminator` for: mount it in a scope \
+            or router whose codec it accepts"
+)]
+pub trait DecodeSet<DecodeCodec>: Sized + Send + Sync + 'static {
+    /// Decodes one delivery into the variant the set's rule picks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError`] as [`InMessages::decode`] does.
+    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<Self, CodecError>;
+
+    /// The models of the set, as [`InMessages::incoming`] lists them.
+    fn incoming() -> Vec<IncomingMessageMetadata>;
+}
+
+// The set's own `InMessages` impl is what a user wrote or derived; the blanket stays out of an
+// error about a set that has neither.
+#[diagnostic::do_not_recommend]
+impl<Set, DecodeCodec> DecodeSet<DecodeCodec> for Set
+where
+    Set: InMessages,
+    DecodeCodec: Codec,
+{
+    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<Self, CodecError> {
+        <Set as InMessages>::decode(codec, msg)
+    }
+
+    fn incoming() -> Vec<IncomingMessageMetadata> {
+        <Set as InMessages>::incoming()
+    }
 }
 
 /// One model of an [`InMessages`] set: what every variant's type must be.

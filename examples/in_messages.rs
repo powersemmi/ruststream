@@ -3,8 +3,8 @@
 //!
 //! The JSON model decodes through the codec of the mount and the Protobuf model reads its own
 //! bytes: a set mixes the lanes, and the generated document lists each model with its own
-//! format. Three sets below, one per rule: the `event` header, a function over the delivery,
-//! and the order of the variants.
+//! format. Four sets below, one per rule: the `event` header, a function over the delivery, a
+//! discriminator that asks the decode codec, and the order of the variants.
 //!
 //! ```text
 //! cargo test --example in_messages --features testing,macros,memory
@@ -15,8 +15,10 @@
 
 use std::error::Error;
 
+use ruststream::codec::{Codec, CodecError, JsonCodec};
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 // --8<-- [start:models]
@@ -85,6 +87,76 @@ async fn on_update(update: &OrderUpdate) -> HandlerOutcome {
 }
 // --8<-- [end:discriminate]
 
+// --8<-- [start:discriminate_with_codec]
+/// What a registry codec answers beside decoding: the record a schema id stands for.
+trait RecordNames: Codec {
+    fn record_name(&self, schema: &[u8]) -> Option<&'static str>;
+}
+
+/// JSON whose records a schema registry names; the registry here is a fixed table.
+#[derive(Debug, Clone, Copy)]
+struct Registry;
+
+impl Codec for Registry {
+    fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
+        JsonCodec.encode(value)
+    }
+
+    fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
+        JsonCodec.decode(bytes)
+    }
+}
+
+impl RecordNames for Registry {
+    fn record_name(&self, schema: &[u8]) -> Option<&'static str> {
+        match schema {
+            b"1" => Some("OrderCreated"),
+            b"2" => Some("OrderPlaced"),
+            _ => None,
+        }
+    }
+}
+
+/// An order was placed through the legacy checkout: the same JSON shape as `OrderCreated`, so
+/// only the registry tells the two apart.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, MessageInfo)]
+struct OrderPlaced {
+    id: u64,
+}
+
+/// Records named by the registry the scope codec holds: every delivery carries a schema id,
+/// and only the codec knows which record it stands for.
+#[derive(InMessages)]
+#[in_messages(discriminate_with_codec = ByRecord)]
+enum OrderRecord {
+    Created(OrderCreated),
+    Placed(OrderPlaced),
+}
+
+/// Asks the codec which record the `schema` header names. It accepts every codec that names
+/// records, so the set mounts only under such a codec.
+struct ByRecord;
+
+impl<DecodeCodec: RecordNames> CodecDiscriminator<OrderRecordKind, DecodeCodec> for ByRecord {
+    fn kind<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Option<OrderRecordKind> {
+        match codec.record_name(msg.headers().get("schema")?)? {
+            "OrderCreated" => Some(OrderRecordKind::Created),
+            "OrderPlaced" => Some(OrderRecordKind::Placed),
+            _ => None,
+        }
+    }
+}
+
+#[subscriber("orders.records")]
+async fn on_record(record: &OrderRecord) -> HandlerOutcome {
+    match record {
+        OrderRecord::Created(created) => tracing::info!(created.id, "created"),
+        OrderRecord::Placed(placed) => tracing::info!(placed.id, "placed"),
+    }
+    HandlerOutcome::ack()
+}
+// --8<-- [end:discriminate_with_codec]
+
 // --8<-- [start:left_to_right]
 /// No rule: the variants are tried in their order, and the first that decodes wins. The JSON
 /// model comes first because it is the stricter one: a Protobuf reader skips what it does not
@@ -111,6 +183,7 @@ fn app() -> impl App {
         b.include(on_event);
         b.include(on_update);
         b.include(on_change);
+        b.include_router(Router::new().with_codec(Registry).include(on_record));
     })
 }
 // --8<-- [end:app]
@@ -185,6 +258,41 @@ mod tests {
             .subscriber("orders.updates")
             .assert_called(2)
             .settled(HandlerOutcome::ack());
+        Ok(())
+    }
+
+    /// The schema id a producer stamps on every record.
+    #[derive(Serialize)]
+    struct SchemaId {
+        schema: &'static str,
+    }
+
+    #[tokio::test]
+    async fn the_codec_names_the_model() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(app()).await?;
+        let broker = tb.broker::<MemoryBroker>();
+
+        broker
+            .publish_with_headers(
+                "orders.records",
+                &OrderPlaced { id: 7 },
+                &SchemaId { schema: "2" },
+            )
+            .await?;
+        // A schema id the registry does not know picks no record: a decode failure.
+        broker
+            .publish_with_headers(
+                "orders.records",
+                &OrderCreated { id: 8 },
+                &SchemaId { schema: "9" },
+            )
+            .await?;
+        tb.settle().await?;
+
+        broker
+            .subscriber("orders.records")
+            .assert_called(2)
+            .assert_last_failed_to_decode();
         Ok(())
     }
 

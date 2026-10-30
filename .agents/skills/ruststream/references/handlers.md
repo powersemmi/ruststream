@@ -270,7 +270,13 @@ async fn on_event(event: &OrderEvent) -> HandlerOutcome {
 
 A rule a header cannot state (a schema id, a field of the payload) is a function:
 `#[in_messages(discriminate = path)]` names a `fn(&impl IncomingMessage) -> Option<OrderEventKind>`
-over the generated kind enum, and `None` is a decode failure naming the set. With no rule the
+over the generated kind enum, and `None` is a decode failure naming the set. A rule only the
+decode codec can answer (a registry codec that knows which record a schema id stands for) is a
+type: `#[in_messages(discriminate_with_codec = ByRecord)]` names a type implementing
+`CodecDiscriminator<OrderEventKind, DecodeCodec>`, whose `kind(codec, msg)` returns the kind the
+same way; a set mounted under a codec the type does not accept is a compile error at the mount
+site, and such a set does not satisfy a `T: InMessages` bound. A broker crate may ship the type
+for its own format. With no rule the
 variants are tried in their order and the first that decodes wins; that is exact only as far as
 the formats are strict (a Protobuf reader skips unknown fields), so order the strictest model
 first or name a rule. A missing header, an unknown value and a payload no variant decodes are

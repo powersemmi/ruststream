@@ -21,7 +21,7 @@
 //! [`OutgoingMessageMetadata`] a dictionary reports, and [`OutEntry`], the bound a manual body
 //! declares its arena with), the message-set vocabulary ([`InMessages`] over [`SoloSet`], with
 //! [`InVariant`], [`IncomingMessageMetadata`] and [`HeaderDiscriminator`] a hand-written set
-//! names), the state projection ([`FromRef`]) and the extractor binding ([`FromContext`]).
+//! names, and [`CodecDiscriminator`] a codec-aware discriminator implements), the state projection ([`FromRef`]) and the extractor binding ([`FromContext`]).
 //!
 //! Brokers, codecs and the optional feature modules (`asyncapi`, `metrics`, `logging`, `otel`,
 //! `testing`) stay explicit imports.
@@ -103,10 +103,10 @@
 //! ```
 
 pub use crate::runtime::{
-    App, AppInfo, Context, ContextKind, Ctx, DefaultSlot, Deserialized, FailurePolicies,
-    FailurePolicy, ForReply, ForSlot, FromContext, FromRef, Handle, HandlerOutcome,
-    HeaderDiscriminator, Headers, InMessages, InVariant, IncomingMessageMetadata, Input,
-    MainRuntime, MapPublisher, Message, MessageWire, Names, Out, OutEntry, OutMessages,
+    App, AppInfo, CodecDiscriminator, Context, ContextKind, Ctx, DefaultSlot, Deserialized,
+    FailurePolicies, FailurePolicy, ForReply, ForSlot, FromContext, FromRef, Handle,
+    HandlerOutcome, HeaderDiscriminator, Headers, InMessages, InVariant, IncomingMessageMetadata,
+    Input, MainRuntime, MapPublisher, Message, MessageWire, Names, Out, OutEntry, OutMessages,
     OutgoingMessageMetadata, Outs, PublishExt, PublishTransform, PublishedThrough, Reads, Reply,
     ReplyShape, Retry, Router, RouterDef, RunningApp, RustStream, Serialized, SerializedReply,
     SerializedWire, Slot, SoloDeserialized, SoloSet, State, SubscriberSettings, WireBytes, Workers,

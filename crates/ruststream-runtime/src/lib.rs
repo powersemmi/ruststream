@@ -119,7 +119,9 @@ pub use main_runtime::MainRuntime;
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 #[doc(hidden)]
 pub use handler::HandlerResult;
-pub use in_messages::{InMessages, InVariant, MessageDeclaration, VariantOf};
+pub use in_messages::{
+    CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,
+};
 #[doc(hidden)]
 pub use in_messages::{
     VariantLane, every_variant_failed, header_missing, header_unknown, no_variant_chosen,

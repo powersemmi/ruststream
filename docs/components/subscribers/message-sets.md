@@ -29,6 +29,14 @@ The function returning `None` is a decode failure naming the set.
 This is the form for a rule no attribute states: a schema id, a field of the payload, a shape of the bytes.
 A broker crate may ship such a function for its own format.
 
+A rule only the decode codec can answer is a type: `#[in_messages(discriminate_with_codec = ByRecord)]` names one that implements [`CodecDiscriminator`](api:ruststream::runtime::CodecDiscriminator).
+A schema registry is the case: each record carries a schema id, and only the registry codec knows which record the id stands for.
+The type's `kind(codec, msg)` reads the codec of the scope or router and the delivery, and returns the kind the way a function does; `None` is the same decode failure.
+An impl that bounds the codec makes the set mount only under codecs that satisfy the bound: a set mounted under a codec that cannot answer is a compile error at the mount site.
+The call is static, so a delivery pays only for what the type itself does.
+Such a set decodes per codec, so it does not implement `InMessages` itself: it is a handler input everywhere a set is, and a bound of your own written as `T: InMessages` does not accept it.
+A broker crate may ship the type for its own registry.
+
 A set with no rule tries its variants left to right, and the first that decodes wins.
 The order of the variants is the rule, so put the strictest model first.
 Every variant failing is one decode failure that carries each variant's error.
@@ -81,6 +89,12 @@ A rule of your own, over the generated kind enum:
 
 {/* single-form: the rule is a plain function; the manual tab writes the same function inside its `InMessages` impl */}
 ```rust reference="examples/in_messages.rs#discriminate"
+```
+
+A rule that asks the decode codec: the codec names records, and the set mounts under it through a router.
+
+{/* single-form: the per-codec decode of such a set is machinery a hand-written set does not name */}
+```rust reference="examples/in_messages.rs#discriminate_with_codec"
 ```
 
 Left to right, the strictest model first:

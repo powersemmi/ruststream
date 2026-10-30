@@ -43,6 +43,7 @@ mod from_context;
 mod header_materialization;
 mod health_probe;
 mod in_messages;
+mod in_messages_with_codec;
 mod in_process;
 mod lane_traits_without_macros;
 mod lanes;

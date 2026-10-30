@@ -82,6 +82,9 @@ pub use ruststream_runtime::{Bindable, Bound, BrokerRegistration};
 pub use ruststream_runtime::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 #[doc(hidden)]
 pub use ruststream_runtime::{CapsBatches, DefinitionInputCodec, MountsWith};
+pub use ruststream_runtime::{
+    CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,
+};
 #[doc(hidden)]
 pub use ruststream_runtime::{
     CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere, RetryPairing,
@@ -101,7 +104,6 @@ pub use ruststream_runtime::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
     OutgoingMessageMetadata,
 };
-pub use ruststream_runtime::{InMessages, InVariant, MessageDeclaration, VariantOf};
 pub use ruststream_runtime::{
     IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
     RouterPublishingOut, RouterSink, RouterWith, forms,
