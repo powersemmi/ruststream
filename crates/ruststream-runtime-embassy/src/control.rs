@@ -286,9 +286,22 @@ impl<'a> LoopSignal<'a> {
     }
 }
 
+impl LoopSignal<'_> {
+    /// The app's own wait for the stop: it registers the task's waker with the control, so a
+    /// stop wakes the task once and every loop of it reads the flag on that poll.
+    pub(crate) const fn watch(&self) -> Stopping<'_> {
+        Stopping {
+            control: self.control,
+        }
+    }
+}
+
+// A loop's wait reads the flag and registers nothing: every loop runs in the app's one task, and
+// the app's own wait keeps that task registered. A registration per loop would take a critical
+// section per idle loop on every wake.
 impl ShutdownWait for LoopSignal<'_> {
     type Wait<'a>
-        = Stopping<'a>
+        = Flag<'a>
     where
         Self: 'a;
 
@@ -296,9 +309,28 @@ impl ShutdownWait for LoopSignal<'_> {
         (&self.control).is_cancelled()
     }
 
-    fn cancelled(&self) -> Stopping<'_> {
-        Stopping {
+    fn cancelled(&self) -> Flag<'_> {
+        Flag {
             control: self.control,
+        }
+    }
+}
+
+/// A loop's wait for the stop: ready once the flag is set, woken by the app's own wait.
+#[derive(Debug)]
+#[must_use = "a wait does nothing unless polled"]
+pub(crate) struct Flag<'a> {
+    control: &'a Control,
+}
+
+impl Future for Flag<'_> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<()> {
+        if self.control.stopped.load(Ordering::Relaxed) {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
         }
     }
 }
@@ -315,14 +347,48 @@ impl Halt for LoopSignal<'_> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::sync::Arc;
+    use alloc::task::Wake;
     use core::pin::pin;
+    use core::sync::atomic::{AtomicU32, Ordering};
     use core::task::{Context, Poll, Waker};
 
     use embassy_futures::block_on;
 
     use ruststream_runtime::{Halt, ShutdownWait};
 
-    use super::{Control, Health};
+    use super::{Control, Health, LoopSignal};
+
+    /// A waker that counts its wakes.
+    struct Wakes(AtomicU32);
+
+    impl Wake for Wakes {
+        fn wake(self: Arc<Self>) {
+            self.wake_by_ref();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn a_loops_wait_for_the_stop_registers_nothing_and_sees_the_flag() {
+        let control = Control::new();
+        let counted = Arc::new(Wakes(AtomicU32::new(0)));
+        let waker = Waker::from(Arc::clone(&counted));
+        let mut cx = Context::from_waker(&waker);
+        let signal = LoopSignal::new(&control);
+        let mut wait = pin!(signal.cancelled());
+        assert_eq!(wait.as_mut().poll(&mut cx), Poll::Pending);
+        control.stop();
+        assert_eq!(
+            counted.0.load(Ordering::Relaxed),
+            0,
+            "wakes of a loop's own wait: the app's wait wakes the task"
+        );
+        assert_eq!(wait.as_mut().poll(&mut cx), Poll::Ready(()));
+    }
 
     #[test]
     fn a_new_control_reports_the_app_starting() {
