@@ -26,10 +26,10 @@ pub use super::retry::redelivery_address;
 use futures::StreamExt;
 #[cfg(feature = "asyncapi")]
 use ruststream_asyncapi::build_spec;
-#[cfg(doc)]
-use ruststream_core::AckError;
 #[cfg(feature = "asyncapi")]
 use ruststream_core::DescribeServer;
+#[cfg(doc)]
+use ruststream_core::{AckError, IncomingMessage};
 use ruststream_core::{
     Broker, Connected, LocalIncomingMessage, Publisher, Subscribe, Subscriber, SubscriptionSource,
 };
