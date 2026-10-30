@@ -1702,6 +1702,7 @@ dependencies = [
  "futures-core",
  "hash32",
  "heapless",
+ "ruststream-cli",
  "ruststream-core",
  "ruststream-memory",
  "ruststream-runtime",
@@ -1709,6 +1710,7 @@ dependencies = [
  "stats_alloc",
  "thiserror",
  "tracing",
+ "trybuild",
 ]
 
 [[package]]
