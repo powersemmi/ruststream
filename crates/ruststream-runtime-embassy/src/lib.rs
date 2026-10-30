@@ -31,6 +31,7 @@ pub mod frames;
 mod hooks;
 mod host;
 mod lanes;
+mod mailbox;
 mod mounts;
 
 pub use app::{EmbeddedApp, Mounts, Parts, RunError, Scope};

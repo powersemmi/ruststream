@@ -16,7 +16,6 @@ use core::marker::PhantomData;
 use core::pin::pin;
 
 use bytes::BytesMut;
-use embassy_futures::join::join_array;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use futures::StreamExt;
@@ -31,6 +30,7 @@ use ruststream_runtime::{
 use tracing::error;
 
 use crate::host::Detached;
+use crate::mailbox::{Mailbox, join_workers};
 
 /// The plan of one registration on the embedded runner: its lanes and the room it keeps for
 /// delayed retries, `0` for none.
@@ -194,8 +194,7 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
         ..
     } = route;
     let failure = DispatchFailure::new(policies, signal.clone());
-    let inboxes: [Channel<NoopRawMutex, Option<Sub::Message>, 1>; COUNT] =
-        array::from_fn(|_| Channel::new());
+    let mailboxes: [Mailbox<Sub::Message>; COUNT] = array::from_fn(|_| Mailbox::new());
     let free: Channel<NoopRawMutex, usize, COUNT> = Channel::new();
     if !keyed {
         for index in 0..COUNT {
@@ -211,9 +210,9 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
         host,
         failure: &failure,
     };
-    let workers = join_array(array::from_fn::<_, COUNT, _>(|index| {
-        work(&inboxes[index], (!keyed).then_some((&free, index)), &shared)
-    }));
+    let workers = join_workers(&mailboxes, |index, mailbox| {
+        work(mailbox, (!keyed).then_some((&free, index)), &shared)
+    });
     let feed = async {
         let mut stream = pin!(subscriber.stream());
         let mut cancelled = pin!(signal.cancelled());
@@ -245,7 +244,7 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
                             lane_of::<COUNT>,
                         )
                     });
-                    inboxes[lane].send(Some(msg)).await;
+                    mailboxes[lane].send(Some(msg)).await;
                 }
                 Some(Err(err)) => {
                     error!(
@@ -262,8 +261,8 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
             }
         }
         // Each worker finishes the delivery it holds, then reads the end of its lane.
-        for inbox in &inboxes {
-            inbox.send(None).await;
+        for mailbox in &mailboxes {
+            mailbox.send(None).await;
         }
     };
     join(feed, workers).await;
@@ -282,7 +281,7 @@ struct Shared<'a, Body, Cx, State, Signal, Host> {
 /// One worker: dispatches what its lane hands it until the lane ends, and reports itself free
 /// after each delivery when it is a pool's.
 async fn work<Message, Body, Cx, State, Signal, Host, const COUNT: usize>(
-    inbox: &Channel<NoopRawMutex, Option<Message>, 1>,
+    mailbox: &Mailbox<Message>,
     free: Option<(&Channel<NoopRawMutex, usize, COUNT>, usize)>,
     shared: &Shared<'_, Body, Cx, State, Signal, Host>,
 ) where
@@ -294,7 +293,7 @@ async fn work<Message, Body, Cx, State, Signal, Host, const COUNT: usize>(
 {
     // One encode buffer per worker, as the sequential loop keeps one.
     let mut encode = BytesMut::new();
-    while let Some(msg) = inbox.receive().await {
+    while let Some(msg) = mailbox.receive().await {
         let mut slot = DeliverySlot::new(msg);
         dispatch(
             shared.handler,
