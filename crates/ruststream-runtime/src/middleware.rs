@@ -250,6 +250,61 @@ impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 ///     .include(subscriber(LocalMemorySource::new("readings"), Log).build());
 /// # let _ = routes;
 /// ```
+///
+/// The metrics and OpenTelemetry layers wrap the multi-thread runner's handlers only, so a local
+/// router that names one does not open:
+///
+/// ```compile_fail
+/// # use std::convert::Infallible;
+/// # use std::future::ready;
+/// use ruststream::metrics::Metrics;
+/// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, subscriber};
+/// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
+/// use ruststream_runtime::{Deserialized, Input, OpenRoutes, SoloDeserialized};
+/// # struct Reading<'a>(&'a [u8]);
+/// # impl Deserialized for Reading<'_> {
+/// #     type Output<'a> = Reading<'a>;
+/// #     type Error = Infallible;
+/// #     fn from_payload(payload: &[u8]) -> Result<Reading<'_>, Infallible> { Ok(Reading(payload)) }
+/// # }
+/// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
+/// # struct Log;
+/// # impl Handle<Reading<'_>> for Log {
+/// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> + Send { let _ = r.0; ready(Ok(())) }
+/// # }
+/// fn routes(metrics: &Metrics) -> impl OpenRoutes<LocalMemoryBroker<4>> {
+///     Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
+///         .layer(metrics.consume_layer())
+///         .include(subscriber(LocalMemorySource::new("readings"), Log).build())
+/// }
+/// ```
+///
+/// ```compile_fail
+/// # use std::convert::Infallible;
+/// # use std::future::ready;
+/// use ruststream::otel::OpenTelemetryLayer;
+/// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, subscriber};
+/// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
+/// use ruststream_runtime::{Deserialized, Input, OpenRoutes, SoloDeserialized};
+/// # struct Reading<'a>(&'a [u8]);
+/// # impl Deserialized for Reading<'_> {
+/// #     type Output<'a> = Reading<'a>;
+/// #     type Error = Infallible;
+/// #     fn from_payload(payload: &[u8]) -> Result<Reading<'_>, Infallible> { Ok(Reading(payload)) }
+/// # }
+/// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
+/// # struct Log;
+/// # impl Handle<Reading<'_>> for Log {
+/// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> + Send { let _ = r.0; ready(Ok(())) }
+/// # }
+/// fn routes() -> impl OpenRoutes<LocalMemoryBroker<4>> {
+///     Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
+///         .layer(OpenTelemetryLayer)
+///         .include(subscriber(LocalMemorySource::new("readings"), Log).build())
+/// }
+/// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not wrap the handlers of a local router",
     note = "a router started with `Router::local()` wraps its handlers through \
