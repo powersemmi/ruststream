@@ -156,7 +156,6 @@ pub use ruststream_core::{
 };
 pub use ruststream_core::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
 pub use ruststream_core::{Broker, Connected, ConnectedBroker};
-pub use ruststream_core::{Buffered, BufferedSubscriber};
 pub use ruststream_core::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
 pub use ruststream_core::{
     CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,
@@ -169,6 +168,7 @@ pub use ruststream_core::{DeserializeHeadersError, SerializeHeadersError};
 pub use ruststream_core::{IncomingMessage, OutgoingMessage, RawMessage};
 
 pub use ruststream_core::nonzero;
+pub use ruststream_runtime::{Buffered, BufferedSubscriber};
 
 pub mod codec;
 

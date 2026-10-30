@@ -6,7 +6,7 @@
 //! module overviews live there.
 //!
 //! - The broker lifecycle: [`Broker`], [`ConnectedBroker`], [`Connected`].
-//! - Subscribing: [`Subscriber`], [`SubscriptionSource`] and its descriptors, [`Buffered`].
+//! - Subscribing: [`Subscriber`], [`SubscriptionSource`] and its descriptors.
 //! - Publishing: [`Publisher`], [`PublishPolicy`], [`DefaultPublish`], the payload forms
 //!   [`Lend`] and [`Take`].
 //! - Messages: [`IncomingMessage`], [`OutgoingMessage`], [`RawMessage`], [`HeaderMap`].
@@ -18,7 +18,6 @@ pub mod bindable;
 #[cfg(feature = "asyncapi")]
 pub mod bindings;
 mod broker;
-mod buffered;
 mod capability;
 pub mod codec;
 mod describe;
@@ -42,7 +41,6 @@ pub use bytes::{Bytes, BytesMut};
 pub use bytes_utils::Str;
 
 pub use broker::{Broker, Connected, ConnectedBroker};
-pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
     ApiKeyLocation, BatchSubscriber, Carries, CarriesBatch, DescribeServer, HttpApiKeyLocation,
     OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker,

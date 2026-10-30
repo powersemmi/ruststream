@@ -296,7 +296,9 @@ impl<S, P> StartAt<S, P> {
     /// `self.map_source(|source| source.map_inner(|inner| inner.durable("workers")))`.
     ///
     /// The source type may change, which is what a descriptor that wraps another one (the
-    /// client-side [`Buffered`](crate::Buffered) batcher, a broker's own adapter) needs.
+    /// client-side [`Buffered`] batcher, a broker's own adapter) needs.
+    ///
+    /// [`Buffered`]: https://docs.rs/ruststream/latest/ruststream/struct.Buffered.html
     ///
     /// # Examples
     ///

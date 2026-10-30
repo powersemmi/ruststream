@@ -16,7 +16,7 @@ help: the following other types implement trait `BatchSubscriber`
    | impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySubscriber<Log>`
    |
-  ::: crates/ruststream-core/src/buffered.rs
+  ::: crates/ruststream-runtime/src/buffered.rs
    |
    | impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `BufferedSubscriber<S>`
