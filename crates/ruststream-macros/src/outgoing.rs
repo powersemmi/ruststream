@@ -106,7 +106,7 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         #set_where_clause
         {
             fn outgoing()
-                -> ::std::vec::Vec<::ruststream::runtime::OutgoingMessageMetadata>
+                -> ::ruststream::__private::Vec<::ruststream::runtime::OutgoingMessageMetadata>
             {
                 #entries
             }
@@ -127,10 +127,10 @@ fn declared_entries(
     parameters: &TokenStream2,
 ) -> TokenStream2 {
     if !declares {
-        return quote!(::std::vec::Vec::new());
+        return quote!(::ruststream::__private::Vec::new());
     }
     quote! {
-        ::std::vec![
+        ::ruststream::__private::vec![
             ::ruststream::runtime::OutgoingMessageMetadata::new(
                 <#name #ty_generics as ::ruststream::OutgoingDestination>::DESTINATION,
                 ::core::any::type_name::<#name #ty_generics>(),
@@ -398,7 +398,7 @@ fn template_builder(
                     #(#bound,)*
                 {
                     // A templated address is rendered per publish; the fixed form is not.
-                    let address = ::std::format!(#format_string #(, #format_args)*);
+                    let address = ::ruststream::__private::format!(#format_string #(, #format_args)*);
                     ::ruststream::runtime::PublishAt::publish_at(self.cont, &address).await
                 }
             }
@@ -443,7 +443,7 @@ fn setter(
         .enumerate()
         .map(|(position, state)| {
             if position == index {
-                quote!(::std::string::String)
+                quote!(::ruststream::__private::String)
             } else {
                 quote!(#state)
             }
@@ -456,7 +456,7 @@ fn setter(
         .map(|(_, state)| quote!(#state));
     let moved = fields.iter().enumerate().map(|(position, field)| {
         if position == index {
-            quote!(#field: ::std::string::ToString::to_string(&value))
+            quote!(#field: ::ruststream::__private::ToString::to_string(&value))
         } else {
             quote!(#field: self.#field)
         }

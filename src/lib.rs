@@ -290,6 +290,16 @@ pub mod otel;
 pub mod __private {
     use core::marker::PhantomData;
 
+    // The standard names the macros emit, reached through the facade so that a `#![no_std]`
+    // crate, which has neither `::std` nor these names in its prelude, can use the derives.
+    pub use core::error::Error;
+    pub use std::boxed::Box;
+    pub use std::format;
+    pub use std::process::ExitCode;
+    pub use std::string::{String, ToString};
+    pub use std::vec;
+    pub use std::vec::Vec;
+
     use crate::runtime::Serialized;
     #[cfg(feature = "asyncapi")]
     use ruststream_runtime::schema_json;

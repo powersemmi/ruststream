@@ -1,0 +1,17 @@
+[package]
+name = "ruststream-no-std-probe"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A #![no_std] crate that uses every derive and the subscriber attribute, so the code the macros emit is held to names outside the standard library."
+publish = false
+
+[dependencies]
+# A path dependency without a version: the crate is never published.
+ruststream = { path = "../..", default-features = false, features = ["macros", "json"] }
+serde.workspace = true
+
+[lints]
+workspace = true

@@ -10,6 +10,7 @@ members = [
     "crates/ruststream-conformance",
     "crates/ruststream-macros",
     "crates/ruststream-example-suite",
+    "crates/ruststream-no-std-probe",
 ]
 # `templates/` holds cargo-generate scaffolds (rendered by `cargo generate`, not built here): their
 # sources carry `{{project-name}}` placeholders that are not valid Rust/TOML until rendered, so they
