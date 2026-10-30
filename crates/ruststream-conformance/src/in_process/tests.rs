@@ -25,6 +25,8 @@ use ruststream_core::{
 };
 use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, TestableBroker};
 
+mod local;
+
 /// What is wrong with a [`Faulty`] broker's transport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fault {

@@ -35,6 +35,7 @@ use ruststream_core::{
 };
 use ruststream_runtime::testing::{Backlog, TestableBroker};
 
+mod local;
 mod queue;
 
 /// The one rule a [`Faulty`] broker breaks.
