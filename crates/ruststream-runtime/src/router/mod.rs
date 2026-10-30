@@ -38,7 +38,7 @@ pub use local::LocalPipeline;
 // The typed default-reply token is machinery, but the macro expansion names it in generated
 // types (the default attach of a sealed reply definition), so it is public and hidden.
 #[doc(hidden)]
-pub use fold::{OpenLayered, OpenRoutes, OpenedRoute, RunRoutes};
+pub use fold::{OpenLayered, OpenRoutes, OpenedBatchRoute, OpenedRoute, RunRoutes};
 #[doc(hidden)]
 pub use mount::DefaultReply;
 pub use mount::IncludeDef;
@@ -95,13 +95,13 @@ pub(crate) type IncludedBatchRouter<B, S, D, C, RC, RL, RP, R> =
 /// involved, so the adapter carries the message type, the element family `F` and the handler.
 type DeserializedBatchRoute<B, S, D, F> = BatchRoute<
     S,
-    DeserializedBatch<SourceMessage<B, S>, F, <D as BatchDef>::Handler>,
+    DeserializedBatch<LocalSourceMessage<B, S>, F, <D as BatchDef>::Handler>,
     <D as BatchDef>::Context,
 >;
 
 /// The router that mounting a self-deserializing [`BatchDef`] `D` on source `S` onto `R`
 /// produces.
-type IncludedRawBatchRouter<B, S, D, F, RC, RL, RP, R> =
+pub(crate) type IncludedRawBatchRouter<B, S, D, F, RC, RL, RP, R> =
     Router<B, (DeserializedBatchRoute<B, S, D, F>, R), RC, RL, RP>;
 
 /// The route a carried [`BatchDef`] `D` mounted on source `S` becomes: the subscription's batches

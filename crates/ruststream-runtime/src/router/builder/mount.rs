@@ -5,7 +5,8 @@ use alloc::borrow::ToOwned;
 use core::marker::PhantomData;
 
 use crate::{
-    BatchSubscriber, Broker, Connected, LocalBroker, LocalSubscriptionSource, SubscriptionSource,
+    BatchSubscriber, Broker, Connected, LocalBatchSubscriber, LocalBroker, LocalSubscriptionSource,
+    SubscriptionSource,
 };
 
 use crate::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch, batch_metadata};
@@ -109,16 +110,15 @@ impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         def: Def,
     ) -> IncludedRawBatchRouter<B, Source, Def, F, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
-        B: Broker,
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
+        Source::Subscriber: LocalBatchSubscriber,
         Def: BatchDef<Input = Provided<F>> + BatchSized,
         Def::Handler: 'static,
     {
         // The self-deserializing batch mounts with no codec, so the media type it would report
         // is the one nothing produced.
-        let meta =
-            batch_metadata(source.name().to_owned(), &def).describing::<Connected<B>, _>(&source);
+        let meta = batch_metadata(source.name().to_owned(), &def)
+            .describing::<LocalConnected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();

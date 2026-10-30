@@ -16,11 +16,19 @@
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
-use core::future::ready;
+use core::future::{poll_fn, ready};
+use core::num::NonZeroUsize;
+use core::pin::pin;
+use core::task::Poll;
+
+use bytes::BytesMut;
+use futures::Stream;
+use tracing::error;
 
 use futures::future::join;
 
-use crate::dispatch::{Delivery, HeadersAtOnce, Workers, run_sequential};
+use crate::batch::{DeserializedBatch, LocalBatch, LocalBatchHandler};
+use crate::dispatch::{Delivery, HeadersAtOnce, Turn, Workers, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::LocalHandler;
 use crate::host::{Detach, Halt, ShutdownWait};
@@ -29,12 +37,12 @@ use crate::lifecycle::BoxError;
 use crate::middleware::{LocalBlanketLayer, Stack};
 use crate::typed::{LocalTyped, Typed};
 use crate::{
-    BuildContext, Handler, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
-    LocalSubscriptionSource,
+    BuildContext, Handler, LocalBatchSubscriber, LocalBroker, LocalConnected, LocalIncomingMessage,
+    LocalSubscriber, LocalSubscriptionSource,
 };
 
 use super::builder::Router;
-use super::routes::SubscribeRoute;
+use super::routes::{BatchRoute, SubscribeRoute};
 
 /// A finished router's routes, opened against the connected broker into one list.
 ///
@@ -298,5 +306,123 @@ where
             HeadersAtOnce,
         )
         .await;
+    }
+}
+
+/// One opened batch subscription: the subscriber, the batch handler it dispatches to, the size
+/// its batches open at, and what each batch runs under.
+///
+/// A router's layers wrap single-message handlers only, as on the multi-thread runner: a batch
+/// handler runs as the registration built it.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct OpenedBatchRoute<Sub, Body, Cx> {
+    subscriber: Sub,
+    handler: Body,
+    name: Arc<str>,
+    batch_size: NonZeroUsize,
+    delivery: Delivery<Cx>,
+    policies: FailurePolicies,
+}
+
+impl<B, State, Source, M, F, Inner, Cx> OpenLayered<B, State>
+    for BatchRoute<Source, DeserializedBatch<M, F, Inner>, Cx>
+where
+    B: LocalBroker,
+    Source: LocalSubscriptionSource<LocalConnected<B>>,
+    Source::Subscriber: LocalBatchSubscriber<Message = M>,
+    LocalBatch<DeserializedBatch<M, F, Inner>>:
+        LocalBatchHandler<<Source::Subscriber as LocalBatchSubscriber>::Batch, Cx, State>,
+{
+    type Opened<Layers: LocalBlanketLayer + Clone> =
+        OpenedBatchRoute<Source::Subscriber, LocalBatch<DeserializedBatch<M, F, Inner>>, Cx>;
+
+    async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+        self,
+        connected: &LocalConnected<B>,
+        _layers: &Layers,
+    ) -> Result<Self::Opened<Layers>, BoxError> {
+        let name: Arc<str> = Arc::from(self.source.name());
+        // See the single-message route: a policy value, not a type.
+        if self.workers != Workers::sequential() {
+            return Err(Box::from(alloc::format!(
+                "subscription `{name}`: this runner dispatches one batch at a time, and the \
+                 registration asks for workers"
+            )));
+        }
+        let subscriber = self
+            .source
+            .subscribe(connected)
+            .await
+            .map_err(|err| -> BoxError { Box::new(err) })?;
+        Ok(OpenedBatchRoute {
+            subscriber,
+            handler: LocalBatch(self.handler),
+            name,
+            batch_size: self.batch_size,
+            delivery: Delivery::unscoped(),
+            policies: self.policies,
+        })
+    }
+}
+
+impl<State, Sub, Body, Cx> RunRoutes<State> for OpenedBatchRoute<Sub, Body, Cx>
+where
+    Sub: LocalBatchSubscriber,
+    Body: LocalBatchHandler<Sub::Batch, Cx, State>,
+{
+    async fn run<Signal, Host>(mut self, signal: Signal, state: &Arc<State>, host: &Host)
+    where
+        Signal: ShutdownWait + Halt + Clone,
+        Host: Detach,
+    {
+        let failure = DispatchFailure::new(self.policies, signal.clone());
+        let mut stream = pin!(self.subscriber.batches(self.batch_size));
+        let mut cancelled = pin!(signal.cancelled());
+        // One decode buffer and one encode buffer for the whole loop, as on the multi-thread
+        // runner's sequential batch loop.
+        let mut scratch = Body::Scratch::default();
+        let mut encode = BytesMut::new();
+        loop {
+            if signal.is_cancelled() {
+                break;
+            }
+            // The stream first, the token only where the stream has nothing.
+            let pulled = poll_fn(|cx| match stream.as_mut().poll_next(cx) {
+                Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
+                Poll::Ready(None) => Poll::Ready(Turn::Ended),
+                Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
+            })
+            .await;
+            match pulled {
+                Turn::Delivery(Ok(batch)) => {
+                    run_batch::<_, _, Cx, _, _, _>(
+                        &self.handler,
+                        batch,
+                        &mut scratch,
+                        &mut encode,
+                        &self.name,
+                        &**state,
+                        &self.delivery,
+                        host,
+                        &failure,
+                    )
+                    .await;
+                }
+                Turn::Delivery(Err(err)) => {
+                    error!(
+                        target: "ruststream::dispatch",
+                        subscription = %self.name,
+                        error = %err,
+                        "subscriber stream error",
+                    );
+                }
+                Turn::Ended => {
+                    signal.stream_ended(&self.name);
+                    break;
+                }
+                Turn::Shutdown => break,
+            }
+        }
     }
 }

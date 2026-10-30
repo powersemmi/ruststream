@@ -13,6 +13,7 @@
 use core::cell::Cell;
 use core::convert::Infallible;
 use core::future::ready;
+use core::num::NonZeroUsize;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
@@ -20,8 +21,8 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, Receiver};
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, BrokerMoves, HeaderMap, LocalBroker, LocalConnectedBroker, LocalIncomingMessage,
-    LocalSubscriber, LocalSubscriptionSource,
+    AckError, BrokerMoves, HeaderMap, LocalBatchSubscriber, LocalBroker, LocalConnectedBroker,
+    LocalIncomingMessage, LocalSubscriber, LocalSubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -92,6 +93,15 @@ impl FrameSubscriber {
             settled,
         }
     }
+
+    /// One received frame as the subscription hands it out.
+    fn delivery(&self, frame: Frame) -> FrameDelivery {
+        FrameDelivery {
+            frame,
+            headers: HeaderMap::new(),
+            settled: self.settled,
+        }
+    }
 }
 
 impl LocalSubscriber for FrameSubscriber {
@@ -112,13 +122,54 @@ impl Stream for Deliveries<'_> {
     type Item = Result<FrameDelivery, Infallible>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let settled = self.subscriber.settled;
-        self.subscriber.receiver.poll_receive(cx).map(|frame| {
-            Some(Ok(FrameDelivery {
-                frame,
-                headers: HeaderMap::new(),
-                settled,
-            }))
+        let subscriber = self.subscriber;
+        subscriber
+            .receiver
+            .poll_receive(cx)
+            .map(|frame| Some(Ok(subscriber.delivery(frame))))
+    }
+}
+
+// A batch is the frames waiting when the first one arrives, up to the size the registration
+// asked for, held inline: taking one allocates nothing.
+impl LocalBatchSubscriber for FrameSubscriber {
+    type Batch = heapless::Vec<FrameDelivery, DEPTH>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl Stream<Item = Result<Self::Batch, Infallible>> + '_ {
+        Bursts {
+            subscriber: self,
+            size,
+        }
+    }
+}
+
+/// The batch stream of a [`FrameSubscriber`]: parks until a frame arrives, then takes it and
+/// every frame already waiting behind it, up to the batch size.
+struct Bursts<'a> {
+    subscriber: &'a FrameSubscriber,
+    size: NonZeroUsize,
+}
+
+impl Stream for Bursts<'_> {
+    type Item = Result<heapless::Vec<FrameDelivery, DEPTH>, Infallible>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let subscriber = self.subscriber;
+        let limit = self.size.get().min(DEPTH);
+        subscriber.receiver.poll_receive(cx).map(|first| {
+            let mut batch = heapless::Vec::new();
+            let mut next = Some(first);
+            while let Some(frame) = next {
+                // The limit is at most the channel's depth, which is the batch's capacity.
+                let _ = batch.push(subscriber.delivery(frame));
+                next = (batch.len() < limit)
+                    .then(|| subscriber.receiver.try_receive().ok())
+                    .flatten();
+            }
+            Some(Ok(batch))
         })
     }
 }
@@ -162,14 +213,29 @@ fn count(counter: &Cell<u32>) {
 #[derive(Debug)]
 pub struct FrameBroker {
     frames: &'static Frames,
+    bursts: &'static Frames,
     settled: &'static Settlements,
 }
 
 impl FrameBroker {
     /// A broker over `frames`, recording its settlements in `settled`. Performs no I/O.
+    ///
+    /// Its burst subscription ([`FrameSource::bursts`]) reads `frames` too, until
+    /// [`with_bursts`](Self::with_bursts) gives it a channel of its own.
     #[must_use]
     pub const fn new(frames: &'static Frames, settled: &'static Settlements) -> Self {
-        Self { frames, settled }
+        Self {
+            frames,
+            bursts: frames,
+            settled,
+        }
+    }
+
+    /// The same broker with `bursts` as the channel its burst subscription reads.
+    #[must_use]
+    pub const fn with_bursts(mut self, bursts: &'static Frames) -> Self {
+        self.bursts = bursts;
+        self
     }
 }
 
@@ -177,6 +243,7 @@ impl FrameBroker {
 #[derive(Debug)]
 pub struct FrameConnected {
     frames: &'static Frames,
+    bursts: &'static Frames,
     settled: &'static Settlements,
 }
 
@@ -187,6 +254,7 @@ impl LocalBroker for FrameBroker {
     fn connect(self) -> impl Future<Output = Result<FrameConnected, Infallible>> {
         ready(Ok(FrameConnected {
             frames: self.frames,
+            bursts: self.bursts,
             settled: self.settled,
         }))
     }
@@ -201,17 +269,27 @@ impl LocalConnectedBroker for FrameConnected {
     }
 }
 
-/// The descriptor of the broker's one subscription, named `name`.
+/// The descriptor of a subscription to one of the broker's channels, named `name`.
 #[derive(Debug, Clone, Copy)]
 pub struct FrameSource {
     name: &'static str,
+    bursts: bool,
 }
 
 impl FrameSource {
-    /// The subscription, named `name` in the app's diagnostics.
+    /// The subscription to the broker's main channel, named `name` in the app's diagnostics.
     #[must_use]
     pub const fn new(name: &'static str) -> Self {
-        Self { name }
+        Self {
+            name,
+            bursts: false,
+        }
+    }
+
+    /// The subscription to the broker's burst channel (see [`FrameBroker::with_bursts`]).
+    #[must_use]
+    pub const fn bursts(name: &'static str) -> Self {
+        Self { name, bursts: true }
     }
 }
 
@@ -229,10 +307,12 @@ impl LocalSubscriptionSource<FrameConnected> for FrameSource {
         self,
         connected: &FrameConnected,
     ) -> impl Future<Output = Result<FrameSubscriber, Infallible>> {
-        ready(Ok(FrameSubscriber::new(
-            connected.frames,
-            connected.settled,
-        )))
+        let frames = if self.bursts {
+            connected.bursts
+        } else {
+            connected.frames
+        };
+        ready(Ok(FrameSubscriber::new(frames, connected.settled)))
     }
 }
 

@@ -134,7 +134,7 @@ async fn clones_made_dispatching(delivery: &Delivery<()>) -> usize {
         |_values: &[Counted], _ctx: &mut Context| ready(HandlerOutcome::ack()),
     );
     run_batch(
-        &handler,
+        &Arc::new(handler),
         page,
         &mut (),
         &mut BytesMut::new(),

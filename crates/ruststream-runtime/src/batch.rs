@@ -28,7 +28,7 @@ use opentelemetry::{KeyValue, global};
 use serde::de::DeserializeOwned;
 use tracing::warn;
 
-use crate::{BuildBatchContext, IncomingMessage};
+use crate::{BuildBatchContext, IncomingMessage, LocalIncomingMessage};
 
 use super::context::Context;
 use super::dispatch::{Slot, Workers, settle_outcome};
@@ -294,7 +294,7 @@ pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetad
 /// One batch as its handler takes it: what its context is built from, and what the harness
 /// records of it when the handler panics before settling anything.
 #[doc(hidden)]
-pub trait TakenBatch<C>: Send {
+pub trait TakenBatch<C> {
     /// The batch's context, or `None` for a batch with nothing in it: such a batch runs nothing.
     fn context(&self) -> Option<C>;
 
@@ -308,7 +308,7 @@ pub trait TakenBatch<C>: Send {
 // The decoding forms collect the deliveries, and a batch's context is built from its first.
 impl<M, C> TakenBatch<C> for Vec<M>
 where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     C: BuildBatchContext<M>,
 {
     fn context(&self) -> Option<C> {
@@ -342,7 +342,7 @@ pub trait BatchHandler<Batch, C = (), S = ()>: Send + Sync {
 
     /// The batch as this handler takes it: its deliveries collected, or the broker's batch whole
     /// where the handler lends the values the batch holds.
-    type Taken: TakenBatch<C>;
+    type Taken: TakenBatch<C> + Send;
 
     /// Takes one batch off the subscription.
     fn take(batch: Batch) -> Self::Taken;
@@ -552,13 +552,36 @@ where
         batch.into_iter().collect()
     }
 
-    async fn handle_batch<Host: Detach>(
+    fn handle_batch<Host: Detach>(
+        &self,
+        batch: Vec<M>,
+        scratch: &mut (),
+        ctx: &mut Context<'_, C, S>,
+        host: &Host,
+    ) -> impl Future<Output = ()> + Send {
+        self.handle_local(batch, scratch, ctx, host)
+    }
+}
+
+impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
+    /// Constructs each element in place and runs the inner handler on those that construct: the
+    /// adapter's body, for a batch of either family. The [`BatchHandler`] impl is this future; a
+    /// runner whose deliveries are not `Sync` reaches it through
+    /// [`LocalBatch`](local::LocalBatch).
+    // `Send` exactly where the deliveries are: the `BatchHandler` impl's signature proves it there.
+    #[allow(clippy::future_not_send)]
+    pub(crate) async fn handle_local<C, S, Host: Detach>(
         &self,
         batch: Vec<M>,
         _scratch: &mut (),
         ctx: &mut Context<'_, C, S>,
         host: &Host,
-    ) {
+    ) where
+        M: LocalIncomingMessage,
+        F: Deserialized,
+        Inner: for<'p> SliceHandler<F::Output<'p>, C, S>,
+        C: BuildBatchContext<M> + Send + Sync + 'static,
+    {
         let subscription = ctx.subscription();
         if batch.is_empty() {
             return;
@@ -753,7 +776,7 @@ pub(crate) fn reported<M, C, S>(
     ctx: &Context<'_, C, S>,
 ) -> Option<HandlerResult>
 where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
 {
     let err = msg.decode_error()?;
     warn!(
@@ -787,9 +810,11 @@ pub(crate) fn rejection<C, S>(
 }
 
 mod carried;
+mod local;
 mod settle;
 
 pub(crate) use carried::{CarriedBatch, SourceCarriesBatch};
+pub use local::{LocalBatch, LocalBatchHandler};
 use settle::settle_split_batch;
 pub(crate) use settle::{LentValues, settle_batch, settle_lent_batch};
 
