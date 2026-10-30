@@ -23,6 +23,7 @@ use crate::input::Materialize;
 use crate::lifecycle::BoxError;
 use crate::middleware::LocalBlanketLayer;
 use crate::redelivery::{CopyPublisher, NoCopies, PairCopies};
+use crate::redelivery::{ScopeDelivery, open_local_route};
 use crate::typed::{LocalTyped, Typed};
 use crate::{
     BuildContext, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
@@ -274,6 +275,7 @@ pub trait OpenLocalRoute<B: LocalBroker, State> {
     fn open_route(
         self,
         connected: &LocalConnected<B>,
+        scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError>>;
 }
 
@@ -297,8 +299,9 @@ macro_rules! open_plain {
                 self,
                 connected: &LocalConnected<B>,
                 layers: &Layers,
+                scope: &ScopeDelivery,
             ) -> Result<Self::Opened<Layers>, BoxError> {
-                let route = self.open_route(connected).await?;
+                let route = self.open_route(connected, scope).await?;
                 Ok(OpenedRoute::new(
                     route.subscriber,
                     route.handler,
@@ -342,8 +345,10 @@ where
     async fn open_route(
         self,
         connected: &LocalConnected<B>,
+        scope: &ScopeDelivery,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Cx>, BoxError> {
         let name: Arc<str> = Arc::from(self.source.name());
+        let delivery = open_local_route(scope, &name);
         let subscriber = self
             .source
             .subscribe(connected)
@@ -353,7 +358,7 @@ where
             subscriber,
             handler: LocalTyped(self.handler),
             name,
-            delivery: Delivery::unscoped(),
+            delivery,
             policies: self.policies,
         })
     }
@@ -378,6 +383,7 @@ where
         self,
         connected: &LocalConnected<B>,
         layers: &Layers,
+        scope: &ScopeDelivery,
     ) -> Result<Self::Opened<Layers>, BoxError> {
         let Self { route, plan } = self;
         // Paired before the subscription opens, so a copy path the broker refuses fails the
@@ -385,7 +391,7 @@ where
         let path =
             <Plan::Copies as PairCopies<B, Route::Source>>::pair(route.source(), connected).await?;
         Ok(OpenedDispatch {
-            route: route.open_route(connected).await?,
+            route: route.open_route(connected, scope).await?,
             layers: layers.clone(),
             plan,
             path,

@@ -10,7 +10,6 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::any::type_name;
 
-use crate::dispatch::Delivery;
 use crate::inject::LocalFromStartup;
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
@@ -21,6 +20,7 @@ use crate::publish::{
 use crate::publishing::{
     EncodeReply, LocalPublishing, LocalPublishingCall, PublishingHandler, warn_ignored_reply_name,
 };
+use crate::redelivery::{ScopeDelivery, open_local_route};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Origin;
 use crate::{
@@ -101,6 +101,7 @@ where
     async fn open_route(
         self,
         connected: &LocalConnected<B>,
+        scope: &ScopeDelivery,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
@@ -112,6 +113,7 @@ where
             ..
         } = self;
         let (name, subscriber) = subscribe::<B, _>(source, connected).await?;
+        let delivery = open_local_route(scope, &name);
         warn_ignored_reply_name(
             &name,
             type_name::<Def::Reply>(),
@@ -139,7 +141,7 @@ where
             subscriber,
             handler,
             name,
-            delivery: Delivery::unscoped(),
+            delivery,
             policies,
         })
     }
@@ -172,6 +174,7 @@ where
     async fn open_route(
         self,
         connected: &LocalConnected<B>,
+        scope: &ScopeDelivery,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
@@ -183,6 +186,7 @@ where
             ..
         } = self;
         let (name, subscriber) = subscribe::<B, _>(source, connected).await?;
+        let delivery = open_local_route(scope, &name);
         warn_ignored_reply_name(
             &name,
             type_name::<Def::Reply>(),
@@ -210,7 +214,7 @@ where
             subscriber,
             handler,
             name,
-            delivery: Delivery::unscoped(),
+            delivery,
             policies,
         })
     }

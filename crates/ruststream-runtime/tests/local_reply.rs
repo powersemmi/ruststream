@@ -20,7 +20,7 @@ use ruststream_core::{
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
     Context, ContextKind, Deserialized, Halt, HandlerOutcome, Input, LocalDetach, LocalHandle,
-    OpenRoutes, Outgoing, PublishTransform, Reads, Router, RunRoutes, ShutdownWait,
+    OpenRoutes, Outgoing, PublishTransform, Reads, Router, RunRoutes, ScopeDelivery, ShutdownWait,
     SoloDeserialized, local_subscriber,
 };
 use tokio::sync::Notify;
@@ -146,7 +146,7 @@ async fn an_encoded_reply_leaves_through_the_codec_to_a_local_broker() {
         .out_reply(LocalMemoryPublish)
         .transform(Stamp)
         .build()
-        .open(&connected)
+        .open(&connected, &ScopeDelivery::new())
         .await
         .expect("the route opens");
     let publisher = LocalMemoryPublish

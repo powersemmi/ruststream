@@ -11,6 +11,7 @@ use core::future::ready;
 use ruststream_core::{LocalBroker, LocalConnectedBroker};
 use ruststream_runtime::{
     OpenRoutes, RetryDestinationsDeclared, Router, RouterCommit, RouterWith, RunRoutes,
+    ScopeDelivery,
 };
 use tracing::warn;
 
@@ -120,7 +121,7 @@ where
             broker: type_name::<B>(),
             source: err.into(),
         })?;
-        match routes.open(&connected).await {
+        match routes.open(&connected, &ScopeDelivery::new()).await {
             Ok(routes) => Ok(((connected,), routes)),
             Err(source) => {
                 close(connected).await;
@@ -179,7 +180,7 @@ impl<Later: CloseAll, Earlier: CloseAll> CloseAll for (Later, Earlier) {
 }
 
 /// Shuts one broker down, logging a failure with the broker it came from.
-async fn close<Connected: LocalConnectedBroker>(connected: Connected) {
+pub(crate) async fn close<Connected: LocalConnectedBroker>(connected: Connected) {
     if let Err(err) = connected.shutdown().await {
         warn!(
             target: "ruststream::embassy",
