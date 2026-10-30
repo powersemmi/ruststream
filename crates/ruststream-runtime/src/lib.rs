@@ -232,7 +232,7 @@ pub use metadata::{
     OutgoingMessageMetadata,
 };
 #[cfg(feature = "alloc")]
-pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
+pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, LocalBlanketLayer, Stack, layers};
 #[cfg(feature = "poll-diagnostics")]
 #[doc(hidden)]
 pub use poll_diagnostics::{BUCKET_BOUNDS_NS, PollStats};
@@ -291,7 +291,7 @@ pub use retry::{
 #[doc(hidden)]
 pub use router::{
     AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply,
-    MountSink, OpenRoutes, Opened, OpenedRoute, PublishInjectMount, PublishMount,
+    MountSink, OpenLayered, OpenRoutes, Opened, OpenedRoute, PublishInjectMount, PublishMount,
     RawReplyInjectMount, RawReplyMount, ReplyAttachment, RetryDestinationsDeclared, RouteMetadata,
     RouteSubscription, RouterBroker, RouterCommit, RouterMount, RunRoutes,
 };

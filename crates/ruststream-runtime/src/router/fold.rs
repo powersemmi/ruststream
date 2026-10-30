@@ -26,7 +26,7 @@ use crate::handler::LocalHandler;
 use crate::host::{Detach, Halt, ShutdownWait};
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
-use crate::middleware::Identity;
+use crate::middleware::{LocalBlanketLayer, Stack};
 use crate::typed::{LocalTyped, Typed};
 use crate::{
     BuildContext, Handler, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
@@ -44,8 +44,7 @@ use super::routes::SubscribeRoute;
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a route this runner opens",
     note = "a runner that hosts the app in one task opens plain single-message registrations \
-            (`include(def)` of a definition without a reply, an `Out` slot or a batch); the \
-            router's own `layer` stack is not applied there"
+            (`include(def)` of a definition without a reply, an `Out` slot or a batch)"
 )]
 pub trait OpenRoutes<B: LocalBroker, State = ()> {
     /// The opened list: every subscription with its handler, ready to run.
@@ -79,22 +78,51 @@ pub trait RunRoutes<State> {
         Host: Detach;
 }
 
-/// One opened single-message subscription: the subscriber, the handler it dispatches to, and
-/// what each of its deliveries runs under.
+/// One registration of a router's list, opened under the layer stack that wraps its handler:
+/// the router's own, inside every router it was merged into.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a route this runner opens",
+    note = "a runner that hosts the app in one task opens plain single-message registrations \
+            (`include(def)` of a definition without a reply, an `Out` slot or a batch)"
+)]
+pub trait OpenLayered<B: LocalBroker, State> {
+    /// The opened registrations, each holding the layer stack it runs under.
+    type Opened<Layers: LocalBlanketLayer + Clone>: RunRoutes<State>;
+
+    /// Subscribes every registration against `connected`, keeping `layers` beside each handler.
+    ///
+    /// # Errors
+    ///
+    /// See [`OpenRoutes::open`].
+    fn open_layered<Layers: LocalBlanketLayer + Clone>(
+        self,
+        connected: &LocalConnected<B>,
+        layers: &Layers,
+    ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>>;
+}
+
+/// One opened single-message subscription: the subscriber, the handler it dispatches to, the
+/// layer stack that wraps the handler when it runs, and what each of its deliveries runs under.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct OpenedRoute<Sub, Body, Cx> {
+pub struct OpenedRoute<Sub, Body, Cx, Layers> {
     subscriber: Sub,
     handler: Body,
+    layers: Layers,
     name: Arc<str>,
     delivery: Delivery<Cx>,
     policies: FailurePolicies,
 }
 
-impl<B: LocalBroker, State> OpenRoutes<B, State> for () {
-    type Opened = ();
+impl<B: LocalBroker, State> OpenLayered<B, State> for () {
+    type Opened<Layers: LocalBlanketLayer + Clone> = ();
 
-    fn open(self, _connected: &LocalConnected<B>) -> impl Future<Output = Result<(), BoxError>> {
+    fn open_layered<Layers: LocalBlanketLayer + Clone>(
+        self,
+        _connected: &LocalConnected<B>,
+        _layers: &Layers,
+    ) -> impl Future<Output = Result<(), BoxError>> {
         ready(Ok(()))
     }
 }
@@ -114,19 +142,23 @@ impl<State> RunRoutes<State> for () {
     }
 }
 
-impl<B, State, Head, Tail> OpenRoutes<B, State> for (Head, Tail)
+impl<B, State, Head, Tail> OpenLayered<B, State> for (Head, Tail)
 where
     B: LocalBroker,
-    Head: OpenRoutes<B, State>,
-    Tail: OpenRoutes<B, State>,
+    Head: OpenLayered<B, State>,
+    Tail: OpenLayered<B, State>,
 {
-    type Opened = (Head::Opened, Tail::Opened);
+    type Opened<Layers: LocalBlanketLayer + Clone> = (Head::Opened<Layers>, Tail::Opened<Layers>);
 
-    async fn open(self, connected: &LocalConnected<B>) -> Result<Self::Opened, BoxError> {
+    async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+        self,
+        connected: &LocalConnected<B>,
+        layers: &Layers,
+    ) -> Result<Self::Opened<Layers>, BoxError> {
         // The list is built head first and the router pushes onto the head, so the tail holds
         // the registrations made first: they subscribe first.
-        let tail = self.1.open(connected).await?;
-        let head = self.0.open(connected).await?;
+        let tail = self.1.open_layered(connected, layers).await?;
+        let head = self.0.open_layered(connected, layers).await?;
         Ok((head, tail))
     }
 }
@@ -149,25 +181,47 @@ where
     }
 }
 
-// A merged router is one registration of the router it was merged into; its own layer stack
-// would wrap its handlers, which the fold does not apply, so only a router without one opens.
-impl<B, State, Routes, RouteCodec, RoutePipe> OpenRoutes<B, State>
-    for Router<B, Routes, RouteCodec, Identity, RoutePipe>
+// A finished router opens its list under its own layer stack.
+impl<B, State, Routes, RouteCodec, RouteLayers, RoutePipe> OpenRoutes<B, State>
+    for Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 where
     B: LocalBroker,
-    Routes: OpenRoutes<B, State>,
+    Routes: OpenLayered<B, State>,
+    RouteLayers: LocalBlanketLayer + Clone,
 {
-    type Opened = Routes::Opened;
+    type Opened = Routes::Opened<RouteLayers>;
 
     fn open(
         self,
         connected: &LocalConnected<B>,
     ) -> impl Future<Output = Result<Self::Opened, BoxError>> {
-        self.routes.open(connected)
+        let layers = self.layers;
+        async move { self.routes.open_layered(connected, &layers).await }
     }
 }
 
-impl<B, State, Source, M, Input, DecodeCodec, Inner, Cx> OpenRoutes<B, State>
+// A merged router is one registration of the router it was merged into: its own stack wraps its
+// handlers inside the stack of the router that holds it, as on the multi-thread runner.
+impl<B, State, Routes, RouteCodec, RouteLayers, RoutePipe> OpenLayered<B, State>
+    for Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
+where
+    B: LocalBroker,
+    Routes: OpenLayered<B, State>,
+    RouteLayers: LocalBlanketLayer + Clone,
+{
+    type Opened<Layers: LocalBlanketLayer + Clone> = Routes::Opened<Stack<RouteLayers, Layers>>;
+
+    fn open_layered<Layers: LocalBlanketLayer + Clone>(
+        self,
+        connected: &LocalConnected<B>,
+        layers: &Layers,
+    ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
+        let composed = Stack::new(self.layers, layers.clone());
+        async move { self.routes.open_layered(connected, &composed).await }
+    }
+}
+
+impl<B, State, Source, M, Input, DecodeCodec, Inner, Cx> OpenLayered<B, State>
     for SubscribeRoute<Source, Typed<M, Input, DecodeCodec, Inner>, Cx>
 where
     B: LocalBroker,
@@ -178,10 +232,18 @@ where
     Inner: Handler<Input::Target, Cx, State>,
     Cx: BuildContext<M> + Send + Sync + 'static,
 {
-    type Opened =
-        OpenedRoute<Source::Subscriber, LocalTyped<Typed<M, Input, DecodeCodec, Inner>>, Cx>;
+    type Opened<Layers: LocalBlanketLayer + Clone> = OpenedRoute<
+        Source::Subscriber,
+        LocalTyped<Typed<M, Input, DecodeCodec, Inner>>,
+        Cx,
+        Layers,
+    >;
 
-    async fn open(self, connected: &LocalConnected<B>) -> Result<Self::Opened, BoxError> {
+    async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+        self,
+        connected: &LocalConnected<B>,
+        layers: &Layers,
+    ) -> Result<Self::Opened<Layers>, BoxError> {
         let name: Arc<str> = Arc::from(self.source.name());
         // Why a startup refusal and not a compile error: the policy is a value the definition's
         // chain set, so its type does not say whether it is sequential.
@@ -199,6 +261,7 @@ where
         Ok(OpenedRoute {
             subscriber,
             handler: LocalTyped(self.handler),
+            layers: layers.clone(),
             name,
             delivery: Delivery::unscoped(),
             policies: self.policies,
@@ -206,11 +269,12 @@ where
     }
 }
 
-impl<State, Sub, Body, Cx> RunRoutes<State> for OpenedRoute<Sub, Body, Cx>
+impl<State, Sub, Body, Cx, Layers> RunRoutes<State> for OpenedRoute<Sub, Body, Cx, Layers>
 where
     Sub: LocalSubscriber,
     Body: LocalHandler<Sub::Message, Cx, State>,
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+    Layers: LocalBlanketLayer,
 {
     async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
     where
@@ -218,9 +282,13 @@ where
         Host: Detach,
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
+        // Applied here, where the loop starts: the wrapped handler's type is the layer's own
+        // and cannot be named in the opened list.
+        let handler =
+            LocalBlanketLayer::apply::<Sub::Message, Cx, State, _>(&self.layers, self.handler);
         run_sequential(
             self.subscriber,
-            self.handler,
+            handler,
             signal,
             self.name,
             Arc::clone(state),
