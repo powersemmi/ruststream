@@ -130,8 +130,8 @@ fn app() -> impl App {
                 })
                 .publish()
                 .await
-        });
-        b.include(subscriber("orders", Receive).build())
+        })
+        .include(subscriber("orders", Receive).build())
     })
 }
 // --8<-- [end:app]

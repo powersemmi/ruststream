@@ -428,7 +428,7 @@ async fn a_refused_broker_shutdown_still_closes_the_others_and_runs_after_shutdo
 async fn a_refused_shutdown_during_the_startup_unwind_is_logged_not_returned() {
     log_capture::record_shared();
     let app = RustStream::new(AppInfo::new("cov-unwind", "0.1.0"))
-        .with_broker_labeled("cov-unwind-egress", StubbornBroker, |b| b.end())
+        .with_broker_labeled("cov-unwind-egress", StubbornBroker, |b| b)
         .register_broker(UnreachableBroker);
 
     let err = app

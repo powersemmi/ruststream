@@ -187,8 +187,8 @@ fn announcing_app() -> RustStream {
                     .publish()
                     .await
                     .map_err(|err| AnnounceError(err.to_string()))
-            });
-            b.include(take_order_slowly)
+            })
+            .include(take_order_slowly)
         })
         .with_broker_labeled("west", west, |b| b.include(take_order_slowly))
 }

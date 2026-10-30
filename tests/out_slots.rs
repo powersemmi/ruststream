@@ -110,7 +110,7 @@ async fn a_slot_binds_a_foreign_broker_through_a_token() {
     let to_other = other.bind(Publish);
 
     let app = RustStream::new(AppInfo::new("slots-cross", "0.1.0"))
-        .with_broker_labeled("other", other, |b| b.end())
+        .with_broker_labeled("other", other, |b| b)
         .with_broker_labeled("ingress", ingress, |b| {
             b.include(transcode)
                 .out(Audit, to_other)

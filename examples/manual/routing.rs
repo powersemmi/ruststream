@@ -197,9 +197,9 @@ mod layer {
                 Router::new()
                     .layer(Count(orders_seen))
                     .include(subscriber("orders", Accept).build()),
-            );
+            )
             // Mounted on the scope, outside the router's layer.
-            b.include(subscriber("shipments", Dispatch).build())
+            .include(subscriber("shipments", Dispatch).build())
         })
     }
     // --8<-- [end:layer]

@@ -79,10 +79,10 @@ fn app() -> impl App {
                 })
                 .publish()
                 .await
-        });
+        })
         // A policy holds no connection; startup pairs it with the connected broker.
-        b.include(subscriber("orders", Archive).build())
-            .out(DefaultSlot, Publish)
+        .include(subscriber("orders", Archive).build())
+        .out(DefaultSlot, Publish)
     })
 }
 // --8<-- [end:app]

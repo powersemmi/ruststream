@@ -73,7 +73,7 @@ fn app() -> impl App {
         // Bound the post-shutdown drain of in-flight handlers.
         .shutdown_timeout(Duration::from_secs(10))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include_router(routes::orders(&metrics));
-            b.include_router(routes::payments(&metrics))
+            b.include_router(routes::orders(&metrics))
+                .include_router(routes::payments(&metrics))
         })
 }

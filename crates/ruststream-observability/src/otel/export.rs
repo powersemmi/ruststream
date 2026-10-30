@@ -331,7 +331,7 @@ impl OtelBuilder {
 /// let app = RustStream::new(AppInfo::new("orders-svc", "0.1.0"))
 ///     .layer(otel.consume_layer())
 ///     .publish_layer(otel.publish_layer())
-///     .with_broker(MemoryBroker::new(), |b| b.end());
+///     .with_broker(MemoryBroker::new(), |b| b);
 /// let running = app.start().await?;
 /// otel.observe_health(running.health());
 /// # let _ = running;

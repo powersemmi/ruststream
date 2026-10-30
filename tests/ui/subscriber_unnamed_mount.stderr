@@ -22,7 +22,7 @@ help: the following other types implement trait `SubscriptionSource<C>`
    |
    | impl<C: Subscribe> SubscriptionSource<C> for Name {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Name` implements `SubscriptionSource<C>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`
 
 error[E0277]: `Unnamed<Name>` does not open a subscription on `ConnectedMemoryBroker`
   --> tests/ui/subscriber_unnamed_mount.rs:21:10
@@ -50,7 +50,7 @@ help: the following other types implement trait `SubscriptionSource<C>`
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Name` implements `SubscriptionSource<C>`
    = note: required for `ruststream_runtime::router::routes::SubscribeRoute<Unnamed<Name>, Typed<_, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), handle>>>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
    = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<Unnamed<Name>, Typed<_, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), handle>>>, ())` to implement `RouterDef<MemoryBroker>`
-   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Unnamed<Name>, Typed<_, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), handle>>>, ())>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Unnamed<Name>, Typed<_, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), handle>>>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
 note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
   --> crates/ruststream-runtime-tokio/src/app/service.rs
    |

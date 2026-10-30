@@ -12,16 +12,15 @@ use ruststream::{SecurityScheme, ServerSpec};
 #[test]
 fn build_spec_describes_handlers() {
     let info = AppInfo::new("orders-svc", "1.2.3").description("Order processing");
-    let app = RustStream::new(info).with_broker(MemoryBroker::new(), |b| {
-        let orders = b.broker().subscribe("orders");
+    let bus = MemoryBroker::new();
+    let app = RustStream::new(info).with_broker(bus.clone(), |b| {
         b.handle(
-            orders,
+            bus.subscribe("orders"),
             |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             HandlerMetadata::raw("orders").with_description("Handles orders"),
-        );
-        let alerts = b.broker().subscribe("alerts");
-        b.handle(
-            alerts,
+        )
+        .handle(
+            bus.subscribe("alerts"),
             |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             HandlerMetadata::typed::<u64>("alerts"),
         )
@@ -62,14 +61,15 @@ fn build_spec_describes_handlers() {
 /// unique when several handlers share one subscription name.
 #[test]
 fn message_components_merge_and_send_ids_stay_unique() {
-    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
-        let first = b.broker().subscribe("shared");
+    let bus1 = MemoryBroker::new();
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(bus1.clone(), |b| {
+        let first = bus1.subscribe("shared");
         let mut first_meta =
             HandlerMetadata::typed::<u64>("shared").with_headers_schema("{\"title\":\"MetaA\"}");
         first_meta
             .outgoing
             .push(OutgoingMessageMetadata::new("c1", "bytes"));
-        b.handle(
+        let b = b.handle(
             first,
             |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             first_meta,
@@ -77,7 +77,7 @@ fn message_components_merge_and_send_ids_stay_unique() {
 
         // The second handler on the same subject brings the payload schema the first one
         // lacked, plus a conflicting headers schema, plus its own outgoing channel.
-        let second = b.broker().subscribe("shared");
+        let second = bus1.subscribe("shared");
         let mut second_meta = HandlerMetadata::typed::<u64>("shared")
             .with_payload_schema("{\"type\":\"integer\"}")
             .with_headers_schema("{\"title\":\"MetaB\"}");
@@ -165,7 +165,7 @@ fn labeled_broker_populates_server_from_describe() {
     let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker_labeled(
         "ingress",
         DescribingBroker::new("nats.example.com:4222"),
-        |b| b.end(),
+        |b| b,
     );
 
     let spec = build_spec(&app);
@@ -180,11 +180,12 @@ fn labeled_memory_broker_is_an_in_process_server() {
     // The in-memory broker has no network address: a labeled registration still gives it a server
     // entry (its label) over the "memory" protocol, with no host. This is what lets a service mount
     // several memory brokers with disjoint routing and address each by name.
+    let bus2 = MemoryBroker::new();
     let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker_labeled(
         "local",
-        MemoryBroker::new(),
+        bus2.clone(),
         |b| {
-            let orders = b.broker().subscribe("orders");
+            let orders = bus2.subscribe("orders");
             b.handle(
                 orders,
                 |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
@@ -211,7 +212,7 @@ fn explicit_server_overrides_labeled_broker() {
         .with_broker_labeled(
             "ingress",
             DescribingBroker::new("nats.example.com:4222"),
-            |b| b.end(),
+            |b| b,
         );
 
     let spec = build_spec(&app);
@@ -909,10 +910,11 @@ mod document_surface {
     /// stops showing every channel on every server.
     #[test]
     fn a_labeled_registration_names_the_server_of_its_channels() {
+        let bus3 = MemoryBroker::new();
         let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
             .with_broker_labeled("local", MemoryBroker::new(), |b| b.include(confirm))
-            .with_broker_labeled("audit", MemoryBroker::new(), |b| {
-                let audit = b.broker().subscribe("audit");
+            .with_broker_labeled("audit", bus3.clone(), |b| {
+                let audit = bus3.subscribe("audit");
                 b.handle(
                     audit,
                     |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
@@ -1792,7 +1794,7 @@ mod publish_bindings {
             .with_broker(MemoryBroker::new(), |b| {
                 b.include(respond).out(Events, token)
             })
-            .with_broker(other, |b| b.end());
+            .with_broker(other, |b| b);
         let value = document(&app);
 
         assert_eq!(
@@ -1822,7 +1824,7 @@ mod publish_bindings {
                     .transform(ReplyTo)
                     .out(Events, Publish)
             })
-            .with_broker(other, |b| b.end());
+            .with_broker(other, |b| b);
         let value = document(&app);
 
         assert_eq!(

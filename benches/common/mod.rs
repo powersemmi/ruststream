@@ -443,7 +443,7 @@ pub struct Pending {
 }
 
 /// The scope a scenario's mount receives: what `with_broker` hands its closure.
-pub type Mount<'a> = BrokerScope<'a, MemoryBroker, Identity, (), Latch>;
+pub type Mount = BrokerScope<MemoryBroker, Identity, (), Latch>;
 
 /// The chain a scenario's mount returns.
 pub trait Mounted: MountChain<MemoryBroker, Identity, Latch, PublishIdentity> {}
@@ -454,7 +454,7 @@ impl<Chain: MountChain<MemoryBroker, Identity, Latch, PublishIdentity>> Mounted 
 pub fn pending<Chain: Mounted>(
     messages: usize,
     size: usize,
-    mount: impl FnOnce(Mount<'_>) -> Chain,
+    mount: impl FnOnce(Mount) -> Chain,
 ) -> Pending {
     pending_on(runtime(), messages, size, mount)
 }
@@ -464,7 +464,7 @@ pub fn pending_on<Chain: Mounted>(
     runtime: Runtime,
     messages: usize,
     size: usize,
-    mount: impl FnOnce(Mount<'_>) -> Chain,
+    mount: impl FnOnce(Mount) -> Chain,
 ) -> Pending {
     let latch = Latch::default();
     let broker = MemoryBroker::new();
@@ -479,7 +479,7 @@ pub fn pending_on<Chain: Mounted>(
 pub fn pending_with_headers<Chain: Mounted>(
     messages: usize,
     headers: &'static [(&'static str, &'static str)],
-    mount: impl FnOnce(Mount<'_>) -> Chain,
+    mount: impl FnOnce(Mount) -> Chain,
 ) -> Pending {
     Pending {
         headers,

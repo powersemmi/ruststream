@@ -42,10 +42,10 @@ pub use ruststream_runtime::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{
-    AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply,
-    PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
-    RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker, RouterCommit,
-    RouterMount,
+    AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, ChainHead,
+    DefaultReply, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount,
+    ReplyAttachment, RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker,
+    RouterCommit, RouterMount, SplitHead,
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{
@@ -137,10 +137,12 @@ pub use ruststream_runtime_tokio::{
     Setup, SubscriptionCount, SubscriptionEnd, Wired,
 };
 #[cfg(feature = "tokio")]
-#[doc(hidden)]
-pub use ruststream_runtime_tokio::MountChain;
-#[cfg(feature = "tokio")]
 pub use ruststream_runtime_tokio::{MainRuntime, RouterSink};
+#[cfg(feature = "tokio")]
+#[doc(hidden)]
+pub use ruststream_runtime_tokio::{
+    MountChain, ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup,
+};
 
 #[cfg(feature = "tokio")]
 pub mod cli;

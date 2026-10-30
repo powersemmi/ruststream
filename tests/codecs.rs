@@ -43,10 +43,9 @@ async fn non_default_codecs_dispatch_through_the_router() {
         .with_codec(MsgpackCodec)
         .include(msgpack_order);
 
-    let app =
-        RustStream::new(AppInfo::new("codecs", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include_router(cbor_router);
-            b.include_router(msgpack_router)
+    let app = RustStream::new(AppInfo::new("codecs", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include_router(cbor_router).include_router(msgpack_router)
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

@@ -19,7 +19,7 @@ help: the trait `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, 
    | |     Def::Handler: 'static,
    | |__________________________^
    = note: required for `ruststream_runtime::input::Carried<Row>` to implement `ruststream_runtime::input::Materialize<ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
 
 error[E0277]: `Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>` cannot handle `MemoryMessage`
   --> tests/ui/carried_without_carries.rs:25:10
@@ -44,7 +44,7 @@ help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, 
    | |__________________________________________^
    = note: required for `ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
    = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ())` to implement `RouterDef<MemoryBroker>`
-   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ())>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
 note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker`
   --> crates/ruststream-runtime-tokio/src/app/service.rs
    |

@@ -27,8 +27,6 @@ mod sink;
 mod testkit;
 pub mod time;
 
-#[doc(hidden)]
-pub use app::MountChain;
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 pub use app::TestParts;
@@ -38,6 +36,8 @@ pub use app::{
 };
 #[doc(hidden)]
 pub use app::{ConnectedEntry, LifecycleHook, RegisteredBroker, ShutdownHooks, Starter, Teardown};
+#[doc(hidden)]
+pub use app::{MountChain, ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use clock::Tokio;
 pub use ruststream_runtime::MainRuntime;

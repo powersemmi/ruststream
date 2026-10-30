@@ -11,4 +11,4 @@ help: the trait `BatchSized` is implemented for `SubscriberBuilder<Def, Src, (W,
    |
    | impl<Def, Src, W, F, P, DC> BatchSized for SubscriberBuilder<Def, Src, (W, F, P, Fixed), DC> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
+   = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`

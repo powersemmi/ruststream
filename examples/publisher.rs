@@ -50,9 +50,10 @@ fn app() -> impl App {
                 })
                 .publish()
                 .await
-        });
+        })
         // A policy holds no connection; startup pairs it with the connected broker.
-        b.include(archive).out(DefaultSlot, Publish)
+        .include(archive)
+        .out(DefaultSlot, Publish)
     })
 }
 // --8<-- [end:app]

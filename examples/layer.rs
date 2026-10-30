@@ -142,14 +142,14 @@ mod scopes {
     fn app() -> impl App {
         RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             // Before the first `include`: every handler of this router.
-            b.include_router(Router::new().layer(RequireTenant).include(refund));
-            // After an `include`: that registration alone; `audit` runs unwrapped.
-            b.include_router(
-                Router::new()
-                    .include(invoice)
-                    .layer(RequireTenant)
-                    .include(audit),
-            )
+            b.include_router(Router::new().layer(RequireTenant).include(refund))
+                // After an `include`: that registration alone; `audit` runs unwrapped.
+                .include_router(
+                    Router::new()
+                        .include(invoice)
+                        .layer(RequireTenant)
+                        .include(audit),
+                )
         })
     }
     // --8<-- [end:scopes]

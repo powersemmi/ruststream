@@ -96,7 +96,7 @@ async fn start_and_shutdown_run_lifecycle_hooks_in_order() {
             o4.lock().expect("poisoned").push("after_shutdown");
             Ok::<(), Infallible>(())
         })
-        .with_broker(MemoryBroker::new(), |b| b.end());
+        .with_broker(MemoryBroker::new(), |b| b);
 
     let running = app.start().await.expect("startup failed");
     assert_eq!(

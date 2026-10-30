@@ -245,7 +245,7 @@ where
     ///     let broker = MemoryBroker::new().bindable();
     ///     let announce = broker.bind(Publish);
     ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
-    ///         .with_broker(broker, |b| b.end())
+    ///         .with_broker(broker, |b| b)
     ///         .after_startup(async move |_state| {
     ///             let publisher = announce.live().await?;
     ///             publisher.message(&Started { service: "orders" }).publish().await?;

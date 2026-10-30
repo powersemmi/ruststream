@@ -362,7 +362,7 @@ async fn a_failed_publish_keeps_error_type_low_cardinality() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(AtomicBool::new(false))))
         .publish_layer(otel.publish_layer())
-        .with_broker_labeled("egress", egress, |b| b.end())
+        .with_broker_labeled("egress", egress, |b| b)
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
             b.include(confirm_once).out(Reply, to_egress)
         });

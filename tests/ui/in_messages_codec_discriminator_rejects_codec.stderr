@@ -14,7 +14,7 @@ help: the trait `DecodeSet<JsonCodec>` is not implemented for `OrderEvent`
    = help: for that trait implementation, expected `Registry`, found `JsonCodec`
    = note: required for `SoloSet<OrderEvent>` to implement `ruststream::runtime::TypedLane<OrderEvent, JsonCodec>`
    = note: required for `ruststream_runtime::input::Decoded<OrderEvent>` to implement `ruststream_runtime::input::Materialize<JsonCodec, MemoryMessage>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<ruststream::memory::MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<SoloSet<OrderEvent>, (), (), (), on_event, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<ruststream::memory::MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<SoloSet<OrderEvent>, (), (), (), on_event, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
    = note: this error originates in the derive macro `InMessages` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: `Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>` cannot handle `MemoryMessage`
@@ -40,7 +40,7 @@ help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, 
    | |__________________________________________^
    = note: required for `ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>` to implement `ruststream_runtime::router::routes::MountRoute<ruststream::memory::MemoryBroker, (), PublishIdentity>`
    = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>, ())` to implement `RouterDef<ruststream::memory::MemoryBroker>`
-   = note: required for `Router<ruststream::memory::MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>, ())>` to implement `ruststream::runtime::MountChain<ruststream::memory::MemoryBroker>`
+   = note: required for `Router<ruststream::memory::MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountChain<ruststream::memory::MemoryBroker>`
 note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker`
   --> crates/ruststream-runtime-tokio/src/app/service.rs
    |

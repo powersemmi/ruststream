@@ -52,8 +52,8 @@ fn app() -> impl App {
                 })
                 .publish()
                 .await
-        });
-        b.include(handle)
+        })
+        .include(handle)
     })
 }
 // --8<-- [end:app]

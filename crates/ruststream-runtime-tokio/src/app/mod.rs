@@ -16,6 +16,8 @@ pub use health::{HealthProbe, HealthState, SubscriptionCount, SubscriptionEnd};
 pub use include::MountChain;
 pub use run::RunningApp;
 pub use scope::BrokerScope;
+#[doc(hidden)]
+pub use scope::{ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup};
 pub use service::RegisteredBroker;
 #[cfg(feature = "testing")]
 pub use service::TestParts;

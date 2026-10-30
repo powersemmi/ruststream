@@ -208,7 +208,7 @@ fn stopped_for_the_reported_error(tb: &TestApp<()>) {
 
 /// An app with one broker, the in-memory bus of every test that publishes as it goes.
 fn app<Chain: MountChain<MemoryBroker>>(
-    mount: impl FnOnce(BrokerScope<'_, MemoryBroker>) -> Chain,
+    mount: impl FnOnce(BrokerScope<MemoryBroker>) -> Chain,
 ) -> RustStream {
     RustStream::new(AppInfo::new("claims", "0.1.0")).with_broker(MemoryBroker::new(), mount)
 }
@@ -232,7 +232,7 @@ async fn holding(name: &str, payloads: &[&str]) -> Result<MemoryBroker<Retaining
 /// An app over a retaining bus, its batch subscription opened at the start of the log.
 fn replaying<Chain: MountChain<MemoryBroker<Retaining>>>(
     broker: MemoryBroker<Retaining>,
-    mount: impl FnOnce(BrokerScope<'_, MemoryBroker<Retaining>>) -> Chain,
+    mount: impl FnOnce(BrokerScope<MemoryBroker<Retaining>>) -> Chain,
 ) -> RustStream {
     RustStream::new(AppInfo::new("claims", "0.1.0")).with_broker(broker, mount)
 }

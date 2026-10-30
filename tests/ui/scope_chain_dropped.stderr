@@ -5,10 +5,17 @@ error[E0277]: the `with_broker` closure must return the mount chain
    |                                                       ^^^^^^^^^^^ `()` is not a mount chain
    |
    = help: the trait `ruststream::runtime::MountChain<MemoryBroker>` is not implemented for `()`
-   = note: return the chain `include` opens: `|b| b.include(a).include(b)`, every `Out` slot bound with `.out(marker, policy)`; a scope that mounts nothing returns `b.end()`
+   = note: return the scope or the chain its `include` opens: `|b| b.include(a).include(b)`, every `Out` slot bound with `.out(marker, policy)`; a broker that mounts nothing is `|b| b`
 help: the following other types implement trait `ruststream::runtime::MountChain<B, Layers, State, Pipeline>`
   --> crates/ruststream-runtime-tokio/src/app/include/mod.rs
    |
+   | / impl<B, Layers, C, State, Pipeline, Pre> MountChain<B, Layers, State, Pipeline>
+   | |     for BrokerScope<B, Layers, C, State, Pipeline, Pre>
+   | | where
+   | |     B: Broker + 'static,
+   | |     Pre: ScopeRegistrations<B, Layers, State, Pipeline>,
+   | |________________________________________________________^ `BrokerScope<B, Layers, C, State, Pipeline, Pre>`
+...
    | / impl<B, Layers, State, Pipeline, Routes, RC, RL, RP> MountChain<B, Layers, State, Pipeline>
    | |     for Router<B, Routes, RC, RL, RP>
    | | where

@@ -649,8 +649,8 @@ async fn seek_reaches_the_body_through_the_context() {
                     None,
                 )
                 .await
-        });
-        b.include(subscriber("orders", Replayer).build())
+        })
+        .include(subscriber("orders", Replayer).build())
     });
     let running = app.start().await.expect("the app starts");
     running.shutdown().await.expect("the app stops cleanly");
@@ -674,64 +674,64 @@ async fn a_subscriber_dispatches_end_to_end() {
                     None,
                 )
                 .await
-        });
-        b.include(subscriber("orders", Audit).build())
-            .include(subscriber("orders", SettleBatch).batch(nonzero!(4)).build())
-            .include(subscriber("frames", Inspect).build())
-            .include(subscriber("frames", Frames).batch(nonzero!(4)).build())
-            .include(subscriber("orders", Echo).reply().to("echoes").build())
-            .out(Reply, MemoryPublish)
-            .include(subscriber("frames", RawEcho).reply().to("echoes").build())
-            .include(
-                subscriber("orders", ConfirmBatchesInContext)
-                    .reply()
-                    .to("confirmations")
-                    .batch(nonzero!(4))
-                    .build(),
-            )
-            .include(
-                subscriber("orders", BatchGatewayInContext)
-                    .reply()
-                    .to("confirmations")
-                    .batch(nonzero!(4))
-                    .build(),
-            )
-            .out(Analytics, MemoryPublish)
-            .include(
-                subscriber("orders", Confirm)
-                    .reply()
-                    .to("confirmations")
-                    .build(),
-            )
-            .out(Reply, MemoryPublish)
-            .codec(JsonCodec)
-            .include(subscriber("orders", RawMirror).build())
-            .out(Analytics, MemoryPublish)
-            .include(subscriber("orders", Mirror).build())
-            .out(Analytics, MemoryPublish)
-            .transform(Trace)
-            .include(subscriber("orders", PairMirror).build())
-            .out(Analytics, MemoryPublish)
-            .transform(Trace)
-            .out(Ledger, MemoryPublish)
-            .include(
-                subscriber("orders", RawGateway)
-                    .reply()
-                    .to("echoes")
-                    .build(),
-            )
-            .out(Reply, MemoryPublish)
-            .out(Analytics, MemoryPublish)
-            .include(
-                subscriber("orders", Gateway)
-                    .reply()
-                    .to("confirmations")
-                    .build(),
-            )
-            .out(Reply, MemoryPublish)
-            .transform(StampReply)
-            .out(Analytics, MemoryPublish)
-            .transform(Trace)
+        })
+        .include(subscriber("orders", Audit).build())
+        .include(subscriber("orders", SettleBatch).batch(nonzero!(4)).build())
+        .include(subscriber("frames", Inspect).build())
+        .include(subscriber("frames", Frames).batch(nonzero!(4)).build())
+        .include(subscriber("orders", Echo).reply().to("echoes").build())
+        .out(Reply, MemoryPublish)
+        .include(subscriber("frames", RawEcho).reply().to("echoes").build())
+        .include(
+            subscriber("orders", ConfirmBatchesInContext)
+                .reply()
+                .to("confirmations")
+                .batch(nonzero!(4))
+                .build(),
+        )
+        .include(
+            subscriber("orders", BatchGatewayInContext)
+                .reply()
+                .to("confirmations")
+                .batch(nonzero!(4))
+                .build(),
+        )
+        .out(Analytics, MemoryPublish)
+        .include(
+            subscriber("orders", Confirm)
+                .reply()
+                .to("confirmations")
+                .build(),
+        )
+        .out(Reply, MemoryPublish)
+        .codec(JsonCodec)
+        .include(subscriber("orders", RawMirror).build())
+        .out(Analytics, MemoryPublish)
+        .include(subscriber("orders", Mirror).build())
+        .out(Analytics, MemoryPublish)
+        .transform(Trace)
+        .include(subscriber("orders", PairMirror).build())
+        .out(Analytics, MemoryPublish)
+        .transform(Trace)
+        .out(Ledger, MemoryPublish)
+        .include(
+            subscriber("orders", RawGateway)
+                .reply()
+                .to("echoes")
+                .build(),
+        )
+        .out(Reply, MemoryPublish)
+        .out(Analytics, MemoryPublish)
+        .include(
+            subscriber("orders", Gateway)
+                .reply()
+                .to("confirmations")
+                .build(),
+        )
+        .out(Reply, MemoryPublish)
+        .transform(StampReply)
+        .out(Analytics, MemoryPublish)
+        .transform(Trace)
     });
     let running = app.start().await.expect("the app starts");
     running.shutdown().await.expect("the app stops cleanly");

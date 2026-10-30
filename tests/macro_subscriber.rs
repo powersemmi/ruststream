@@ -149,7 +149,7 @@ async fn static_publish_layer_transforms_reply() {
     let egress = MemoryBroker::new().bindable();
     let egress_pub = egress.bind(Publish);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker_labeled("egress", egress, |b| b.end())
+        .with_broker_labeled("egress", egress, |b| b)
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
             b.include(relay)
                 .out(Reply, egress_pub)
@@ -209,7 +209,7 @@ async fn macro_publisher_replies_cross_broker() {
     let egress_pub = egress.bind(Publish);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(Tagger)
-        .with_broker_labeled("egress", egress, |b| b.end())
+        .with_broker_labeled("egress", egress, |b| b)
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
             b.include(reply).out(Reply, egress_pub)
         });

@@ -20,7 +20,7 @@ help: the trait `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, 
    | |     Def::Handler: 'static,
    | |     T: Clone + Send + Sync + 'static,
    | |_____________________________________^
-   = note: required for `CarriedBatch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<BatchCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Fixed)>>`
+   = note: required for `CarriedBatch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<BatchCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Fixed)>>`
 
 error[E0277]: the subscription `MemorySource` does not lend batches of `Row`
   --> tests/ui/carried_batch_without_carries.rs:25:13
@@ -37,8 +37,9 @@ help: the trait `ruststream::runtime::MountChain<B, Layers, State, Pipeline>` is
    | |     for Router<B, Routes, RC, RL, RP>
    | | where
    | |     B: Broker + 'static,
-   | |     Routes: RouterDef<B, State, RP>,
-   | |             ----------------------- unsatisfied requirement introduced here: `(ruststream_runtime::router::routes::BatchRoute<MemorySource, ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>>, ()): RouterDef<MemoryBroker>`
+...  |
+   | |     Routes::Rest: RouterDef<B, State, RP>,
+   | |                   ----------------------- unsatisfied requirement introduced here: `<(ruststream_runtime::router::routes::BatchRoute<MemorySource, ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>>, ruststream::runtime::ChainHead<()>) as ruststream::runtime::SplitHead>::Rest: RouterDef<MemoryBroker>`
 ...  |
    | |     Pipeline: PublishPipeline + Clone + Send + 'static,
    | |     State: Send + Sync + 'static,
@@ -46,7 +47,7 @@ help: the trait `ruststream::runtime::MountChain<B, Layers, State, Pipeline>` is
    = note: required for `ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>` to implement `ruststream_runtime::batch::BatchHandler<Vec<MemoryMessage>>`
    = note: required for `ruststream_runtime::router::routes::BatchRoute<MemorySource, ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
    = note: required for `(ruststream_runtime::router::routes::BatchRoute<MemorySource, ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>>, ())` to implement `RouterDef<MemoryBroker>`
-   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::BatchRoute<MemorySource, ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>>, ())>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::BatchRoute<MemorySource, ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
 note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker`
   --> crates/ruststream-runtime-tokio/src/app/service.rs
    |

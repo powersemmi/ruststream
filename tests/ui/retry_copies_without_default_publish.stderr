@@ -17,7 +17,7 @@ help: the trait `DefaultPublish` is implemented for `ConnectedMemoryBroker<Log>`
    = note: required for `AddressedCopies` to implement `ruststream::runtime::CopyPathPairing<Bus, (), PublishIdentity>`
    = note: required for `ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<BusMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>` to implement `ruststream_runtime::router::routes::MountRoute<Bus, (), PublishIdentity>`
    = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<BusMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ())` to implement `RouterDef<Bus>`
-   = note: required for `Router<Bus, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<BusMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ())>` to implement `ruststream::runtime::MountChain<Bus>`
+   = note: required for `Router<Bus, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<BusMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountChain<Bus>`
 note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
   --> crates/ruststream-runtime-tokio/src/app/service.rs
    |

@@ -163,8 +163,8 @@ mod announce {
                     service: "orders".to_owned(),
                 };
                 publisher.message(&started).publish().await
-            });
-            b.include(subscriber("orders", Accept).build())
+            })
+            .include(subscriber("orders", Accept).build())
         })
     }
     // --8<-- [end:announce]

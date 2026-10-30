@@ -124,8 +124,8 @@ mod announce {
                     service: "orders".to_owned(),
                 };
                 publisher.message(&started).publish().await
-            });
-            b.include(accept)
+            })
+            .include(accept)
         })
     }
     // --8<-- [end:announce]

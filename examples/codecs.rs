@@ -56,8 +56,8 @@ mod ladder {
             CborCodec,
             |b| {
                 // A router names the codec of the handlers it mounts.
-                b.include_router(Router::new().with_codec(JsonCodec).include(audit));
-                b.include(bill)
+                b.include_router(Router::new().with_codec(JsonCodec).include(audit))
+                    .include(bill)
                     // A reply takes the default codec, JSON, unless its position names one.
                     .include(checkout)
                     .out_reply(Publish)

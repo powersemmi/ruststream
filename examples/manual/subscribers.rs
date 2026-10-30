@@ -276,10 +276,10 @@ impl Handle<Order> for Bill {
 fn app() -> RustStream {
     let shard = 7;
     RustStream::new(AppInfo::new("subscribers", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include_router(fan_out_routes());
-        b.include_router(per_customer_routes());
-        b.include_router(batch_routes());
-        b.include(subscriber("orders", Receive).build())
+        b.include_router(fan_out_routes())
+            .include_router(per_customer_routes())
+            .include_router(batch_routes())
+            .include(subscriber("orders", Receive).build())
             .include(subscriber("orders", WithContext).build())
             // --8<-- [start:name_mount]
             .include(

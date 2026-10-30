@@ -163,8 +163,8 @@ fn announcing_app() -> RustStream {
                 .publish()
                 .await
                 .map_err(|err| io::Error::other(err.to_string()))
-        });
-        b.include(take_order)
+        })
+        .include(take_order)
     })
 }
 

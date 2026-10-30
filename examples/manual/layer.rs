@@ -150,9 +150,9 @@ mod scopes {
                 Router::new()
                     .layer(RequireTenant)
                     .include(subscriber("refunds", Log).build()),
-            );
+            )
             // After an `include`: that registration alone; `audit` runs unwrapped.
-            b.include_router(
+            .include_router(
                 Router::new()
                     .include(subscriber("invoices", Log).build())
                     .layer(RequireTenant)

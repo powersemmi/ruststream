@@ -426,7 +426,7 @@ mod tests {
                 .on_startup(async move |()| {
                     Err::<(), _>(io::Error::other("state producer refused"))
                 })
-                .with_broker(MemoryBroker::new(), |b| b.end())
+                .with_broker(MemoryBroker::new(), |b| b)
         };
         let err = execute_default(&args(&["run"]), build).expect_err("the failing state producer");
         assert!(

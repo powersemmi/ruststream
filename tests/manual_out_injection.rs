@@ -72,7 +72,7 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let to_other = other.bind(Publish);
     let app = RustStream::new(AppInfo::new("cross", "0.1.0"))
         // The target broker may mount its own handlers here.
-        .with_broker(other, |b| b.end())
+        .with_broker(other, |b| b)
         .with_broker(ingress_broker, |b| {
             b.include(subscriber("out.crossing", Crossing).build())
                 .out(DefaultSlot, to_other)
