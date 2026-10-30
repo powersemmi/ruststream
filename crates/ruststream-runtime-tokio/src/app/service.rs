@@ -896,17 +896,16 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             // The scope id is the index this broker will occupy once pushed below; the harness
             // uses it to scope recorded deliveries per broker.
             let tasks = self.continuations.clone();
-            let scope_delivery = Arc::new(ScopeDelivery::new(
-                Arc::clone(&host),
-                #[cfg(feature = "testing")]
+            let scope_delivery = ScopeDelivery::new(Arc::clone(&host));
+            #[cfg(feature = "testing")]
+            let scope_delivery = scope_delivery.with_harness(
                 self.test_hooks.clone(),
-                #[cfg(feature = "testing")]
                 self.brokers.len(),
-                #[cfg(feature = "testing")]
                 subscription,
-                #[cfg(feature = "poll-diagnostics")]
-                self.poll_diagnostics.clone(),
-            ));
+            );
+            #[cfg(feature = "poll-diagnostics")]
+            let scope_delivery = scope_delivery.with_poll(self.poll_diagnostics.clone());
+            let scope_delivery = Arc::new(scope_delivery);
             self.starters.push(Box::new(move |state, shutdown| {
                 let connected = slot
                     .lock()

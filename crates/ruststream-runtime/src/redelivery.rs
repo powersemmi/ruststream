@@ -537,27 +537,53 @@ impl fmt::Debug for ScopeDelivery {
 }
 
 impl ScopeDelivery {
-    /// The scope context every subscription of one broker dispatches under.
+    /// The scope context every subscription of one broker dispatches under, outside any harness
+    /// and with diagnostics of its own; [`with_harness`](Self::with_harness) and
+    /// [`with_poll`](Self::with_poll) attach the app's.
+    ///
+    /// The harness and the diagnostics are attached by methods rather than taken here, so the
+    /// signature is the same whichever features of this crate a build unifies: a runner built
+    /// without them still calls it.
     #[doc(hidden)]
     #[must_use]
-    pub fn new(
-        host: Arc<dyn Detach>,
-        #[cfg(feature = "testing")] hooks: Arc<TestHooks>,
-        #[cfg(feature = "testing")] scope_id: usize,
-        #[cfg(feature = "testing")] subscription: usize,
-        #[cfg(feature = "poll-diagnostics")] poll: PollDiagnostics,
-    ) -> Self {
+    pub fn new(host: Arc<dyn Detach>) -> Self {
         Self {
             host,
             #[cfg(feature = "testing")]
-            hooks,
+            hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
-            scope_id,
+            scope_id: 0,
             #[cfg(feature = "testing")]
-            subscription,
+            subscription: 0,
             #[cfg(feature = "poll-diagnostics")]
-            poll,
+            poll: PollDiagnostics::new(),
         }
+    }
+
+    /// The harness hooks this scope dispatches under, with the broker's registration index and
+    /// the subscription's identity.
+    #[doc(hidden)]
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn with_harness(
+        mut self,
+        hooks: Arc<TestHooks>,
+        scope_id: usize,
+        subscription: usize,
+    ) -> Self {
+        self.hooks = hooks;
+        self.scope_id = scope_id;
+        self.subscription = subscription;
+        self
+    }
+
+    /// The app's poll-time diagnostics, which this scope's subscriptions register with.
+    #[doc(hidden)]
+    #[cfg(feature = "poll-diagnostics")]
+    #[must_use]
+    pub fn with_poll(mut self, poll: PollDiagnostics) -> Self {
+        self.poll = poll;
+        self
     }
 
     /// The app's poll-time diagnostics.
