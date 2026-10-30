@@ -383,6 +383,53 @@ impl<Def, Src, F, P, B, DC> WorkersStep for SubscriberBuilder<Def, Src, (Open, F
     }
 }
 
+/// A definition's settings that leave its dispatch concurrency open: one delivery at a time,
+/// where the runner fixes any pool at its own mount site.
+///
+/// A runner that hosts the app in one task (embassy's) takes its worker count as a constant of
+/// the mount site, so a definition that names a count of its own with
+/// [`workers`](SubscriberSettings::workers), [`threads`](SubscriberSettings::threads) or the
+/// attribute's `workers(..)` clause does not mount there. Machinery; never named directly.
+///
+/// # Examples
+///
+/// A count on the definition does not mount on a local router:
+///
+/// ```compile_fail
+/// # use std::convert::Infallible;
+/// # use std::future::ready;
+/// use ruststream::nonzero;
+/// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, SubscriberSettings, subscriber};
+/// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
+/// use ruststream_runtime::{Deserialized, Input, SoloDeserialized};
+/// # struct Reading<'a>(&'a [u8]);
+/// # impl Deserialized for Reading<'_> {
+/// #     type Output<'a> = Reading<'a>;
+/// #     type Error = Infallible;
+/// #     fn from_payload(payload: &[u8]) -> Result<Reading<'_>, Infallible> { Ok(Reading(payload)) }
+/// # }
+/// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
+/// # struct Log;
+/// # impl Handle<Reading<'_>> for Log {
+/// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> + Send { let _ = r.0; ready(Ok(())) }
+/// # }
+/// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local().include(
+///     subscriber(LocalMemorySource::new("readings"), Log)
+///         .workers(nonzero!(4))
+///         .build(),
+/// );
+/// ```
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` sets a worker count, which the embedded runner fixes at the mount site",
+    note = "on EmbeddedApp write `.include(def).pool::<N>()` or `.keyed::<N>()`; `threads(n)` runs \
+            only on the tokio runtime"
+)]
+pub trait Sequential {}
+
+impl<Def, Src, F, P, B, DC> Sequential for SubscriberBuilder<Def, Src, (Open, F, P, B), DC> {}
+
 /// Setting the failure policies. See [`SubscriberSettings::on_failure`].
 #[diagnostic::on_unimplemented(
     message = "this subscriber's failure policies are already fixed",

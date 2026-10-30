@@ -12,8 +12,8 @@ use crate::batch::BatchDef;
 use crate::input::{Materialize, Provided};
 use crate::lifecycle::BoxError;
 use crate::middleware::Identity;
-use crate::publish::{Outgoing, PublishIdentity, SendThrough};
-use crate::settings::{BatchSized, DefMountCodec, MountsWith};
+use crate::publish::{Outgoing, PublishIdentity, PublishPipeline, SendThrough};
+use crate::settings::{BatchSized, DefMountCodec, MountsWith, Sequential};
 use crate::subscriber_def::SubscriberDef;
 use crate::{
     LocalBatchSubscriber, LocalBroker, LocalConnected, LocalPublisher, LocalSourceMessage,
@@ -107,6 +107,95 @@ impl<B: LocalBroker + 'static> Router<B, (), (), Identity, LocalPipeline> {
         }
     }
 }
+
+/// A definition's settings that fit the runner the chain's pipeline `Pipe` belongs to: every
+/// setting on the multi-thread runner, and settings that name no worker count of their own on a
+/// local chain, whose runner fixes its pools at its own mount site. Machinery; never named
+/// directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` sets a worker count, which the embedded runner fixes at the mount site",
+    note = "on EmbeddedApp write `.include(def).pool::<N>()` or `.keyed::<N>()`; `threads(n)` runs \
+            only on the tokio runtime"
+)]
+pub trait PoolFits<Pipe> {}
+
+impl<Settings, Pipe: PublishPipeline> PoolFits<Pipe> for Settings {}
+
+impl<Settings: Sequential, Pipe> PoolFits<LocalPipeline<Pipe>> for Settings {}
+
+/// The publish pipeline a router's chain carries, read off the router type. Machinery; never
+/// named directly.
+#[doc(hidden)]
+pub trait RouterPipe {
+    /// The chain's pipeline: a [`LocalPipeline`] on a local chain.
+    type Pipe;
+}
+
+impl<B, Routes, RouteCodec, RouteLayers, Pipe> RouterPipe
+    for Router<B, Routes, RouteCodec, RouteLayers, Pipe>
+{
+    type Pipe = Pipe;
+}
+
+/// A chain whose registrations take a worker count at run time: the multi-thread runner's.
+/// Machinery; never named directly.
+///
+/// # Examples
+///
+/// [`Router::workers`] does not exist on a local chain:
+///
+/// ```compile_fail
+/// # use std::convert::Infallible;
+/// # use std::future::ready;
+/// use ruststream::nonzero;
+/// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, Workers, subscriber};
+/// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
+/// use ruststream_runtime::{Deserialized, Input, SoloDeserialized};
+/// # struct Reading<'a>(&'a [u8]);
+/// # impl Deserialized for Reading<'_> {
+/// #     type Output<'a> = Reading<'a>;
+/// #     type Error = Infallible;
+/// #     fn from_payload(payload: &[u8]) -> Result<Reading<'_>, Infallible> { Ok(Reading(payload)) }
+/// # }
+/// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
+/// # struct Log;
+/// # impl Handle<Reading<'_>> for Log {
+/// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> + Send { let _ = r.0; ready(Ok(())) }
+/// # }
+/// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
+///     .include(subscriber(LocalMemorySource::new("readings"), Log).build())
+///     .workers(Workers::pool(nonzero!(4)));
+/// ```
+///
+/// Neither does the attribute's `workers(..)` clause:
+///
+/// ```compile_fail
+/// use ruststream::runtime::{HandlerOutcome, Router, SubscriberSettings};
+/// use ruststream::{Deserialized, subscriber};
+/// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
+///
+/// #[derive(Deserialized)]
+/// struct Reading<'a>(&'a [u8]);
+///
+/// #[subscriber(LocalMemorySource, workers(4))]
+/// async fn log(reading: &Reading<'_>) -> HandlerOutcome {
+///     let _ = reading.0.len();
+///     HandlerOutcome::ack()
+/// }
+///
+/// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local().include(log.name("readings"));
+/// ```
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "a registration on a local router takes no worker count at run time",
+    note = "the embedded runner fixes the count at its mount site: on EmbeddedApp write \
+            `.include(def).pool::<N>()` or `.keyed::<N>()`"
+)]
+pub trait TakesWorkers {}
+
+impl<Pipe: PublishPipeline> TakesWorkers for Pipe {}
 
 // A local chain's replies and slot publishes go straight to the broker: the publish layers of
 // the multi-thread runner's app do not reach it.
