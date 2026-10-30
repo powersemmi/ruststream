@@ -191,6 +191,8 @@ impl Shutdown {
     }
 }
 
+// The runner's own type: its implementation is machinery, not part of the trait's documented set.
+#[doc(hidden)]
 impl ShutdownWait for Shutdown {
     type Wait<'a> = WaitForCancellationFuture<'a>;
 
@@ -205,6 +207,7 @@ impl ShutdownWait for Shutdown {
     }
 }
 
+#[doc(hidden)]
 impl Halt for Shutdown {
     fn fail(&self, subscription: &str, reason: &str) {
         self.signal(subscription, reason);
