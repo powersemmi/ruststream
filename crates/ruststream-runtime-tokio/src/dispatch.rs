@@ -62,14 +62,14 @@ where
 
 /// Waits for whichever comes first: a finished worker off `tasks`, or `shutdown`.
 ///
-/// The sequential loop's turn's counterpart for a full pool, in the same order and over the same pinned token
-/// future: a worker that has already finished is reaped without the token's waiter list being
-/// touched. `Ended` answers an empty set, which a full pool cannot be.
+/// For a full pool, what a turn of the sequential loop is for a subscriber: in the same order and
+/// over the same pinned token future, a worker that has already finished is reaped without the
+/// token's waiter list being touched. `Ended` answers an empty set, which a full pool cannot be.
 ///
 /// # Cancel safety
 ///
-/// Cancel-safe, like the sequential loop's turn: a `JoinSet` keeps its finished workers across polls, and the
-/// registration a parked poll made with the waiter list outlives that poll.
+/// Cancel-safe, like a turn of the sequential loop: a `JoinSet` keeps its finished workers across
+/// polls, and the registration a parked poll made with the waiter list outlives that poll.
 pub(super) async fn reap<Wait, Done>(
     tasks: &mut JoinSet<Done>,
     mut cancelled: Pin<&mut Wait>,
