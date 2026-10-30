@@ -385,7 +385,7 @@ where
     }
 
     let Some(path) = copy_path(delivery, host) else {
-        return requeue_now(slot, name, &delivery.declaration).await;
+        return requeue_now::<M, Host>(slot, name, &delivery.declaration).await;
     };
 
     match redelivery_of(slot.get(), &delivery.declaration) {
@@ -425,12 +425,12 @@ where
 }
 
 /// Requeues a delayed retry at once, on a broker that moves the subscription's deliveries itself
-/// and cannot hold one back.
+/// and cannot hold one back, or on a runner whose copies wait in a store the mount has none of.
 ///
 /// # Errors
 ///
 /// Returns the [`AckError`] from the requeue.
-async fn requeue_now<M: LocalIncomingMessage>(
+async fn requeue_now<M: LocalIncomingMessage, Host: HostDetach>(
     slot: &mut Slot<M>,
     name: &str,
     declaration: &RetryDeclaration,
@@ -441,12 +441,23 @@ async fn requeue_now<M: LocalIncomingMessage>(
         redelivery_of(slot.get(), declaration),
         Redelivery::Subscription
     ) {
-        warn!(
-            target: "ruststream::dispatch",
-            subscription = %name,
-            "retry_after on a broker with neither native delayed redelivery nor a copy path \
-             of its own; requeuing immediately (the delay is dropped)",
-        );
+        // The runner is a type, so which warning applies is settled at compile time.
+        if Host::STORES_COPIES {
+            warn!(
+                target: "ruststream::dispatch",
+                subscription = %name,
+                "retry_after on a mount with no store of copies; requeuing immediately (the delay \
+                 is dropped). A mount whose descriptor addresses its copies keeps them with \
+                 `.retry_capacity::<CAP>()`",
+            );
+        } else {
+            warn!(
+                target: "ruststream::dispatch",
+                subscription = %name,
+                "retry_after on a broker with neither native delayed redelivery nor a copy path \
+                 of its own; requeuing immediately (the delay is dropped)",
+            );
+        }
     }
     slot.take().nack(true).await
 }

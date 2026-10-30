@@ -226,6 +226,10 @@ pub trait Detach: Send + Sync {
 /// one-thread runner takes them as they are. Machinery; never named directly.
 #[doc(hidden)]
 pub trait HostDetach {
+    /// Whether the runner keeps a mount's retry copies in a store the mount sizes itself: see
+    /// [`LocalDetach::STORES_COPIES`].
+    const STORES_COPIES: bool = false;
+
     /// Runs `work` beside the delivery that left it.
     fn detach<Work>(&self, work: Work)
     where
@@ -296,6 +300,8 @@ impl<Host: Detach> HostDetach for Host {
 pub struct OnOneThread<'host, Host>(pub &'host Host);
 
 impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
+    const STORES_COPIES: bool = Host::STORES_COPIES;
+
     #[inline]
     fn detach<Work>(&self, work: Work)
     where
@@ -342,6 +348,8 @@ pub struct Keeping<'host, Host, Kept>(pub &'host Host, pub &'host Kept);
 
 #[cfg(feature = "alloc")]
 impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept> {
+    const STORES_COPIES: bool = Host::STORES_COPIES;
+
     #[inline]
     fn detach<Work>(&self, work: Work)
     where
@@ -454,6 +462,10 @@ impl KeptCopies for NoKept {
 /// not keep.
 #[doc(hidden)]
 pub trait LocalDetach {
+    /// Whether this runner keeps a mount's retry copies in a store the mount sizes itself, so a
+    /// delayed retry on a mount without one names the step that adds it.
+    const STORES_COPIES: bool = false;
+
     /// Runs `work` beside the delivery that left it.
     fn detach<Work>(&self, work: Work)
     where

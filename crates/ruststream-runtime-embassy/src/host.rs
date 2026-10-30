@@ -111,6 +111,9 @@ impl<Timers: Clock<Sleep: 'static> + 'static> Detached<Timers> {
 }
 
 impl<Timers: Clock<Sleep: 'static> + 'static> LocalDetach for Detached<Timers> {
+    // A copy waits in the store its mount sized with `.retry_capacity`.
+    const STORES_COPIES: bool = true;
+
     fn detach<Work>(&self, work: Work)
     where
         Work: Future<Output = ()> + 'static,

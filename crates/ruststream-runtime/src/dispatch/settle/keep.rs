@@ -123,8 +123,9 @@ mod tests {
     use super::super::settle_outcome;
     use crate::dispatch::{Delivery, RETRY_COUNT_HEADER, Slot};
     use crate::handler::HandlerResult;
-    use crate::host::{Keeping, KeptCopies, LocalDetach};
+    use crate::host::{Keeping, KeptCopies, LocalDetach, OnOneThread};
     use crate::lifecycle::BoxError;
+    use crate::testkit::log_capture;
     use crate::{HeaderMap, RetryDeclaration};
 
     /// What the store was asked to do, in order.
@@ -352,6 +353,61 @@ mod tests {
         .await;
         assert_eq!(settled, 1, "the original is dropped");
         assert_eq!(store.asked(), [filled(), Asked::SendNow(None)]);
+    }
+
+    /// A one-thread runner whose copies wait in a store of the mount's own, run with none.
+    struct StoreRunner;
+
+    impl LocalDetach for StoreRunner {
+        const STORES_COPIES: bool = true;
+
+        fn detach<Work>(&self, _work: Work)
+        where
+            Work: Future<Output = ()> + 'static,
+        {
+        }
+
+        fn detach_after<Work>(&self, _delay: Duration, _work: Work)
+        where
+            Work: Future<Output = ()> + 'static,
+        {
+        }
+    }
+
+    #[tokio::test]
+    async fn a_delay_with_no_store_names_the_step_that_keeps_copies() {
+        let (events, _guard) = log_capture::start();
+        let settled = Arc::new(AtomicU8::new(0));
+        let msg = PlainMessage {
+            payload: Bytes::from_static(b"body"),
+            headers: HeaderMap::new(),
+            settled: Arc::clone(&settled),
+            settlement: Settlement::Accepted,
+        };
+        settle_outcome(
+            &mut Slot::new(msg),
+            HandlerResult::retry_after(LATER),
+            "orders",
+            &Delivery::empty(),
+            &OnOneThread(&StoreRunner),
+            unit_cx,
+        )
+        .await;
+        assert_eq!(
+            settled.load(Ordering::SeqCst),
+            2,
+            "the delivery is requeued"
+        );
+        let warned = log_capture::find(
+            &events,
+            "retry_after on a mount with no store of copies; requeuing immediately (the delay \
+             is dropped). A mount whose descriptor addresses its copies keeps them with \
+             `.retry_capacity::<CAP>()`",
+        );
+        assert_eq!(
+            warned.get("subscription").map(String::as_str),
+            Some("orders")
+        );
     }
 
     #[tokio::test]
