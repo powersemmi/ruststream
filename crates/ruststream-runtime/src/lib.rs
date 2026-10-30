@@ -36,6 +36,13 @@ extern crate std;
 #[allow(clippy::wildcard_imports)]
 use ruststream_core::*;
 
+/// Whether this build's delivery body records what the test harness or OpenTelemetry reads: a
+/// batch then allocates the records on top of what its form allocates. Read by the runners'
+/// allocation tests, which hold the production body to its count. Machinery; never named
+/// directly.
+#[doc(hidden)]
+pub const INSTRUMENTED_BODY: bool = cfg!(any(feature = "testing", feature = "otel"));
+
 #[cfg(feature = "alloc")]
 pub mod codec;
 pub mod testing;
