@@ -1695,6 +1695,7 @@ dependencies = [
  "rmp-serde",
  "ruststream",
  "ruststream-core",
+ "ruststream-memory",
  "schemars",
  "serde",
  "serde_json",

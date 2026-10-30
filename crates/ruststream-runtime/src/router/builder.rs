@@ -103,7 +103,7 @@ pub struct Router<B, Routes = (), C = (), Layers = Identity, Pipe = PublishIdent
     pub(super) _broker: PhantomData<fn() -> B>,
 }
 
-impl<B: LocalBroker + 'static> Default for Router<B> {
+impl<B: Broker + 'static> Default for Router<B> {
     fn default() -> Self {
         Self {
             routes: (),
@@ -121,7 +121,7 @@ impl<B, Routes, C, Layers, Pipe> fmt::Debug for Router<B, Routes, C, Layers, Pip
     }
 }
 
-impl<B: LocalBroker + 'static> Router<B, ()> {
+impl<B: Broker + 'static> Router<B, ()> {
     /// Creates an empty router decoding with the [`DefaultCodec`](crate::codec::DefaultCodec).
     #[must_use]
     pub fn new() -> Self {
