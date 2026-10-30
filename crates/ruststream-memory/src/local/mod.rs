@@ -58,6 +58,29 @@ mod broker;
 mod bus;
 mod subscriber;
 
+/// Reads the local bus's streams in tests without awaiting them.
+///
+/// Every step of the bus is synchronous, so a delivery the test expects is already waiting when
+/// the stream is polled. A test that awaited it would hang on a broken bus instead of failing.
+#[cfg(test)]
+mod drive {
+    use futures::{FutureExt, Stream, StreamExt};
+
+    /// The next item the stream already holds.
+    pub(super) fn waiting<S: Stream + Unpin>(stream: &mut S) -> S::Item {
+        stream
+            .next()
+            .now_or_never()
+            .expect("the stream has nothing waiting: the delivery the test expects never arrived")
+            .expect("the stream ended where the test expects a delivery")
+    }
+
+    /// Whether the stream has ended, rather than yielding an item or waiting.
+    pub(super) fn ended<S: Stream + Unpin>(stream: &mut S) -> bool {
+        matches!(stream.next().now_or_never(), Some(None))
+    }
+}
+
 /// The heap's types, which the standard prelude names when `std` is on and this module reaches
 /// through `alloc` without it.
 mod alloc_prelude {
