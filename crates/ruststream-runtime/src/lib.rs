@@ -171,7 +171,7 @@ pub use handle::{
 #[doc(hidden)]
 pub use handler::IntoOutcome;
 #[cfg(feature = "alloc")]
-pub use handler::{Handler, HandlerOutcome};
+pub use handler::{Handler, HandlerOutcome, LocalHandler};
 pub use host::{Clock, ShutdownWait};
 #[doc(hidden)]
 pub use host::{Detach, Halt};
