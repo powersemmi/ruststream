@@ -7,6 +7,73 @@
 //! This module is `#[cfg(test)]` and everything in it is `pub(crate)`: nothing here is part of the
 //! published surface. The user-facing test harness is [`crate::testing`].
 
+use std::sync::Mutex;
+use std::time::Duration;
+
+use tokio::time;
+use tokio_util::task::TaskTracker;
+
+use crate::host::{Detach, Halt};
+
+/// The runner a delivery built by a unit test hands its leftovers to: tasks on the test's own
+/// runtime, tracked by `0`, so a test can wait for them or count them.
+pub(crate) struct Tracked(pub(crate) TaskTracker);
+
+impl Detach for Tracked {
+    fn detach<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        drop(self.0.spawn(work));
+    }
+
+    fn detach_after<Work>(&self, delay: Duration, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        drop(self.0.spawn(async move {
+            time::sleep(delay).await;
+            work.await;
+        }));
+    }
+}
+
+/// The shutdown a unit test hands the body: it records the failure a fail-fast raised it with, the
+/// first one winning, as the runner's shutdown does.
+#[derive(Debug, Default)]
+pub(crate) struct Shutdown(Mutex<Option<String>>);
+
+impl Shutdown {
+    /// A shutdown nothing has raised yet.
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether a fail-fast raised it.
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.peek_failure().is_some()
+    }
+
+    /// The first failure recorded, naming its subscription.
+    pub(crate) fn peek_failure(&self) -> Option<String> {
+        self.0
+            .lock()
+            .expect("the failure slot is never poisoned")
+            .clone()
+    }
+}
+
+impl Halt for Shutdown {
+    fn fail(&self, subscription: &str, reason: &str) {
+        self.0
+            .lock()
+            .expect("the failure slot is never poisoned")
+            .get_or_insert_with(|| format!("{subscription}: {reason}"));
+    }
+
+    fn stream_ended(&self, _subscription: &str) {}
+}
+
 /// Records the fields of every tracing event emitted while the guard is alive, so a test can
 /// assert on a diagnostic's content rather than on its mere existence.
 ///
@@ -18,8 +85,8 @@ pub(crate) mod log_capture {
     use std::sync::{Arc, Mutex, Once};
 
     use tracing::field::{Field, Visit};
-    use tracing::subscriber::{DefaultGuard, Interest};
-    use tracing::{Metadata, Subscriber, span, subscriber};
+    use tracing::subscriber::DefaultGuard;
+    use tracing::{Subscriber, subscriber};
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::{Context, SubscriberExt as _};
 
@@ -61,42 +128,17 @@ pub(crate) mod log_capture {
 
     /// Installs the capturing subscriber for the current thread. Events are collected until the
     /// returned guard is dropped.
-    /// The process-wide subscriber: it records nothing, and keeps every callsite's interest at
-    /// "sometimes". Without it the only global dispatcher is the no-op one, and a callsite a test
-    /// on another thread hits first, while no capture is installed anywhere, can be cached as
-    /// never interested: a capture installed a moment later then misses that event.
-    struct Undecided;
-
-    impl Subscriber for Undecided {
-        fn register_callsite(&self, _metadata: &'static Metadata<'static>) -> Interest {
-            Interest::sometimes()
-        }
-
-        fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
-            false
-        }
-
-        fn new_span(&self, _span: &span::Attributes<'_>) -> span::Id {
-            span::Id::from_u64(1)
-        }
-
-        fn record(&self, _span: &span::Id, _values: &span::Record<'_>) {}
-
-        fn record_follows_from(&self, _span: &span::Id, _follows: &span::Id) {}
-
-        fn event(&self, _event: &tracing::Event<'_>) {}
-
-        fn enter(&self, _span: &span::Id) {}
-
-        fn exit(&self, _span: &span::Id) {}
-    }
-
+    ///
+    /// The process-wide subscriber is an empty registry, interested in every callsite. Without it
+    /// the only global dispatcher is the no-op one, and a callsite a test on another thread hits
+    /// first, while no capture is installed anywhere, can be cached as never interested: a capture
+    /// installed a moment later then misses that event.
     pub(crate) fn start() -> (Events, DefaultGuard) {
-        static UNDECIDED: Once = Once::new();
-        UNDECIDED.call_once(|| {
+        static INTERESTED: Once = Once::new();
+        INTERESTED.call_once(|| {
             // Another test binary's global subscriber is not this process's concern: a failure
             // here means one is already installed, which keeps the interest open just as well.
-            let _ = subscriber::set_global_default(Undecided);
+            let _ = subscriber::set_global_default(tracing_subscriber::registry());
         });
         let events: Events = Arc::new(Mutex::new(Vec::new()));
         let guard = subscriber::set_default(

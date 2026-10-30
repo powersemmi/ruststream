@@ -291,7 +291,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// fixed content-type header, or stamping the delivery's trace / correlation id onto the reply
 /// (read it from `cx`). For cross-cutting
 /// *observation* across every publish (metrics), use the app-wide [`PublishLayer`](crate::PublishLayer) via
-/// [`RustStream::publish_layer`](crate::RustStream::publish_layer) instead; the per-publisher
+/// [`RustStream::publish_layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.publish_layer) instead; the per-publisher
 /// transforms run first (closest to the value), then the app-wide publish pipeline, then the send.
 ///
 /// # Which positions a transform mounts on

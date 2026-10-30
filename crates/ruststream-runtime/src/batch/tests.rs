@@ -8,12 +8,14 @@ use futures::StreamExt;
 use tokio::{task, time};
 use tokio_util::task::TaskTracker;
 
+use crate::testkit::Tracked;
+
 use super::super::dispatch::{Delivery, RETRY_COUNT_HEADER};
 use super::super::input::Decoded;
-use super::super::shutdown::Shutdown;
 use super::*;
 use crate::codec::{CodecError, JsonCodec};
 use crate::redelivery::bare_retry_publisher;
+use crate::testkit::Shutdown;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 use crate::testkit::log_capture;
 use crate::{AckError, HeaderMap, Name, Subscriber, SubscriptionSource};
@@ -41,11 +43,12 @@ async fn per_element_outcomes_settle_individually() {
 
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("selective", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 3);
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     let redelivered = pull_batch(&mut sub).await;
     let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
@@ -86,11 +89,12 @@ async fn per_element_continuations_run_after_settle() {
 
     let tasks = TaskTracker::new();
     let state = ();
-    let delivery = Delivery::with_tasks(tasks.clone());
+    let delivery = Delivery::empty();
+    let host = Tracked(tasks.clone());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("after-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     // The continuation for element 0 runs on the tracked set after settling.
     ran.notified().await;
@@ -119,11 +123,12 @@ async fn unmatched_remainder_is_retried() {
 
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("short", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 3);
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     let redelivered = pull_batch(&mut sub).await;
     let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
@@ -154,10 +159,11 @@ async fn per_element_outcomes_carry_delays() {
 
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("delayed", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     let mut stream = std::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
@@ -181,11 +187,12 @@ async fn uniform_outcome_settles_the_whole_batch() {
 
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("uniform", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 2);
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     let redelivered = pull_batch(&mut sub).await;
     assert_eq!(redelivered.len(), 2);
@@ -317,12 +324,13 @@ async fn fail_fast_decode_tears_down_and_drops_the_element() {
     let shutdown = Shutdown::new();
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx =
         Context::new("ff-batch", &headers, &state, (), &delivery).with_failfast(&shutdown);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 2);
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     assert!(shutdown.is_cancelled(), "a fail-fast decode must tear down");
     let failure = shutdown.peek_failure().expect("a failure must be recorded");
@@ -375,6 +383,7 @@ async fn a_refused_ack_does_not_abort_the_batch() {
         BatchResult::Uniform(HandlerOutcome::ack()),
         "refusing",
         &Delivery::<()>::empty(),
+        &Tracked(TaskTracker::new()),
     )
     .await;
 
@@ -398,6 +407,7 @@ async fn outcome_count_mismatch_is_logged_with_both_counts() {
         BatchResult::PerElement(vec![HandlerOutcome::ack()]),
         "short-batch",
         &Delivery::<()>::empty(),
+        &Tracked(TaskTracker::new()),
     )
     .await;
     drop(guard);
@@ -429,16 +439,18 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
     });
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("diag-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     settle_batch(
         vec![UnsettleableMessage(Arc::new(AtomicUsize::new(0)))],
         BatchResult::Uniform(HandlerOutcome::ack()),
         "diag-batch",
         &Delivery::<()>::empty(),
+        &Tracked(TaskTracker::new()),
     )
     .await;
     drop(guard);
@@ -539,10 +551,11 @@ async fn a_deserialized_batch_lends_the_payloads_and_settles_the_deliveries() {
 
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
-    handled(&handler, batch, &mut (), &mut ctx).await;
+    handled(&handler, batch, &mut (), &mut ctx, &host).await;
 
     assert_eq!(
         seen.lock().unwrap().as_slice(),
@@ -557,9 +570,17 @@ async fn an_empty_deserialized_batch_reaches_no_handler() {
 
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
-    handled(&handler, Vec::<MemoryMessage>::new(), &mut (), &mut ctx).await;
+    handled(
+        &handler,
+        Vec::<MemoryMessage>::new(),
+        &mut (),
+        &mut ctx,
+        &host,
+    )
+    .await;
 
     assert_eq!(*seen.lock().unwrap(), Vec::<Vec<u8>>::new());
 }
@@ -578,10 +599,11 @@ async fn a_failed_construction_is_settled_and_the_rest_reach_the_batch() {
 
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
-    handled(&handler, batch, &mut (), &mut ctx).await;
+    handled(&handler, batch, &mut (), &mut ctx, &host).await;
 
     assert_eq!(
         seen.lock().unwrap().as_slice(),
@@ -677,11 +699,8 @@ async fn deferred_copies(
 async fn a_uniform_batch_retry_after_defers_a_republish() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::deferring_to(
-        bare_retry_publisher(broker.publisher()),
-        "orders",
-        TaskTracker::new(),
-    );
+    let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+    let host = Tracked(TaskTracker::new());
 
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
         ready(HandlerOutcome::retry_after(DEFER))
@@ -695,6 +714,7 @@ async fn a_uniform_batch_retry_after_defers_a_republish() {
         PlainMessage::batch(&[b"1", b"2"], &dropped),
         &mut Vec::new(),
         &mut ctx,
+        &host,
     )
     .await;
 
@@ -714,11 +734,8 @@ async fn a_uniform_batch_retry_after_defers_a_republish() {
 async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::deferring_to(
-        bare_retry_publisher(broker.publisher()),
-        "orders",
-        TaskTracker::new(),
-    );
+    let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+    let host = Tracked(TaskTracker::new());
 
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
         ready(vec![
@@ -735,6 +752,7 @@ async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
         PlainMessage::batch(&[b"1", b"2"], &dropped),
         &mut Vec::new(),
         &mut ctx,
+        &host,
     )
     .await;
 
@@ -752,11 +770,8 @@ async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
 async fn a_deferred_decode_rejection_is_republished() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::deferring_to(
-        bare_retry_publisher(broker.publisher()),
-        "orders",
-        TaskTracker::new(),
-    );
+    let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+    let host = Tracked(TaskTracker::new());
 
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
         ready(HandlerOutcome::ack())
@@ -771,6 +786,7 @@ async fn a_deferred_decode_rejection_is_republished() {
         PlainMessage::batch(&[b"not json", b"1"], &dropped),
         &mut Vec::new(),
         &mut ctx,
+        &host,
     )
     .await;
 
@@ -807,11 +823,8 @@ impl<'p> SliceHandler<Frame<'p>> for DeferFrames {
 async fn a_split_batch_defers_the_rejected_and_the_accepted_alike() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::deferring_to(
-        bare_retry_publisher(broker.publisher()),
-        "orders",
-        TaskTracker::new(),
-    );
+    let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+    let host = Tracked(TaskTracker::new());
 
     // The middle element is empty, which `Frame` refuses to construct from.
     let handler = DeserializedBatch::<_, Frame<'static>, _>::over(DeferFrames)
@@ -825,6 +838,7 @@ async fn a_split_batch_defers_the_rejected_and_the_accepted_alike() {
         PlainMessage::batch(&[b"one", b"", b"two"], &dropped),
         &mut (),
         &mut ctx,
+        &host,
     )
     .await;
 

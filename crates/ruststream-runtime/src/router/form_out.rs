@@ -14,7 +14,7 @@
 //! instantiates the definition and the entry's pipeline is part of that instantiated type. The
 //! chain therefore carries the pipeline its slots publish through: [`PublishIdentity`] on a
 //! router built on its own (the app that mounts it, and the middleware it carries, exist only
-//! later), the app's own on a chain a [`BrokerScope`](crate::BrokerScope) drives.
+//! later), the app's own on a chain a [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) drives.
 
 // The typed default reply needs a default codec to encode with, so those pieces are gated the
 // same way; the byte-reply default publishes bare bytes and needs only `DefaultPublish`.

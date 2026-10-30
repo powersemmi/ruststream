@@ -406,7 +406,9 @@ impl Workers {
 
     /// One worker on the app's runtime is indistinguishable from the sequential loop; one
     /// dedicated thread is still a thread of its own.
-    pub(crate) const fn is_sequential(&self) -> bool {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn is_sequential(&self) -> bool {
         self.count.get() == 1 && matches!(self.placement, Placement::Runtime)
     }
 

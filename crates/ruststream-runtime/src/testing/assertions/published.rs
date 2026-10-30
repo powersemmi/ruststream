@@ -249,7 +249,7 @@ impl<T> PublishedAssertions<T> {
     /// Asserts the most recent published message carries the header `name` with `value`.
     ///
     /// What a publish transform or an app-wide
-    /// [`publish_layer`](crate::RustStream::publish_layer) put on the message is read
+    /// [`publish_layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.publish_layer) put on the message is read
     /// here: the assertion sees the message as it left, so a stamp added on the way out shows up
     /// on the reply channel and on `tb.out::<Marker>()` alike.
     ///

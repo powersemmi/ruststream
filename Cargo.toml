@@ -2,6 +2,7 @@
 members = [
     "crates/ruststream-core",
     "crates/ruststream-runtime",
+    "crates/ruststream-runtime-tokio",
     "crates/ruststream-memory",
     "crates/ruststream-asyncapi",
     "crates/ruststream-observability",
@@ -11,6 +12,7 @@ members = [
     "crates/ruststream-macros",
     "crates/ruststream-example-suite",
     "crates/ruststream-no-std-probe",
+    "crates/ruststream-embassy-probe",
 ]
 # `templates/` holds cargo-generate scaffolds (rendered by `cargo generate`, not built here): their
 # sources carry `{{project-name}}` placeholders that are not valid Rust/TOML until rendered, so they
@@ -69,6 +71,7 @@ ruststream-macros = { version = "=0.7.7", path = "crates/ruststream-macros" }
 # The crates the facade re-exports, pinned exactly for the same reason as the macros crate.
 ruststream-core = { version = "=0.7.7", path = "crates/ruststream-core" }
 ruststream-runtime = { version = "=0.7.7", path = "crates/ruststream-runtime" }
+ruststream-runtime-tokio = { version = "=0.7.7", path = "crates/ruststream-runtime-tokio" }
 ruststream-memory = { version = "=0.7.7", path = "crates/ruststream-memory" }
 ruststream-asyncapi = { version = "=0.7.7", path = "crates/ruststream-asyncapi" }
 ruststream-observability = { version = "=0.7.7", path = "crates/ruststream-observability" }
@@ -967,6 +970,7 @@ logging = [
 cli = ["dep:anyhow", "ruststream-cli/tool"]
 poll-diagnostics = [
     "ruststream-runtime/poll-diagnostics",
+    "ruststream-runtime-tokio/poll-diagnostics",
     "ruststream-observability?/poll-diagnostics",
 ]
 testing = [
@@ -974,6 +978,7 @@ testing = [
     "dep:ruststream-testing",
     "ruststream-core/testing",
     "ruststream-runtime/testing",
+    "ruststream-runtime-tokio/testing",
     "ruststream-memory?/testing",
 ]
 otel = ["dep:ruststream-observability", "ruststream-observability/otel"]
@@ -981,6 +986,7 @@ otel = ["dep:ruststream-observability", "ruststream-observability/otel"]
 [dependencies]
 ruststream-core = { workspace = true, features = ["std"] }
 ruststream-runtime.workspace = true
+ruststream-runtime-tokio.workspace = true
 ruststream-memory = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }
@@ -1063,7 +1069,17 @@ harness = false
 required-features = ["memory", "json", "macros"]
 
 [[bench]]
+name = "continuation"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
 name = "retry_copy"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "retry_copy_deferred"
 harness = false
 required-features = ["memory", "json", "macros"]
 

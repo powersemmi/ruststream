@@ -22,13 +22,14 @@ use bytes::BytesMut;
 
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::RecordedValue;
-use crate::{Field, FieldMut, HeaderMap, IncomingMessage};
+use crate::{Field, FieldMut, HeaderMap, LocalIncomingMessage};
 
 use super::dispatch::Delivery;
 use super::failure::FailurePolicy;
 use super::handler::{HandlerOutcome, HandlerResult};
-use super::main_runtime::MainRuntime;
-use super::shutdown::Shutdown;
+use crate::host::Halt;
+#[cfg(feature = "tokio")]
+use crate::main_runtime::MainRuntime;
 
 /// Where one delivery's header map comes from.
 ///
@@ -80,7 +81,7 @@ impl<'a> From<&'a HeaderMap> for DeliveryHeaders<'a> {
 /// The delivery itself, which is what the dispatch path hands the context.
 pub(crate) struct FromDelivery<'m, M>(pub(crate) &'m M);
 
-impl<M: IncomingMessage> HeaderSource for FromDelivery<'_, M> {
+impl<M: LocalIncomingMessage> HeaderSource for FromDelivery<'_, M> {
     fn headers(&self) -> &HeaderMap {
         self.0.headers()
     }
@@ -182,7 +183,7 @@ pub struct Context<'a, C = (), S = ()> {
     cx: C,
     delivery: &'a Delivery<C>,
     after: Vec<AfterHook>,
-    failfast: Option<&'a Shutdown>,
+    failfast: Option<&'a dyn Halt>,
     /// The dispatch loop's encode buffer, lent to this delivery's reply. `None` where the
     /// context was built without one, and then the reply encodes into a buffer of its own.
     encode: Option<&'a mut BytesMut>,
@@ -283,7 +284,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// service down from inside the handler. The dispatch loop sets this; contexts built in tests
     /// leave it unset (a fail-fast there logs but cannot reach the run loop).
     #[must_use]
-    pub(crate) fn with_failfast(mut self, failfast: &'a Shutdown) -> Self {
+    pub(crate) fn with_failfast(mut self, failfast: &'a dyn Halt) -> Self {
         self.failfast = Some(failfast);
         self
     }
@@ -358,7 +359,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// [`FailFast`](super::FailurePolicy::FailFast).
     pub(crate) fn fail_fast(&self, reason: &str) {
         if let Some(failfast) = self.failfast {
-            failfast.signal(self.name, reason);
+            failfast.fail(self.name, reason);
         }
     }
 
@@ -371,6 +372,12 @@ impl<'a, C, S> Context<'a, C, S> {
     /// The runtime the app runs on: the one explicit way from a handler on dedicated threads
     /// (`threads(n)`) to send work to the app's runtime (see [`MainRuntime`]). On any other
     /// placement the handler already runs there.
+    ///
+    /// # Panics
+    ///
+    /// Panics where the subscription opened outside the context of a Tokio runtime, as Tokio's
+    /// `Handle::current` does there; a subscription the Tokio runner starts always opens inside
+    /// one.
     ///
     /// # Examples
     ///
@@ -386,9 +393,13 @@ impl<'a, C, S> Context<'a, C, S> {
     ///     HandlerOutcome::ack()
     /// }
     /// ```
+    #[cfg(feature = "tokio")]
     #[must_use]
     pub fn main_runtime(&self) -> &MainRuntime {
-        &self.delivery.runtime
+        self.delivery
+            .runtime
+            .as_ref()
+            .expect("the subscription opened outside the context of a Tokio runtime")
     }
 
     /// The delivery's own headers, taken off the broker on the first call and kept for the rest
@@ -590,7 +601,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// Post-settle hooks are at-most-once: the message is already settled before any hook runs, so
     /// a hook that panics, or that is lost when the process crashes, never causes a redelivery and
     /// never blocks the next delivery. A graceful shutdown drains in-flight hooks (bounded by the
-    /// app's [`shutdown_timeout`](super::RustStream::shutdown_timeout)); an aborted shutdown may
+    /// app's [`shutdown_timeout`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.shutdown_timeout)); an aborted shutdown may
     /// drop them.
     ///
     /// # Examples

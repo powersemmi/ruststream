@@ -5,12 +5,11 @@ use std::{sync::Arc, time::Duration};
 
 use tokio::task::JoinHandle;
 use tokio::time;
-use tokio::time::Instant;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
-use crate::lifecycle::{BoxError, BoxFuture, ConnectedLifecycle};
 use crate::shutdown::Shutdown;
+use crate::{BoxError, BoxFuture, Clock, ConnectedLifecycle, Tokio};
 
 use super::{LifecycleHook, RustStreamError};
 
@@ -193,7 +192,7 @@ pub(crate) async fn drain_handles(
         return joined;
     };
 
-    let until = Instant::now() + timeout;
+    let until = Tokio.now() + timeout;
     let mut timed_out = false;
     for mut handle in handles {
         if time::timeout_at(until, &mut handle).await.is_ok() {

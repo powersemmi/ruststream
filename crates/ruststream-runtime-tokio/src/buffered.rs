@@ -15,11 +15,10 @@ use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use futures::{Stream, StreamExt, stream};
-use tokio::time::sleep;
 
 use crate::{
-    AddressedCopies, BatchSubscriber, ConnectedBroker, DeclareRetryError, RedeliveryAddress,
-    RedeliveryAddressed, RetryDeclaration, Seekable, Subscriber, SubscriptionSource,
+    AddressedCopies, BatchSubscriber, Clock, ConnectedBroker, DeclareRetryError, RedeliveryAddress,
+    RedeliveryAddressed, RetryDeclaration, Seekable, Subscriber, SubscriptionSource, Tokio,
 };
 
 const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
@@ -298,7 +297,7 @@ where
     batch.push(first);
     let mut carry = Carry::Nothing;
     if max_size > 1 {
-        let deadline = sleep(max_wait);
+        let deadline = Tokio.sleep(max_wait);
         tokio::pin!(deadline);
         loop {
             tokio::select! {

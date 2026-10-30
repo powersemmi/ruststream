@@ -35,7 +35,7 @@ use ruststream_core::{
 };
 use ruststream_runtime::testing::{Backlog, InProcess, TestableBroker};
 #[cfg(feature = "asyncapi")]
-use ruststream_runtime::{AppInfo, RustStream};
+use ruststream_runtime_tokio::{AppInfo, RustStream};
 use tokio::{runtime, sync::oneshot, time::timeout};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);

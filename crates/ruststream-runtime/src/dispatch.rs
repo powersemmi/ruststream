@@ -1,11 +1,7 @@
 //! The per-subscriber dispatch loop: pulls messages off one subscriber and invokes its handler
-//! until shutdown is signalled or the stream ends. [`RustStream`](super::RustStream) owns the
-//! task spawning.
+//! until shutdown is signalled or the stream ends. The runner spawns it, on the runtime it owns.
 
 use std::any::Any;
-use std::future::poll_fn;
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::num::NonZeroUsize;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -15,10 +11,9 @@ use std::task::{Context as TaskContext, Poll};
 use bytes::Bytes;
 use bytes::BytesMut;
 use futures::{FutureExt, Stream};
-use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tracing::error;
 
-use crate::{BatchSubscriber, HeaderMap, IncomingMessage, Subscriber};
+use crate::{BuildContext, HeaderMap, LocalIncomingMessage, LocalSubscriber};
 
 use super::batch::{BatchHandler, TakenBatch};
 use super::context::{Context, FromDelivery};
@@ -26,17 +21,15 @@ use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 #[cfg(doc)]
 use super::handler::HandlerResult;
 use super::handler::{Handler, HandlerOutcome};
-use super::shutdown::Shutdown;
+use super::host::{Detach, Halt, ShutdownWait};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
     Coordinator, Delivered, HarnessScope, Record, calls_in_harness_scope, in_harness_scope,
 };
 #[cfg(feature = "testing")]
 use crate::testing::hooks::DueCall;
-pub(crate) use delivery::{Delivery, Slot};
+pub use delivery::{Delivery, Lent, Slot};
 pub(crate) use settle::settle_outcome;
-pub(crate) use threads::StartThreadError;
-use threads::Threads;
 pub use workers::{Placement, Workers};
 
 /// Header carrying the framework's own retry count.
@@ -98,70 +91,83 @@ macro_rules! observed {
     };
 }
 
-/// Spawns a task that drives `subscriber` through `handler` until `shutdown` is triggered or the
-/// stream terminates. Each delivery is given a [`Context`] built from `name`, the message headers,
-/// shared `state`, and the `delivery` publish context.
-pub(crate) fn spawn_dispatch<S, H, C, St>(
+/// Drives `subscriber` through `handler` until `shutdown` is signalled or the stream ends: the
+/// sequential loop a runner spawns for a subscription. Each delivery is given a [`Context`] built
+/// from `name`, the message headers, shared `state`, and the publish context `lent` holds;
+/// `held` lives as long as the loop (a runner's guard on its shutdown count, say).
+// The parts are independent and each runner passes its own; bundling them into a struct would
+// hide that.
+// Written over the local twins of the contract, so the future is `Send` exactly where the types
+// it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
+#[allow(clippy::future_not_send)]
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub async fn run_sequential<S, H, C, St, Signal, Lending, Held>(
     mut subscriber: S,
     handler: Arc<H>,
-    shutdown: Shutdown,
+    shutdown: Signal,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
-    failure: DispatchFailure,
-) -> JoinHandle<()>
-where
-    S: Subscriber + Send + 'static,
-    H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
-    St: Send + Sync + 'static,
+    lent: Lending,
+    failure: DispatchFailure<Signal>,
+    held: Held,
+) where
+    S: LocalSubscriber,
+    S::Message: Sync,
+    H: Handler<S::Message, C, St>,
+    // See `dispatch`.
+    C: BuildContext<S::Message> + Send + Sync + 'static,
+    Signal: ShutdownWait + Halt,
+    Lending: Lent<C>,
 {
-    let consuming = shutdown.consuming();
-    tokio::spawn(async move {
-        let _consuming = consuming;
-        let mut stream = std::pin::pin!(subscriber.stream());
-        let mut cancelled = std::pin::pin!(shutdown.cancelled());
-        // One encode buffer for the whole loop: a reply that leaves through a publisher which
-        // reads the payload is written into this one every time, so the subscription allocates
-        // it once and never again.
-        let mut encode = BytesMut::new();
-        // The loop's slot, one for the whole loop: the stream's poll writes each delivery
-        // straight into it, and the settle takes it out again. A delivery returned by value
-        // through the turn and bound to a local on its way here would be copied twice more.
-        let mut slot = Slot::empty();
-        loop {
-            match turn_into(&shutdown, stream.as_mut(), cancelled.as_mut(), &mut slot).await {
-                Turn::Delivery(Ok(())) => {
-                    // Pinned rather than awaited in place: a delivery's future carries the
-                    // context, the handler's own state and the settle path, and awaiting the
-                    // call expression makes the loop build it on the stack and copy it into
-                    // its own state on every delivery.
-                    let handling = std::pin::pin!(dispatch(
-                        &*handler,
-                        &mut slot,
-                        &mut encode,
-                        &name,
-                        &state,
-                        &delivery,
-                        &failure
-                    ));
-                    handling.await;
-                }
-                Turn::Delivery(Err(err)) => {
-                    error!(
-                        target: "ruststream::dispatch",
-                        error = %err,
-                        "subscriber stream error",
-                    );
-                }
-                Turn::Ended => {
-                    shutdown.stream_ended(&name);
-                    break;
-                }
-                Turn::Shutdown => break,
+    // Owned by the loop itself, so a runner spawns this future as it is, with no future of its
+    // own around it: the loop is the task.
+    let _held = held;
+    let delivery = lent.delivery();
+    let host = lent.host();
+    let mut stream = std::pin::pin!(subscriber.stream());
+    let mut cancelled = std::pin::pin!(shutdown.cancelled());
+    // One encode buffer for the whole loop: a reply that leaves through a publisher which
+    // reads the payload is written into this one every time, so the subscription allocates
+    // it once and never again.
+    let mut encode = BytesMut::new();
+    // The loop's slot, one for the whole loop: the stream's poll writes each delivery
+    // straight into it, and the settle takes it out again. A delivery returned by value
+    // through the turn and bound to a local on its way here would be copied twice more.
+    let mut slot = Slot::empty();
+    loop {
+        match turn_into(&shutdown, stream.as_mut(), cancelled.as_mut(), &mut slot).await {
+            Turn::Delivery(Ok(())) => {
+                // Pinned rather than awaited in place: a delivery's future carries the
+                // context, the handler's own state and the settle path, and awaiting the
+                // call expression makes the loop build it on the stack and copy it into
+                // its own state on every delivery.
+                let handling = std::pin::pin!(dispatch(
+                    &*handler,
+                    &mut slot,
+                    &mut encode,
+                    &name,
+                    &state,
+                    delivery,
+                    host,
+                    &failure
+                ));
+                handling.await;
             }
+            Turn::Delivery(Err(err)) => {
+                error!(
+                    target: "ruststream::dispatch",
+                    error = %err,
+                    "subscriber stream error",
+                );
+            }
+            Turn::Ended => {
+                shutdown.stream_ended(&name);
+                break;
+            }
+            Turn::Shutdown => break,
         }
-    })
+    }
 }
 
 /// Waits for whichever comes first: the next item off `stream`, or `shutdown`. A delivery is
@@ -169,7 +175,7 @@ where
 ///
 /// The stream is polled first and `cancelled` only where it answers `Pending`, so a turn that
 /// finds a delivery ready never touches the token's waiter list: what shutdown costs a busy
-/// subscription is the one relaxed load of [`Shutdown`]'s flag. `cancelled` is the token's own
+/// subscription is the one relaxed load of the shutdown's flag. `cancelled` is the token's own
 /// wait future, built once per subscription by the caller and pinned across the whole loop, so
 /// the turn that does park registers with the waiter list once rather than on every iteration,
 /// which is what a `select!` over `cancelled()` charges.
@@ -183,8 +189,8 @@ where
 ///
 /// The other loops write the same wait out rather than share it: one instantiation shared with
 /// them is enough for the compiler to stop inlining it here.
-fn turn_into<'s, St, Message, Failure, Wait>(
-    shutdown: &Shutdown,
+fn turn_into<'s, St, Message, Failure, Wait, Signal>(
+    shutdown: &Signal,
     stream: Pin<&'s mut St>,
     cancelled: Pin<&'s mut Wait>,
     slot: &'s mut Slot<Message>,
@@ -192,6 +198,7 @@ fn turn_into<'s, St, Message, Failure, Wait>(
 where
     St: Stream<Item = Result<Message, Failure>>,
     Wait: Future<Output = ()>,
+    Signal: ShutdownWait,
 {
     TurnInto {
         shutdown: shutdown.is_cancelled(),
@@ -237,7 +244,9 @@ where
 }
 
 /// What one turn of a dispatch loop found on its subscriber.
-enum Turn<T> {
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum Turn<T> {
     /// The subscriber yielded a delivery, or an error reading one.
     Delivery(T),
     /// The subscriber's stream ended; the loop is done.
@@ -246,82 +255,15 @@ enum Turn<T> {
     Shutdown,
 }
 
-/// Waits for whichever comes first: a finished worker off `tasks`, or `shutdown`.
-///
-/// [`turn_into`]'s counterpart for a full pool, in the same order and over the same pinned token
-/// future: a worker that has already finished is reaped without the token's waiter list being
-/// touched. `Ended` answers an empty set, which a full pool cannot be.
-///
-/// # Cancel safety
-///
-/// Cancel-safe, like [`turn_into`]: a `JoinSet` keeps its finished workers across polls, and the
-/// registration a parked poll made with the waiter list outlives that poll.
-async fn reap<Wait, Done>(
-    tasks: &mut JoinSet<Done>,
-    mut cancelled: Pin<&mut Wait>,
-) -> Turn<Result<Done, JoinError>>
-where
-    Wait: Future<Output = ()>,
-    Done: 'static,
-{
-    poll_fn(|cx| match tasks.poll_join_next(cx) {
-        Poll::Ready(Some(joined)) => Poll::Ready(Turn::Delivery(joined)),
-        Poll::Ready(None) => Poll::Ready(Turn::Ended),
-        Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
-    })
-    .await
-}
-
-/// Spawns a task that drives `subscriber` through `handler` with `workers.count` long-lived
-/// workers: a pool that hands each delivery to a free worker, or with `by_key` lanes that hand it
-/// to the worker its key hashes to (see [`pool`]).
-///
-/// Sequential policies delegate to [`spawn_dispatch`]. On shutdown the stream stops being
-/// polled and the workers drain what they hold; if the app's `shutdown_timeout` aborts this task,
-/// the workers abort with it.
-// The parts are independent and each spawn site passes its own; bundling them into a struct
-// would hide that.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_dispatch_workers<S, H, C, St>(
-    subscriber: S,
-    handler: Arc<H>,
-    shutdown: Shutdown,
-    name: Arc<str>,
-    state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
-    failure: DispatchFailure,
-    workers: Workers,
-) -> Result<JoinHandle<()>, StartThreadError>
-where
-    S: Subscriber + Send + 'static,
-    S::Message: Send + Sync + 'static,
-    H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
-    St: Send + Sync + 'static,
-{
-    let workers = placed(workers, &delivery);
-    if workers.is_sequential() {
-        return Ok(spawn_dispatch(
-            subscriber, handler, shutdown, name, state, delivery, failure,
-        ));
-    }
-    if matches!(workers.placement, Placement::Threads) {
-        return spawn_dispatch_threads(
-            subscriber, handler, shutdown, name, state, delivery, failure, workers,
-        );
-    }
-    Ok(pool::spawn_dispatch_pool(
-        subscriber, handler, shutdown, name, state, delivery, failure, workers,
-    ))
-}
-
 /// The policy a subscription's loop runs under: the declared one, except under the harness.
 // Without either feature the delivery has nothing to say about the placement.
 #[cfg_attr(
     not(any(feature = "poll-diagnostics", feature = "testing")),
     allow(unused_variables)
 )]
-fn placed<C>(workers: Workers, delivery: &Delivery<C>) -> Workers {
+#[doc(hidden)]
+#[must_use]
+pub fn placed<C>(workers: Workers, delivery: &Delivery<C>) -> Workers {
     // Before the harness maps the placement away: the declaration is what the warning advises.
     #[cfg(feature = "poll-diagnostics")]
     if matches!(workers.placement, Placement::Threads) {
@@ -336,336 +278,31 @@ fn placed<C>(workers: Workers, delivery: &Delivery<C>) -> Workers {
     workers
 }
 
-/// Starts the dedicated threads of a `threads(n)` subscription and spawns its loop on the app's
-/// runtime (see [`threads`]).
-// See `spawn_dispatch_workers`: each part is the registration's own.
+/// One delivery, end to end: the handler, the settle and what the delivery leaves behind.
+// Written over the local twins of the contract, so the future is `Send` exactly where the types
+// it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
+#[allow(clippy::future_not_send)]
+#[doc(hidden)]
+// Each part is the delivery's own or the runner's; bundling them would hide which is which.
 #[allow(clippy::too_many_arguments)]
-fn spawn_dispatch_threads<S, H, C, St>(
-    mut subscriber: S,
-    handler: Arc<H>,
-    shutdown: Shutdown,
-    name: Arc<str>,
-    state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
-    failure: DispatchFailure,
-    workers: Workers,
-) -> Result<JoinHandle<()>, StartThreadError>
-where
-    S: Subscriber + Send + 'static,
-    S::Message: Send + Sync + 'static,
-    H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
-    St: Send + Sync + 'static,
-{
-    let shared = Arc::new(pool::Shared {
-        handler,
-        name,
-        state,
-        delivery,
-        failure,
-    });
-    let threads = Threads::start(&shared.name, workers.count.get(), workers.by_key, |own| {
-        let shared = Arc::clone(&shared);
-        let delivery = shared.delivery.on_thread(own);
-        // One encode buffer per thread, for the reason the sequential loop has one.
-        let mut encode = BytesMut::new();
-        async move |msg: S::Message| {
-            let mut slot = Slot::new(msg);
-            dispatch(
-                &*shared.handler,
-                &mut slot,
-                &mut encode,
-                &shared.name,
-                &shared.state,
-                &delivery,
-                &shared.failure,
-            )
-            .await;
-        }
-    })?;
-    let consuming = shutdown.consuming();
-    Ok(tokio::spawn(async move {
-        let _consuming = consuming;
-        threads
-            .feed(
-                subscriber.stream(),
-                &shared.name,
-                &shutdown,
-                <S::Message as IncomingMessage>::partition_key,
-            )
-            .await;
-    }))
-}
-
-fn lane_of(key: &[u8], lanes: usize) -> usize {
-    let mut hasher = DefaultHasher::new();
-    key.hash(&mut hasher);
-    // The modulo keeps the value below `lanes`, which is a usize.
-    #[allow(clippy::cast_possible_truncation)]
-    {
-        (hasher.finish() % lanes as u64) as usize
-    }
-}
-
-/// What a finished worker handed back, or nothing and a log line where it failed.
-fn log_worker_exit<Done>(joined: Result<Done, JoinError>) -> Option<Done> {
-    match joined {
-        Ok(done) => Some(done),
-        Err(err) => {
-            error!(target: "ruststream::dispatch", error = %err, "worker task failed");
-            None
-        }
-    }
-}
-
-/// Spawns a task that drives `subscriber` through a batch `handler`, one
-/// [`BatchSubscriber::batches`] item per invocation, until `shutdown` is triggered or the stream
-/// terminates. The handler owns the batch's deliveries and settles each of them.
-///
-/// With a non-sequential `workers` policy, up to `workers.count` batches are in flight at once,
-/// each in its own task; keyed lanes do not apply at batch granularity (the macro rejects
-/// `by_key` on batch forms), so a keyed policy degrades to the plain pool.
-#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
-    subscriber: S,
-    handler: Arc<H>,
-    shutdown: Shutdown,
-    name: Arc<str>,
-    state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
-    failure: DispatchFailure,
-    workers: Workers,
-    batch_size: NonZeroUsize,
-) -> Result<JoinHandle<()>, StartThreadError>
-where
-    S: BatchSubscriber + Send + 'static,
-    S::Message: Send + 'static,
-    S::Batch: 'static,
-    H: BatchHandler<S::Batch, C, St> + 'static,
-    C: Send + Sync + 'static,
-    St: Send + Sync + 'static,
-{
-    let workers = placed(workers, &delivery);
-    if matches!(workers.placement, Placement::Threads) {
-        return spawn_batch_threads(
-            subscriber, handler, shutdown, name, state, delivery, failure, workers, batch_size,
-        );
-    }
-    let shared = pool::Shared {
-        handler,
-        name,
-        state,
-        delivery,
-        failure,
-    };
-    let consuming = shutdown.consuming();
-    Ok(tokio::spawn(async move {
-        let _consuming = consuming;
-        batch_loop(subscriber, &shared, &shutdown, workers, batch_size).await;
-    }))
-}
-
-/// The loop of a batch subscription on the app's runtime: one batch at a time where the policy
-/// is sequential, up to `workers.count` at once on a pool of workers otherwise.
-async fn batch_loop<S, H, C, St>(
-    mut subscriber: S,
-    shared: &pool::Shared<H, St, C>,
-    shutdown: &Shutdown,
-    workers: Workers,
-    batch_size: NonZeroUsize,
-) where
-    S: BatchSubscriber + Send + 'static,
-    S::Message: Send + 'static,
-    S::Batch: 'static,
-    H: BatchHandler<S::Batch, C, St> + 'static,
-    C: Send + Sync + 'static,
-    St: Send + Sync + 'static,
-{
-    // The registration's own batch size, straight to the broker: whatever comes back is the
-    // batch the handler sees.
-    let mut stream = std::pin::pin!(subscriber.batches(batch_size));
-    let mut cancelled = std::pin::pin!(shutdown.cancelled());
-    let mut tasks = JoinSet::new();
-    // One decode buffer for the whole loop: the sequential path lends the same one to every
-    // batch, so the slice a handler reads is allocated once for the subscription. The encode
-    // buffer beside it is the same bargain on the way out. A pooled batch runs beside the
-    // others and cannot share these, so it takes a pair of its own from `spare`, where the
-    // pool keeps what finished workers handed back.
-    let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
-    let mut encode = BytesMut::new();
-    let mut spare = Vec::new();
-    loop {
-        if shutdown.is_cancelled() {
-            break;
-        }
-        if tasks.len() >= workers.count.get() {
-            // The pool is full: reap a finished worker before polling for more.
-            match reap(&mut tasks, cancelled.as_mut()).await {
-                Turn::Delivery(joined) => spare.extend(log_worker_exit(joined)),
-                // A full pool holds a worker, so `Ended` is shutdown's twin here: either
-                // way the drain below joins whatever is still running.
-                Turn::Ended | Turn::Shutdown => break,
-            }
-            continue;
-        }
-        // The stream first, the token only where the stream has nothing: see `turn_into`, whose
-        // wait this is.
-        let pulled = poll_fn(|cx| match stream.as_mut().poll_next(cx) {
-            Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
-            Poll::Ready(None) => Poll::Ready(Turn::Ended),
-            Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
-        })
-        .await;
-        match pulled {
-            Turn::Delivery(Ok(batch)) if workers.is_sequential() => {
-                // Turbofish: the adapter handlers are generic over the batch context, so the
-                // spawn's own parameter names it.
-                run_batch::<_, _, C, _>(
-                    &*shared.handler,
-                    batch,
-                    &mut scratch,
-                    &mut encode,
-                    &shared.name,
-                    &shared.state,
-                    &shared.delivery,
-                    &shared.failure,
-                )
-                .await;
-            }
-            Turn::Delivery(Ok(batch)) => {
-                let buffers = spare.pop().unwrap_or_default();
-                tasks.spawn(pooled_batch::<_, _, C, _>(shared, batch, buffers));
-            }
-            Turn::Delivery(Err(err)) => {
-                error!(
-                    target: "ruststream::dispatch",
-                    error = %err,
-                    "subscriber stream error",
-                );
-            }
-            Turn::Ended => {
-                shutdown.stream_ended(&shared.name);
-                break;
-            }
-            Turn::Shutdown => break,
-        }
-    }
-    while let Some(joined) = tasks.join_next().await {
-        log_worker_exit(joined);
-    }
-}
-
-/// One batch of a pooled subscription, run on a worker of its own with the buffers it was lent,
-/// which it hands back for the next batch.
-fn pooled_batch<H, Batch, C, St>(
-    shared: &pool::Shared<H, St, C>,
-    batch: Batch,
-    (mut scratch, mut encode): (H::Scratch, BytesMut),
-) -> impl Future<Output = (H::Scratch, BytesMut)> + use<H, Batch, C, St>
-where
-    H: BatchHandler<Batch, C, St>,
-    C: Send + Sync + 'static,
-    St: Send + Sync,
-{
-    let handler = Arc::clone(&shared.handler);
-    let name = Arc::clone(&shared.name);
-    let state = Arc::clone(&shared.state);
-    let delivery = Arc::clone(&shared.delivery);
-    let failure = shared.failure.clone();
-    async move {
-        run_batch::<_, _, C, _>(
-            &*handler,
-            batch,
-            &mut scratch,
-            &mut encode,
-            &name,
-            &state,
-            &delivery,
-            &failure,
-        )
-        .await;
-        (scratch, encode)
-    }
-}
-
-/// The batch counterpart of [`spawn_dispatch_threads`]: each thread takes whole batches off its
-/// ring, with a decode and an encode buffer of its own. Keyed lanes do not apply to batches, so a
-/// keyed policy spreads batches as the plain one does.
-#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-fn spawn_batch_threads<S, H, C, St>(
-    mut subscriber: S,
-    handler: Arc<H>,
-    shutdown: Shutdown,
-    name: Arc<str>,
-    state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
-    failure: DispatchFailure,
-    workers: Workers,
-    batch_size: NonZeroUsize,
-) -> Result<JoinHandle<()>, StartThreadError>
-where
-    S: BatchSubscriber + Send + 'static,
-    S::Message: Send + 'static,
-    S::Batch: 'static,
-    H: BatchHandler<S::Batch, C, St> + 'static,
-    C: Send + Sync + 'static,
-    St: Send + Sync + 'static,
-{
-    let shared = Arc::new(pool::Shared {
-        handler,
-        name,
-        state,
-        delivery,
-        failure,
-    });
-    let threads = Threads::start(&shared.name, workers.count.get(), false, |own| {
-        let shared = Arc::clone(&shared);
-        let delivery = shared.delivery.on_thread(own);
-        let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
-        let mut encode = BytesMut::new();
-        async move |batch: S::Batch| {
-            run_batch::<_, _, C, _>(
-                &*shared.handler,
-                batch,
-                &mut scratch,
-                &mut encode,
-                &shared.name,
-                &shared.state,
-                &delivery,
-                &shared.failure,
-            )
-            .await;
-        }
-    })?;
-    let consuming = shutdown.consuming();
-    Ok(tokio::spawn(async move {
-        let _consuming = consuming;
-        threads
-            .feed(
-                subscriber.batches(batch_size),
-                &shared.name,
-                &shutdown,
-                |_| None,
-            )
-            .await;
-    }))
-}
-
-async fn dispatch<H, M, C, St>(
+pub async fn dispatch<H, M, C, St, Signal, Host>(
     handler: &H,
     slot: &mut Slot<M>,
     encode: &mut BytesMut,
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
-    failure: &DispatchFailure,
+    host: &Host,
+    failure: &DispatchFailure<Signal>,
 ) where
     H: Handler<M, C, St>,
-    C: crate::BuildContext<M> + Send + Sync + 'static,
-    M: IncomingMessage,
-    // The dispatch future is awaited inside a spawned task, so it must be `Send`: the context
-    // borrows `&St` across the handler await, which requires `St: Sync`.
-    St: Send + Sync,
+    // A deferred retry copy carries the broker's context into the work the delivery leaves
+    // behind, which may run on another thread.
+    C: BuildContext<M> + Send + Sync + 'static,
+    // The context reads the headers through a `Sync` view of the delivery.
+    M: LocalIncomingMessage + Sync,
+    Signal: Halt,
+    Host: Detach,
 {
     // Settling the message is what releases the harness's quiescence wait, and the post-settle
     // continuations are spawned after it; one in-flight token spanning the whole dispatch keeps a
@@ -759,13 +396,13 @@ async fn dispatch<H, M, C, St>(
     if let Some(mut s) = settle {
         // Named for the same reason as the delivery's own future above: the settle path is
         // built where it is polled instead of being copied into this future's state.
-        let settling = settle_outcome(slot, s.outcome(), name, delivery, C::build);
+        let settling = settle_outcome(slot, s.outcome(), name, delivery, host, C::build);
         settling.await;
         // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
         if let Some(after) = s.take_after() {
-            delivery.spawn_after(after);
+            host.detach(after);
         }
     } else {
         // A fail-fast left the delivery unsettled: it is released here, as it always was at the
@@ -777,7 +414,7 @@ async fn dispatch<H, M, C, St>(
     // covers both - the harness's `drain` and the shutdown's alike.
     if let Some(continuations) = continuations {
         for fut in continuations {
-            delivery.spawn_after(fut);
+            host.detach(fut);
         }
     }
     // The hooks a test registered on this subscription run once the call is settled, inside the
@@ -793,10 +430,10 @@ async fn dispatch<H, M, C, St>(
 /// where a fail-fast panic tore the service down and left the delivery unsettled (a broker with
 /// redelivery hands it back after the restart).
 #[inline]
-fn outcome_after_panic(
+fn outcome_after_panic<Signal: Halt>(
     payload: &(dyn Any + Send),
     name: &str,
-    failure: &DispatchFailure,
+    failure: &DispatchFailure<Signal>,
 ) -> Option<HandlerOutcome> {
     let reason = panic_reason(payload);
     error!(
@@ -809,7 +446,7 @@ fn outcome_after_panic(
         FailurePolicy::FailFast => {
             failure
                 .shutdown
-                .signal(name, &format!("handler panicked: {reason}"));
+                .fail(name, &format!("handler panicked: {reason}"));
             None
         }
         other => Some(
@@ -848,8 +485,12 @@ fn record_call<C>(
 /// once the batch has settled (per-element outcomes make a gated hook ill-defined on a batch).
 // The loop hands this everything one batch needs, the buffers it lends included: see
 // spawn_dispatch_workers.
+// Written over the local twins of the contract, so the future is `Send` exactly where the types
+// it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
+#[allow(clippy::future_not_send)]
+#[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
-async fn run_batch<H, Batch, C, St>(
+pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     handler: &H,
     batch: Batch,
     scratch: &mut H::Scratch,
@@ -857,11 +498,12 @@ async fn run_batch<H, Batch, C, St>(
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
-    failure: &DispatchFailure,
+    host: &Host,
+    failure: &DispatchFailure<Signal>,
 ) where
     H: BatchHandler<Batch, C, St>,
-    C: Send + Sync + 'static,
-    St: Send + Sync,
+    Signal: Halt,
+    Host: Detach,
 {
     let batch = H::take(batch);
     // A batch spans many deliveries, so its context carries only subscription-scoped data, built
@@ -900,7 +542,7 @@ async fn run_batch<H, Batch, C, St>(
         harness_scope(delivery),
         observed!(
             delivery,
-            AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx).await })
+            AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx, host).await })
                 .catch_unwind()
         ),
     )
@@ -908,7 +550,7 @@ async fn run_batch<H, Batch, C, St>(
     #[cfg(not(feature = "testing"))]
     let result = observed!(
         delivery,
-        AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx).await })
+        AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx, host).await })
             .catch_unwind()
     )
     .await;
@@ -917,7 +559,7 @@ async fn run_batch<H, Batch, C, St>(
             // As on the single-message path: a batch that registered no hook pays the branch.
             if ctx.has_hooks() {
                 for fut in ctx.take_settle_hooks() {
-                    delivery.spawn_after(fut);
+                    host.detach(fut);
                 }
             }
         }
@@ -943,7 +585,7 @@ async fn run_batch<H, Batch, C, St>(
             if failure.policies.panic == FailurePolicy::FailFast {
                 failure
                     .shutdown
-                    .signal(name, &format!("batch handler panicked: {reason}"));
+                    .fail(name, &format!("batch handler panicked: {reason}"));
             }
         }
     }
@@ -972,9 +614,5 @@ mod delivery;
 mod fixtures;
 #[cfg(all(test, feature = "testing"))]
 mod harness_tests;
-mod pool;
 mod settle;
-#[cfg(test)]
-mod tests;
-mod threads;
 mod workers;

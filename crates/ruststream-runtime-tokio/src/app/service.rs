@@ -6,22 +6,22 @@ use std::{
 };
 
 use crate::bindable::BrokerRegistration;
-use crate::codec::Codec;
 use crate::{Broker, DescribeServer, ServerSpec};
+use ruststream_runtime::codec::Codec;
 
 use tokio_util::task::TaskTracker;
 
-use crate::bindable::ConnectedSlot;
-use crate::lifecycle::{BoxError, BrokerCell, BrokerLifecycle};
-use crate::metadata::HandlerMetadata;
-use crate::middleware::{Identity, Stack};
+use crate::HandlerMetadata;
 #[cfg(feature = "poll-diagnostics")]
-use crate::poll_diagnostics::PollDiagnostics;
-use crate::publish::{PublishIdentity, PublishLayer, PublishStack};
-use crate::redelivery::ScopeDelivery;
-use crate::router::RouterSink;
+use crate::PollDiagnostics;
+use crate::ScopeDelivery;
+use crate::bindable::ConnectedSlot;
+use crate::sink::RouterSink;
 #[cfg(feature = "testing")]
-use crate::testing::coordinator::TestHooks;
+use crate::testing::TestHooks;
+use crate::{BoxError, BrokerCell, BrokerLifecycle};
+use crate::{Identity, Stack};
+use crate::{PublishIdentity, PublishLayer, PublishStack};
 
 use super::health::SubscriptionEnd;
 use super::scope::BrokerScope;
@@ -637,7 +637,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// broker is then held for lifecycle management. Call this once per broker.
     ///
     /// The scope carries no codec of its own, so macro handlers mounted with `b.include(handle)`
-    /// decode with the [`DefaultCodec`](crate::codec::DefaultCodec). To decode with another codec
+    /// decode with the [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec). To decode with another codec
     /// scope-wide, use [`with_broker_codec`](Self::with_broker_codec).
     ///
     /// The first call moves the builder to the [`Wired`] phase: the state, the middleware stack,
@@ -665,7 +665,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     }
 
     /// Registers a broker with a scope-wide `codec`, replacing the
-    /// [`DefaultCodec`](crate::codec::DefaultCodec) a codec-less scope decodes with.
+    /// [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec) a codec-less scope decodes with.
     ///
     /// `build` receives a [`BrokerScope`] whose [`include`](BrokerScope::include) family reads
     /// the same as on a codec-less scope (`b.include(handle)`) but decodes with `codec`. A
@@ -737,7 +737,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// [`server(label, spec)`](Self::server) entry for the same label takes precedence.
     ///
     /// Like [`with_broker`](Self::with_broker), the scope decodes with the
-    /// [`DefaultCodec`](crate::codec::DefaultCodec); use
+    /// [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec); use
     /// [`with_broker_labeled_codec`](Self::with_broker_labeled_codec) to name another.
     ///
     /// # Examples
@@ -890,31 +890,29 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             let subscription = self.test_hooks.subscribed(self.brokers.len(), &meta.name);
             // The scope id is the index this broker will occupy once pushed below; the harness
             // uses it to scope recorded deliveries per broker.
-            let scope_delivery = Arc::new(ScopeDelivery::new(
-                self.continuations.clone(),
-                #[cfg(feature = "testing")]
+            let tasks = self.continuations.clone();
+            let scope_delivery = ScopeDelivery::new();
+            #[cfg(feature = "testing")]
+            let scope_delivery = scope_delivery.with_harness(
                 self.test_hooks.clone(),
-                #[cfg(feature = "testing")]
                 self.brokers.len(),
-                #[cfg(feature = "testing")]
                 subscription,
-                #[cfg(feature = "poll-diagnostics")]
-                self.poll_diagnostics.clone(),
-            ));
+            );
+            #[cfg(feature = "poll-diagnostics")]
+            let scope_delivery = scope_delivery.with_poll(self.poll_diagnostics.clone());
+            let scope_delivery = Arc::new(scope_delivery);
             self.starters.push(Box::new(move |state, shutdown| {
                 let connected = slot
                     .lock()
                     .expect("connected slot mutex poisoned")
                     .clone()
                     .expect("brokers connect before subscriptions open");
-                bound(connected, state, scope_delivery, shutdown)
+                bound(connected, state, scope_delivery, tasks, shutdown)
             }));
             // The scope's label is the name of this broker's AsyncAPI server, so every channel
             // the scope mounts can say which server it lives on.
-            self.handlers.push(HandlerMetadata {
-                server: label.clone().map(Cow::Owned),
-                ..meta
-            });
+            self.handlers
+                .push(meta.at_server(label.clone().map(Cow::Owned)));
         }
         self.brokers.push(RegisteredBroker {
             lifecycle: Box::new(BrokerCell { broker, slot }),

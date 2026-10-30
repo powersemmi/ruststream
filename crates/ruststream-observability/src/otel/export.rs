@@ -29,9 +29,10 @@ use ruststream_runtime::HandlerResult;
 #[cfg(feature = "poll-diagnostics")]
 use ruststream_runtime::PollDiagnostics;
 use ruststream_runtime::{
-    BlanketLayer, Context, Handler, HandlerOutcome, HealthProbe, HealthState, Layer, Outgoing,
-    PublishLayer, PublishNext, PublishPipeline,
+    BlanketLayer, Context, Handler, HandlerOutcome, Layer, Outgoing, PublishLayer, PublishNext,
+    PublishPipeline,
 };
+use ruststream_runtime_tokio::{HealthProbe, HealthState};
 
 /// Header carrying the publish wall-clock time (unix milliseconds, ASCII decimal).
 ///
@@ -356,7 +357,7 @@ impl Otel {
     }
 
     /// A consume-side [`Layer`] recording the per-delivery metrics; add it with
-    /// [`RustStream::layer`](ruststream_runtime::RustStream::layer). Pair it with
+    /// [`RustStream::layer`](ruststream_runtime_tokio::RustStream::layer). Pair it with
     /// [`OpenTelemetry::consume_layer`](crate::otel::propagation::OpenTelemetry::consume_layer) for
     /// the trace-context propagation half.
     #[must_use]
@@ -368,7 +369,7 @@ impl Otel {
 
     /// A publish-side middleware recording the per-publish metrics (and stamping the queue-time
     /// header unless disabled); add it with
-    /// [`RustStream::publish_layer`](ruststream_runtime::RustStream::publish_layer).
+    /// [`RustStream::publish_layer`](ruststream_runtime_tokio::RustStream::publish_layer).
     #[must_use]
     pub fn publish_layer(&self) -> OtelPublishLayer {
         OtelPublishLayer {

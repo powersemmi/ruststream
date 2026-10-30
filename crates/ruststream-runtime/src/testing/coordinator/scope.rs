@@ -267,7 +267,9 @@ pub enum Outcome {
 /// One delivery inside a recorded handler call: the payload the handler saw, the value its
 /// delivery lent where the handler took one ([`Carries`](crate::Carries)), and how the
 /// dispatcher settled it (`None` when a fail-fast panic left the message unsettled).
-pub(crate) struct Delivered {
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct Delivered {
     pub(crate) raw: Bytes,
     /// A clone of the carried value, taken only on the carried lane: that value never was bytes,
     /// so the payload cannot stand for it.
@@ -345,7 +347,9 @@ pub struct TestHooks {
 
 impl TestHooks {
     /// A hooks slot that is never installed: the production / no-harness path.
-    pub(crate) fn detached() -> Self {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn detached() -> Self {
         Self {
             coordinator: OnceLock::new(),
             subscriptions: Mutex::new(Vec::new()),
@@ -356,7 +360,8 @@ impl TestHooks {
     /// returns the subscription's identity. Two subscriptions may report one name (two
     /// subscriptions on one Pulsar topic both report the topic), so the name does not identify
     /// one.
-    pub(crate) fn subscribed(&self, scope_id: usize, name: &str) -> usize {
+    #[doc(hidden)]
+    pub fn subscribed(&self, scope_id: usize, name: &str) -> usize {
         let mut subscriptions = self
             .subscriptions
             .lock()

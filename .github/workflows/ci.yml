@@ -178,7 +178,7 @@ jobs:
       - name: cargo check-external-types
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         run: |
-          for manifest in Cargo.toml crates/ruststream-{core,runtime,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
+          for manifest in Cargo.toml crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
             cargo +nightly-2026-03-20 check-external-types --all-features \
               --manifest-path "$manifest" --config external-types.toml
           done
@@ -193,7 +193,7 @@ jobs:
           CARGO_HTTP_MULTIPLEXING: "false"
         run: |
           cargo publish --locked --dry-run --all-features -p ruststream-macros -p ruststream-core \
-            -p ruststream-runtime -p ruststream-memory -p ruststream-asyncapi \
+            -p ruststream-runtime -p ruststream-runtime-tokio -p ruststream-memory -p ruststream-asyncapi \
             -p ruststream-observability -p ruststream-testing -p ruststream-conformance \
             -p ruststream-cli -p ruststream
 

@@ -9,7 +9,8 @@ use std::any::Any;
 use std::time::Duration;
 
 use super::handler::HandlerResult;
-use super::shutdown::Shutdown;
+#[cfg(doc)]
+use crate::host::Halt;
 
 /// What a subscriber does when it cannot process a message.
 ///
@@ -47,7 +48,7 @@ use super::shutdown::Shutdown;
 #[non_exhaustive]
 pub enum FailurePolicy {
     /// Log a loud error naming the subscription, then initiate a graceful app shutdown and make
-    /// [`run`](super::RustStream::run) return `Err`, so an orchestrator restarts the service and
+    /// [`run`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.run) return `Err`, so an orchestrator restarts the service and
     /// the failure lands in the logs. The default for a handler panic. Only takes effect under an
     /// unwinding panic profile; with `panic = "abort"` the process is already gone and there is
     /// nothing to catch.
@@ -163,20 +164,21 @@ impl Default for FailurePolicies {
 }
 
 /// What one dispatch loop needs to apply a [`FailurePolicy`]: the per-subscriber [policies] and the
-/// app-level [shutdown signal](Shutdown). The policies are captured when the subscriber
+/// app-level shutdown signal, the runner's [`Halt`]. The policies are captured when the subscriber
 /// is mounted (like [`Workers`](super::Workers)); the handle is supplied once at run time, shared
 /// by every loop so any of them can tear the service down.
 ///
 /// [policies]: FailurePolicies
+#[doc(hidden)]
 #[derive(Debug, Clone)]
-pub(crate) struct DispatchFailure {
+pub struct DispatchFailure<Signal> {
     pub(crate) policies: FailurePolicies,
-    pub(crate) shutdown: Shutdown,
+    pub(crate) shutdown: Signal,
 }
 
-impl DispatchFailure {
+impl<Signal> DispatchFailure<Signal> {
     /// Bundles the per-subscriber `policies` with the app-level error-shutdown `shutdown` handle.
-    pub(crate) fn new(policies: FailurePolicies, shutdown: Shutdown) -> Self {
+    pub const fn new(policies: FailurePolicies, shutdown: Signal) -> Self {
         Self { policies, shutdown }
     }
 }

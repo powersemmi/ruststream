@@ -24,7 +24,7 @@ use tokio::runtime::{Builder, Runtime};
 use ruststream_asyncapi as asyncapi;
 #[cfg(feature = "logging")]
 use ruststream_observability::logging;
-use ruststream_runtime::{App, RustStreamError};
+use ruststream_runtime_tokio::{App, RustStreamError};
 
 /// Errors surfaced by the generated CLI entry point.
 #[derive(Debug, Error)]
@@ -108,7 +108,7 @@ enum Command {
 /// ```
 ///
 /// The attribute form, with a subscription that computes on eight threads of its own and reaches
-/// the current-thread runtime only through [`MainRuntime`](ruststream_runtime::MainRuntime):
+/// the current-thread runtime only through [`MainRuntime`](ruststream_runtime_tokio::MainRuntime):
 ///
 /// ```
 /// # mod demo {
@@ -334,7 +334,7 @@ mod tests {
     use std::process::ExitCode;
 
     use ruststream::memory::MemoryBroker;
-    use ruststream_runtime::{App, AppInfo, RustStream, RustStreamError};
+    use ruststream_runtime_tokio::{App, AppInfo, RustStream, RustStreamError};
 
     // `execute` drives a built service, so only the tests that can build one reach it.
     use super::execute;

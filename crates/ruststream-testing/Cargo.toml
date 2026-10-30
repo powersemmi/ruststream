@@ -24,6 +24,7 @@ msgpack = ["ruststream-runtime/msgpack"]
 [dependencies]
 ruststream-core = { workspace = true, features = ["testing"] }
 ruststream-runtime = { workspace = true, features = ["testing"] }
+ruststream-runtime-tokio = { workspace = true, features = ["testing"] }
 inventory.workspace = true
 serde = { workspace = true, features = ["std"] }
 tracing.workspace = true

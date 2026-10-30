@@ -22,6 +22,7 @@ use crate::{
 use super::super::context::Context;
 use super::super::dispatch::{Slot, settle_outcome};
 use super::super::failure::FailurePolicy;
+use super::super::host::Detach;
 #[cfg(feature = "otel")]
 use super::record_batch_size;
 use super::{
@@ -73,11 +74,18 @@ type Lane<Src, Conn, T> = PhantomData<fn() -> (Src, Conn, T)>;
 
 /// The batch as the carried adapter takes it: whole, because its values are lent from it while
 /// the body runs.
-pub(crate) struct Lent<Src, Conn, Batch, T> {
+#[doc(hidden)]
+pub struct Lent<Src, Conn, Batch, T> {
     batch: Batch,
     /// The copies of the lent values the harness records, made once while a harness watches.
     recorded: LentValues,
     _lane: Lane<Src, Conn, T>,
+}
+
+impl<Src, Conn, Batch, T> fmt::Debug for Lent<Src, Conn, Batch, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Lent").finish_non_exhaustive()
+    }
 }
 
 impl<Src, Conn, Batch, T, C> TakenBatch<C> for Lent<Src, Conn, Batch, T>
@@ -169,11 +177,12 @@ where
         }
     }
 
-    async fn handle_batch(
+    async fn handle_batch<Host: Detach>(
         &self,
         taken: Self::Taken,
         _scratch: &mut (),
         ctx: &mut Context<'_, C, S>,
+        host: &Host,
     ) {
         let subscription = ctx.subscription();
         let delivery = ctx.delivery();
@@ -231,12 +240,13 @@ where
                 outcome,
                 subscription,
                 delivery,
+                host,
                 <C as BuildBatchContext<M>>::build,
             )
             .await;
         }
         if let Some(result) = result {
-            settle_lent_batch(deliveries, result, subscription, delivery, recorded).await;
+            settle_lent_batch(deliveries, result, subscription, delivery, host, recorded).await;
         }
     }
 }

@@ -26,11 +26,11 @@ use crate::slot::{NoReply, OutAttachment, SlotCodec};
 
 use super::MergedRouter;
 use super::builders::RouterWith;
+use super::mount_sink::MountSink;
 use super::routes::{
     BatchRoute, DeclaredRoute, HandleRoute, MountRoute, RetriedRoute, RetryDestinationsDeclared,
     RouteMeta, RouteMetadata, RouteSubscription, RouterDef, RouterHandlers, SubscribeRoute,
 };
-use super::sink::RouterSink;
 
 mod mount;
 
@@ -38,7 +38,7 @@ mod mount;
 ///
 /// Build it by chaining (each call consumes the router and returns a new type that carries the
 /// added registration), then mount it with
-/// [`include_router`](crate::BrokerScope::include_router). The registration list `Routes` is
+/// [`include_router`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.include_router). The registration list `Routes` is
 /// an opaque nested tuple, so a builder function returns `impl RouterDef<B>` instead of naming the
 /// type.
 ///
@@ -92,7 +92,7 @@ pub struct Router<B, Routes = (), C = (), Layers = Identity, Pipe = PublishIdent
     /// A slot's pipeline is part of the instantiated definition's type, so it is fixed when the
     /// slot binds - which is at `include`, before an app exists. A router built on its own
     /// therefore carries [`PublishIdentity`] here and its slots publish with nothing in the way;
-    /// the chain a [`BrokerScope`](crate::BrokerScope) drives carries the app's own
+    /// the chain a [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) drives carries the app's own
     /// pipeline, because there the app is already known. Replies are not affected either way:
     /// their publisher pairs at startup, so they travel the app's pipeline on both surfaces.
     pub(super) pipeline: Pipe,
@@ -130,7 +130,7 @@ impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Adds a router-scope middleware layer, wrapping every handler in this router when the
     /// router is mounted. The first layer added runs outermost within the router; the app's
-    /// global [`layer`](crate::RustStream::layer) stack wraps outside it.
+    /// global [`layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.layer) stack wraps outside it.
     ///
     /// The layer must be a [`BlanketLayer`] (it applies to handlers whose concrete types the
     /// router hides), like the app-global stack, and it is declared before the router's first
@@ -150,10 +150,11 @@ impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
 }
 
 impl<B: Broker + 'static, RouteCodec, RoutePipe> Router<B, (), RouteCodec, Identity, RoutePipe> {
-    /// The empty chain a [`BrokerScope`](crate::BrokerScope) drives one registration
+    /// The empty chain a [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) drives one registration
     /// through: the scope's codec and its publish pipeline, with no router-scope layers of its
     /// own (the app's stack wraps at the drain, as it does for any router).
-    pub(crate) fn for_scope(codec: RouteCodec, pipeline: RoutePipe) -> Self {
+    #[doc(hidden)]
+    pub const fn for_scope(codec: RouteCodec, pipeline: RoutePipe) -> Self {
         Self {
             routes: (),
             codec,
@@ -342,7 +343,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// decode step, so the layer sees the raw delivery.
     ///
     /// The per-registration counterpart of the app-wide
-    /// [`RustStream::layer`](crate::RustStream::layer) and the router-wide
+    /// [`RustStream::layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.layer) and the router-wide
     /// [`layer`](Router::layer) on a fresh router: those two wrap every handler in their scope, so
     /// they take a [`BlanketLayer`], which cannot be written for a layer fixed to one message
     /// type. This one wraps exactly one registration, whose handler type is still concrete here,
@@ -820,15 +821,16 @@ where
     Routes: RouterDef<B, State, Pipe>,
     Layers: BlanketLayer + Clone + Send + Sync + 'static,
 {
-    fn mount<G, PP>(
+    fn mount<G, PP, Sink>(
         self,
         global: &G,
         pipeline: &PP,
         _retry_pipeline: &RetryPipeline,
-        sink: &mut RouterSink<B, State>,
+        sink: &mut Sink,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
+        Sink: MountSink<B, State>,
     {
         let composed = ComposedBlanket {
             outer: global.clone(),
@@ -860,20 +862,21 @@ where
     // A whole router is many registrations, each with its own context; nothing here reads one.
     type Context = ();
 
-    fn mount_one<G, PP>(
+    fn mount_one<G, PP, Sink>(
         self,
         global: &G,
         pipeline: &PP,
         // A merged router carries its own publish path down to its own registrations, so what
         // reaches it here only travels on to the `RouterDef` impl, which ignores it in turn.
         retry_pipeline: &RetryPipeline,
-        sink: &mut RouterSink<B, State>,
+        sink: &mut Sink,
         // A whole router is many registrations, and a retry position or declaration belongs to
         // one, so neither binds here: `RetryOpen` is not implemented for a router.
         _setup: RetrySetup<B, ()>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
+        Sink: MountSink<B, State>,
     {
         RouterDef::<B, State, RetryPipeline>::mount(self, global, pipeline, retry_pipeline, sink);
     }

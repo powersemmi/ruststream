@@ -1,0 +1,50 @@
+[package]
+name = "ruststream-runtime-tokio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The tokio runner of the RustStream messaging framework: the app's lifecycle, spawning, worker pools, dedicated threads and the clock; services use it through `ruststream`."
+keywords = ["messaging", "async", "tokio", "broker", "ruststream"]
+categories = ["asynchronous", "network-programming"]
+readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+# The codecs the doc examples of the app builder decode with.
+json = ["ruststream-runtime/json"]
+cbor = ["ruststream-runtime/cbor"]
+# The harness's hooks into the app: the in-process start and the test clock.
+testing = ["ruststream-runtime/testing", "ruststream-core/testing", "tokio/test-util"]
+poll-diagnostics = ["ruststream-runtime/poll-diagnostics"]
+
+[dependencies]
+ruststream-core.workspace = true
+ruststream-runtime = { workspace = true, features = ["tokio"] }
+bytes = { workspace = true, features = ["std"] }
+futures.workspace = true
+rtrb.workspace = true
+thiserror = { workspace = true, features = ["std"] }
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
+# The doc examples serve health over HTTP.
+axum = "0.8"
+schemars = "1"
+tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std", "registry"] }
+# The doc examples are a service's code, so they import the facade; the unit tests reach the
+# in-memory broker through it. A path dependency without a version is dropped on publish.
+ruststream = { path = "../..", features = ["macros", "memory", "json", "asyncapi", "testing", "conformance", "poll-diagnostics"] }
+
+[lints]
+workspace = true

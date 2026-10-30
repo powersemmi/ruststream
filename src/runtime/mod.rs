@@ -6,7 +6,6 @@
 pub use ruststream_runtime::ConnectedSlot;
 #[doc(hidden)]
 pub use ruststream_runtime::IntoOutcome;
-pub use ruststream_runtime::MainRuntime;
 pub use ruststream_runtime::Out;
 pub use ruststream_runtime::Retry;
 #[doc(hidden)]
@@ -37,10 +36,6 @@ pub use ruststream_runtime::{After, Context};
 pub use ruststream_runtime::{
     AllOpen, BatchSized, BatchStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
-};
-pub use ruststream_runtime::{
-    App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
-    RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{
@@ -82,6 +77,7 @@ pub use ruststream_runtime::{Bindable, Bound, BrokerRegistration};
 pub use ruststream_runtime::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 #[doc(hidden)]
 pub use ruststream_runtime::{CapsBatches, DefinitionInputCodec, MountsWith};
+pub use ruststream_runtime::{Clock, ShutdownWait};
 pub use ruststream_runtime::{
     CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,
 };
@@ -106,10 +102,8 @@ pub use ruststream_runtime::{
 };
 pub use ruststream_runtime::{
     IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
-    RouterPublishingOut, RouterSink, RouterWith, forms,
+    RouterPublishingOut, RouterWith, forms,
 };
-#[doc(hidden)]
-pub use ruststream_runtime::{IncludeMount, ScopeCommit};
 pub use ruststream_runtime::{Placement, RETRY_COUNT_HEADER, Workers};
 #[cfg(feature = "poll-diagnostics")]
 pub use ruststream_runtime::{PollDiagnostics, PollReport};
@@ -122,5 +116,13 @@ pub use ruststream_runtime::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{batch_verdict, uniform_batch};
+pub use ruststream_runtime_tokio::Tokio;
+pub use ruststream_runtime_tokio::{
+    App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
+    RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
+};
+#[doc(hidden)]
+pub use ruststream_runtime_tokio::{IncludeMount, ScopeCommit};
+pub use ruststream_runtime_tokio::{MainRuntime, RouterSink};
 
 pub mod cli;

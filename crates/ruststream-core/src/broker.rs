@@ -129,7 +129,9 @@ crate::__contract_twin! {
         ///
         /// Every implementation of a Send trait is an implementation of its twin through a blanket
         /// impl, which forwards each item statically. Code written over the local family takes
-        /// every broker; the runtime of this crate takes the Send family. A crate imports one
+        /// every broker: the shared delivery body of `ruststream-runtime` is written over it, and
+        /// the tokio runner, which spawns that body on tokio's pool, takes the Send family. A
+        /// crate imports one
         /// family: with both in scope, a method call on a broker's own type matches two traits and
         /// does not compile (E0034). The prelude carries the Send family.
         ///

@@ -4,8 +4,11 @@
 use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle};
 
+#[cfg(doc)]
+use crate::context::Context;
+
 /// The runtime the app runs on, as a handler reaches it: `Ctx(main): Ctx<MainRuntime>` as a
-/// parameter, or [`Context::main_runtime`](super::Context::main_runtime).
+/// parameter, or [`Context::main_runtime`].
 ///
 /// A handler on dedicated threads (`threads(n)`) runs on its own thread, and so does everything
 /// it leaves behind: a plain `tokio::spawn`, a timer, an `and_after` continuation, an `after(..)`
@@ -50,16 +53,10 @@ use tokio::task::{JoinError, JoinHandle};
 pub struct MainRuntime(Handle);
 
 impl MainRuntime {
-    /// The runtime the calling task runs on: a subscription captures it when it opens, inside
-    /// the app's startup.
-    pub(crate) fn current() -> Self {
-        Self(Handle::current())
-    }
-
-    /// Wraps `handle`.
-    #[cfg(test)]
-    pub(crate) const fn new(handle: Handle) -> Self {
-        Self(handle)
+    /// The runtime the calling task runs on, where it runs on one: a subscription captures it
+    /// when it opens, inside the app's startup.
+    pub(crate) fn try_current() -> Option<Self> {
+        Handle::try_current().ok().map(Self)
     }
 
     /// Starts `future` as a task of the app's runtime and returns its handle; the handler does

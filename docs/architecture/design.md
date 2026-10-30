@@ -49,6 +49,12 @@ The traits, the runtime and each optional layer are crates of their own, and `ru
 re-exports them under one set of paths. The compiler holds the layering: the contract crate,
 `ruststream-core`, depends on no other crate of the framework. It builds with `#![no_std]` and
 needs only an allocator, so a device can depend on it; `ruststream` turns on its `std` feature.
+The delivery body (decoding, middleware, the handler, the reply, the settlement) lives in
+`ruststream-runtime`, which names no executor. It is generic over a runtime's clock and over the
+wait on the app's shutdown. `ruststream-runtime-tokio` runs it on tokio and owns what is tokio's:
+the app's lifecycle, spawning, the worker pools, the dedicated threads and the signals. Service
+code that waits calls `ruststream::time::sleep`, which sleeps on the app's clock, so the test
+harness moves it with every other timer.
 A cargo feature of `ruststream`
 turns an optional layer on: the [memory broker](../components/memory/index.md), AsyncAPI,
 metrics, logging, OpenTelemetry, [testing](../components/application/testing/index.md) and the

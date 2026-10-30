@@ -20,7 +20,7 @@ pub struct Spec {
     /// The `AsyncAPI` specification version (always `"3.1.0"`).
     pub asyncapi: String,
     /// The service's own identifier, when it declared one
-    /// ([`AppInfo::id`](method@ruststream_runtime::AppInfo::id)).
+    /// ([`AppInfo::id`](method@ruststream_runtime_tokio::AppInfo::id)).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<AppId>,
     /// Service metadata.
@@ -236,7 +236,7 @@ pub struct Channel {
     /// The servers this channel exists on, as references into the document's `servers` map.
     ///
     /// Filled from the label the registration's broker was registered under
-    /// ([`with_broker_labeled`](ruststream_runtime::RustStream::with_broker_labeled)), and from the
+    /// ([`with_broker_labeled`](ruststream_runtime_tokio::RustStream::with_broker_labeled)), and from the
     /// single server of a one-broker document. Empty where neither applies, which per the
     /// specification means the channel is available on every server: that is the honest answer
     /// when the registration named no broker, and it is also the limit of what the core can say

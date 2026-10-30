@@ -32,12 +32,11 @@ use super::hooks::{DueCall, DuePublish, Hooks, PublishTarget, Within};
 
 mod scope;
 
-pub use scope::Outcome;
 pub(crate) use scope::{
     Delivered, HarnessScope, PendingRecord, PipelinePublish, Record, RecordedValue, SlotRecord,
-    TestHooks, calls_in_harness_scope, in_harness_scope, publishing_to, record_batch,
-    record_slot_publish,
+    calls_in_harness_scope, in_harness_scope, publishing_to, record_batch, record_slot_publish,
 };
+pub use scope::{Outcome, TestHooks};
 
 /// Records deliveries and tracks in-flight work so the harness can drive a service to quiescence.
 ///

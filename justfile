@@ -23,8 +23,8 @@ bench_features := "memory,macros,json"
 # baseline holds the gated ones to an instruction limit; the ungated one is measured and reported,
 # and held to no number. The wall-clock one is in neither list: it runs under a different harness,
 # which takes none of the arguments below.
-gated_benches := "--bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench consume_pool --bench consume_threads --bench middleware --bench batch --bench reply --bench reply_lending --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply"
-ungated_benches := "--bench retry_copy"
+gated_benches := "--bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench consume_pool --bench consume_threads --bench middleware --bench batch --bench reply --bench reply_lending --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench continuation"
+ungated_benches := "--bench retry_copy --bench retry_copy_deferred"
 
 default: check
 
@@ -59,6 +59,16 @@ check:
     # Rustdoc sees what rustc cannot: broken intra-doc links and redundant targets. CI gates on
     # it, so a link to an item a refactor removed must fail here rather than three jobs later.
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+    # The shared delivery body also documents without the tokio runner's feature, the way a crate
+    # on another runtime builds it: a link to an item that feature gates must not break there.
+    RUSTDOCFLAGS="-D warnings" cargo doc -p ruststream-runtime --no-deps \
+        --features json,msgpack,cbor,asyncapi,metrics,otel,testing,poll-diagnostics
+    # The types the public API of each published crate names from its dependencies, as CI checks
+    # them: the facade, and each crate behind it where its items are defined.
+    for manifest in Cargo.toml crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do \
+        cargo +nightly-2026-03-20 check-external-types --all-features \
+            --manifest-path "$manifest" --config external-types.toml || exit 1; \
+    done
     # The compile-fail snapshots: rustc's exact wording on the stable toolchain this repository
     # selects, which is what CI records them with. REQUIRE_UI_TESTS turns a skip into a failure,
     # so a lost opt-in shows here. `ui_codec_free` holds the errors that exist only where no

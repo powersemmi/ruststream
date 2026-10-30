@@ -16,7 +16,6 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use thiserror::Error;
-use tokio_util::task::TaskTracker;
 use tracing::info;
 
 use crate::dispatch::Delivery;
@@ -508,9 +507,8 @@ impl<B: Broker + 'static, Cx: Send + Sync + 'static> RetryPairing<B, Cx> {
 /// The deferred retry is a registration's own, so it is not here: this is what the whole scope
 /// shares with each of its subscriptions, plus, under the `testing` feature, which subscription
 /// of the app it is.
-pub(crate) struct ScopeDelivery {
-    /// App-wide tracker for post-settle continuations, so a graceful shutdown drains them.
-    tasks: TaskTracker,
+#[doc(hidden)]
+pub struct ScopeDelivery {
     /// The harness's recording-and-quiescence hooks for this scope.
     #[cfg(feature = "testing")]
     hooks: Arc<TestHooks>,
@@ -526,37 +524,71 @@ pub(crate) struct ScopeDelivery {
     poll: PollDiagnostics,
 }
 
+impl fmt::Debug for ScopeDelivery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ScopeDelivery").finish_non_exhaustive()
+    }
+}
+
+impl Default for ScopeDelivery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScopeDelivery {
-    /// The scope context every subscription of one broker dispatches under.
-    pub(crate) fn new(
-        tasks: TaskTracker,
-        #[cfg(feature = "testing")] hooks: Arc<TestHooks>,
-        #[cfg(feature = "testing")] scope_id: usize,
-        #[cfg(feature = "testing")] subscription: usize,
-        #[cfg(feature = "poll-diagnostics")] poll: PollDiagnostics,
-    ) -> Self {
+    /// The scope context every subscription of one broker dispatches under, outside any harness
+    /// and with diagnostics of its own; [`with_harness`](Self::with_harness) and
+    /// [`with_poll`](Self::with_poll) attach the app's.
+    ///
+    /// The harness and the diagnostics are attached by methods rather than taken here, so the
+    /// signature is the same whichever features of this crate a build unifies: a runner built
+    /// without them still calls it.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new() -> Self {
         Self {
-            tasks,
             #[cfg(feature = "testing")]
-            hooks,
+            hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
-            scope_id,
+            scope_id: 0,
             #[cfg(feature = "testing")]
-            subscription,
+            subscription: 0,
             #[cfg(feature = "poll-diagnostics")]
-            poll,
+            poll: PollDiagnostics::new(),
         }
+    }
+
+    /// The harness hooks this scope dispatches under, with the broker's registration index and
+    /// the subscription's identity.
+    #[doc(hidden)]
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn with_harness(
+        mut self,
+        hooks: Arc<TestHooks>,
+        scope_id: usize,
+        subscription: usize,
+    ) -> Self {
+        self.hooks = hooks;
+        self.scope_id = scope_id;
+        self.subscription = subscription;
+        self
+    }
+
+    /// The app's poll-time diagnostics, which this scope's subscriptions register with.
+    #[doc(hidden)]
+    #[cfg(feature = "poll-diagnostics")]
+    #[must_use]
+    pub fn with_poll(mut self, poll: PollDiagnostics) -> Self {
+        self.poll = poll;
+        self
     }
 
     /// The app's poll-time diagnostics.
     #[cfg(feature = "poll-diagnostics")]
     pub(crate) const fn poll(&self) -> &PollDiagnostics {
         &self.poll
-    }
-
-    /// The tracker post-settle continuations are spawned onto.
-    pub(crate) fn tasks(&self) -> &TaskTracker {
-        &self.tasks
     }
 
     /// The harness hooks this scope dispatches under.
@@ -649,7 +681,7 @@ pub(crate) async fn open_subscription<B, Source, Cx>(
     scope: &ScopeDelivery,
     subscription: &str,
     setup: RetrySetup<B, Cx>,
-) -> Result<(Source::Subscriber, Arc<Delivery<Cx>>), BoxError>
+) -> Result<(Source::Subscriber, Delivery<Cx>), BoxError>
 where
     B: Broker + 'static,
     Cx: Send + Sync + 'static,
@@ -715,12 +747,7 @@ where
         .map_err(BoxError::from)?;
     Ok((
         subscriber,
-        Arc::new(Delivery::for_subscription(
-            scope,
-            subscription,
-            retry,
-            declaration,
-        )),
+        Delivery::for_subscription(scope, subscription, retry, declaration),
     ))
 }
 
@@ -761,14 +788,8 @@ fn announce<Cx>(
 /// The delivery context for a subscriber mounted without a source: nothing describes where a
 /// redelivery of it would be published, and no mount chain can bind the retry position on one, so
 /// there is no retry path to build.
-pub(crate) fn open_mounted_subscriber<Cx>(
-    scope: &ScopeDelivery,
-    subscription: &str,
-) -> Arc<Delivery<Cx>> {
-    Arc::new(Delivery::for_subscription(
-        scope,
-        subscription,
-        None,
-        RetryDeclaration::new(),
-    ))
+#[doc(hidden)]
+#[must_use]
+pub fn open_mounted_subscriber<Cx>(scope: &ScopeDelivery, subscription: &str) -> Delivery<Cx> {
+    Delivery::for_subscription(scope, subscription, None, RetryDeclaration::new())
 }

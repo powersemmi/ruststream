@@ -42,7 +42,7 @@ use ruststream_core::{
 };
 use ruststream_runtime::RETRY_COUNT_HEADER;
 #[cfg(feature = "asyncapi")]
-use ruststream_runtime::{AppInfo, RustStream};
+use ruststream_runtime_tokio::{AppInfo, RustStream};
 
 /// How long a check waits for a delivery it expects. Long enough for a live consumer that joins a
 /// group on its first poll; a correct broker never comes near it, it only bounds a failing run.

@@ -1,0 +1,47 @@
+[package]
+name = "ruststream-embassy-probe"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The shared delivery body run on embassy's executor and clock, with a broker that keeps no heap on the delivery path, so the body is held to what a device runner offers."
+publish = false
+
+[dependencies]
+ruststream-core.workspace = true
+ruststream-runtime.workspace = true
+futures-core.workspace = true
+# The clock a device reads. The driver is the binary's choice: the test picks the mock driver.
+embassy-time = "0.5.1"
+# The channel the broker stand-in delivers through and the wakers the shutdown keeps, both
+# without a heap.
+embassy-sync = "0.8"
+heapless = "0.9"
+
+[dev-dependencies]
+# The thread-mode executor of the `std` platform: the executor a device runs, hosted on a thread.
+# Its integrated timer queue keeps each timer in the task that awaits it, so every timer the body
+# arms must be polled with an embassy task's own waker.
+embassy-executor = { version = "0.10", features = ["platform-std", "executor-thread"] }
+# The clock the test moves by hand. The executor's integrated timer queue serves it, so no
+# `generic-queue-N` feature is named.
+embassy-time = { version = "0.5.1", features = ["mock-driver"] }
+embassy-futures = "0.1.2"
+# The mock driver and the shutdown's waker list lock through a critical section; on a host it is a
+# process-wide mutex.
+critical-section = { version = "1.1", features = ["std"] }
+static_cell = "2.1"
+# Counts the process's allocations so the test reads what one delivery made: four atomic
+# counters per allocation, in the test binary only.
+stats_alloc = "0.1.10"
+
+# The executor owns the thread it runs on, and the mock clock is one per process, so the test is a
+# binary of its own with no test harness: it passes when the executor returns.
+[[test]]
+name = "embassy"
+path = "tests/embassy.rs"
+harness = false
+
+[lints]
+workspace = true

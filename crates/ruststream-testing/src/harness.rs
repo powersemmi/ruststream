@@ -1,4 +1,4 @@
-//! The [`TestApp`] harness: drives a built [`RustStream`](ruststream_runtime::RustStream) application
+//! The [`TestApp`] harness: drives a built [`RustStream`](ruststream_runtime_tokio::RustStream) application
 //! and exposes per-broker assertions. In process, each broker of the app connects through its
 //! registered [`InProcess`] transition, which produces the production connected form with no I/O;
 //! live, each connects through its ordinary `connect`, against a running stand.
@@ -14,8 +14,8 @@ use tokio::time;
 use tokio::time::Instant;
 use tokio_util::task::TaskTracker;
 
-use ruststream_runtime::{App, RustStreamError, SubscriptionEnd};
-use ruststream_runtime::{
+use ruststream_runtime_tokio::{App, RustStreamError, SubscriptionEnd};
+use ruststream_runtime_tokio::{
     ConnectedEntry, LifecycleHook, RegisteredBroker, Shutdown, ShutdownHooks, Starter, Teardown,
     TestParts,
 };
@@ -154,7 +154,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// to connect in process, or [`TestError::Subscribe`] if a subscription fails to open.
     ///
     /// The app's publish pipeline is whatever it was built with: an app-wide
-    /// [`publish_layer`](ruststream_runtime::RustStream::publish_layer) is already baked into the mounted routes, so
+    /// [`publish_layer`](ruststream_runtime_tokio::RustStream::publish_layer) is already baked into the mounted routes, so
     /// the harness drives the same stack production would.
     ///
     /// # Examples
@@ -311,7 +311,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// A publisher the service uses itself is outside this record: one kept in its state, one an
     /// `after_startup` hook is handed or pairs, one from
     /// [`Bound::live`](ruststream_runtime::Bound::live) or
-    /// [`RunningApp::publisher`](ruststream_runtime::RunningApp::publisher), and one a broker crate
+    /// [`RunningApp::publisher`](ruststream_runtime_tokio::RunningApp::publisher), and one a broker crate
     /// builds outside the runtime's pairing. The harness neither waits for its publishes nor lists
     /// them; a test sends its own input through `tb.broker::<B>().message(..)`.
     ///
@@ -553,7 +553,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             hook_failures: HookFailures::new(coordinator),
         })
     }
-    /// Shuts the harness down the way [`RunningApp::shutdown`](ruststream_runtime::RunningApp::shutdown)
+    /// Shuts the harness down the way [`RunningApp::shutdown`](ruststream_runtime_tokio::RunningApp::shutdown)
     /// shuts the service down: the `on_shutdown` hooks, then the dispatch loops, the in-flight
     /// handlers and post-settle continuations (bounded by the app's shutdown timeout), the brokers
     /// in reverse registration order, and the `after_shutdown` hooks last. A failing shutdown hook

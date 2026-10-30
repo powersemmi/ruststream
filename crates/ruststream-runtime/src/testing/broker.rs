@@ -594,7 +594,7 @@ macro_rules! register_testable_broker {
 /// Returns all observed messages; on timeout it returns those seen so far (so assert on the returned
 /// messages, not just on length). For application tests prefer [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html), which
 /// drives to quiescence without polling; this helper is for tests that run a service via
-/// [`run_until`](crate::RustStream::run_until) directly.
+/// [`run_until`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.run_until) directly.
 ///
 /// # Examples
 ///

@@ -64,6 +64,7 @@ jobs:
           publish ruststream-macros
           publish ruststream-core --all-features
           publish ruststream-runtime --all-features
+          publish ruststream-runtime-tokio --all-features
           publish ruststream-memory --all-features
           publish ruststream-asyncapi --all-features
           publish ruststream-observability --all-features

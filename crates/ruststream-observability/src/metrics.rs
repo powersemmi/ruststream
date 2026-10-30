@@ -36,9 +36,9 @@ struct Inner {
 /// Collects consume and publish metrics into a shared Prometheus registry.
 ///
 /// Cheap to clone (shares one registry and counter set). Hand [`consume_layer`](Self::consume_layer)
-/// to [`RustStream::layer`](ruststream_runtime::RustStream::layer) and
+/// to [`RustStream::layer`](ruststream_runtime_tokio::RustStream::layer) and
 /// [`publish_layer`](Self::publish_layer) to
-/// [`RustStream::publish_layer`](ruststream_runtime::RustStream::publish_layer).
+/// [`RustStream::publish_layer`](ruststream_runtime_tokio::RustStream::publish_layer).
 ///
 /// The consume layer records every handled message, and the publish layer every publish
 /// attempt, the failed ones included. The registry is the global default unless

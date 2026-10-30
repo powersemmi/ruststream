@@ -178,7 +178,7 @@ pub use ruststream_core::{
 };
 
 pub use ruststream_core::nonzero;
-pub use ruststream_runtime::{Buffered, BufferedSubscriber};
+pub use ruststream_runtime_tokio::{Buffered, BufferedSubscriber};
 
 pub mod codec;
 
@@ -188,6 +188,11 @@ pub mod memory;
 pub mod runtime;
 
 pub use runtime::RustStream;
+
+/// Time for service code: the sleep that runs on the app's clock, which the test harness moves.
+pub mod time {
+    pub use ruststream_runtime_tokio::time::sleep;
+}
 
 /// Attribute macro that turns an `async fn` into a mountable subscriber definition.
 ///

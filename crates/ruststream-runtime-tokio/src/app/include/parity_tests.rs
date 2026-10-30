@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::BytesMut;
 use crate::PublishedThrough;
-use crate::codec::JsonCodec;
 use crate::nonzero;
 use crate::{
     Buffered, CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
@@ -28,6 +27,7 @@ use ruststream::memory::{
     MemoryBatchContext, MemoryBroker, MemoryContext, MemoryPosition, MemoryPublish,
     MemoryPublisher, Position, Retaining, Retention, SeekHandle,
 };
+use ruststream_runtime::codec::JsonCodec;
 
 mod slots;
 

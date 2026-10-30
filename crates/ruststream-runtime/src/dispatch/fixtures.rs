@@ -19,8 +19,6 @@ pub(super) enum Settlement {
     Unsupported,
     /// The transport does settle, but the broker rejected this one.
     Rejected,
-    /// The broker's settlement panics: a fault of the transport, past the handler's guard.
-    Panics,
 }
 
 impl Settlement {
@@ -29,7 +27,6 @@ impl Settlement {
             Self::Accepted => Ok(()),
             Self::Unsupported => Err(AckError::Unsupported),
             Self::Rejected => Err(AckError::Timeout),
-            Self::Panics => panic!("the broker's settlement panicked"),
         }
     }
 }
@@ -37,17 +34,23 @@ impl Settlement {
 /// A delivery without native delayed redelivery: `supports_nack_after` stays at the trait
 /// default (`false`), and the default `nack_after` would error. It records how it was settled
 /// so a test can assert the fallback dropped it rather than calling `nack(true)`.
-pub(super) struct PlainMessage {
-    pub(super) payload: Bytes,
+///
+/// Its payload is shared bytes by default; a test that measures what a dispatch holds of the
+/// delivery stores the payload inline, so the delivery's size is the payload's.
+pub(super) struct PlainMessage<Payload = Bytes> {
+    pub(super) payload: Payload,
     pub(super) headers: HeaderMap,
     // 0 = unset, 1 = nack(false) (dropped), 2 = nack(true) (requeued).
     pub(super) settled: Arc<AtomicU8>,
     pub(super) settlement: Settlement,
 }
 
-impl IncomingMessage for PlainMessage {
+impl<Payload> IncomingMessage for PlainMessage<Payload>
+where
+    Payload: AsRef<[u8]> + Send + Sync,
+{
     fn payload(&self) -> &[u8] {
-        &self.payload
+        self.payload.as_ref()
     }
 
     fn headers(&self) -> &HeaderMap {

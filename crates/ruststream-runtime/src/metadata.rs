@@ -463,7 +463,7 @@ pub struct HandlerMetadata {
     pub deserialized: bool,
     /// The name of the `AsyncAPI` server this handler's broker was registered under, when the
     /// registration carries one: the label of
-    /// [`with_broker_labeled`](crate::RustStream::with_broker_labeled). Feeds the
+    /// [`with_broker_labeled`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.with_broker_labeled). Feeds the
     /// channel's `servers` list, so a multi-broker document says which broker a channel lives
     /// on instead of showing every channel on every server.
     ///
@@ -485,6 +485,15 @@ pub struct HandlerMetadata {
 }
 
 impl HandlerMetadata {
+    /// The same metadata on the AsyncAPI server `server`: the label of the broker scope that
+    /// mounted the handler.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn at_server(mut self, server: Option<Cow<'static, str>>) -> Self {
+        self.server = server;
+        self
+    }
+
     /// Constructs metadata for a raw-bytes handler bound to a name.
     #[must_use]
     pub fn raw(name: impl Into<Cow<'static, str>>) -> Self {

@@ -152,8 +152,18 @@ SCENARIOS = [
         "request_reply/service",
     ),
     Scenario(
+        "a continuation left behind by every delivery",
+        "continuation/service",
+    ),
+    Scenario(
         "a delivery that asks to be redelivered, natively by the broker",
         "retry_copy/service",
+        gated=False,
+        note="cold path: measured and reported, never gated",
+    ),
+    Scenario(
+        "a delayed redelivery the runtime publishes as a copy",
+        "retry_copy_deferred/service",
         gated=False,
         note="cold path: measured and reported, never gated",
     ),

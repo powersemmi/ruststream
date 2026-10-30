@@ -1,5 +1,5 @@
 //! The contract a `#[subscriber]`-generated type implements so it can be mounted with
-//! [`BrokerScope::include`](super::BrokerScope::include).
+//! [`BrokerScope::include`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.include).
 
 use super::dispatch::Workers;
 use super::failure::FailurePolicies;
@@ -9,7 +9,7 @@ use super::metadata::HandlerMetadata;
 /// A handler definition produced by the `#[subscriber]` macro (with or without `raw`).
 ///
 /// It bundles a [`Handler`](super::Handler) with the subscription [`Source`](Self::Source) it
-/// binds to, so [`BrokerScope::include`](super::BrokerScope::include) can subscribe and wire
+/// binds to, so [`BrokerScope::include`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.include) can subscribe and wire
 /// decoding without the caller repeating anything. The source is a [`Name`](crate::Name) for
 /// `#[subscriber("topic")]`, or a broker descriptor for `#[subscriber(RedisStream::new(..))]`. The
 /// generated type is itself the handler, so [`Handler`](Self::Handler) is usually `Self`.

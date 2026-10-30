@@ -28,9 +28,9 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::task::{JoinError, JoinHandle};
 
-use crate::lifecycle::{BoxError, BoxFuture};
 use crate::shutdown::Shutdown;
 use crate::{AppId, Contact, ExternalDocs, License, Tag};
+use crate::{BoxError, BoxFuture};
 
 /// A registration deferred until [`RustStream::run`].
 ///
@@ -281,9 +281,9 @@ pub enum RustStreamError {
 pub(super) mod lifecycle_hooks {
     use std::{error::Error as StdError, sync::Arc};
 
+    use crate::BoxError;
     use crate::bindable::ConnectedSlot;
     use crate::bindable::pair_bound;
-    use crate::lifecycle::BoxError;
     use crate::{Broker, Connected, PublishPolicy};
 
     use super::LifecycleHook;

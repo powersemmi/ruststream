@@ -3,24 +3,16 @@
 
 use std::fmt;
 use std::sync::Arc;
-#[cfg(test)]
-use std::sync::LazyLock;
-
-#[cfg(test)]
-use tokio::runtime::Builder;
-#[cfg(test)]
-use tokio::runtime::Handle;
-#[cfg(test)]
-use tokio::runtime::Runtime;
-use tokio_util::task::TaskTracker;
 
 #[cfg(doc)]
 use crate::IncomingMessage;
 use crate::RetryDeclaration;
 #[cfg(doc)]
 use crate::context::Context;
+use crate::host::Detach;
+#[cfg(feature = "tokio")]
 use crate::main_runtime::MainRuntime;
-#[cfg(all(test, feature = "poll-diagnostics"))]
+#[cfg(feature = "poll-diagnostics")]
 use crate::poll_diagnostics::PollDiagnostics;
 #[cfg(feature = "poll-diagnostics")]
 use crate::poll_diagnostics::PollSampler;
@@ -31,10 +23,11 @@ use crate::redelivery::{DeferredRetry, ScopeDelivery};
 use crate::testing::coordinator::TestHooks;
 
 /// Per-subscription publish context threaded into every delivery's [`Context`]: the
-/// broker-agnostic `retry_after` fallback of this registration and the app-wide tracker for
-/// post-settle continuations.
-/// An `and_after` continuation is spawned onto `tasks` so a graceful shutdown drains it.
-pub(crate) struct Delivery<C = ()> {
+/// broker-agnostic `retry_after` fallback of this registration and what the mount site declared
+/// about it. What a delivery leaves behind goes to the runner's
+/// [`Detach`](crate::host::Detach), which the loop carries beside it.
+#[doc(hidden)]
+pub struct Delivery<C = ()> {
     /// The retry path of this subscription: the publisher a copy of a delivery leaves through,
     /// with the destination the mount site or the descriptor named. `None` where the broker moves
     /// the delivery itself, in which case a `NackAfter` on a transport with no native delayed
@@ -43,20 +36,12 @@ pub(crate) struct Delivery<C = ()> {
     /// What the mount site declared with `max_attempts(..)` and `dead_letter(..)`. Read only
     /// where the runtime is the one moving the delivery.
     pub(crate) declaration: RetryDeclaration,
-    /// Per-scope task tracker for post-settle `and_after` continuations. The
-    /// dispatcher spawns each element's continuation onto it after settling, so a graceful
-    /// shutdown drains them.
-    pub(crate) tasks: TaskTracker,
-    /// The runtime the app connected its brokers on, captured when the subscription opens. A
-    /// handler reaches it through [`Context::main_runtime`](crate::context::Context::main_runtime)
-    /// to send work there. What the delivery leaves behind (a continuation, the timer of a
-    /// delayed retry copy) does not run here: it runs where the delivery runs, which under
-    /// `threads(n)` is the dedicated thread's runtime (see [`Delivery::spawn_after`]).
-    pub(crate) runtime: MainRuntime,
-    /// On a dedicated thread (`threads(n)`), the thread's own tracker: the thread waits for what
-    /// its deliveries left behind before it ends, so a shutdown does not drop it with the
-    /// thread's runtime. `None` everywhere else.
-    pub(crate) thread_tasks: Option<TaskTracker>,
+    /// The runtime the app runs on, captured where the subscription opens, inside the app's
+    /// startup: a handler reaches it through
+    /// [`Context::main_runtime`](crate::context::Context::main_runtime) to send work there.
+    /// `None` for a subscription a runner opened outside any Tokio runtime.
+    #[cfg(feature = "tokio")]
+    pub(crate) runtime: Option<MainRuntime>,
     /// The harness's recording-and-quiescence hooks for this scope. Empty (uninstalled) outside a
     /// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) run, so the per-delivery read is a single atomic load.
     #[cfg(feature = "testing")]
@@ -85,10 +70,8 @@ impl<C> Delivery<C> {
         Self {
             retry,
             declaration,
-            tasks: scope.tasks().clone(),
-            // A subscription opens inside the app's startup, on the runtime it connected on.
-            runtime: MainRuntime::current(),
-            thread_tasks: None,
+            #[cfg(feature = "tokio")]
+            runtime: MainRuntime::try_current(),
             #[cfg(feature = "testing")]
             hooks: Arc::clone(scope.hooks()),
             #[cfg(feature = "testing")]
@@ -100,16 +83,16 @@ impl<C> Delivery<C> {
         }
     }
 
-    /// A delivery context outside any scope, for tests that drive the dispatch functions
-    /// directly.
-    #[cfg(test)]
-    pub(crate) fn detached(retry: Option<DeferredRetry<C>>, tasks: TaskTracker) -> Self {
+    /// A delivery context outside any scope, with no retry path: what a runner's own tests drive
+    /// the dispatch functions under.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn unscoped() -> Self {
         Self {
-            retry,
+            retry: None,
             declaration: RetryDeclaration::new(),
-            tasks,
-            runtime: MainRuntime::new(test_runtime()),
-            thread_tasks: None,
+            #[cfg(feature = "tokio")]
+            runtime: MainRuntime::try_current(),
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
@@ -121,21 +104,27 @@ impl<C> Delivery<C> {
         }
     }
 
+    /// A delivery context outside any scope, for tests that drive the dispatch functions
+    /// directly.
+    #[cfg(test)]
+    pub(crate) fn detached(retry: Option<DeferredRetry<C>>) -> Self {
+        Self {
+            retry,
+            ..Self::unscoped()
+        }
+    }
+
     /// A delivery context publishing its retry copies through `publisher` at `destination`. For
     /// tests.
     #[cfg(test)]
     pub(crate) fn deferring_to(
         publisher: Arc<dyn ErasedRetryPublisher<C>>,
         destination: &str,
-        tasks: TaskTracker,
     ) -> Self {
-        Self::detached(
-            Some(DeferredRetry {
-                publisher,
-                destination: Some(Arc::from(destination)),
-            }),
-            tasks,
-        )
+        Self::detached(Some(DeferredRetry {
+            publisher,
+            destination: Some(Arc::from(destination)),
+        }))
     }
 
     /// The same context with a declaration on it, as a mount site's `max_attempts(..)` and
@@ -146,45 +135,27 @@ impl<C> Delivery<C> {
         self
     }
 
-    /// An empty delivery context: no deferred retry, a fresh continuation tracker. For tests.
+    /// An empty delivery context: no deferred retry. For tests.
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
-        Self::with_tasks(TaskTracker::new())
-    }
-
-    /// An empty delivery context carrying a caller-owned continuation tracker, so a test can
-    /// observe the post-settle continuations spawned through it.
-    #[cfg(test)]
-    pub(crate) fn with_tasks(tasks: TaskTracker) -> Self {
-        Self::detached(None, tasks)
+        Self::detached(None)
     }
 }
 
 impl<C> Delivery<C> {
-    /// Spawns work the delivery leaves behind (a continuation, a post-settle hook, the timer of a
-    /// deferred copy) on the runtime the delivery runs on, tracked so a graceful shutdown waits
-    /// for it.
-    pub(crate) fn spawn_after<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        match &self.thread_tasks {
-            None => drop(self.tasks.spawn(work)),
-            Some(own) => drop(self.tasks.spawn(own.track_future(work))),
-        }
-    }
-
-    /// The same context for one dedicated thread, whose leftovers `own` tracks as well.
-    pub(super) fn on_thread(&self, own: TaskTracker) -> Self {
+    /// The same context for one dedicated thread: its poll diagnostics sample the thread's
+    /// handler on their own.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn on_thread(&self) -> Self {
         Self {
             retry: self.retry.as_ref().map(|retry| DeferredRetry {
                 publisher: Arc::clone(&retry.publisher),
                 destination: retry.destination.clone(),
             }),
             declaration: self.declaration.clone(),
-            tasks: self.tasks.clone(),
+            #[cfg(feature = "tokio")]
             runtime: self.runtime.clone(),
-            thread_tasks: Some(own),
             #[cfg(feature = "testing")]
             hooks: Arc::clone(&self.hooks),
             #[cfg(feature = "testing")]
@@ -197,19 +168,6 @@ impl<C> Delivery<C> {
     }
 }
 
-/// The runtime a delivery context built by a unit test answers `main_runtime` with: the test's
-/// own where it runs inside one, and a shared idle one where a synchronous test builds a context.
-#[cfg(test)]
-fn test_runtime() -> Handle {
-    static IDLE: LazyLock<Runtime> = LazyLock::new(|| {
-        Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("a current-thread runtime builds")
-    });
-    Handle::try_current().unwrap_or_else(|_| IDLE.handle().clone())
-}
-
 impl<C> fmt::Debug for Delivery<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Delivery")
@@ -218,7 +176,6 @@ impl<C> fmt::Debug for Delivery<C> {
                 &self.retry.as_ref().map(|retry| &retry.destination),
             )
             .field("declaration", &self.declaration)
-            .field("pending_continuations", &self.tasks.len())
             .finish_non_exhaustive()
     }
 }
@@ -235,14 +192,17 @@ impl<C> fmt::Debug for Delivery<C> {
 /// slot is never empty on the dispatch path: the sequential loop's one slot is filled by the poll
 /// that takes a delivery off the stream and emptied by the settle, and a pooled worker's is filled
 /// where it is declared; taking the delivery is the last thing that happens to it.
-pub(crate) struct Slot<M>(Option<M>);
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct Slot<M>(Option<M>);
 
 /// What a slot says when it is read after the settle has taken the delivery.
 const SETTLED: &str = "the delivery has already been settled";
 
 impl<M> Slot<M> {
     /// The slot holding `msg`.
-    pub(crate) const fn new(msg: M) -> Self {
+    #[doc(hidden)]
+    pub const fn new(msg: M) -> Self {
         Self(Some(msg))
     }
 
@@ -276,23 +236,122 @@ impl<M> Slot<M> {
     }
 }
 
+/// What a runner lends a subscription's loop: its publish context and the runner's own handle,
+/// held however the runner shares them with the loop's other parts.
+#[doc(hidden)]
+pub trait Lent<C> {
+    /// The runner's handle the loop hands its leftovers to.
+    type Host: Detach;
+
+    /// The publish context every delivery of the subscription runs under.
+    fn delivery(&self) -> &Delivery<C>;
+
+    /// The runner's handle.
+    fn host(&self) -> &Self::Host;
+}
+
+impl<C, Shared: Lent<C>> Lent<C> for Arc<Shared> {
+    type Host = Shared::Host;
+
+    #[inline]
+    fn delivery(&self) -> &Delivery<C> {
+        (**self).delivery()
+    }
+
+    #[inline]
+    fn host(&self) -> &Self::Host {
+        (**self).host()
+    }
+}
+
+impl<C, Host: Detach> Lent<C> for (&Delivery<C>, &Host) {
+    type Host = Host;
+
+    #[inline]
+    fn delivery(&self) -> &Delivery<C> {
+        self.0
+    }
+
+    #[inline]
+    fn host(&self) -> &Host {
+        self.1
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::fixtures::RejectingPublisher;
+    use std::future::ready;
+
+    use bytes::BytesMut;
+
+    use super::super::dispatch;
+    use super::super::fixtures::{PlainMessage, RejectingPublisher, Settlement};
     use super::*;
+    use crate::HeaderMap;
+    use crate::context::Context;
+    use crate::failure::{DispatchFailure, FailurePolicies};
+    use crate::handler::HandlerOutcome;
     use crate::redelivery::bare_retry_publisher;
+    use crate::testkit::{Shutdown, Tracked};
+    use tokio_util::task::TaskTracker;
 
     #[test]
     fn the_delivery_debug_form_reports_wiring_without_leaking_the_publisher() {
         let empty = format!("{:?}", Delivery::<()>::empty());
         assert!(empty.contains("retry_destination: None"), "{empty}");
-        assert!(empty.contains("pending_continuations: 0"), "{empty}");
 
-        let wired: Delivery = Delivery::deferring_to(
-            bare_retry_publisher(RejectingPublisher),
-            "orders",
-            TaskTracker::new(),
-        );
+        let wired: Delivery =
+            Delivery::deferring_to(bare_retry_publisher(RejectingPublisher), "orders");
         assert!(format!("{wired:?}").contains("retry_destination: Some(Some(\"orders\"))"));
+    }
+
+    /// A delivery whose size is its own: its `BULK` bytes are held inline, the way a broker's message
+    /// holds its record, and it settles through a ready future that drops it, so what a dispatch
+    /// future holds of the delivery is the only thing that can make that future grow with `BULK`.
+    fn sized<const BULK: usize>() -> PlainMessage<[u8; BULK]> {
+        PlainMessage {
+            payload: [0; BULK],
+            headers: HeaderMap::new(),
+            settled: Arc::default(),
+            settlement: Settlement::Accepted,
+        }
+    }
+
+    /// The size of the future one delivery of `BULK` inline bytes is dispatched through.
+    fn dispatch_future_size<const BULK: usize>() -> usize {
+        let state = ();
+        let delivery: Delivery<()> = Delivery::empty();
+        let failure = DispatchFailure::new(FailurePolicies::default(), Shutdown::new());
+        let mut encode = BytesMut::new();
+        let mut slot = Slot::new(sized::<BULK>());
+        let host = Tracked(TaskTracker::new());
+        let ack_anything =
+            |_: &PlainMessage<[u8; BULK]>, _: &mut Context<'_>| ready(HandlerOutcome::ack());
+        let dispatching = dispatch(
+            &ack_anything,
+            &mut slot,
+            &mut encode,
+            "orders",
+            &state,
+            &delivery,
+            &host,
+            &failure,
+        );
+        size_of_val(&dispatching)
+    }
+
+    #[test]
+    fn the_dispatch_future_holds_a_pointer_to_the_delivery_rather_than_the_delivery() {
+        let small = dispatch_future_size::<0>();
+        let large = dispatch_future_size::<4096>();
+
+        assert_eq!(
+            small, large,
+            "the dispatch future grew with the delivery, so it carries the value",
+        );
+        assert!(
+            large < size_of::<PlainMessage<[u8; 4096]>>(),
+            "the dispatch future is at least as large as the delivery it dispatches: {large} bytes",
+        );
     }
 }

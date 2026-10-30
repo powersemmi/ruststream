@@ -20,6 +20,7 @@ use crate::ContextField;
 use super::context::Context;
 use super::failure::FailurePolicy;
 use super::handler::HandlerOutcome;
+#[cfg(feature = "tokio")]
 use super::main_runtime::MainRuntime;
 
 /// A value resolved from the per-delivery [`Context`] and shared state, ready to be passed to a
@@ -236,7 +237,9 @@ where
 pub struct Ctx<K: CtxKey>(pub K::Value);
 
 /// A key the [`Ctx`] extractor takes: every [`ContextField`], which reads the broker's
-/// per-delivery context, and [`MainRuntime`], which binds the app's runtime.
+/// per-delivery context, and
+/// [`MainRuntime`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.MainRuntime.html),
+/// which binds the app's runtime.
 ///
 /// Sealed: a new key implements [`ContextField`].
 ///
@@ -273,17 +276,21 @@ impl<K: ContextField> CtxKey for K {
     type Value = K::Value;
 }
 
+#[cfg(feature = "tokio")]
 impl CtxKey for MainRuntime {
     type Value = Self;
 }
 
 mod sealed {
-    use super::{ContextField, MainRuntime};
+    use super::ContextField;
+    #[cfg(feature = "tokio")]
+    use super::MainRuntime;
 
     pub trait Sealed {}
 
     impl<K: ContextField> Sealed for K {}
 
+    #[cfg(feature = "tokio")]
     impl Sealed for MainRuntime {}
 }
 
@@ -311,6 +318,7 @@ where
     }
 }
 
+#[cfg(feature = "tokio")]
 impl<C, S> FromContext<C, S> for Ctx<MainRuntime>
 where
     C: Send,

@@ -4,14 +4,14 @@ use std::{error::Error as StdError, fmt, sync::Arc};
 
 use crate::{Broker, Connected, Subscriber};
 
+use crate::FailurePolicies;
+use crate::Handler;
+use crate::HandlerMetadata;
 use crate::PublishPolicy;
 use crate::bindable::ConnectedSlot;
-use crate::failure::FailurePolicies;
-use crate::handler::Handler;
-use crate::metadata::HandlerMetadata;
-use crate::middleware::{BlanketLayer, Identity};
-use crate::publish::{PublishIdentity, PublishPipeline};
-use crate::router::{RouterDef, RouterSink};
+use crate::{BlanketLayer, Identity};
+use crate::{MountSink, RouterDef, RouterSink};
+use crate::{PublishIdentity, PublishPipeline};
 
 use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
 

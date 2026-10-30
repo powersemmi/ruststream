@@ -23,7 +23,8 @@ pub use spec::{
 pub use viewer::{ViewerOptions, render_viewer_html};
 
 use ruststream_core::Tag;
-use ruststream_runtime::{App, OutgoingKind};
+use ruststream_runtime::OutgoingKind;
+use ruststream_runtime_tokio::App;
 
 use operations::{add_outgoing, add_receive, send_operation_id};
 use servers::{build_servers, resolve_server};

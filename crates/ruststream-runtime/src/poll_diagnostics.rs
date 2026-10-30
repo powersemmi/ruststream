@@ -73,7 +73,7 @@ const BUCKETS: usize = BUCKET_BOUNDS_NS.len() + 1;
 /// after 16 samples.
 ///
 /// A handle is cheap to clone, and every clone reads the same reports. Hand one to
-/// [`RustStream::poll_diagnostics`](crate::RustStream::poll_diagnostics) to set the
+/// [`RustStream::poll_diagnostics`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.poll_diagnostics) to set the
 /// threshold or the sampling interval, and keep another to read [`reports`](Self::reports) or to
 /// export them through the `metrics` or `otel` feature.
 ///

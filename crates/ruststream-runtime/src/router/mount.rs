@@ -2,7 +2,7 @@
 //!
 //! A definition ties itself to a form token ([`IncludeDef::Form`]), and one entry point per
 //! surface - [`Router::include`](super::Router::include) and
-//! [`BrokerScope::include`](crate::BrokerScope::include) - resolves the token to the
+//! [`BrokerScope::include`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.include) - resolves the token to the
 //! machinery that form needs, at compile time. The subscription source is never named at a
 //! mount site: it belongs to the definition, which takes the broker's own source expression.
 

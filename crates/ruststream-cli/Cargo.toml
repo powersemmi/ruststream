@@ -25,6 +25,7 @@ tool = ["dep:clap", "dep:anyhow"]
 
 [dependencies]
 ruststream-runtime.workspace = true
+ruststream-runtime-tokio.workspace = true
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }

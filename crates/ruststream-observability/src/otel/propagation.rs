@@ -154,7 +154,7 @@ impl OpenTelemetry {
 
     /// The consume-side [`Layer`]: opens a span per delivery and stamps the consumer's trace context
     /// onto the working headers. Add it with
-    /// [`RustStream::layer`](ruststream_runtime::RustStream::layer).
+    /// [`RustStream::layer`](ruststream_runtime_tokio::RustStream::layer).
     ///
     /// # Examples
     ///

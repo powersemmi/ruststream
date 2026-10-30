@@ -17,18 +17,18 @@ use std::num::NonZeroU32;
 
 use crate::Broker;
 
+use crate::BlanketLayer;
 use crate::app::scope::BrokerScope;
-use crate::middleware::BlanketLayer;
-use crate::publish::{PublishIdentity, PublishPipeline};
-use crate::retry::{
+use crate::{
     Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount, DestinationLast,
     DestinationOpen, Present, Retry, RetryOpen, RouteDeclaring, RoutePosition,
 };
-use crate::router::{MapPublisher, Router, RouterBroker, RouterCommit, RouterDef, RouterWith};
-use crate::slot::{
+use crate::{
     AdmitsAt, BatchTransformLast, CodecLast, MapPolicyLast, NamedStep, OutPosition, Reply,
     ReplyLast, ReplyStep, TransactionalLast, TransformLast,
 };
+use crate::{MapPublisher, Router, RouterBroker, RouterCommit, RouterDef, RouterWith};
+use crate::{PublishIdentity, PublishPipeline};
 
 /// A mount chain that can be drained into a scope's sink. Machinery; never named directly.
 #[doc(hidden)]
