@@ -1,16 +1,17 @@
 //! The routing contract's scenarios: each takes a connected form and drives it through its own
-//! subscribe and inject surface.
+//! subscribe and inject surface. They are written over the local family, which every Send broker
+//! implements through the blanket impls, so both suites run the same scenarios.
 
 use bytes::Bytes;
 use ruststream_core::{
-    AckError, HeaderMap, IncomingMessage, OutgoingMessage, Subscribe, Subscriber,
+    AckError, HeaderMap, LocalIncomingMessage, LocalSubscribe, LocalSubscriber, OutgoingMessage,
 };
-use ruststream_runtime::testing::{Backlog, TestableBroker};
+use ruststream_runtime::testing::{Backlog, LocalTestableBroker};
 
 use super::{expect_next, expect_no_more};
 
-pub(super) async fn ordering<C: TestableBroker + Subscribe>(broker: C) {
-    let mut subscriber = Subscribe::subscribe(&broker, "conformance.ordering")
+pub(super) async fn ordering<C: LocalTestableBroker + LocalSubscribe>(broker: C) {
+    let mut subscriber = LocalSubscribe::subscribe(&broker, "conformance.ordering")
         .await
         .expect("subscribe failed");
 
@@ -40,14 +41,14 @@ pub(super) async fn ordering<C: TestableBroker + Subscribe>(broker: C) {
 /// A message published before the subscription opened reaches it, or does not, exactly as the
 /// broker declares through [`TestableBroker::backlog`]; the one published after reaches it either
 /// way.
-pub(super) async fn publish_before_subscribe<C: TestableBroker + Subscribe>(broker: C) {
+pub(super) async fn publish_before_subscribe<C: LocalTestableBroker + LocalSubscribe>(broker: C) {
     let backlog = broker.backlog();
     broker.inject(OutgoingMessage::new(
         "conformance.late",
         b"before-subscribe".as_slice(),
     ));
 
-    let mut subscriber = Subscribe::subscribe(&broker, "conformance.late")
+    let mut subscriber = LocalSubscribe::subscribe(&broker, "conformance.late")
         .await
         .expect("subscribe failed");
 
@@ -91,15 +92,15 @@ pub(crate) fn unknown_backlog(backlog: Backlog) -> ! {
 }
 
 /// Acknowledges `msg`, accepting a transport that cannot acknowledge.
-async fn settle_ack<M: IncomingMessage>(msg: M) {
+async fn settle_ack<M: LocalIncomingMessage>(msg: M) {
     match msg.ack().await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
     }
 }
 
-pub(super) async fn ack_consumes_delivery<C: TestableBroker + Subscribe>(broker: C) {
-    let mut subscriber = Subscribe::subscribe(&broker, "conformance.ack")
+pub(super) async fn ack_consumes_delivery<C: LocalTestableBroker + LocalSubscribe>(broker: C) {
+    let mut subscriber = LocalSubscribe::subscribe(&broker, "conformance.ack")
         .await
         .expect("subscribe failed");
 
@@ -118,8 +119,10 @@ pub(super) async fn ack_consumes_delivery<C: TestableBroker + Subscribe>(broker:
     broker.shutdown().await.expect("shutdown failed");
 }
 
-pub(super) async fn nack_with_requeue_redelivers<C: TestableBroker + Subscribe>(broker: C) {
-    let mut subscriber = Subscribe::subscribe(&broker, "conformance.requeue")
+pub(super) async fn nack_with_requeue_redelivers<C: LocalTestableBroker + LocalSubscribe>(
+    broker: C,
+) {
+    let mut subscriber = LocalSubscribe::subscribe(&broker, "conformance.requeue")
         .await
         .expect("subscribe failed");
 
@@ -160,8 +163,8 @@ pub(super) async fn nack_with_requeue_redelivers<C: TestableBroker + Subscribe>(
     broker.shutdown().await.expect("shutdown failed");
 }
 
-pub(super) async fn nack_without_requeue_drops<C: TestableBroker + Subscribe>(broker: C) {
-    let mut subscriber = Subscribe::subscribe(&broker, "conformance.drop")
+pub(super) async fn nack_without_requeue_drops<C: LocalTestableBroker + LocalSubscribe>(broker: C) {
+    let mut subscriber = LocalSubscribe::subscribe(&broker, "conformance.drop")
         .await
         .expect("subscribe failed");
 
@@ -180,8 +183,8 @@ pub(super) async fn nack_without_requeue_drops<C: TestableBroker + Subscribe>(br
     broker.shutdown().await.expect("shutdown failed");
 }
 
-pub(super) async fn headers_propagate<C: TestableBroker + Subscribe>(broker: C) {
-    let mut subscriber = Subscribe::subscribe(&broker, "conformance.headers")
+pub(super) async fn headers_propagate<C: LocalTestableBroker + LocalSubscribe>(broker: C) {
+    let mut subscriber = LocalSubscribe::subscribe(&broker, "conformance.headers")
         .await
         .expect("subscribe failed");
 
@@ -212,7 +215,9 @@ pub(super) async fn headers_propagate<C: TestableBroker + Subscribe>(broker: C) 
     broker.shutdown().await.expect("shutdown failed");
 }
 
-pub(super) async fn published_log_observes_publishes<C: TestableBroker + Subscribe>(broker: C) {
+pub(super) async fn published_log_observes_publishes<C: LocalTestableBroker + LocalSubscribe>(
+    broker: C,
+) {
     broker.inject(OutgoingMessage::new(
         "conformance.observe",
         b"first".as_slice(),
