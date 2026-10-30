@@ -59,7 +59,7 @@ impl<B: LocalBroker + 'static> Router<B, (), (), Identity, LocalPipeline> {
     /// ```
     /// use std::convert::Infallible;
     ///
-    /// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, subscriber};
+    /// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, local_subscriber};
     /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
     /// use ruststream_runtime::{Deserialized, Input, SoloDeserialized};
     ///
@@ -81,7 +81,7 @@ impl<B: LocalBroker + 'static> Router<B, (), (), Identity, LocalPipeline> {
     ///
     /// struct Log;
     ///
-    /// impl Handle<Reading<'_>> for Log {
+    /// impl LocalHandle<Reading<'_>> for Log {
     ///     async fn handle(
     ///         &self,
     ///         reading: &Reading<'_>,
@@ -94,7 +94,7 @@ impl<B: LocalBroker + 'static> Router<B, (), (), Identity, LocalPipeline> {
     /// }
     ///
     /// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
-    ///     .include(subscriber(LocalMemorySource::new("readings"), Log).build());
+    ///     .include(local_subscriber(LocalMemorySource::new("readings"), Log).build());
     /// # let _ = routes;
     /// ```
     #[must_use]
@@ -150,7 +150,7 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe> RouterPipe
 /// # use std::convert::Infallible;
 /// # use std::future::ready;
 /// use ruststream::nonzero;
-/// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, Workers, subscriber};
+/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, Workers, local_subscriber};
 /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
 /// use ruststream_runtime::{Deserialized, Input, SoloDeserialized};
 /// # struct Reading<'a>(&'a [u8]);
@@ -161,12 +161,12 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe> RouterPipe
 /// # }
 /// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
 /// # struct Log;
-/// # impl Handle<Reading<'_>> for Log {
+/// # impl LocalHandle<Reading<'_>> for Log {
 /// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
-/// #         -> impl Future<Output = Result<(), HandlerOutcome>> + Send { let _ = r.0; ready(Ok(())) }
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> { let _ = r.0; ready(Ok(())) }
 /// # }
 /// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
-///     .include(subscriber(LocalMemorySource::new("readings"), Log).build())
+///     .include(local_subscriber(LocalMemorySource::new("readings"), Log).build())
 ///     .workers(Workers::pool(nonzero!(4)));
 /// ```
 ///
