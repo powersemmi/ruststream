@@ -9,7 +9,6 @@
 #![allow(clippy::future_not_send)]
 
 use core::cell::Cell;
-use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
 use std::alloc::System;
 use std::sync::Arc;
@@ -19,8 +18,8 @@ use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream_core::LocalIncomingMessage;
 use ruststream_runtime::{
-    Clock, Context, Delivery, DispatchFailure, FailurePolicies, Handler, HandlerOutcome,
-    run_sequential,
+    Clock, Context, Delivery, DispatchFailure, FailurePolicies, HandlerOutcome, HeadersAtOnce,
+    LocalHandler, run_sequential,
 };
 use ruststream_runtime_embassy::frames::{
     Frame, FrameDelivery, FrameSubscriber, Frames, Settlements,
@@ -48,7 +47,7 @@ struct Probe {
     settled: Settlements,
     stop: Control,
     host: Arc<CountDetached>,
-    handled: AtomicU32,
+    handled: Cell<u32>,
     ended: Cell<bool>,
     checked: Cell<bool>,
 }
@@ -57,34 +56,33 @@ struct Probe {
 const SPOILED: &[u8] = b"spoiled";
 
 /// A handler that drops a [`SPOILED`] frame, and waits on the runner's clock for any other before
-/// it counts the delivery as handled.
+/// it counts the delivery as handled. It holds the delivery and a cell across the wait, so its
+/// future is not `Send`.
 #[derive(Debug)]
 struct WaitOnClock {
-    handled: &'static AtomicU32,
+    handled: &'static Cell<u32>,
 }
 
-impl Handler<FrameDelivery> for WaitOnClock {
-    fn handle(
-        &self,
-        delivery: &FrameDelivery,
-        _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = HandlerOutcome> + Send {
-        let handled = self.handled;
-        let spoiled = delivery.payload() == SPOILED;
-        async move {
-            if spoiled {
-                return HandlerOutcome::drop();
-            }
-            EmbassyClock.sleep(HANDLER_WAIT).await;
-            handled.store(handled.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
-            HandlerOutcome::ack()
+impl LocalHandler<FrameDelivery> for WaitOnClock {
+    async fn handle(&self, delivery: &FrameDelivery, _ctx: &mut Context<'_>) -> HandlerOutcome {
+        if delivery.payload() == SPOILED {
+            return HandlerOutcome::drop();
         }
+        EmbassyClock.sleep(HANDLER_WAIT).await;
+        if delivery.payload().is_empty() {
+            return HandlerOutcome::drop();
+        }
+        self.handled.set(self.handled.get() + 1);
+        HandlerOutcome::ack()
     }
 }
 
 /// The subscription's task: concrete, as every embassy task is, over the generic body.
 #[embassy_executor::task]
 async fn subscription(subscriber: FrameSubscriber, probe: &'static Probe) {
+    // The body takes its handler in the `Arc` a multi-thread runner shares it in; on one thread
+    // it is a refcount touched once, at startup.
+    #[allow(clippy::arc_with_non_send_sync)]
     let handler = Arc::new(WaitOnClock {
         handled: &probe.handled,
     });
@@ -99,6 +97,7 @@ async fn subscription(subscriber: FrameSubscriber, probe: &'static Probe) {
         (&delivery, &*probe.host),
         failure,
         (),
+        HeadersAtOnce,
     )
     .await;
     probe.ended.set(true);
@@ -137,14 +136,14 @@ async fn drive(probe: &'static Probe) {
     probe.frames.send(frame).await;
     settle().await;
     let taken = probe.frames.is_empty();
-    let early = probe.handled.load(Ordering::Relaxed);
+    let early = probe.handled.get();
 
     advance(Duration::from_secs(9)).await;
-    let at_nine = (probe.handled.load(Ordering::Relaxed), probe.settled.acked());
+    let at_nine = (probe.handled.get(), probe.settled.acked());
 
     advance(Duration::from_secs(1)).await;
     let at_ten = (
-        probe.handled.load(Ordering::Relaxed),
+        probe.handled.get(),
         probe.settled.acked(),
         probe.settled.nacked(),
     );
@@ -153,7 +152,7 @@ async fn drive(probe: &'static Probe) {
     probe.frames.send(spoiled).await;
     settle().await;
     let dropped = (
-        probe.handled.load(Ordering::Relaxed),
+        probe.handled.get(),
         probe.settled.acked(),
         probe.settled.nacked(),
     );
@@ -211,7 +210,7 @@ fn main() {
         settled: Settlements::new(),
         stop: Control::new(),
         host: Arc::new(CountDetached::new()),
-        handled: AtomicU32::new(0),
+        handled: Cell::new(0),
         ended: Cell::new(false),
         checked: Cell::new(false),
     });

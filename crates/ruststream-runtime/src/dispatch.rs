@@ -30,7 +30,7 @@ use tracing::error;
 use crate::{BuildContext, HeaderMap, LocalIncomingMessage, LocalSubscriber};
 
 use super::batch::{BatchHandler, TakenBatch};
-use super::context::{Context, FromDelivery};
+use super::context::Context;
 use super::failure::DispatchFailure;
 #[cfg(feature = "std")]
 use super::failure::{FailurePolicy, panic_reason};
@@ -47,6 +47,7 @@ use crate::testing::coordinator::{
 #[cfg(feature = "testing")]
 use crate::testing::hooks::DueCall;
 pub use delivery::{Delivery, Lent, Slot};
+pub use headers::{HeadersAtOnce, HeadersOnDemand, LendHeaders};
 pub(crate) use settle::settle_outcome;
 pub use workers::{Placement, Workers};
 
@@ -112,7 +113,8 @@ macro_rules! observed {
 /// Drives `subscriber` through `handler` until `shutdown` is signalled or the stream ends: the
 /// sequential loop a runner spawns for a subscription. Each delivery is given a [`Context`] built
 /// from `name`, the message headers, shared `state`, and the publish context `lent` holds;
-/// `held` lives as long as the loop (a runner's guard on its shutdown count, say).
+/// `held` lives as long as the loop (a runner's guard on its shutdown count, say), and `headers`
+/// says how each delivery lends its headers to the context (see [`LendHeaders`]).
 // The parts are independent and each runner passes its own; bundling them into a struct would
 // hide that.
 // Written over the local twins of the contract, so the future is `Send` exactly where the types
@@ -120,7 +122,7 @@ macro_rules! observed {
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
-pub async fn run_sequential<S, H, C, St, Signal, Lending, Held>(
+pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: Signal,
@@ -129,10 +131,11 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held>(
     lent: Lending,
     failure: DispatchFailure<Signal>,
     held: Held,
+    headers: Headers,
 ) where
     S: LocalSubscriber,
-    S::Message: Sync,
     H: LocalHandler<S::Message, C, St>,
+    Headers: LendHeaders<S::Message>,
     // See `dispatch`.
     C: BuildContext<S::Message> + Send + Sync + 'static,
     Signal: ShutdownWait + Halt,
@@ -168,7 +171,8 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held>(
                     &state,
                     delivery,
                     host,
-                    &failure
+                    &failure,
+                    headers,
                 ));
                 handling.await;
             }
@@ -303,7 +307,7 @@ pub fn placed<C>(workers: Workers, delivery: &Delivery<C>) -> Workers {
 #[doc(hidden)]
 // Each part is the delivery's own or the runner's; bundling them would hide which is which.
 #[allow(clippy::too_many_arguments)]
-pub async fn dispatch<H, M, C, St, Signal, Host>(
+pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     handler: &H,
     slot: &mut Slot<M>,
     encode: &mut BytesMut,
@@ -312,15 +316,16 @@ pub async fn dispatch<H, M, C, St, Signal, Host>(
     delivery: &Delivery<C>,
     host: &Host,
     failure: &DispatchFailure<Signal>,
+    _headers: Headers,
 ) where
     H: LocalHandler<M, C, St>,
     // A deferred retry copy carries the broker's context into the work the delivery leaves
     // behind, which may run on another thread.
     C: BuildContext<M> + Send + Sync + 'static,
-    // The context reads the headers through a `Sync` view of the delivery.
-    M: LocalIncomingMessage + Sync,
+    M: LocalIncomingMessage,
     Signal: Halt,
     Host: Detach,
+    Headers: LendHeaders<M>,
 {
     // Settling the message is what releases the harness's quiescence wait, and the post-settle
     // continuations are spawned after it; one in-flight token spanning the whole dispatch keeps a
@@ -343,9 +348,10 @@ pub async fn dispatch<H, M, C, St, Signal, Host>(
     let (settle, continuations) = {
         let msg = slot.get();
         let cx = C::build(msg);
-        // The delivery itself, not its header map: a handler that reads no headers never reaches
-        // the broker's accessor, which is a parse and a buffer on most transports.
-        let source = FromDelivery(msg);
+        // The delivery itself where it can be shared, not its header map: a handler that reads no
+        // headers never reaches the broker's accessor, which is a parse and a buffer on most
+        // transports.
+        let source = Headers::source(msg);
         let mut ctx = Context::new(name, &source, state, cx, delivery)
             .with_failfast(&failure.shutdown)
             .with_encode_buffer(encode)
@@ -648,6 +654,7 @@ mod delivery;
 mod fixtures;
 #[cfg(all(test, feature = "testing"))]
 mod harness_tests;
+mod headers;
 mod settle;
 mod workers;
 
@@ -656,17 +663,18 @@ mod tests {
     use alloc::rc::Rc;
     use alloc::sync::Arc;
     use core::cell::Cell;
+    use core::future::ready;
     use core::sync::atomic::{AtomicU8, Ordering};
 
     use bytes::{Bytes, BytesMut};
 
     use super::fixtures::{PlainMessage, Settlement};
-    use super::{Delivery, Slot, dispatch};
-    use crate::HeaderMap;
+    use super::{Delivery, HeadersAtOnce, HeadersOnDemand, Slot, dispatch};
     use crate::context::Context;
     use crate::failure::{DispatchFailure, FailurePolicies};
     use crate::handler::{HandlerOutcome, LocalHandler};
     use crate::testkit::{Shutdown, Tracked};
+    use crate::{AckError, HeaderMap, LocalIncomingMessage};
     use tokio::task::yield_now;
     use tokio_util::task::TaskTracker;
 
@@ -708,6 +716,7 @@ mod tests {
             &delivery,
             &host,
             &failure,
+            HeadersOnDemand,
         )
         .await;
 
@@ -716,6 +725,72 @@ mod tests {
             settled.load(Ordering::Relaxed),
             1,
             "the delivery was dropped"
+        );
+    }
+
+    /// A delivery of a broker whose types stay on one thread: it records its settlement in an
+    /// `Rc`, so it is neither `Send` nor `Sync`, and it implements only the local contract twin.
+    struct OnOneThread {
+        headers: HeaderMap,
+        nacked: Rc<Cell<bool>>,
+    }
+
+    impl LocalIncomingMessage for OnOneThread {
+        fn payload(&self) -> &[u8] {
+            b"reading"
+        }
+
+        fn headers(&self) -> &HeaderMap {
+            &self.headers
+        }
+
+        fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+            ready(Ok(()))
+        }
+
+        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+            self.nacked.set(true);
+            ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_delivery_that_is_not_sync_is_lent_to_the_handler_with_its_headers() {
+        let nacked = Rc::new(Cell::new(false));
+        let mut headers = HeaderMap::new();
+        headers.insert("sensor", "north");
+        let mut slot = Slot::new(OnOneThread {
+            headers,
+            nacked: Rc::clone(&nacked),
+        });
+        let delivery: Delivery<()> = Delivery::empty();
+        let failure = DispatchFailure::new(FailurePolicies::default(), Shutdown::new());
+        let host = Tracked(TaskTracker::new());
+        let read_header = |_: &OnOneThread, ctx: &mut Context<'_>| {
+            let north = ctx.headers().get("sensor") == Some(b"north".as_slice());
+            ready(if north {
+                HandlerOutcome::drop()
+            } else {
+                HandlerOutcome::ack()
+            })
+        };
+
+        dispatch(
+            &read_header,
+            &mut slot,
+            &mut BytesMut::new(),
+            "readings",
+            &(),
+            &delivery,
+            &host,
+            &failure,
+            HeadersAtOnce,
+        )
+        .await;
+
+        assert!(
+            nacked.get(),
+            "the handler read the header and dropped the delivery"
         );
     }
 }
