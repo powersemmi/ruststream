@@ -377,7 +377,11 @@ jobs:
       - name: cargo check (no default features)
         env:
           CARGO_BUILD_WARNINGS: deny
-        run: cargo check --locked --workspace --no-default-features
+        # The probe always asks for `macros` and `json`, and a workspace build unifies a
+        # dependency's features across members, so it is left out here and checked on its own.
+        run: |
+          cargo check --locked --workspace --exclude ruststream-no-std-probe --no-default-features
+          cargo check --locked -p ruststream-no-std-probe
 
       # The test run below builds every other target with all features, and clippy holds that
       # build to its warnings.
@@ -466,7 +470,8 @@ jobs:
           CARGO_BUILD_WARNINGS: deny
         run: |
           cargo test --locked --no-default-features --lib
-          cargo check --locked --workspace --no-default-features --features testing,memory,macros
+          cargo check --locked --workspace --exclude ruststream-no-std-probe --no-default-features \
+            --features testing,memory,macros
           cargo test --locked --no-default-features --features macros,memory,testing --test suite \
             -- raw_subscriber:: codec_free_lanes:: ui_codec_free::
           cargo test --locked --no-default-features --features memory,testing --test suite \
@@ -527,7 +532,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "beta"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-beta
-        run: cargo check --locked --workspace --no-default-features
+        run: cargo check --locked --workspace --exclude ruststream-no-std-probe --no-default-features
 
       - name: cargo check (benchmarks, beta)
         if: "!cancelled() && steps.stable.outcome == 'success'"
@@ -555,7 +560,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-floor
-        run: cargo check --locked --workspace --no-default-features
+        run: cargo check --locked --workspace --exclude ruststream-no-std-probe --no-default-features
 
       - name: cargo check (benchmarks, 1.95)
         if: "!cancelled() && steps.stable.outcome == 'success'"

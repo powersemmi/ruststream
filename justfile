@@ -38,11 +38,15 @@ check:
     # run, and cleaning them is not what a benchmark change is for.
     cargo check --benches --no-default-features --features {{ bench_features }}
     cargo check --workspace --lib --bins --tests --examples --all-features
-    cargo check --workspace --no-default-features
+    # The probe always asks for `macros` and `json`, and a workspace build unifies a dependency's
+    # features across members, so the reduced legs leave it out and check it on its own.
+    cargo check --workspace --exclude ruststream-no-std-probe --no-default-features
     # The codec-free build. A codec is optional, so the self-carrying lanes
     # (`Serialized` / `Deserialized`) and the typed publish entry point over them must stand with
     # no codec feature at all; only encoding and decoding may demand one.
-    cargo check --workspace --no-default-features --features testing,memory,macros
+    cargo check --workspace --exclude ruststream-no-std-probe --no-default-features \
+        --features testing,memory,macros
+    cargo check -p ruststream-no-std-probe
     # The contract builds without `std`, for a Cortex-M4F with an allocator and for a Cortex-M0+,
     # which has no compare-and-swap: there `bytes` takes `extra-platforms`, and the library build
     # takes `portable-atomic`'s single-core option in place of the one a firmware binary chooses.
