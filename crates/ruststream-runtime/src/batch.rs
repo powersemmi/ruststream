@@ -35,7 +35,7 @@ use super::dispatch::{Slot, Workers, settle_outcome};
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handle::Deserialized;
 use super::handler::{HandlerOutcome, HandlerResult};
-use super::host::Detach;
+use super::host::{Detach, HostDetach};
 use super::input::{DecodeWith, InputKind, REPORTED};
 use super::metadata::HandlerMetadata;
 #[cfg(all(test, feature = "json"))]
@@ -570,7 +570,7 @@ impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
     /// [`LocalBatch`](local::LocalBatch).
     // `Send` exactly where the deliveries are: the `BatchHandler` impl's signature proves it there.
     #[allow(clippy::future_not_send)]
-    pub(crate) async fn handle_local<C, S, Host: Detach>(
+    pub(crate) async fn handle_local<C, S, Host: HostDetach>(
         &self,
         batch: Vec<M>,
         _scratch: &mut (),
@@ -668,6 +668,8 @@ pub(crate) fn record_batch_size(destination: &KeyValue, len: usize) {
 /// across an `.await` would wrongly require `Context: Sync`.
 // The `&mut` is for Send-ness, not mutation (only `&self` methods are called), so the lint fires.
 #[allow(clippy::needless_pass_by_ref_mut)]
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S, Host>(
     batch: Vec<M>,
     values: &mut Vec<Input::Owned>,
@@ -682,7 +684,7 @@ where
     DecodeCodec: Sync,
     C: BuildBatchContext<M> + Send + Sync + 'static,
     S: Send + Sync,
-    Host: Detach,
+    Host: HostDetach,
 {
     let subscription = ctx.subscription();
     // Taken before the loop: the settle below awaits, and a borrow of `ctx` held across it would

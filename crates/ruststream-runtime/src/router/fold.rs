@@ -27,18 +27,19 @@ use tracing::error;
 
 use futures::future::join;
 
-use crate::batch::{DeserializedBatch, LocalBatch, LocalBatchHandler};
+use crate::batch::{DeserializedBatch, LocalBatch, SliceHandler};
 use crate::dispatch::{Delivery, HeadersAtOnce, Turn, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
+use crate::handle::Deserialized;
 use crate::handler::LocalHandler;
-use crate::host::{Detach, Halt, ShutdownWait};
+use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, ShutdownWait};
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
 use crate::middleware::{LocalBlanketLayer, Stack};
 use crate::typed::{LocalTyped, Typed};
 use crate::{
-    BuildContext, Handler, LocalBatchSubscriber, LocalBroker, LocalConnected, LocalIncomingMessage,
-    LocalSubscriber, LocalSubscriptionSource,
+    BuildBatchContext, BuildContext, Handler, LocalBatchSubscriber, LocalBroker, LocalConnected,
+    LocalIncomingMessage, LocalSubscriber, LocalSubscriptionSource,
 };
 
 use super::builder::Router;
@@ -82,7 +83,7 @@ pub trait RunRoutes<State> {
     ) -> impl Future<Output = ()>
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach;
+        Host: LocalDetach;
 }
 
 /// One registration of a router's list, opened under the layer stack that wraps its handler:
@@ -164,7 +165,7 @@ impl<State> RunRoutes<State> for () {
     ) -> impl Future<Output = ()>
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach,
+        Host: LocalDetach,
     {
         ready(())
     }
@@ -199,7 +200,7 @@ where
     async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach,
+        Host: LocalDetach,
     {
         join(
             self.0.run(signal.clone(), state, host),
@@ -299,9 +300,10 @@ where
     async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach,
+        Host: LocalDetach,
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
+        let host = OnOneThread(host);
         // Applied here, where the loop starts: the wrapped handler's type is the layer's own
         // and cannot be named in the opened list.
         let handler =
@@ -312,7 +314,7 @@ where
             signal,
             self.name,
             Arc::clone(state),
-            (&self.delivery, host),
+            (&self.delivery, &host),
             failure,
             (),
             HeadersAtOnce,
@@ -344,7 +346,7 @@ where
     Source: LocalSubscriptionSource<LocalConnected<B>>,
     Source::Subscriber: LocalBatchSubscriber<Message = M>,
     LocalBatch<DeserializedBatch<M, F, Inner>>:
-        LocalBatchHandler<<Source::Subscriber as LocalBatchSubscriber>::Batch, Cx, State>,
+        RunsBatches<<Source::Subscriber as LocalBatchSubscriber>::Batch, Cx, State>,
 {
     type Opened<Layers: LocalBlanketLayer + Clone> =
         OpenedBatchRoute<Source::Subscriber, LocalBatch<DeserializedBatch<M, F, Inner>>, Cx>;
@@ -374,13 +376,14 @@ where
 impl<State, Sub, Body, Cx> RunRoutes<State> for OpenedBatchRoute<Sub, Body, Cx>
 where
     Sub: LocalBatchSubscriber,
-    Body: LocalBatchHandler<Sub::Batch, Cx, State>,
+    Body: RunsBatches<Sub::Batch, Cx, State>,
 {
     async fn run<Signal, Host>(mut self, signal: Signal, state: &Arc<State>, host: &Host)
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach,
+        Host: LocalDetach,
     {
+        let host = OnOneThread(host);
         let failure = DispatchFailure::new(self.policies, signal.clone());
         let mut stream = pin!(self.subscriber.batches(self.batch_size));
         let mut cancelled = pin!(signal.cancelled());
@@ -401,18 +404,18 @@ where
             .await;
             match pulled {
                 Turn::Delivery(Ok(batch)) => {
-                    run_batch::<_, _, Cx, _, _, _>(
-                        &self.handler,
-                        batch,
-                        &mut scratch,
-                        &mut encode,
-                        &self.name,
-                        &**state,
-                        &self.delivery,
-                        host,
-                        &failure,
-                    )
-                    .await;
+                    self.handler
+                        .run_one(
+                            batch,
+                            &mut scratch,
+                            &mut encode,
+                            &self.name,
+                            &**state,
+                            &self.delivery,
+                            &host,
+                            &failure,
+                        )
+                        .await;
                 }
                 Turn::Delivery(Err(err)) => {
                     error!(
@@ -429,5 +432,62 @@ where
                 Turn::Shutdown => break,
             }
         }
+    }
+}
+
+/// A batch handler the fold runs on a one-thread runner of any host: one batch handed to the
+/// shared batch body. Machinery; never named directly.
+#[doc(hidden)]
+pub trait RunsBatches<Batch, C, S> {
+    /// The decode buffer one subscription's loop keeps.
+    type Scratch: Default;
+
+    /// Runs one batch through the shared body.
+    #[allow(clippy::too_many_arguments)]
+    fn run_one<Signal, Host>(
+        &self,
+        batch: Batch,
+        scratch: &mut Self::Scratch,
+        encode: &mut BytesMut,
+        name: &str,
+        state: &S,
+        delivery: &Delivery<C>,
+        host: &Host,
+        failure: &DispatchFailure<Signal>,
+    ) -> impl Future<Output = ()>
+    where
+        Signal: Halt,
+        Host: HostDetach;
+}
+
+impl<Batch, M, F, Inner, C, S> RunsBatches<Batch, C, S>
+    for LocalBatch<DeserializedBatch<M, F, Inner>>
+where
+    Batch: IntoIterator<Item = M>,
+    M: LocalIncomingMessage,
+    F: Deserialized,
+    Inner: for<'p> SliceHandler<F::Output<'p>, C, S>,
+    C: BuildBatchContext<M> + Send + Sync + 'static,
+{
+    type Scratch = ();
+
+    fn run_one<Signal, Host>(
+        &self,
+        batch: Batch,
+        scratch: &mut (),
+        encode: &mut BytesMut,
+        name: &str,
+        state: &S,
+        delivery: &Delivery<C>,
+        host: &Host,
+        failure: &DispatchFailure<Signal>,
+    ) -> impl Future<Output = ()>
+    where
+        Signal: Halt,
+        Host: HostDetach,
+    {
+        run_batch::<Self, Batch, C, S, Signal, Host>(
+            self, batch, scratch, encode, name, state, delivery, host, failure,
+        )
     }
 }

@@ -199,6 +199,66 @@ pub trait Detach: Send + Sync {
         Work: Future<Output = ()> + Send + 'static;
 }
 
+/// Where the delivery body hands the work a delivery leaves behind, on a runner of either
+/// family: every [`Detach`] is one, and a [`LocalDetach`] is one through [`OnOneThread`].
+///
+/// The body's own leftovers (an `and_after` continuation, a post-settle hook) are `Send`, so a
+/// one-thread runner takes them as they are. Machinery; never named directly.
+#[doc(hidden)]
+pub trait HostDetach {
+    /// Runs `work` beside the delivery that left it.
+    fn detach<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static;
+
+    /// Runs `work` once `delay` has passed on the runner's clock.
+    fn detach_after<Work>(&self, delay: Duration, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static;
+}
+
+impl<Host: Detach> HostDetach for Host {
+    #[inline]
+    fn detach<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        Detach::detach(self, work);
+    }
+
+    #[inline]
+    fn detach_after<Work>(&self, delay: Duration, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        Detach::detach_after(self, delay, work);
+    }
+}
+
+/// A [`LocalDetach`] lent to the delivery body: a one-thread runner's host, taking the body's
+/// leftovers into its own storage. Machinery; never named directly.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct OnOneThread<'host, Host>(pub &'host Host);
+
+impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
+    #[inline]
+    fn detach<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        LocalDetach::detach(self.0, work);
+    }
+
+    #[inline]
+    fn detach_after<Work>(&self, delay: Duration, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        LocalDetach::detach_after(self.0, delay, work);
+    }
+}
+
 /// Work a delivery leaves behind on a runner that polls every delivery on one thread: the
 /// [`Detach`] of the local family, whose work need not be `Send`.
 ///

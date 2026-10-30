@@ -14,7 +14,7 @@ use super::{Delivery, RETRY_COUNT_HEADER, Slot};
 #[cfg(doc)]
 use crate::IncomingMessage;
 use crate::handler::HandlerResult;
-use crate::host::Detach;
+use crate::host::HostDetach;
 use crate::publish::PublishContext;
 use crate::redelivery::DeferredRetry;
 #[cfg(feature = "testing")]
@@ -34,6 +34,8 @@ fn current_retry_count(headers: &HeaderMap) -> u64 {
 /// The single place a settlement reaches the broker, single-message and batch paths alike: a
 /// second one would be free to answer a [`NackAfter`](HandlerResult::NackAfter) differently, and
 /// the retry path below is exactly the part that is easy to leave out.
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 pub(crate) async fn settle_outcome<M, C, Host>(
     slot: &mut Slot<M>,
     outcome: HandlerResult,
@@ -44,7 +46,7 @@ pub(crate) async fn settle_outcome<M, C, Host>(
 ) where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     let ack_result = match outcome {
         HandlerResult::Ack => slot.take().ack().await,
@@ -135,6 +137,8 @@ fn redelivery_of<'d, M: LocalIncomingMessage>(
 /// # Errors
 ///
 /// Returns the [`AckError`] from settling the original delivery.
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 async fn settle_retry<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
@@ -145,7 +149,7 @@ async fn settle_retry<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     if delivery.declaration.declares_nothing() {
         return slot.take().nack(true).await;
@@ -244,6 +248,8 @@ where
 /// without a graceful shutdown) before the timer fires, the copy is lost, since the original has
 /// already been dropped. Brokers that need at-least-once delayed redelivery across a crash must
 /// provide native support.
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 async fn settle_nack_after<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
@@ -255,7 +261,7 @@ async fn settle_nack_after<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     if slot.get().supports_nack_after() {
         // The cap is read before the delay reaches the broker: a native redelivery would otherwise
@@ -374,6 +380,8 @@ async fn requeue_now<M: LocalIncomingMessage>(
 /// Returns the [`AckError`] from dropping the original, as [`publish_copy`] does.
 // Each part is the delivery's own or the runner's; bundling them would hide which is which.
 #[allow(clippy::too_many_arguments)]
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 async fn dead_letter<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
@@ -387,7 +395,7 @@ async fn dead_letter<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     if at_cap {
         warn_at_cap(name, attempt_of(slot.get()), Some(destination));
@@ -457,6 +465,8 @@ fn warn_at_cap(name: &str, attempt: u64, destination: Option<&str>) {
 #[cfg_attr(not(feature = "testing"), allow(unused_variables))]
 // Each part is the delivery's own or the runner's; bundling them would hide which is which.
 #[allow(clippy::too_many_arguments)]
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 async fn publish_copy<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
@@ -470,7 +480,7 @@ async fn publish_copy<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     let publisher = Arc::clone(&retry.publisher);
     let subscription: Arc<str> = Arc::from(name);
