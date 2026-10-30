@@ -53,6 +53,8 @@ ruststream-memory = { workspace = true, features = ["embassy"] }
 stats_alloc = "0.1.10"
 # The compile-fail snapshots, and the tokio-only surface they hold this runner apart from.
 trybuild = "1"
+# The facade a service imports, for the attribute macro the snapshots write.
+ruststream = { path = "../..", features = ["macros"] }
 ruststream-cli.workspace = true
 
 # The executor owns the thread it runs on, and the mock clock is one per process, so the test is a
