@@ -5,9 +5,10 @@
 //! on the multi-thread runner; each slot pairs against a broker of the local family into a
 //! [`LocalSlot`](crate::LocalSlot) when the subscription opens.
 
-use crate::codec::Codec;
 use crate::inject::InjectDef;
 use crate::input::Materialize;
+#[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
+use crate::publish::UnnamedCodec;
 use crate::publish::{LowerOutTransforms, NarrowToUse, SlotStackUse};
 use crate::settings::{DefMountCodec, MountsWith};
 use crate::slot::{
@@ -53,6 +54,37 @@ where
     }
 }
 
+/// The codec a local chain's slots encode with when none names its own: the surface's own, the
+/// crate default for a surface that names none, and no codec at all in a build without one, where
+/// a slot publishes the types that carry their own bytes.
+#[doc(hidden)]
+pub trait SlotSurface {
+    /// The resolved surface codec.
+    type Codec: Clone;
+
+    /// Produces it, once per registration.
+    fn slot_codec(&self) -> Self::Codec;
+}
+
+impl<Surface: MountCodec> SlotSurface for Surface {
+    type Codec = Surface::Codec;
+
+    fn slot_codec(&self) -> Self::Codec {
+        self.mount_codec()
+    }
+}
+
+// A device build often has no serde codec: its slots publish what carries its own bytes, and a
+// value that needs encoding is refused where it is published, naming the missing codec.
+#[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
+impl SlotSurface for () {
+    type Codec = UnnamedCodec;
+
+    fn slot_codec(&self) -> UnnamedCodec {
+        UnnamedCodec::new()
+    }
+}
+
 /// The pipeline one slot's `.transform(..)` steps lower onto.
 type SlotPipeline<Layers, Pipe> = <Layers as LowerOutTransforms<Pipe>>::Out;
 
@@ -89,11 +121,11 @@ macro_rules! local_inject_out_commit {
             for (NoReply, ($(WithSource<OutAttachment<$marker, $attach, $layers, $enc>>,)+))
         where
             B: LocalBroker + 'static,
-            RouteCodec: MountCodec,
+            RouteCodec: SlotSurface,
             Pipe: Clone,
             $(
                 $marker: OutSlot,
-                $enc: SlotCodec<RouteCodec::Codec, Codec: Codec>,
+                $enc: SlotCodec<RouteCodec::Codec>,
                 $attach: LocalPublishPolicy<LocalConnected<B>>,
                 $layers: LowerOutTransforms<LocalPipeline<Pipe>>
                     + SlotStackUse<SlotLive<$attach, B>>,
@@ -136,7 +168,7 @@ macro_rules! local_inject_out_commit {
                 let (_no_reply, ($($attach,)+)) = self;
                 // The slots encode with the surface's codec unless one named its own; only the
                 // decode side honours the definition's `.codec(..)` override.
-                let codec = router.codec.mount_codec();
+                let codec = router.codec.slot_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
                 let (def, extra) = def.bind_local(($(

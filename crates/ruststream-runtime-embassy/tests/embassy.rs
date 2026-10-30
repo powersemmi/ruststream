@@ -22,17 +22,22 @@ use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream_core::LocalBroker;
 use ruststream_core::LocalIncomingMessage;
-use ruststream_core::{BytesMut, CallerName, OutgoingDestination};
+use ruststream_core::{
+    BytesMut, CallerName, LocalPublisher, MessageHeaders, NoHeaders, OutgoingDestination,
+};
 use ruststream_runtime::{
     Clock, Context, Delivery, DispatchFailure, FailurePolicies, HandlerOutcome, HeadersAtOnce,
     INSTRUMENTED_BODY, LocalDetach, LocalHandler, run_sequential,
 };
 use ruststream_runtime::{
-    Deserialized, Handle, Input, LocalBlanketLayer, OpenRoutes, ReplyShape, Router, RunRoutes,
-    Serialized, SerializedReply, SoloDeserialized, SubscriberSettings, WireBytes, subscriber,
+    Deserialized, Handle, Input, LocalBlanketLayer, LocalHandle, LocalOutEntry, MessageWire,
+    OpenRoutes, OutSlot, Outs, PublishedThrough, Reads, ReplyShape, Router, RunRoutes, Serialized,
+    SerializedReply, SerializedWire, SoloDeserialized, SubscriberSettings, WireBytes,
+    local_subscriber, subscriber,
 };
 use ruststream_runtime_embassy::frames::{
-    Frame, FrameBroker, FrameDelivery, FrameSource, FrameSubscriber, Frames, Settlements,
+    Frame, FrameBroker, FrameDelivery, FramePublish, FrameSource, FrameSubscriber, Frames,
+    Settlements,
 };
 use ruststream_runtime_embassy::{Control, CountDetached, EmbassyClock, Health};
 use static_cell::StaticCell;
@@ -81,6 +86,8 @@ struct App {
     /// The request channel its reply subscription reads, and the channel its replies go to.
     requests: Frames,
     replies: Frames,
+    /// The event channel its `Out` subscription reads; its slot publishes to the reply channel.
+    events: Frames,
     /// The app's host: counts the work its deliveries leave behind.
     host: LocalCount,
     ended: Cell<bool>,
@@ -235,6 +242,73 @@ impl Handle<Reading<'_>, Pong> for Answer {
     }
 }
 
+/// What the app's `Out` subscription publishes for every event: its own bytes, lent to the
+/// publisher as they are.
+struct Relayed;
+
+impl Serialized for Relayed {
+    type Error = Infallible;
+
+    fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
+        Ok(WireBytes::Own(b"relayed"))
+    }
+}
+
+// What `#[derive(Serialized)]` and `#[derive(Outgoing)]` write: the bytes are the wire, the call
+// names the destination, and the type carries no headers.
+impl MessageWire for Relayed {
+    type Wire = SerializedWire;
+}
+
+impl OutgoingDestination for Relayed {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Relayed {
+    type Contract = NoHeaders;
+}
+
+/// The slot the app relays its events through.
+struct Trail;
+
+impl OutSlot for Trail {
+    const NAME: &'static str = "Trail";
+    type Destination = Reads;
+}
+
+impl PublishedThrough<Trail> for Relayed {}
+
+/// The app's event handler: relays every event through its slot, holding a cell's borrow across
+/// the publish, so its future is not `Send`.
+struct Relay;
+
+impl<T> LocalHandle<Reading<'_>, (), Outs<(T,)>> for Relay
+where
+    T: LocalOutEntry<Trail, Wire: LocalPublisher>,
+{
+    async fn handle(
+        &self,
+        _event: &Reading<'_>,
+        outs: &Outs<(T,)>,
+        _ctx: &mut Context<'_>,
+    ) -> Result<(), HandlerOutcome> {
+        let relayed = Cell::new(false);
+        let mark = &relayed;
+        let sent = outs
+            .get(Trail)
+            .message(&Relayed)
+            .to("trail")
+            .publish()
+            .await;
+        mark.set(sent.is_ok());
+        if relayed.get() {
+            Ok(())
+        } else {
+            Err(HandlerOutcome::retry())
+        }
+    }
+}
+
 /// The app's routes, as a device service declares them.
 fn routes(app: &'static App) -> impl OpenRoutes<FrameBroker> {
     let bursts = CountBursts {
@@ -263,6 +337,8 @@ fn routes(app: &'static App) -> impl OpenRoutes<FrameBroker> {
                 .to("pongs")
                 .build(),
         )
+        .include(local_subscriber(FrameSource::events("events"), Relay).build())
+        .out(Trail, FramePublish)
         .build()
 }
 
@@ -454,6 +530,7 @@ async fn check_the_app(app: &App) {
 
     check_the_bursts(app).await;
     check_the_replies(app).await;
+    check_the_slot(app).await;
     assert_eq!(allocations, 0, "allocations on the router's delivery path");
     passed("the router's delivery path allocates nothing");
 
@@ -528,6 +605,28 @@ async fn check_the_replies(app: &App) {
     passed("a reply through a lending publisher allocates nothing");
 }
 
+/// Sends an event to the app's `Out` subscription, and reads what its slot published.
+async fn check_the_slot(app: &App) {
+    let acked = app.settled.acked();
+    let relaying = Region::new(ALLOCATOR);
+    app.events
+        .send(Frame::new(b"event").expect("the payload fits a frame"))
+        .await;
+    settle().await;
+    let allocations = relaying.change().allocations;
+    let relayed = app.replies.try_receive().ok();
+
+    assert_eq!(
+        relayed.as_ref().map(Frame::payload),
+        Some(b"relayed".as_slice()),
+        "the slot's publish on the reply channel"
+    );
+    assert_eq!(app.settled.acked() - acked, 1, "the event is acked");
+    passed("a body of the local family publishes through its slot and acks the event");
+    assert_eq!(allocations, 0, "allocations of one event and its publish");
+    passed("a publish through a lending slot allocates nothing");
+}
+
 /// What one batch of the self-deserializing form allocates on any runner: the deliveries it
 /// collects and the values it builds from them.
 const BATCH_ALLOCATIONS: usize = 2;
@@ -555,6 +654,7 @@ fn main() {
             batched: AtomicU32::new(0),
             requests: Frames::new(),
             replies: Frames::new(),
+            events: Frames::new(),
             host: LocalCount::default(),
             ended: Cell::new(false),
         },
@@ -566,7 +666,8 @@ fn main() {
             let broker = FrameBroker::new(&probe.app.frames, &probe.app.settled)
                 .with_bursts(&probe.app.bursts)
                 .with_requests(&probe.app.requests)
-                .with_replies(&probe.app.replies);
+                .with_replies(&probe.app.replies)
+                .with_events(&probe.app.events);
             spawner.spawn(app(broker, &probe.app).expect("the app task is free"));
             spawner.spawn(drive(probe).expect("the driver task is free"));
         },
