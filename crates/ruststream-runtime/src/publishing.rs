@@ -542,11 +542,11 @@ where
     }
 }
 
-/// The [`Handler`] built from a [`PublishingDef`]: decode, run, deliver the reply, ack.
+/// The [`Handler`] built from a reply definition: decode, run, deliver the reply, ack.
 ///
-/// `DecodeCodec` decodes the incoming message; the reply leaves through the [`ReplySink`]
+/// `DecodeCodec` decodes the incoming message; the reply leaves through the reply sink
 /// `Wiring` (encoded by the reply stack, or byte-for-byte through a bare publisher) to the
-/// definition's [`reply_name`](PublishingDef::reply_name). A handler returning `Err(result)`
+/// definition's reply name. A handler returning `Err(result)`
 /// skips the publish; a failed reply publish nacks the incoming message with `requeue = true`,
 /// so the broker redelivers it instead of silently losing the reply.
 pub struct PublishingHandler<Def: PublishingDef, DecodeCodec, Wiring, Pipeline = PublishIdentity> {
