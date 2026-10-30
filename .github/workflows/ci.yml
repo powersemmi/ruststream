@@ -26,6 +26,9 @@ env:
   TOKIO_FEATURES: asyncapi,cbor,cli,conformance,json,logging,macros,memory,metrics,msgpack,otel,poll-diagnostics,testing,tokio
   EMBASSY_FEATURES: cbor,embassy,json,macros,memory,msgpack
   WORKSPACE_FEATURES: asyncapi,cbor,cli,conformance,json,logging,macros,memory,metrics,msgpack,otel,poll-diagnostics,testing,tokio,ruststream-memory/embassy
+  # The embedded runner's tests and examples build the facade with the embassy set, so a leg on
+  # the tokio set leaves the runner out and its own legs build it.
+  TOKIO_LEGS_EXCLUDE: --exclude ruststream-runtime-embassy
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -175,7 +178,7 @@ jobs:
         env:
           CARGO_BUILD_WARNINGS: deny
         run: |
-          cargo clippy --locked --workspace --lib --bins --tests --examples \
+          cargo clippy --locked --workspace $TOKIO_LEGS_EXCLUDE --lib --bins --tests --examples \
             --features "$WORKSPACE_FEATURES" -- -D warnings
           cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
 
@@ -190,8 +193,11 @@ jobs:
         run: |
           cargo clippy --locked -p ruststream --all-targets --no-default-features \
             --features "$EMBASSY_FEATURES" -- -D warnings
-          cargo clippy --locked -p ruststream-runtime-embassy -p ruststream-memory --all-targets \
-            --no-default-features --features embassy -- -D warnings
+          cargo clippy --locked -p ruststream-runtime-embassy --all-targets -- -D warnings
+          cargo clippy --locked -p ruststream-memory --all-targets --no-default-features \
+            --features embassy -- -D warnings
+          cargo clippy --locked -p ruststream-testing --all-targets --features embassy,json \
+            -- -D warnings
           tree="$(cargo tree --locked -p ruststream --no-default-features \
             --features "$EMBASSY_FEATURES" -e normal -i tokio)"
           if [ -n "$tree" ]; then
@@ -226,13 +232,15 @@ jobs:
       # Every published package in one invocation: packaging strips the path from the lockstep
       # dependencies between them, and between a version bump and the release those versions are
       # not on crates.io yet, so packaging one alone cannot resolve the others.
+      # Each package is verified on its own with its default features, which select one runtime
+      # in every package that has one.
       # CARGO_HTTP_MULTIPLEXING=false works around HTTP2 framing failures on the runners.
       - name: cargo publish dry-run (no upload)
         if: "!cancelled() && env.DIST_CHANGED == 'true'"
         env:
           CARGO_HTTP_MULTIPLEXING: "false"
         run: |
-          cargo publish --locked --dry-run --features "$WORKSPACE_FEATURES" -p ruststream-macros \
+          cargo publish --locked --dry-run -p ruststream-macros \
             -p ruststream-core -p ruststream-runtime -p ruststream-runtime-tokio \
             -p ruststream-runtime-embassy -p ruststream-memory -p ruststream-asyncapi \
             -p ruststream-observability -p ruststream-testing -p ruststream-conformance \
@@ -335,9 +343,9 @@ jobs:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-minimal
         run: |
-          cargo check --locked --workspace --examples --features "$WORKSPACE_FEATURES"
-          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --tests
-          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --doc
+          cargo check --locked --workspace $TOKIO_LEGS_EXCLUDE --examples --features "$WORKSPACE_FEATURES"
+          cargo test --locked --workspace $TOKIO_LEGS_EXCLUDE --features "$WORKSPACE_FEATURES" --no-fail-fast --tests
+          cargo test --locked --workspace $TOKIO_LEGS_EXCLUDE --features "$WORKSPACE_FEATURES" --no-fail-fast --doc
 
       # Everything above still sees dev-dependencies, which raise shared floors before the library
       # is built: the run proves the workspace resolves, not that the manifest is honest for a
@@ -469,7 +477,7 @@ jobs:
         # `--tests` and not every target: the examples' tests are modules of one test binary, so
         # an example needs no binary of its own, and clippy has already compiled each one.
         run: >-
-          cargo llvm-cov --locked --no-report --workspace --features "$WORKSPACE_FEATURES"
+          cargo llvm-cov --locked --no-report --workspace $TOKIO_LEGS_EXCLUDE --features "$WORKSPACE_FEATURES"
           --no-fail-fast --tests
 
       # The summary is written before the gate's exit code propagates, so it shows up even on a
@@ -547,13 +555,15 @@ jobs:
           CARGO_BUILD_WARNINGS: deny
         run: cargo test --locked -p ruststream --no-fail-fast
 
-      # The embassy runtime's host tests: the embedded runner and the local bus.
+      # The embassy runtime's host tests: the embedded runner, the local bus and the harness.
       - name: cargo test (embassy runtime)
         env:
           CARGO_BUILD_WARNINGS: deny
-        run: >-
-          cargo test --locked -p ruststream-runtime-embassy -p ruststream-memory
-          --no-default-features --features embassy --no-fail-fast
+        run: |
+          cargo test --locked -p ruststream-runtime-embassy --no-fail-fast
+          cargo test --locked -p ruststream-memory --no-default-features --features embassy \
+            --no-fail-fast
+          cargo test --locked -p ruststream-testing --features embassy,json --no-fail-fast
 
       # The workspace run hides a doc example that names a feature-gated item without gating itself.
       # Both ends of the range catch it, on the facade alone for the reason the default-features
@@ -562,7 +572,7 @@ jobs:
         env:
           CARGO_BUILD_WARNINGS: deny
         run: |
-          cargo test --locked --workspace --doc --features "$WORKSPACE_FEATURES"
+          cargo test --locked --workspace $TOKIO_LEGS_EXCLUDE --doc --features "$WORKSPACE_FEATURES"
           cargo test --locked -p ruststream --doc
           cargo test --locked -p ruststream --doc --no-default-features
 
@@ -587,7 +597,7 @@ jobs:
           RUSTUP_TOOLCHAIN: beta
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-beta
         run: |
-          cargo clippy --locked --workspace --lib --bins --tests --examples \
+          cargo clippy --locked --workspace $TOKIO_LEGS_EXCLUDE --lib --bins --tests --examples \
             --features "$WORKSPACE_FEATURES" \
             -- -D warnings
 
@@ -611,9 +621,9 @@ jobs:
           RUSTUP_TOOLCHAIN: "beta"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-beta
         run: |
-          cargo check --locked --workspace --examples --features "$WORKSPACE_FEATURES"
-          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --tests
-          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --doc
+          cargo check --locked --workspace $TOKIO_LEGS_EXCLUDE --examples --features "$WORKSPACE_FEATURES"
+          cargo test --locked --workspace $TOKIO_LEGS_EXCLUDE --features "$WORKSPACE_FEATURES" --no-fail-fast --tests
+          cargo test --locked --workspace $TOKIO_LEGS_EXCLUDE --features "$WORKSPACE_FEATURES" --no-fail-fast --doc
 
       - name: Delete the beta build
         if: always()
@@ -639,9 +649,9 @@ jobs:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-floor
         run: |
-          cargo check --locked --workspace --examples --features "$WORKSPACE_FEATURES"
-          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --tests
-          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --doc
+          cargo check --locked --workspace $TOKIO_LEGS_EXCLUDE --examples --features "$WORKSPACE_FEATURES"
+          cargo test --locked --workspace $TOKIO_LEGS_EXCLUDE --features "$WORKSPACE_FEATURES" --no-fail-fast --tests
+          cargo test --locked --workspace $TOKIO_LEGS_EXCLUDE --features "$WORKSPACE_FEATURES" --no-fail-fast --doc
 
       - name: Delete the floor build
         if: always()
