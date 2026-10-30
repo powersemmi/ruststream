@@ -86,5 +86,11 @@ name = "attributes"
 path = "tests/attributes.rs"
 harness = false
 
+# Apps with many routes, on one broker and over two: a binary of its own, as above.
+[[test]]
+name = "routes"
+path = "tests/routes.rs"
+harness = false
+
 [lints]
 workspace = true

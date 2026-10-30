@@ -18,14 +18,14 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::future::{poll_fn, ready};
 use core::num::NonZeroUsize;
-use core::pin::pin;
-use core::task::Poll;
+use core::pin::{Pin, pin};
+use core::task::{Context, Poll};
 
 use bytes::BytesMut;
 use futures::Stream;
+use futures::future::MaybeDone;
+use pin_project_lite::pin_project;
 use tracing::error;
-
-use futures::future::join;
 
 use crate::batch::{DeserializedBatch, LocalBatch, LocalSliceHandler};
 use crate::dispatch::{Delivery, HeadersAtOnce, Turn, run_batch, run_sequential};
@@ -197,16 +197,108 @@ where
     Head: RunRoutes<State>,
     Tail: RunRoutes<State>,
 {
-    async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
+    fn run<Signal, Host>(
+        self,
+        signal: Signal,
+        state: &Arc<State>,
+        host: &Host,
+    ) -> impl Future<Output = ()>
     where
         Signal: ShutdownWait + Halt + Clone,
         Host: LocalDetach,
     {
-        join(
-            self.0.run(signal.clone(), state, host),
-            self.1.run(signal, state, host),
-        )
-        .await;
+        // A named future, not an `async` block: each pair of the tree is one type level of the
+        // app's future, so a device's many routes stay inside the compiler's layout depth.
+        Both {
+            left: MaybeDone::Future(self.0.run(signal.clone(), state, host)),
+            right: MaybeDone::Future(self.1.run(signal, state, host)),
+        }
+    }
+}
+
+pin_project! {
+    /// Two route loops polled together; ready once both have ended. Each loop's future is
+    /// dropped as soon as it ends.
+    struct Both<Left: Future, Right: Future> {
+        #[pin]
+        left: MaybeDone<Left>,
+        #[pin]
+        right: MaybeDone<Right>,
+    }
+}
+
+impl<Left: Future, Right: Future> Future for Both<Left, Right> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this = self.project();
+        let left = this.left.poll(cx).is_ready();
+        let right = this.right.poll(cx).is_ready();
+        if left && right {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+/// A list of registrations re-associated into a balanced tree of pairs, so the joined future of
+/// a long list nests as deep as the logarithm of its length rather than its length.
+///
+/// The list is the router's: built head first, ending in `()`. A pass pairs neighbours (the
+/// later registration on the left), and passes repeat until one element remains. Opening a pair
+/// opens its right side first, so the tree still subscribes in registration order.
+#[doc(hidden)]
+pub trait Balance {
+    /// The list after one pass: neighbours paired.
+    type Paired;
+    /// The balanced tree.
+    type Tree;
+
+    /// Pairs neighbours once.
+    fn pair(self) -> Self::Paired;
+
+    /// Re-associates the list into its balanced tree.
+    fn balance(self) -> Self::Tree;
+}
+
+impl Balance for () {
+    type Paired = ();
+    type Tree = ();
+
+    fn pair(self) {}
+
+    fn balance(self) {}
+}
+
+impl<Last> Balance for (Last, ()) {
+    type Paired = Self;
+    type Tree = Last;
+
+    fn pair(self) -> Self {
+        self
+    }
+
+    fn balance(self) -> Last {
+        self.0
+    }
+}
+
+impl<First, Second, Rest> Balance for (First, (Second, Rest))
+where
+    Rest: Balance,
+    ((First, Second), Rest::Paired): Balance,
+{
+    type Paired = ((First, Second), Rest::Paired);
+    type Tree = <((First, Second), Rest::Paired) as Balance>::Tree;
+
+    fn pair(self) -> Self::Paired {
+        let (first, (second, rest)) = self;
+        ((first, second), rest.pair())
+    }
+
+    fn balance(self) -> Self::Tree {
+        self.pair().balance()
     }
 }
 
@@ -215,17 +307,18 @@ impl<B, State, Routes, RouteCodec, RouteLayers, RoutePipe> OpenRoutes<B, State>
     for Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 where
     B: LocalBroker,
-    Routes: OpenLayered<B, State>,
+    Routes: Balance<Tree: OpenLayered<B, State>>,
     RouteLayers: LocalBlanketLayer + Clone,
 {
-    type Opened = Routes::Opened<RouteLayers>;
+    type Opened = <Routes::Tree as OpenLayered<B, State>>::Opened<RouteLayers>;
 
     fn open(
         self,
         connected: &LocalConnected<B>,
     ) -> impl Future<Output = Result<Self::Opened, BoxError>> {
         let layers = self.layers;
-        async move { self.routes.open_layered(connected, &layers).await }
+        let routes = self.routes.balance();
+        async move { routes.open_layered(connected, &layers).await }
     }
 }
 
@@ -235,10 +328,11 @@ impl<B, State, Routes, RouteCodec, RouteLayers, RoutePipe> OpenLayered<B, State>
     for Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 where
     B: LocalBroker,
-    Routes: OpenLayered<B, State>,
+    Routes: Balance<Tree: OpenLayered<B, State>>,
     RouteLayers: LocalBlanketLayer + Clone,
 {
-    type Opened<Layers: LocalBlanketLayer + Clone> = Routes::Opened<Stack<RouteLayers, Layers>>;
+    type Opened<Layers: LocalBlanketLayer + Clone> =
+        <Routes::Tree as OpenLayered<B, State>>::Opened<Stack<RouteLayers, Layers>>;
 
     fn open_layered<Layers: LocalBlanketLayer + Clone>(
         self,
@@ -246,7 +340,8 @@ where
         layers: &Layers,
     ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
         let composed = Stack::new(self.layers, layers.clone());
-        async move { self.routes.open_layered(connected, &composed).await }
+        let routes = self.routes.balance();
+        async move { routes.open_layered(connected, &composed).await }
     }
 }
 

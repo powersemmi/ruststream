@@ -9,8 +9,6 @@
 // A thread-mode embassy task is never sent anywhere, and the bodies hold values that are not
 // `Send` on purpose.
 #![allow(clippy::future_not_send)]
-// Six routes on one broker nest the app future past the compiler's default layout depth.
-#![recursion_limit = "256"]
 
 use core::cell::Cell;
 use core::num::NonZeroUsize;

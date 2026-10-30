@@ -11,7 +11,7 @@ use core::pin::pin;
 
 use futures::future::{Either, join, select};
 use ruststream_core::LocalBroker;
-use ruststream_runtime::{BoxError, Identity, LocalPipeline, Router, RunRoutes};
+use ruststream_runtime::{Balance, BoxError, Identity, LocalPipeline, Router, RunRoutes};
 use thiserror::Error;
 
 use crate::control::{Control, LoopSignal};
@@ -224,7 +224,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
     ) -> EmbeddedApp<
         Parts<
             State,
-            (Brokers, BrokerMount<B, Chain::Routes>),
+            (BrokerMount<B, Chain::Routes>, Brokers),
             Hooks<AfterStartup, OnShutdown, AfterShutdown>,
         >,
     >
@@ -242,7 +242,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
         EmbeddedApp {
             mounts: Parts {
                 state,
-                brokers: (brokers, BrokerMount { broker, routes }),
+                brokers: (BrokerMount { broker, routes }, brokers),
                 hooks,
             },
         }
@@ -419,7 +419,7 @@ pub trait Mounts {
 impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown> Mounts
     for Parts<State, Brokers, Hooks<AfterStartup, OnShutdown, AfterShutdown>>
 where
-    Brokers: StartMounts<State>,
+    Brokers: Balance<Tree: StartMounts<State>>,
     AfterStartup: HookList<State>,
     OnShutdown: HookList<State>,
     AfterShutdown: HookList<State>,
@@ -431,7 +431,7 @@ where
             hooks,
         } = self;
         let state = Arc::new(state);
-        let (connections, opened) = match brokers.start().await {
+        let (connections, opened) = match brokers.balance().start().await {
             Ok(started) => started,
             Err(err) => {
                 control.fail_app("app", "startup failed");

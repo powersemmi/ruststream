@@ -59,7 +59,8 @@ where
     }
 }
 
-/// One broker of the app and the routes its scope returned.
+/// One broker of the app and the routes its scope returned: an element of the app's broker
+/// list, which holds the latest registration at its head.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct BrokerMount<B, Routes> {
@@ -67,7 +68,11 @@ pub struct BrokerMount<B, Routes> {
     pub(crate) routes: Routes,
 }
 
-/// The app's broker list, started: every broker connected and every route opened.
+/// The app's brokers, started: every broker connected and every route opened.
+///
+/// Implemented by one [`BrokerMount`] and by a pair of them; the app re-associates its broker
+/// list into a balanced tree of pairs first, so an app of many brokers stays inside the
+/// compiler's layout depth.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "a broker of the embedded app does not open its routes",
@@ -101,37 +106,53 @@ impl<State> StartMounts<State> for () {
     }
 }
 
-impl<State, Earlier, B, Routes> StartMounts<State> for (Earlier, BrokerMount<B, Routes>)
+impl<State, B, Routes> StartMounts<State> for BrokerMount<B, Routes>
 where
-    Earlier: StartMounts<State>,
     B: LocalBroker,
     Routes: OpenRoutes<B, State>,
 {
-    type Connections = (Earlier::Connections, B::Connected);
-    type Opened = (Earlier::Opened, Routes::Opened);
+    type Connections = (B::Connected,);
+    type Opened = Routes::Opened;
 
     async fn start(self) -> Result<(Self::Connections, Self::Opened), RunError> {
-        let (connections, opened) = self.0.start().await?;
-        let BrokerMount { broker, routes } = self.1;
-        let connected = match broker.connect().await {
-            Ok(connected) => connected,
-            Err(err) => {
-                connections.close_all().await;
-                return Err(RunError::Connect {
-                    broker: type_name::<B>(),
-                    source: err.into(),
-                });
-            }
-        };
+        let Self { broker, routes } = self;
+        let connected = broker.connect().await.map_err(|err| RunError::Connect {
+            broker: type_name::<B>(),
+            source: err.into(),
+        })?;
         match routes.open(&connected).await {
-            Ok(routes) => Ok(((connections, connected), (opened, routes))),
+            Ok(routes) => Ok(((connected,), routes)),
             Err(source) => {
                 close(connected).await;
-                connections.close_all().await;
                 Err(RunError::Subscribe {
                     broker: type_name::<B>(),
                     source,
                 })
+            }
+        }
+    }
+}
+
+// A pair of the balanced broker tree: the right side holds the brokers registered first, so it
+// starts first and the left side's failure shuts it down.
+impl<State, Later, Earlier> StartMounts<State> for (Later, Earlier)
+where
+    Later: StartMounts<State>,
+    Earlier: StartMounts<State>,
+{
+    type Connections = (Later::Connections, Earlier::Connections);
+    type Opened = (Later::Opened, Earlier::Opened);
+
+    async fn start(self) -> Result<(Self::Connections, Self::Opened), RunError> {
+        let (later, earlier) = self;
+        let (earlier_connections, earlier_opened) = earlier.start().await?;
+        match later.start().await {
+            Ok((connections, opened)) => {
+                Ok(((connections, earlier_connections), (opened, earlier_opened)))
+            }
+            Err(err) => {
+                earlier_connections.close_all().await;
+                Err(err)
             }
         }
     }
@@ -143,14 +164,17 @@ impl CloseAll for () {
     }
 }
 
-impl<Earlier, Connected> CloseAll for (Earlier, Connected)
-where
-    Earlier: CloseAll,
-    Connected: LocalConnectedBroker,
-{
+impl<Connected: LocalConnectedBroker> CloseAll for (Connected,) {
+    fn close_all(self) -> impl Future<Output = ()> {
+        close(self.0)
+    }
+}
+
+// The later brokers were connected last, so they are shut down first.
+impl<Later: CloseAll, Earlier: CloseAll> CloseAll for (Later, Earlier) {
     async fn close_all(self) {
-        close(self.1).await;
         self.0.close_all().await;
+        self.1.close_all().await;
     }
 }
 
