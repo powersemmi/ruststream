@@ -237,7 +237,9 @@ where
 pub struct Ctx<K: CtxKey>(pub K::Value);
 
 /// A key the [`Ctx`] extractor takes: every [`ContextField`], which reads the broker's
-/// per-delivery context, and [`MainRuntime`], which binds the app's runtime.
+/// per-delivery context, and
+/// [`MainRuntime`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.MainRuntime.html),
+/// which binds the app's runtime.
 ///
 /// Sealed: a new key implements [`ContextField`].
 ///

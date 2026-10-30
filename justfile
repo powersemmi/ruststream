@@ -59,6 +59,10 @@ check:
     # Rustdoc sees what rustc cannot: broken intra-doc links and redundant targets. CI gates on
     # it, so a link to an item a refactor removed must fail here rather than three jobs later.
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+    # The shared delivery body also documents without the tokio runner's feature, the way a crate
+    # on another runtime builds it: a link to an item that feature gates must not break there.
+    RUSTDOCFLAGS="-D warnings" cargo doc -p ruststream-runtime --no-deps \
+        --features json,msgpack,cbor,asyncapi,metrics,otel,testing,poll-diagnostics
     # The types the public API of each published crate names from its dependencies, as CI checks
     # them: the facade, and each crate behind it where its items are defined.
     for manifest in Cargo.toml crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do \
