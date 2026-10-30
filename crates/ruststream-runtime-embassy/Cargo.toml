@@ -99,5 +99,12 @@ name = "retry"
 path = "tests/retry.rs"
 harness = false
 
+# The plan steps after the publishing forms (a codec reply, a raw reply, an `Out` slot), on the
+# mock clock: a binary of its own, as above.
+[[test]]
+name = "planned"
+path = "tests/planned.rs"
+harness = false
+
 [lints]
 workspace = true

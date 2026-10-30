@@ -25,7 +25,8 @@ use ruststream_core::{BuildContext, LocalIncomingMessage, LocalSubscriber};
 use ruststream_runtime::{
     CopyPublisher, Delivery, DeliverySlot, DispatchFailure, Dispatched, Halt, HeadersAtOnce,
     HostDetach, KeepCopies, Keeping, LocalDetach, LocalDispatch, LocalHandler, LocalPipeline,
-    LocalPlanned, LocalRoute, NoCopies, OnOneThread, Router, ShutdownWait, dispatch,
+    LocalPlanned, LocalRoute, NoCopies, OnOneThread, RetryDestinationsDeclared, Router,
+    RouterCommit, RouterWith, ShutdownWait, dispatch,
 };
 use tracing::error;
 
@@ -607,5 +608,23 @@ where
             lanes: plan.into_lanes(),
             room: PhantomData,
         })
+    }
+}
+
+// A registration with steps of its own (`.out_reply(..)`, `.out(..)`) is committed first, so
+// the plan goes on the route the chain built.
+impl<Mount, R, Def, Attach, Last> MountSteps for RouterWith<Mount, R, Def, Attach, Last>
+where
+    Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared + MountSteps>,
+{
+    type WithLanes<Next> = <Attach::Out as MountSteps>::WithLanes<Next>;
+    type WithCapacity<const CAP: usize> = <Attach::Out as MountSteps>::WithCapacity<CAP>;
+
+    fn lanes<Next>(self, lanes: Next) -> Self::WithLanes<Next> {
+        self.build().lanes(lanes)
+    }
+
+    fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP> {
+        self.build().retry_capacity::<CAP>()
     }
 }
