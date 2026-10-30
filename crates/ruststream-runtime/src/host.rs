@@ -198,3 +198,37 @@ pub trait Detach: Send + Sync {
     where
         Work: Future<Output = ()> + Send + 'static;
 }
+
+/// Work a delivery leaves behind on a runner that polls every delivery on one thread: the
+/// [`Detach`] of the local family, whose work need not be `Send`.
+///
+/// A runner that hosts the whole app in one task (embassy's) keeps what it is handed in storage
+/// of its own and polls it from that task, so the work may hold the local broker's `Rc`s and its
+/// `!Send` publishers. A store of fixed capacity answers [`reserve`](Self::reserve) with `false`
+/// when it is full, and the body requeues the delivery instead of dropping it for a copy it could
+/// not keep.
+#[doc(hidden)]
+pub trait LocalDetach {
+    /// Runs `work` beside the delivery that left it.
+    fn detach<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + 'static;
+
+    /// Runs `work` once `delay` has passed on the runner's clock.
+    ///
+    /// The body calls it only after a [`reserve`](Self::reserve) that returned `true`, and the
+    /// call takes that reservation.
+    fn detach_after<Work>(&self, delay: Duration, work: Work)
+    where
+        Work: Future<Output = ()> + 'static;
+
+    /// Reserves room for one delayed piece of work, before the delivery it copies is settled.
+    ///
+    /// A runner with room for any amount keeps the default, `true`.
+    fn reserve(&self) -> bool {
+        true
+    }
+
+    /// Gives back a reservation the body did not use: the settle it was made for failed.
+    fn release(&self) {}
+}
