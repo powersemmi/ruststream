@@ -7,19 +7,19 @@ Every [`Seekable`] is a `LocalSeekable` through a blanket impl.
 
 ```
 # use std::cell::{Cell, RefCell};
-# use std::collections::VecDeque;
 # use std::convert::Infallible;
+# use std::error::Error;
 # use std::rc::Rc;
 # use std::task::Poll;
 #
-# use futures::{Stream, stream};
+# use futures::{Stream, StreamExt, stream};
 #
 use ruststream::LocalSeekable;
 # use ruststream::{AckError, HeaderMap, LocalIncomingMessage, LocalSeeker, LocalSubscriber};
-# /// The client's state: shared by `Rc`, so nothing built on it is `Send`.
+# /// The client's replayable log: shared by `Rc`, so nothing built on it is `Send`.
 # #[derive(Default)]
 # struct Client {
-#     queue: RefCell<VecDeque<Vec<u8>>>,
+#     log: RefCell<Vec<Vec<u8>>>,
 #     acked: Cell<u64>,
 # }
 # struct Delivery {
@@ -46,8 +46,10 @@ use ruststream::LocalSeekable;
 #         Ok(())
 #     }
 # }
+# /// Reads the log from `next`, the offset its seeker moves.
 # struct QueueSubscriber {
 #     client: Rc<Client>,
+#     next: Rc<Cell<u64>>,
 # }
 #
 # impl LocalSubscriber for QueueSubscriber {
@@ -56,8 +58,12 @@ use ruststream::LocalSeekable;
 #
 #     fn stream(&mut self) -> impl Stream<Item = Result<Delivery, Infallible>> + '_ {
 #         stream::poll_fn(move |_| {
-#             let next = self.client.queue.borrow_mut().pop_front();
-#             Poll::Ready(next.map(|payload| {
+#             let offset = self.next.get();
+#             let payload = usize::try_from(offset)
+#                 .ok()
+#                 .and_then(|index| self.client.log.borrow().get(index).cloned());
+#             Poll::Ready(payload.map(|payload| {
+#                 self.next.set(offset + 1);
 #                 Ok(Delivery {
 #                     payload,
 #                     headers: HeaderMap::new(),
@@ -68,6 +74,7 @@ use ruststream::LocalSeekable;
 #     }
 # }
 #
+# /// The subscription's read position, shared with it by `Rc`.
 # #[derive(Clone)]
 # pub struct Cursor {
 #     next: Rc<Cell<u64>>,
@@ -86,9 +93,24 @@ impl LocalSeekable for QueueSubscriber {
     type Seeker = Cursor;
 
     fn seeker(&self) -> Cursor {
+        // The cursor moves the position this subscriber reads from.
         Cursor {
-            next: Rc::new(Cell::new(0)),
+            next: Rc::clone(&self.next),
         }
     }
 }
+# fn main() -> Result<(), Box<dyn Error>> {
+# futures::executor::block_on(async {
+#     let client = Rc::new(Client::default());
+#     client.log.borrow_mut().extend([b"a".to_vec(), b"b".to_vec()]);
+#     let mut subscriber = QueueSubscriber { client, next: Rc::default() };
+#     let cursor = subscriber.seeker();
+#     let first = subscriber.stream().next().await.ok_or("no delivery")??;
+#     assert_eq!(first.payload(), b"a");
+#     cursor.seek(0).await?;
+#     let again = subscriber.stream().next().await.ok_or("no delivery")??;
+#     assert_eq!(again.payload(), b"a");
+#     Ok(())
+# })
+# }
 ```
