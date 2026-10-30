@@ -19,8 +19,9 @@ use ruststream_core::{
 };
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
-    Context, Deserialized, Detach, Halt, Handle, HandlerOutcome, Input, OpenRoutes, Router,
-    RunRoutes, ShutdownWait, SoloDeserialized, subscriber,
+    Context, ContextKind, Deserialized, Detach, Halt, Handle, HandlerOutcome, Input, OpenRoutes,
+    Outgoing, PublishTransform, Reads, Router, RunRoutes, ShutdownWait, SoloDeserialized,
+    subscriber,
 };
 use tokio::sync::Notify;
 use tokio::sync::futures::Notified;
@@ -114,6 +115,17 @@ impl Handle<Request<'_>, String> for Echo {
     }
 }
 
+/// A reply transform: stamps every reply it sees with the header `stamped`.
+struct Stamp;
+
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
+        out.headers_mut().insert("stamped", "yes");
+    }
+}
+
 #[tokio::test]
 async fn an_encoded_reply_leaves_through_the_codec_to_a_local_broker() {
     let connected = LocalMemoryBroker::<4>::new()
@@ -131,6 +143,8 @@ async fn an_encoded_reply_leaves_through_the_codec_to_a_local_broker() {
                 .to("answers")
                 .build(),
         )
+        .out_reply(LocalMemoryPublish)
+        .transform(Stamp)
         .build()
         .open(&connected)
         .await
@@ -161,6 +175,11 @@ async fn an_encoded_reply_leaves_through_the_codec_to_a_local_broker() {
 
     let answer = answer.expect("an answer").expect("a delivery");
     assert_eq!(LocalIncomingMessage::payload(&answer), b"\"ping\"");
+    assert_eq!(
+        LocalIncomingMessage::headers(&answer).get_str("stamped"),
+        Some("yes"),
+        "the reply transform's header"
+    );
     assert_eq!(
         host.0.load(Ordering::Relaxed),
         0,
