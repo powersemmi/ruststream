@@ -20,11 +20,23 @@
 
 #![no_std]
 
+extern crate alloc;
+
+mod app;
 mod clock;
 mod control;
 mod detach;
 pub mod frames;
+mod hooks;
+mod host;
+mod mounts;
 
+pub use app::{EmbeddedApp, Mounts, Parts, RunError, Scope};
 pub use clock::EmbassyClock;
 pub use control::{Control, Health, Stopping};
 pub use detach::CountDetached;
+#[doc(hidden)]
+pub use hooks::{HookList, Hooks, NoHooks};
+pub use mounts::MountChain;
+#[doc(hidden)]
+pub use mounts::{BrokerMount, CloseAll, StartMounts};

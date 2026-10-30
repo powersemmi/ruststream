@@ -1692,17 +1692,22 @@ dependencies = [
 name = "ruststream-runtime-embassy"
 version = "0.7.7"
 dependencies = [
+ "bytes",
  "critical-section",
  "embassy-executor",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
+ "futures",
  "futures-core",
  "heapless",
  "ruststream-core",
+ "ruststream-memory",
  "ruststream-runtime",
  "static_cell",
  "stats_alloc",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]
