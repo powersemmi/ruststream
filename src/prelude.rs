@@ -103,15 +103,17 @@
 //! ```
 
 pub use crate::runtime::{
-    App, AppInfo, CodecDiscriminator, Context, ContextKind, Ctx, DefaultSlot, Deserialized,
-    FailurePolicies, FailurePolicy, ForReply, ForSlot, FromContext, FromRef, Handle,
-    HandlerOutcome, HeaderDiscriminator, Headers, InMessages, InVariant, IncomingMessageMetadata,
-    Input, MainRuntime, MapPublisher, Message, MessageWire, Names, Out, OutEntry, OutMessages,
-    OutgoingMessageMetadata, Outs, PublishExt, PublishTransform, PublishedThrough, Reads, Reply,
-    ReplyShape, Retry, Router, RouterDef, RunningApp, RustStream, Serialized, SerializedReply,
-    SerializedWire, Slot, SoloDeserialized, SoloSet, State, SubscriberSettings, WireBytes, Workers,
-    subscriber,
+    CodecDiscriminator, Context, ContextKind, Ctx, DefaultSlot, Deserialized, FailurePolicies,
+    FailurePolicy, ForReply, ForSlot, FromContext, FromRef, Handle, HandlerOutcome,
+    HeaderDiscriminator, Headers, InMessages, InVariant, IncomingMessageMetadata, Input,
+    MapPublisher, Message, MessageWire, Names, Out, OutEntry, OutMessages, OutgoingMessageMetadata,
+    Outs, PublishExt, PublishTransform, PublishedThrough, Reads, Reply, ReplyShape, Retry, Router,
+    RouterDef, Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized, SoloSet, State,
+    SubscriberSettings, WireBytes, Workers, subscriber,
 };
+// The application object of the runtime the crate's feature selects.
+#[cfg(feature = "tokio")]
+pub use crate::runtime::{App, AppInfo, MainRuntime, RunningApp, RustStream};
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which
 // assembles the message itself. What still needs one - a publish transform, a middleware, or a
 // broker crate used on its own without this one - names it explicitly.

@@ -116,13 +116,25 @@ pub use ruststream_runtime::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{batch_verdict, uniform_batch};
+
+// The runner the `tokio` feature selects: the app object, its lifecycle and the entry point.
+#[cfg(feature = "tokio")]
 pub use ruststream_runtime_tokio::Tokio;
+#[cfg(feature = "tokio")]
 pub use ruststream_runtime_tokio::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
     RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
 };
+#[cfg(feature = "tokio")]
 #[doc(hidden)]
 pub use ruststream_runtime_tokio::{IncludeMount, ScopeCommit};
+#[cfg(feature = "tokio")]
 pub use ruststream_runtime_tokio::{MainRuntime, RouterSink};
 
+#[cfg(feature = "tokio")]
 pub mod cli;
+
+// The runner the `embassy` feature selects: every item of the embedded runner a service names is
+// re-exported here, at the path its tokio counterpart takes under `tokio`.
+#[cfg(feature = "embassy")]
+pub use ruststream_runtime_embassy::{Control, EmbassyClock, Health, Stopping};

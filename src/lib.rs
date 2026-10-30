@@ -63,18 +63,37 @@
 //!
 //! # Cargo features
 //!
-//! The core traits, the [`runtime::RustStream`] application object, middleware, and dispatch are
-//! always present. The rest is additive and opt-in. Codec features are mutually compatible and
-//! enable only the deserializers you need.
+//! The core traits, the router, middleware and dispatch are always present. The runtime is one
+//! of two features, and the rest is additive and opt-in.
+//!
+//! The runtime runs the app's subscriptions. `tokio` and `embassy` select it, and the two exclude
+//! each other: enabling both is a compile error.
+//!
+//! * `tokio` (default): the [`runtime::RustStream`] application object on tokio's runtime, its
+//!   lifecycle and the generated entry point ([`runtime::cli`]).
+//! * `embassy`: the embedded runner on embassy's executor and clock, for a device with a heap
+//!   and no operating system. Its items (`Control`, `Health`, `EmbassyClock`) are re-exported in
+//!   [`runtime`], and their reference is the documentation of
+//!   [`ruststream-runtime-embassy`](https://docs.rs/ruststream-runtime-embassy).
+//!
+//! Codec features are mutually compatible and enable only the deserializers you need. They work
+//! on either runtime.
 //!
 //! * `json` (default): [`codec::JsonCodec`].
 //! * `msgpack`: [`codec::MsgpackCodec`].
 //! * `cbor`: [`codec::CborCodec`].
-//! * `memory`: [`memory::MemoryBroker`], an in-process broker usable in applications, prototypes
-//!   and tests.
+//!
+//! Two more features work on either runtime:
+//!
+//! * `memory`: the in-process broker of the selected runtime. With `tokio` it is
+//!   [`memory::MemoryBroker`], usable in applications, prototypes and tests; with `embassy` it is
+//!   the local bus in `memory::local`.
 //! * `macros`: the `#[subscriber]`, [`#[ruststream::app]`](macro@app),
 //!   [`#[derive(Outgoing)]`](macro@Outgoing), [`#[derive(MessageInfo)]`](macro@MessageInfo) and
 //!   [`#[derive(InMessages)]`](macro@InMessages) macros.
+//!
+//! The rest run on tokio, and each turns `tokio` on:
+//!
 //! * `asyncapi`: `AsyncAPI` document generation and the HTML viewer.
 //! * `metrics`: Prometheus metrics middleware and exporter.
 //! * `logging`: colored, `RUST_LOG`-driven console logging via `tracing-subscriber`
@@ -94,8 +113,9 @@
 //! * `poll-diagnostics`: every subscription samples the time its handler spends in `poll` and
 //!   warns when a handler computes on the app's runtime ([`runtime::PollDiagnostics`]).
 //!
-//! Disable defaults (`default-features = false`) to drop the bundled JSON codec; the core traits,
-//! runtime, and dispatch remain. Add back only what you need.
+//! A crate that disables the defaults (`default-features = false`) names its runtime among the
+//! features it enables: `features = ["tokio"]` or `features = ["embassy"]`. A broker crate on
+//! tokio enables `tokio`.
 //!
 //! # Getting the imports
 //!
@@ -104,6 +124,12 @@
 //! the codec stay explicit, since those are the choices a service makes for itself.
 
 #![forbid(unsafe_code)]
+
+// The runtime is one choice: the generated code, the app object and the re-exports all assume one.
+#[cfg(all(feature = "tokio", feature = "embassy"))]
+compile_error!(
+    "the `tokio` and `embassy` features select the runtime and exclude each other; enable one"
+);
 
 pub mod prelude;
 pub mod testing;
@@ -178,18 +204,22 @@ pub use ruststream_core::{
 };
 
 pub use ruststream_core::nonzero;
+#[cfg(feature = "tokio")]
 pub use ruststream_runtime_tokio::{Buffered, BufferedSubscriber};
 
 pub mod codec;
 
-#[cfg(feature = "memory")]
+// The bus is the runtime's: the tokio one, or the local one on embassy.
+#[cfg(all(feature = "memory", any(feature = "tokio", feature = "embassy")))]
 pub mod memory;
 
 pub mod runtime;
 
+#[cfg(feature = "tokio")]
 pub use runtime::RustStream;
 
 /// Time for service code: the sleep that runs on the app's clock, which the test harness moves.
+#[cfg(feature = "tokio")]
 pub mod time {
     pub use ruststream_runtime_tokio::time::sleep;
 }
