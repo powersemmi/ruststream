@@ -3,6 +3,11 @@ for a client whose types are not `Send`.
 
 Every [`Subscribe`] is a `LocalSubscribe` through a blanket impl.
 
+A runner of local brokers opens a subscription named by a string through this trait: it calls
+[`subscribe`](Self::subscribe) on the connected broker with the name. The `Name` source and the
+`start_at` adapter around it stay the descriptors of the Send path, so a local broker needs no
+source of its own for a plain name.
+
 # Examples
 
 ```
