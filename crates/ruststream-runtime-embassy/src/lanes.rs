@@ -23,9 +23,9 @@ use futures::future::{Either, join, select};
 use hash32::{FnvHasher, Hasher as _};
 use ruststream_core::{BuildContext, LocalIncomingMessage, LocalSubscriber};
 use ruststream_runtime::{
-    Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, Halt, HeadersAtOnce,
-    LocalDispatch, LocalHandler, LocalPipeline, LocalPlanned, LocalRoute, Router, ShutdownWait,
-    dispatch,
+    Delivery, DeliverySlot, DispatchFailure, Dispatched, Halt, HeadersAtOnce, LocalDetach,
+    LocalDispatch, LocalHandler, LocalPipeline, LocalPlanned, LocalRoute, OnOneThread, Router,
+    ShutdownWait, dispatch,
 };
 use tracing::error;
 
@@ -77,7 +77,7 @@ pub trait Lanes {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach;
+        Host: LocalDetach;
 }
 
 impl Lanes for OneLane {
@@ -93,7 +93,7 @@ impl Lanes for OneLane {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach,
+        Host: LocalDetach,
     {
         route.run_sequential(signal, state, host)
     }
@@ -112,7 +112,7 @@ impl<const WORKERS: usize> Lanes for Pool<WORKERS> {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach,
+        Host: LocalDetach,
     {
         run_lanes::<WORKERS, _, _, _, _, _, _>(route, signal, state, host, false)
     }
@@ -131,7 +131,7 @@ impl<const LANES: usize> Lanes for Keyed<LANES> {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach,
+        Host: LocalDetach,
     {
         run_lanes::<LANES, _, _, _, _, _, _>(route, signal, state, host, true)
     }
@@ -149,7 +149,7 @@ impl<L: Lanes, const CAPACITY: usize> LocalDispatch for EmbeddedPlan<L, Room<CAP
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach,
+        Host: LocalDetach,
     {
         if CAPACITY == 0 {
             self.lanes.run(route, signal, state, host).await;
@@ -183,7 +183,7 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
     Body: LocalHandler<Sub::Message, Cx, State>,
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
     Signal: ShutdownWait + Halt + Clone,
-    Host: Detach,
+    Host: LocalDetach,
 {
     let LocalRoute {
         mut subscriber,
@@ -289,7 +289,7 @@ async fn work<Message, Body, Cx, State, Signal, Host, const COUNT: usize>(
     Body: LocalHandler<Message, Cx, State>,
     Cx: BuildContext<Message> + Send + Sync + 'static,
     Signal: Halt,
-    Host: Detach,
+    Host: LocalDetach,
 {
     // One encode buffer per worker, as the sequential loop keeps one.
     let mut encode = BytesMut::new();
@@ -302,7 +302,7 @@ async fn work<Message, Body, Cx, State, Signal, Host, const COUNT: usize>(
             shared.name,
             shared.state,
             shared.delivery,
-            shared.host,
+            &OnOneThread(shared.host),
             shared.failure,
             HeadersAtOnce,
         )
