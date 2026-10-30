@@ -504,6 +504,61 @@ where
     }
 }
 
+/// A handler whose future may stay on the thread that polls it: the local twin of [`Handler`].
+///
+/// The delivery body runs every handler through this trait, so a runner whose executor polls on
+/// one thread (a device's embassy executor, a thread-per-core runtime) hosts handlers that hold
+/// `Rc`s or `RefCell`s across an await. Every [`Handler`] is one through a forwarding impl, and a
+/// runner that spawns onto a multi-thread runtime bounds on [`Handler`], so the future it spawns
+/// is still proven `Send`.
+///
+/// Import it only where a handler is written for such a runner: with both traits in scope, a
+/// call to `handle` on a value that implements both is ambiguous.
+///
+/// # Examples
+///
+/// ```
+/// use std::cell::Cell;
+/// use std::rc::Rc;
+///
+/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandler};
+///
+/// /// Counts the readings a device took, in a cell only its own executor touches.
+/// struct Readings(Rc<Cell<u32>>);
+///
+/// impl LocalHandler<[u8]> for Readings {
+///     async fn handle(&self, reading: &[u8], _ctx: &mut Context<'_>) -> HandlerOutcome {
+///         let taken = Rc::clone(&self.0);
+///         if reading.is_empty() {
+///             return HandlerOutcome::drop();
+///         }
+///         taken.set(taken.get() + 1);
+///         HandlerOutcome::ack()
+///     }
+/// }
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot handle `{M}`",
+    note = "a handler is a named type with an `impl Handler<{M}>` (or, for a runner that polls on \
+            one thread, an `impl LocalHandler<{M}>`) whose `handle` method returns the settlement"
+)]
+pub trait LocalHandler<M: ?Sized, C = (), S = ()> {
+    /// Handle one input, with the per-delivery [`Context`]; see [`Handler::handle`].
+    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = HandlerOutcome>;
+}
+
+// A forwarding call: the future is the `Handler`'s own, so a runner that knows its handler is a
+// `Handler` proves the body's future `Send` through this impl.
+impl<M: ?Sized, C, S, H> LocalHandler<M, C, S> for H
+where
+    H: Handler<M, C, S>,
+{
+    #[inline]
+    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = HandlerOutcome> {
+        <H as Handler<M, C, S>>::handle(self, msg, ctx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::format;

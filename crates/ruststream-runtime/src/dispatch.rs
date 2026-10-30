@@ -34,11 +34,11 @@ use super::context::{Context, FromDelivery};
 use super::failure::DispatchFailure;
 #[cfg(feature = "std")]
 use super::failure::{FailurePolicy, panic_reason};
-use super::handler::Handler;
 #[cfg(feature = "std")]
 use super::handler::HandlerOutcome;
 #[cfg(doc)]
 use super::handler::HandlerResult;
+use super::handler::LocalHandler;
 use super::host::{Detach, Halt, ShutdownWait};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
@@ -132,7 +132,7 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held>(
 ) where
     S: LocalSubscriber,
     S::Message: Sync,
-    H: Handler<S::Message, C, St>,
+    H: LocalHandler<S::Message, C, St>,
     // See `dispatch`.
     C: BuildContext<S::Message> + Send + Sync + 'static,
     Signal: ShutdownWait + Halt,
@@ -313,7 +313,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host>(
     host: &Host,
     failure: &DispatchFailure<Signal>,
 ) where
-    H: Handler<M, C, St>,
+    H: LocalHandler<M, C, St>,
     // A deferred retry copy carries the broker's context into the work the delivery leaves
     // behind, which may run on another thread.
     C: BuildContext<M> + Send + Sync + 'static,
@@ -650,3 +650,72 @@ mod fixtures;
 mod harness_tests;
 mod settle;
 mod workers;
+
+#[cfg(test)]
+mod tests {
+    use alloc::rc::Rc;
+    use alloc::sync::Arc;
+    use core::cell::Cell;
+    use core::sync::atomic::{AtomicU8, Ordering};
+
+    use bytes::{Bytes, BytesMut};
+
+    use super::fixtures::{PlainMessage, Settlement};
+    use super::{Delivery, Slot, dispatch};
+    use crate::HeaderMap;
+    use crate::context::Context;
+    use crate::failure::{DispatchFailure, FailurePolicies};
+    use crate::handler::{HandlerOutcome, LocalHandler};
+    use crate::testkit::{Shutdown, Tracked};
+    use tokio::task::yield_now;
+    use tokio_util::task::TaskTracker;
+
+    /// A handler a device writes: it keeps a count in an `Rc` and holds it across an await, so
+    /// its future is not `Send`.
+    struct CountsOnOneThread(Rc<Cell<u32>>);
+
+    // The future holds an `Rc` across an await on purpose: that is what the body is held to here.
+    #[allow(clippy::future_not_send)]
+    impl LocalHandler<PlainMessage> for CountsOnOneThread {
+        async fn handle(&self, _msg: &PlainMessage, _ctx: &mut Context<'_>) -> HandlerOutcome {
+            let count = Rc::clone(&self.0);
+            yield_now().await;
+            count.set(count.get() + 1);
+            HandlerOutcome::drop()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_local_handler_whose_future_is_not_send_handles_and_settles_a_delivery() {
+        let handled = Rc::new(Cell::new(0));
+        let settled = Arc::new(AtomicU8::new(0));
+        let mut slot = Slot::new(PlainMessage {
+            payload: Bytes::from_static(b"reading"),
+            headers: HeaderMap::new(),
+            settled: Arc::clone(&settled),
+            settlement: Settlement::Accepted,
+        });
+        let delivery: Delivery<()> = Delivery::empty();
+        let failure = DispatchFailure::new(FailurePolicies::default(), Shutdown::new());
+        let host = Tracked(TaskTracker::new());
+
+        dispatch(
+            &CountsOnOneThread(Rc::clone(&handled)),
+            &mut slot,
+            &mut BytesMut::new(),
+            "readings",
+            &(),
+            &delivery,
+            &host,
+            &failure,
+        )
+        .await;
+
+        assert_eq!(handled.get(), 1, "the handler ran once");
+        assert_eq!(
+            settled.load(Ordering::Relaxed),
+            1,
+            "the delivery was dropped"
+        );
+    }
+}
