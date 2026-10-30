@@ -66,6 +66,9 @@ local_reply_form! {
 /// multi-thread runner's commit builds, over the local twins of the source and the message.
 macro_rules! local_reply_commit {
     ($($mount:ty => $router:ident, $mount_fn:ident;)+) => {$(
+        // A multi-thread chain's commit error lists the commits it could have used; the local
+        // chain's twins are not among them.
+        #[diagnostic::do_not_recommend]
         impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def, Policy>
             RouterCommit<$mount, Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
             for (WithSource<Policy>, ())
@@ -114,6 +117,7 @@ local_reply_commit! {
 // The typed default reply: the broker's plain policy under the default codec, committed as if
 // `.out_reply(<policy>)` had been chained.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+#[diagnostic::do_not_recommend]
 impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
     RouterCommit<PublishMount, Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
     for (DefaultReply, ())
@@ -146,6 +150,7 @@ where
 }
 
 // The serialized wire's default: the broker's plain policy taken bare, so no codec is demanded.
+#[diagnostic::do_not_recommend]
 impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
     RouterCommit<
         RawReplyMount,
