@@ -39,7 +39,7 @@ async fn handle(order: &Order, State(db): State<Database>) -> HandlerOutcome {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(AppState { db: Database }))
-        .with_broker(MemoryBroker::new(), |b| { b.include(handle); })
+        .with_broker(MemoryBroker::new(), |b| b.include(handle))
 }
 ```
 
@@ -53,12 +53,12 @@ use ruststream::codec::{CborCodec, JsonCodec};
 use ruststream::prelude::*;
 
 // every handler in this scope decodes with CborCodec
-RustStream::new(info).with_broker_codec(broker, CborCodec, |b| {
-    b.include(handle);
-});
+RustStream::new(info).with_broker_codec(broker, CborCodec, |b| b.include(handle));
 
 // name the codec for one handler by mounting it through a router
-b.include_router(Router::new().with_codec(JsonCodec).include(handle));
+RustStream::new(info).with_broker(broker, |b| {
+    b.include_router(Router::new().with_codec(JsonCodec).include(handle))
+});
 ```
 
 ## Routers
@@ -84,8 +84,8 @@ fn shipping() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
     Router::new().include(dispatch)
 }
 
-// in with_broker(broker, |b| { ... }):
-b.include_router(orders().merge(shipping()));
+// in with_broker(broker, |b| ..):
+b.include_router(orders().merge(shipping()))
 ```
 
 A router carries its codec in its type, so a function returning one that called `with_codec` names
@@ -101,9 +101,10 @@ fn metrics() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>, CborCodec> {
 }
 ```
 
-On a router every registration that carries an attachment (a reply publisher, an `Out` slot) ends
-with an explicit `.build()`: a chain without it never becomes a router, so it does not compile.
-With no `.out_reply(..)` named, `.build()` takes the broker's own default publish policy.
+A registration that carries an attachment (a reply publisher, an `Out` slot) goes on to the next
+`.include(..)` directly, on a router and in a `with_broker` closure alike; a function that returns
+a router ends the chain with `.build()`. A slot left unbound does not compile. With no
+`.out_reply(..)` named, the broker's own default publish policy answers.
 
 ## Broker-specific subscriptions
 

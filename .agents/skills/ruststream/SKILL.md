@@ -97,7 +97,6 @@ fn app() -> impl App {
                 .max_attempts(nonzero!(5u32))
                 .dead_letter("orders.dead")
                 .out(Audit, Publish)
-                .build();
         })
 }
 ```
@@ -120,7 +119,7 @@ Wrong:
 #[ruststream::app]
 async fn app() -> RustStream {
     let db = Db::connect(url).await.expect("db"); // the builder is not async
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(NatsBroker::new(url), |b| { .. })
+    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(NatsBroker::new(url), |b| b.include(..))
 }
 ```
 
@@ -154,11 +153,12 @@ one per element. There is no `ack()` call on a message and no `Retry` type.
 
 ### Mount with `include`, and name policies only at the mount site
 
-`b.include(handler)` is the one mounting call; the chain after it is a statement
-(`|b| { b.include(h); }`). The cap and the dead letter follow `include`:
+`b.include(handler)` is the one mounting call, and the `with_broker` closure returns the chain it
+opens: `|b| b.include(a).include(b)`. The cap and the dead letter follow `include`:
 `.max_attempts(nonzero!(5u32)).dead_letter("orders.dead")`. Publish policies are named after it:
-`.out_reply(policy)`, `.out(Marker, policy)` then `.build()`, `.out_retry(policy)`. Chain nothing and
-the broker's default policy is used. A handler signature never names a broker type.
+`.out_reply(policy)`, `.out(Marker, policy)`, `.out_retry(policy)`, and the next `.include(..)`
+follows directly. Chain nothing and the broker's default policy is used. A broker the service only
+publishes to returns `b.end()`. A handler signature never names a broker type.
 
 ### Where a message goes belongs to its type
 
@@ -186,12 +186,13 @@ carries a codec, and an attribute has no `codec(..)` clause.
 | Symptom | Fix |
 |---|---|
 | `async fn app()` or `#[tokio::main]` | `#[ruststream::app] fn app() -> impl App`; async setup in `on_startup` |
-| `RustStream::new(broker)` | `RustStream::new(AppInfo::new(name, version)).with_broker(broker, \|b\| { .. })` |
+| `RustStream::new(broker)` | `RustStream::new(AppInfo::new(name, version)).with_broker(broker, \|b\| b.include(..))` |
 | `msg.ack().await` in a handler | return a `HandlerOutcome` |
 | `.max_attempts(5)` | `.max_attempts(nonzero!(5u32))` |
 | `.dead_letter(NatsPublish::new(..))` | `.dead_letter("orders.dead")`: a destination name |
 | `Inject<Db>`, `.state(db)` | `#[derive(FromRef)]` state from `on_startup`, `State<Db>` |
-| `audit: Out<Audit>` | `Out(audit): Out<impl Publisher, Audit>` and `.out(Audit, Publish).build()` |
+| `audit: Out<Audit>` | `Out(audit): Out<impl Publisher, Audit>` and `.out(Audit, Publish)` |
+| `\|b\| { b.include(h); }` | `\|b\| b.include(h)`: the closure returns the chain |
 | `#[subscriber("t", batch(64))]` | `b.include(handler.batch(nonzero!(64)))` |
 | `println!` | `tracing` |
 

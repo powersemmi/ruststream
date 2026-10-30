@@ -63,6 +63,7 @@ RustStream 服务是一个[应用](../../components/application/index.md)：一�
 ## 应用
 
 [`RustStream`](api:ruststream::runtime::RustStream) 就是应用。[`with_broker`](api:ruststream::runtime::RustStream::with_broker) 注册一个 Broker，并用 `include` 在上面挂载订阅者。
+闭包返回 `include` 开启的链，每多一个订阅者，就在链上再写一次 `.include(..)`。
 构建器只记录交给它的内容：Broker 在服务启动时才连接。
 [`#[ruststream::app]`](../../components/application/app-macro.md) 属性把构建器变成 `main`，并带有 `run` 和 `asyncapi gen` 命令。
 手写形式亲手写出这个 `main`：在构建器之上调用 [`run_main`](api:ruststream::runtime::cli::run_main)。

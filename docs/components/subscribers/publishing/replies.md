@@ -21,8 +21,8 @@ A reply whose publish fails nacks the delivery with requeue, so a replying handl
 A [batch handler](../batches.md) returns one `Vec` of replies per batch.
 
 With nothing else said, the reply leaves through the broker's default policy under the default codec.
-[`.out_reply(policy)`](api:ruststream::runtime::Mounting::out_reply) names the [publish policy](./publishers/publisher.md), and the steps after it complete the reply's wiring.
-[`.codec(..)`](api:ruststream::runtime::Mounting::codec) names the codec of the reply, while the request still decodes with the scope's [codec](../codecs/index.md).
+[`.out_reply(policy)`](api:ruststream::runtime::RouterWith::out_reply) names the [publish policy](./publishers/publisher.md), and the steps after it complete the reply's wiring.
+[`.codec(..)`](api:ruststream::runtime::RouterWith::codec) names the codec of the reply, while the request still decodes with the scope's [codec](../codecs/index.md).
 [`.transform(..)`](./transforms/publish-transform.md) adds a publish transform, and [`.transactional()`](./publishers/transactional-publisher.md) puts every reply of a batch in one broker transaction.
 A broker that only reads the payload is lent the dispatch loop's own encode buffer, so a reply allocates nothing per delivery.
 

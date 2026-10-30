@@ -81,8 +81,8 @@ import TabItem from '@theme/TabItem';
 ## Роутер
 
 [`Router`](api:ruststream::runtime::Router) объединяет подписчиков одного модуля с настройками их позиций.
-[`out_reply`](api:ruststream::runtime::Mounting::out_reply) связывает ответ с политикой, а `.codec(INTERNAL)` кодирует его в CBOR.
-[`out`](api:ruststream::runtime::Mounting::out) связывает слот. Слот сохраняет кодек роутера, здесь это JSON.
+[`out_reply`](api:ruststream::runtime::RouterWith::out_reply) связывает ответ с политикой, а `.codec(INTERNAL)` кодирует его в CBOR.
+[`out`](api:ruststream::runtime::RouterWith::out) связывает слот. Слот сохраняет кодек роутера, здесь это JSON.
 Роутер указывает брокер и тип состояния приложения в [`RouterDef<MemoryBroker, Shop>`](api:ruststream::runtime::RouterDef). Тип `Shop` появляется в главе 7.
 
 <Tabs groupId="api">

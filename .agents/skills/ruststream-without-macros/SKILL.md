@@ -93,8 +93,8 @@ impl<'p> Handle<Frame<'p>> for Audit {
 
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Confirm).reply().to("confirmations").build());
-        b.include(subscriber("audit", Audit).build());
+        b.include(subscriber("orders", Confirm).reply().to("confirmations").build())
+            .include(subscriber("audit", Audit).build())
     })
 }
 
