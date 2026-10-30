@@ -1,6 +1,7 @@
 # Apple's linker warns when a binary's unwind table passes 16 MB, which the `suite` test binary
-# does, and the gates deny warnings (`build.warnings` in the justfile). Without the compact table
-# the unwinder reads the DWARF one directly: the warning goes, and a panic unwinds a little slower.
-# It applies only to builds of this repository on Apple targets.
+# does, and the gates deny warnings (`build.warnings` in the justfile). The warning is only advice
+# about exception-handling speed, so on Apple targets the lint that turns linker output into rustc
+# warnings is allowed. The compact unwind table stays: without it the macOS unwinder cannot start
+# a panic at all, and every panic aborts.
 [target.'cfg(target_vendor = "apple")']
-rustflags = ["-C", "link-arg=-Wl,-no_compact_unwind"]
+rustflags = ["-A", "linker-messages"]
