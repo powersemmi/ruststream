@@ -294,6 +294,36 @@ pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///     RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new())
 /// }
 /// ```
+///
+/// # On the embassy runtime
+///
+/// With the facade's `embassy` feature the builder takes what the board hands the app (its
+/// brokers, a radio) and returns `EmbeddedApp<impl Mounts>`. The attribute keeps the function
+/// and adds, beside it, a module of the same name: `task`, the one `#[embassy_executor::task]`
+/// that runs the app, taking the builder's arguments, and `CONTROL`, the app's `static Control`.
+/// The device's crate depends on `embassy-executor`. A run that ends on an error leaves the
+/// health at `Failed` and logs the error through `tracing`. The attribute takes no arguments on
+/// this runtime, and the builder is not generic: the task is one concrete embassy task.
+///
+/// ```ignore
+/// use embassy_executor::Spawner;
+/// use ruststream::memory::local::LocalMemoryBroker;
+/// use ruststream::runtime::{EmbeddedApp, Health, Mounts};
+///
+/// #[ruststream::app]
+/// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
+///     EmbeddedApp::new().with_broker(bus, |b| b.include(on_level).out(Alerts, LocalMemoryPublish))
+/// }
+///
+/// #[embassy_executor::main]
+/// async fn main(spawner: Spawner) {
+///     spawner.spawn(app::task(LocalMemoryBroker::new()).unwrap());
+///     // Later, from any task: read the health, or stop the app.
+///     if app::CONTROL.health() == Health::Running {
+///         app::CONTROL.stop();
+///     }
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn app(attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
