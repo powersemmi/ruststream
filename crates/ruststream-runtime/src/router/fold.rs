@@ -28,7 +28,7 @@ use tracing::error;
 use futures::future::join;
 
 use crate::batch::{DeserializedBatch, LocalBatch, LocalBatchHandler};
-use crate::dispatch::{Delivery, HeadersAtOnce, Turn, Workers, run_batch, run_sequential};
+use crate::dispatch::{Delivery, HeadersAtOnce, Turn, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::LocalHandler;
 use crate::host::{Detach, Halt, ShutdownWait};
@@ -62,8 +62,7 @@ pub trait OpenRoutes<B: LocalBroker, State = ()> {
     ///
     /// # Errors
     ///
-    /// The first subscription the broker refuses, or a route whose dispatch policy this fold
-    /// does not run.
+    /// The first subscription the broker refuses.
     fn open(
         self,
         connected: &LocalConnected<B>,
@@ -274,14 +273,6 @@ where
         layers: &Layers,
     ) -> Result<Self::Opened<Layers>, BoxError> {
         let name: Arc<str> = Arc::from(self.source.name());
-        // Why a startup refusal and not a compile error: the policy is a value the definition's
-        // chain set, so its type does not say whether it is sequential.
-        if self.workers != Workers::sequential() {
-            return Err(Box::from(alloc::format!(
-                "subscription `{name}`: this runner dispatches one delivery at a time, and the \
-                 registration asks for workers"
-            )));
-        }
         let subscriber = self
             .source
             .subscribe(connected)
@@ -364,13 +355,6 @@ where
         _layers: &Layers,
     ) -> Result<Self::Opened<Layers>, BoxError> {
         let name: Arc<str> = Arc::from(self.source.name());
-        // See the single-message route: a policy value, not a type.
-        if self.workers != Workers::sequential() {
-            return Err(Box::from(alloc::format!(
-                "subscription `{name}`: this runner dispatches one batch at a time, and the \
-                 registration asks for workers"
-            )));
-        }
         let subscriber = self
             .source
             .subscribe(connected)

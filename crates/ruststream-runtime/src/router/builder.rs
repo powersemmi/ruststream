@@ -30,6 +30,7 @@ use crate::slot::{NoReply, OutAttachment, SlotCodec};
 
 use super::MergedRouter;
 use super::builders::RouterWith;
+use super::local::TakesWorkers;
 use super::mount_sink::MountSink;
 use super::routes::{
     BatchRoute, DeclaredRoute, HandleRoute, MountRoute, RetriedRoute, RetryDestinationsDeclared,
@@ -340,7 +341,11 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// # fn main() {}
     /// ```
     #[must_use]
-    pub fn workers(mut self, workers: Workers) -> Self {
+    pub fn workers(mut self, workers: Workers) -> Self
+    where
+        // A local chain's runner fixes its pools at its own mount site.
+        RoutePipe: TakesWorkers,
+    {
         self.routes.0.workers = workers;
         self
     }
@@ -443,7 +448,11 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// messages per key and do not apply to batches: a [`Workers::keyed`] policy here behaves
     /// like a plain pool of the same size.
     #[must_use]
-    pub fn workers(mut self, workers: Workers) -> Self {
+    pub fn workers(mut self, workers: Workers) -> Self
+    where
+        // A local chain's runner fixes its pools at its own mount site.
+        RoutePipe: TakesWorkers,
+    {
         self.routes.0.workers = workers;
         self
     }

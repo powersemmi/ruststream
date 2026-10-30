@@ -34,6 +34,7 @@ use crate::slot::{
 };
 
 use super::builder::RouterBroker;
+use super::local::{PoolFits, RouterPipe};
 use super::mount::RouterMount;
 use super::routes::RetryDestinationsDeclared;
 use crate::settings::Declared;
@@ -531,6 +532,8 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     where
         Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
         Next: Declared,
+        R: RouterPipe,
+        Next::Settings: PoolFits<R::Pipe>,
         Next::Form: RouterMount<<Attach as RouterCommit<Mount, R, Def>>::Out, Next::Settings>,
 {
         <Next::Form as RouterMount<_, Next::Settings>>::begin(def.declare(), self.build())

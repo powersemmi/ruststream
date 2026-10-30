@@ -296,9 +296,10 @@ pub use retry::{
 #[doc(hidden)]
 pub use router::{
     AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply,
-    MountSink, OpenLayered, OpenRoutes, Opened, OpenedBatchRoute, OpenedRoute, PublishInjectMount,
-    PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment, RetryDestinationsDeclared,
-    RouteMetadata, RouteSubscription, RouterBroker, RouterCommit, RouterMount, RunRoutes,
+    MountSink, OpenLayered, OpenRoutes, Opened, OpenedBatchRoute, OpenedRoute, PoolFits,
+    PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
+    RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker, RouterCommit,
+    RouterMount, RouterPipe, RunRoutes, TakesWorkers,
 };
 #[cfg(feature = "alloc")]
 pub use router::{
@@ -312,7 +313,7 @@ pub use settings::{
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith};
+pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith, Sequential};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use slot::{

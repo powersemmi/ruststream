@@ -10,7 +10,7 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::any::type_name;
 
-use crate::dispatch::{Delivery, Workers};
+use crate::dispatch::Delivery;
 use crate::inject::LocalFromStartup;
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
@@ -44,14 +44,13 @@ type LocalStack<Policy, B, Enc, PL> = TypedPublisher<
 type LocalReply<Def, DecodeCodec, Wiring> =
     LocalPublishing<PublishingHandler<Def, DecodeCodec, Wiring, LocalPipeline>>;
 
-/// The subscription `source` opens, refused where the registration asks for workers.
+/// The subscription `source` opens, with the name it reports.
 ///
 /// # Errors
 ///
-/// The broker's refusal, or a registration that asks for workers.
+/// The broker's refusal.
 async fn subscribe<B, Source>(
     source: Source,
-    workers: Workers,
     connected: &LocalConnected<B>,
 ) -> Result<(Arc<str>, Source::Subscriber), BoxError>
 where
@@ -59,14 +58,6 @@ where
     Source: LocalSubscriptionSource<LocalConnected<B>>,
 {
     let name: Arc<str> = Arc::from(source.name());
-    // Why a startup refusal and not a compile error: the policy is a value the definition's
-    // chain set, so its type does not say whether it is sequential.
-    if workers != Workers::sequential() {
-        return Err(Box::from(alloc::format!(
-            "subscription `{name}`: this runner dispatches one delivery at a time, and the \
-             registration asks for workers"
-        )));
-    }
     let subscriber = source
         .subscribe(connected)
         .await
@@ -118,10 +109,9 @@ where
             publisher,
             extra,
             policies,
-            workers,
             ..
         } = self;
-        let (name, subscriber) = subscribe::<B, _>(source, workers, connected).await?;
+        let (name, subscriber) = subscribe::<B, _>(source, connected).await?;
         warn_ignored_reply_name(
             &name,
             type_name::<Def::Reply>(),
@@ -190,10 +180,9 @@ where
             publisher,
             extra,
             policies,
-            workers,
             ..
         } = self;
-        let (name, subscriber) = subscribe::<B, _>(source, workers, connected).await?;
+        let (name, subscriber) = subscribe::<B, _>(source, connected).await?;
         warn_ignored_reply_name(
             &name,
             type_name::<Def::Reply>(),
