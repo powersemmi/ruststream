@@ -171,6 +171,9 @@ fn hooked(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
         })
 }
 
+// A device holds the app's future in its static task and awaits it in place, as this task does:
+// nothing moves it. Two brokers' loops make it larger than the lint's limit on some targets.
+#[allow(clippy::large_futures)]
 #[embassy_executor::task]
 async fn run_two(stand: &'static Stand) {
     let outcome = two_brokers(stand).run(&stand.two).await;
