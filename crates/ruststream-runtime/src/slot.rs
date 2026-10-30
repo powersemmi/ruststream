@@ -26,8 +26,9 @@ use crate::publish::{DestinationUse, Names, Reads};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{PipelinePublish, record_slot_publish};
 use crate::{
-    CallerName, ConnectedBroker, FixedName, HeaderMap, NameTemplate, OutgoingDestination,
-    OutgoingFor, OwnedTransactions, Publisher, RequestReply, TransactionalPublisher,
+    CallerName, ConnectedBroker, FixedName, HeaderMap, LocalConnectedBroker, NameTemplate,
+    OutgoingDestination, OutgoingFor, OwnedTransactions, Publisher, RequestReply,
+    TransactionalPublisher,
 };
 
 mod position;
@@ -849,6 +850,15 @@ pub trait HasSlots {
     type Markers;
 }
 
+/// [`HasSlots`] for a definition whose body is a [`LocalHandle`](crate::LocalHandle): its arena
+/// holds [`LocalSlot`](crate::LocalSlot) entries, which is what a local chain reads to bind
+/// them. Machinery; never named directly.
+#[doc(hidden)]
+pub trait LocalHasSlots {
+    /// The slot markers, in the handler signature's parameter order.
+    type Markers;
+}
+
 /// Builds the initial all-unbound attachment tuple for a definition's markers. Machinery behind
 /// `include`; never named directly.
 #[doc(hidden)]
@@ -908,6 +918,25 @@ pub trait BindSlots<C: ConnectedBroker, Sources>: Sized {
 
     /// Instantiates the definition and arranges the sources for resolution.
     fn bind(self, sources: Sources) -> (Self::Bound, Self::Extra);
+}
+
+/// [`BindSlots`] for a chain started with [`Router::local`](crate::Router::local): instantiates a
+/// slot-carrying definition from sources paired against a broker of the local family.
+///
+/// Implemented next to [`HasSlots`] by a definition whose body is a
+/// [`LocalHandle`](crate::LocalHandle); each slot is a [`LocalSlot`](crate::LocalSlot) over the
+/// source's [`LocalPublishPolicy::Live`](crate::LocalPublishPolicy::Live). Machinery; never named
+/// directly.
+#[doc(hidden)]
+pub trait LocalBindSlots<C: LocalConnectedBroker, Sources>: Sized {
+    /// The publisher-applied definition type.
+    type Bound;
+
+    /// The extra tuple the startup resolution resolves the injections against.
+    type Extra;
+
+    /// Instantiates the definition and arranges the sources for resolution.
+    fn bind_local(self, sources: Sources) -> (Self::Bound, Self::Extra);
 }
 
 /// Implements [`InitSlots`] for each marker-tuple arity: every position starts as its marker's

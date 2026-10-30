@@ -4,12 +4,13 @@
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::inject::FromStartup;
+use crate::inject::{FromStartup, LocalFromStartup};
 use crate::metadata::OutgoingMessageMetadata;
 use crate::slot::OutSlot;
-use crate::{Connected, PairError};
+use crate::{Connected, LocalBroker, LocalConnected, PairError};
 
 use super::entry::{OutEntry, Slot};
+use super::local_entry::{LocalOutEntry, LocalSlot};
 
 /// The injections arena a slot body receives: its entries mirror the marker tuple the body
 /// declared, and [`get`](Self::get) picks one by marker.
@@ -83,6 +84,62 @@ macro_rules! impl_select_slot {
     )+};
 }
 
+/// The position tokens of [`SelectSlot`] over the entries of the local family, one per arity
+/// slot.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct LocalOutPos<const N: usize>;
+
+// The local family's entries pick through their own position tokens: an entry is either a
+// multi-thread one or a local one, so exactly one family of impls applies to a declaration.
+macro_rules! impl_local_select_slot {
+    ($(($($before:ident,)* @ $pos:literal $(, $after:ident)*))+) => {$(
+        #[diagnostic::do_not_recommend]
+        impl<M, Body, Entry $(, $before)* $(, $after)*> SelectSlot<M, (LocalOutPos<$pos>, Body)>
+            for ($($before,)* Entry, $($after,)*)
+        where
+            Entry: LocalOutEntry<M, Body>,
+        {
+            type Picked = LocalSlot<M, Entry::Wire, Entry::Enc, Entry::Pipe, Body>;
+
+            fn pick(&self) -> &Self::Picked {
+                #[allow(non_snake_case)]
+                let ($($before,)* picked, $($after,)*) = self;
+                $(let _ = $before;)*
+                $(let _ = $after;)*
+                picked.entry()
+            }
+        }
+    )+};
+}
+
+impl_local_select_slot! {
+    (@ 0)
+    (@ 0, A1)
+    (A0, @ 1)
+    (@ 0, A1, A2)
+    (A0, @ 1, A2)
+    (A0, A1, @ 2)
+}
+
+// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+#[allow(clippy::future_not_send)]
+impl<B, Sub, Extra, E> LocalFromStartup<B, Sub, Extra> for Outs<E>
+where
+    B: LocalBroker,
+    E: LocalFromStartup<B, Sub, Extra>,
+{
+    async fn resolve_local(
+        extra: Extra,
+        connected: &LocalConnected<B>,
+        subscriber: &Sub,
+    ) -> Result<Self, PairError> {
+        Ok(Self {
+            entries: E::resolve_local(extra, connected, subscriber).await?,
+        })
+    }
+}
+
 impl_select_slot! {
     (@ 0)
     (@ 0, A1)
@@ -121,6 +178,14 @@ pub trait EntryMarkers {
     fn outgoing() -> Vec<OutgoingMessageMetadata>;
 }
 
+/// The `AsyncAPI` dictionaries of an arena's entries, one entry set per slot, on either family.
+/// Machinery; never named in user code.
+#[doc(hidden)]
+pub trait SlotDictionary {
+    /// The markers' dictionaries, in declaration order.
+    fn outgoing() -> Vec<OutgoingMessageMetadata>;
+}
+
 macro_rules! impl_entry_markers {
     ($(($($m:ident: $w:ident / $e:ident / $p:ident / $b:ident),+))+) => {$(
         impl<$($m: OutSlot, $w, $e, $p, $b),+> EntryMarkers
@@ -132,6 +197,14 @@ macro_rules! impl_entry_markers {
                 let mut declared = Vec::new();
                 $(declared.extend($m::outgoing());)+
                 declared
+            }
+        }
+
+        impl<$($m: OutSlot, $w, $e, $p, $b),+> SlotDictionary
+            for ($(Slot<$m, $w, $e, $p, $b>,)+)
+        {
+            fn outgoing() -> Vec<OutgoingMessageMetadata> {
+                <Self as EntryMarkers>::outgoing()
             }
         }
     )+};

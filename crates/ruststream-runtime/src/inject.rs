@@ -14,12 +14,15 @@ use core::fmt;
 use core::future::ready;
 use core::marker::PhantomData;
 
-use crate::{Broker, Connected, IncomingMessage, LocalBroker, LocalConnected, PairError};
+use crate::{
+    Broker, Connected, IncomingMessage, LocalBroker, LocalConnected, LocalIncomingMessage,
+    PairError,
+};
 
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handler::{Handler, HandlerOutcome};
+use super::handler::{Handler, HandlerOutcome, LocalHandler};
 use super::input::{InputKind, Materialize};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::slot::DefaultSlot;
@@ -233,6 +236,37 @@ macro_rules! impl_from_startup_for_tuples {
     )+};
 }
 
+/// Implements [`LocalFromStartup`] for injection tuples, as [`impl_from_startup_for_tuples`]
+/// does for the multi-thread family.
+macro_rules! impl_local_from_startup_for_tuples {
+    ($(($($name:ident: $extra:ident),+))+) => {$(
+        // Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+        #[allow(clippy::future_not_send)]
+        impl<B, Sub, $($name, $extra),+> LocalFromStartup<B, Sub, ($($extra,)+)> for ($($name,)+)
+        where
+            B: LocalBroker,
+            $($name: LocalFromStartup<B, Sub, $extra>,)+
+        {
+            async fn resolve_local(
+                extra: ($($extra,)+),
+                connected: &LocalConnected<B>,
+                subscriber: &Sub,
+            ) -> Result<Self, PairError> {
+                #[allow(non_snake_case)]
+                let ($($extra,)+) = extra;
+                Ok(($($name::resolve_local($extra, connected, subscriber).await?,)+))
+            }
+        }
+    )+};
+}
+
+impl_local_from_startup_for_tuples! {
+    (T1: E1)
+    (T1: E1, T2: E2)
+    (T1: E1, T2: E2, T3: E3)
+    (T1: E1, T2: E2, T3: E3, T4: E4)
+}
+
 impl_from_startup_for_tuples! {
     (T1: E1)
     (T1: E1, T2: E2)
@@ -319,6 +353,18 @@ pub(crate) trait InjectCall<S>: InjectDef {
     ) -> impl Future<Output = HandlerOutcome> + Send;
 }
 
+/// [`InjectCall`] for a runner that polls every delivery on one thread: the body's future need
+/// not be `Send`.
+pub(crate) trait LocalInjectCall<S>: InjectDef {
+    /// Runs the handler body with the resolved injections.
+    fn call_local(
+        &self,
+        input: &<Self::Input as InputKind>::Target,
+        injections: &Self::Injections,
+        ctx: &mut Context<'_, Self::Context, S>,
+    ) -> impl Future<Output = HandlerOutcome>;
+}
+
 /// Builds the registration metadata for an injected definition mounted under `name`.
 pub(crate) fn inject_metadata<D: InjectDef>(name: String, def: &D) -> HandlerMetadata {
     let mut meta = HandlerMetadata::raw(name).with_def_details(
@@ -336,7 +382,8 @@ pub(crate) fn inject_metadata<D: InjectDef>(name: String, def: &D) -> HandlerMet
 
 /// The [`Handler`] built from an [`InjectDef`] once its injections resolved: decode, then run
 /// the body with them.
-pub(crate) struct InjectHandler<Def: InjectDef, DecodeCodec> {
+#[doc(hidden)]
+pub struct InjectHandler<Def: InjectDef, DecodeCodec> {
     pub(crate) def: Def,
     pub(crate) codec: DecodeCodec,
     pub(crate) injections: Def::Injections,
@@ -390,6 +437,51 @@ where
         <Def::Input as Materialize<DecodeCodec, Msg>>::record(&held, ctx);
         let view = <Def::Input as Materialize<DecodeCodec, Msg>>::view(&held, msg);
         self.def.call(view, &self.injections, ctx).await
+    }
+}
+
+/// An [`InjectHandler`] for a runner whose deliveries stay on one thread: the same decode, then
+/// the body of the local family with the injections resolved against a broker of that family.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct LocalInject<Inject>(pub(crate) Inject);
+
+impl<Msg, Def, DecodeCodec, State> LocalHandler<Msg, Def::Context, State>
+    for LocalInject<InjectHandler<Def, DecodeCodec>>
+where
+    Msg: LocalIncomingMessage,
+    Def: LocalInjectCall<State>,
+    Def::Input: Materialize<DecodeCodec, Msg>,
+{
+    // The delivery stays on the thread that polls it, which is what this twin is for.
+    #[allow(clippy::future_not_send)]
+    async fn handle(
+        &self,
+        msg: &Msg,
+        ctx: &mut Context<'_, Def::Context, State>,
+    ) -> HandlerOutcome {
+        let inject = &self.0;
+        // The multi-thread handler's decode, step for step: the body is the only difference.
+        if let Some(outcome) =
+            refused::<Def::Input, DecodeCodec, Msg, Def::Context, State>(msg, inject.decode, ctx)
+        {
+            return outcome;
+        }
+        let held =
+            match <Def::Input as Materialize<DecodeCodec, Msg>>::materialize(&inject.codec, msg) {
+                Ok(held) => held,
+                Err(err) => {
+                    return unmaterialized::<Def::Input, DecodeCodec, Msg, Def::Context, State>(
+                        &err,
+                        inject.decode,
+                        ctx,
+                    );
+                }
+            };
+        #[cfg(feature = "testing")]
+        <Def::Input as Materialize<DecodeCodec, Msg>>::record(&held, ctx);
+        let view = <Def::Input as Materialize<DecodeCodec, Msg>>::view(&held, msg);
+        inject.def.call_local(view, &inject.injections, ctx).await
     }
 }
 

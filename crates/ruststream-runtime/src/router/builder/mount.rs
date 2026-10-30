@@ -25,7 +25,7 @@ use crate::router::routes_publish::{BatchPublishingRoute, PublishingRoute, RawRe
 use crate::router::{
     BatchInjectedRouter, BatchPublishingRouter, IncludedBatchRouter, IncludedCarriedBatchRouter,
     IncludedRawBatchRouter, IncludedRouter, InjectedRouter, LocalConnected, LocalSourceMessage,
-    PublishingRouter, RawReplyRouter, SourceMessage,
+    PublishingRouter, RawReplyRouter,
 };
 
 use super::Router;
@@ -191,16 +191,14 @@ impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Routes,
     >
     where
-        B: Broker,
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
+        Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
         Def: InjectDef + 'static,
-        Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
-        DecodeCodec: Send + Sync + 'static,
+        Def::Input: Materialize<DecodeCodec, LocalSourceMessage<B, Source>>,
+        DecodeCodec: 'static,
     {
         let meta = inject_metadata(source.name().to_owned(), &def)
-            .materialized_with::<Def::Input, DecodeCodec, SourceMessage<B, Source>>()
-            .describing::<Connected<B>, _>(&source);
+            .materialized_with::<Def::Input, DecodeCodec, LocalSourceMessage<B, Source>>()
+            .describing::<LocalConnected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         self.with_route(InjectRoute {

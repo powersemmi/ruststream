@@ -60,7 +60,7 @@ pub use pipeline::{
 };
 pub use publisher::{Transactional, TypedPublisher};
 pub use reply::ReplyPublisher;
-pub use sink::{CallCodec, PublishCodec, PublishSink, UnnamedCodec};
+pub use sink::{CallCodec, LocalPublishSink, PublishCodec, PublishSink, UnnamedCodec};
 pub use transaction::{
     Admits, AnyDeclared, TransactionPublishError, TransactionScope, TypedTransaction,
 };

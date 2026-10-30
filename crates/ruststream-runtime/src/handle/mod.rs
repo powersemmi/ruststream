@@ -74,8 +74,8 @@ pub use axis::{
 pub use docs::{DocState, Docs, Probed, ProbedDocs};
 pub use docs::{Documentable, Documented, Undocumented};
 #[doc(hidden)]
-pub use outs::{EntryMarkers, OutPos, SelectSlot};
-pub use outs::{OutEntry, Outs, Slot};
+pub use outs::{EntryMarkers, LocalEntryMarkers, LocalOutPos, OutPos, SelectSlot, SlotDictionary};
+pub use outs::{LocalOutEntry, LocalSlot, OutEntry, Outs, Slot};
 #[doc(hidden)]
 pub use reply::{
     DeclaresReply, RedirectableReply, ReplyDest, ReplyDestination, ReplyFormFor,
@@ -85,7 +85,7 @@ pub use reply::{
 pub use reply::{ReplyShape, Serialized};
 pub use value::{
     DeclaredDest, EncodedReply, HandleValue, IsDocumented, NamedDest, ReplyValue, ResolvedDest,
-    Sealed, SerializedReply, subscriber,
+    Sealed, SerializedReply, local_subscriber, subscriber,
 };
 #[doc(hidden)]
 pub use value::{
@@ -126,6 +126,54 @@ pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: Send + Syn
         outs: &O,
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = Verdict<In, R>> + Send;
+}
+
+/// The body contract of a runner that polls every delivery on one thread: [`Handle`] without
+/// `Send` on the returned future.
+///
+/// A body may hold values that are not `Send` across an `.await` and publish through a broker
+/// whose handles are not.
+///
+/// The axes read as on [`Handle`]; [`local_subscriber`] binds the body to its source and the
+/// chain after it is the same. The definition itself is shared with the router, so the body type
+/// stays `Send + Sync`; only what it does per delivery is free of the bound.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "json")]
+/// # mod demo {
+/// use std::rc::Rc;
+///
+/// use ruststream_runtime::{Context, HandlerOutcome, LocalHandle, local_subscriber};
+/// # #[derive(serde::Deserialize)]
+/// # struct Order { id: u64 }
+///
+/// struct Audit;
+///
+/// impl LocalHandle<Order> for Audit {
+///     async fn handle(&self, order: &Order, _outs: &(), _ctx: &mut Context<'_>) -> Result<(), HandlerOutcome> {
+///         // Held across the await below: the future is not `Send`, and it does not have to be.
+///         let seen = Rc::new(order.id);
+///         core::future::ready(()).await;
+///         println!("order {seen}");
+///         Ok(())
+///     }
+/// }
+///
+/// fn definition() {
+///     let _ = local_subscriber("orders", Audit).build();
+/// }
+/// # }
+/// ```
+pub trait LocalHandle<In: ?Sized + Input, R = (), O = (), C = (), S = ()> {
+    /// Handles one input (a message, or a batch of them). See [`Handle::handle`].
+    fn handle(
+        &self,
+        input: &In,
+        outs: &O,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Verdict<In, R>>;
 }
 
 /// What a value-definition constructor accepts as its subscription source.

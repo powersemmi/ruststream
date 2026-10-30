@@ -183,15 +183,17 @@ pub use handle::{
 #[cfg(feature = "alloc")]
 pub use handle::{
     BatchDeserialized, BatchSet, Deserialized, Documentable, Documented, EncodedReply, Handle,
-    Input, IntoSource, Message, OutEntry, Outs, ReplyShape, Serialized, SerializedReply, Slot,
-    SoloDeserialized, SoloSet, Undocumented, ValueBuilder, Verdict, subscriber,
+    Input, IntoSource, LocalHandle, LocalOutEntry, LocalSlot, Message, OutEntry, Outs, ReplyShape,
+    Serialized, SerializedReply, Slot, SoloDeserialized, SoloSet, Undocumented, ValueBuilder,
+    Verdict, local_subscriber, subscriber,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use handle::{
-    DeclaresReply, EntryMarkers, OutPos, RedirectableReply, ReplyDest, ReplyDestination,
-    ReplyFormFor, ReplyHeadersSchema, ReplyRoute, ResolveDestination, SelectSlot,
-    UnbuiltDefinition, WireDocs, declared_reply_destination, reply_destination,
+    DeclaresReply, EntryMarkers, LocalEntryMarkers, LocalOutPos, OutPos, RedirectableReply,
+    ReplyDest, ReplyDestination, ReplyFormFor, ReplyHeadersSchema, ReplyRoute, ResolveDestination,
+    SelectSlot, SlotDictionary, UnbuiltDefinition, WireDocs, declared_reply_destination,
+    reply_destination,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
@@ -264,19 +266,22 @@ pub use publish::{
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, ContextKind, EncodedWire, ForBatch, ForReply, ForSlot, HeaderSource, HeadersUnset,
-    MapHeaders, MessageBody, MessageWire, MissingSegment, Names, OutPipeline, Outgoing,
-    OutgoingName, PipelinePublishError, PublishAt, PublishBuilder, PublishCodec, PublishContext,
-    PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt, PublishHeaders,
-    PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink, PublishStack,
-    PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads, ResolvedName,
-    SatisfiesContract, SerializePayloadError, SerializedWire, SlotContext, SuppliedName,
-    TemplateAddress, TransactionPublishError, TransactionScope, TypedHeaders, TypedTransaction,
-    UnnamedCodec, for_batch,
+    LocalPublishSink, MapHeaders, MessageBody, MessageWire, MissingSegment, Names, OutPipeline,
+    Outgoing, OutgoingName, PipelinePublishError, PublishAt, PublishBuilder, PublishCodec,
+    PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt,
+    PublishHeaders, PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink,
+    PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads,
+    ResolvedName, SatisfiesContract, SerializePayloadError, SerializedWire, SlotContext,
+    SuppliedName, TemplateAddress, TransactionPublishError, TransactionScope, TypedHeaders,
+    TypedTransaction, UnnamedCodec, for_batch,
 };
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
 // injects through the same positions as a live publish.
 #[cfg(feature = "std")]
 pub use crate::bindable::{Bindable, Bound, BrokerRegistration};
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use inject::{InjectHandler, LocalInject};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use publish::message_of;
@@ -337,8 +342,8 @@ pub use slot::{
 };
 #[cfg(feature = "alloc")]
 pub use slot::{
-    BindSlots, ContainsMessage, DefaultSlot, HasSlots, ListOffer, OutMessages, OutSlot,
-    PublishedThrough, Reply, SlotPublisher, Unrestricted,
+    BindSlots, ContainsMessage, DefaultSlot, HasSlots, ListOffer, LocalBindSlots, LocalHasSlots,
+    OutMessages, OutSlot, PublishedThrough, Reply, SlotPublisher, Unrestricted,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]

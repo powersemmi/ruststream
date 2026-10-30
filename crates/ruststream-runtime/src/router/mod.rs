@@ -16,6 +16,7 @@
 mod builder;
 mod builders;
 mod fold;
+mod fold_inject;
 mod fold_plan;
 mod fold_publish;
 mod form_eager;
@@ -24,6 +25,7 @@ mod form_publish;
 pub mod forms;
 mod include;
 mod local;
+mod local_out;
 mod local_publish;
 mod mount;
 mod mount_sink;
