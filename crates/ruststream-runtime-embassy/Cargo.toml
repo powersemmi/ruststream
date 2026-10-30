@@ -29,6 +29,8 @@ thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
 embassy-futures.workspace = true
+# Projects a worker's future through the gate that keeps a parked worker from being polled.
+pin-project-lite.workspace = true
 # The keyed lanes' hasher: 32-bit FNV-1a, no state and no allocation; heapless already depends on it.
 hash32 = { version = "0.3", default-features = false }
 
