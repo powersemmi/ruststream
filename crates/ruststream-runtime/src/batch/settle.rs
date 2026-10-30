@@ -9,7 +9,7 @@ use tracing::error;
 use super::{BatchResult, uniform_batch};
 use crate::dispatch::{Delivery, Slot, settle_outcome};
 use crate::handler::{HandlerOutcome, HandlerResult};
-use crate::host::Detach;
+use crate::host::HostDetach;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator;
 #[cfg(feature = "testing")]
@@ -23,6 +23,8 @@ use crate::{BuildBatchContext, LocalIncomingMessage};
 /// Settles a batch whose rejected elements were deferred past the handler call: each rejected
 /// index settles by its recorded outcome, and the accepted remainder settles by the handler's
 /// [`BatchResult`] in order, exactly as [`settle_batch`] applies it.
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 pub(super) async fn settle_split_batch<M, C, Host>(
     batch: Vec<M>,
     rejected: Vec<(usize, HandlerResult)>,
@@ -33,7 +35,7 @@ pub(super) async fn settle_split_batch<M, C, Host>(
 ) where
     M: LocalIncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     if rejected.is_empty() {
         return settle_batch(batch, result, subscription, delivery, host).await;
@@ -94,6 +96,8 @@ pub(super) async fn settle_split_batch<M, C, Host>(
 
 /// Applies one [`BatchResult`] to the accepted deliveries behind it - uniformly, or element by
 /// element, spawning each per-element continuation on the tracked set after its settle.
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 pub(crate) async fn settle_batch<M, C, Host>(
     accepted: Vec<M>,
     result: BatchResult,
@@ -103,7 +107,7 @@ pub(crate) async fn settle_batch<M, C, Host>(
 ) where
     M: LocalIncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     settle_lent_batch(
         accepted,
@@ -148,6 +152,8 @@ pub(crate) type LentValues = ();
 
 /// [`settle_batch`] for a batch that lent its handler the values its deliveries carry: the
 /// harness records each value beside the delivery it belongs to.
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 pub(crate) async fn settle_lent_batch<M, C, Host>(
     accepted: Vec<M>,
     result: BatchResult,
@@ -158,7 +164,7 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
 ) where
     M: LocalIncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     // Every batch form funnels its batch through here, which is the one place that knows both
     // the deliveries and the settlements they got; the harness reads the batch off it.

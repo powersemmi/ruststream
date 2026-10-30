@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use crate::context::Context;
 use crate::handle::Deserialized;
-use crate::host::Detach;
+use crate::host::{Detach, HostDetach};
 use crate::{BuildBatchContext, LocalIncomingMessage};
 
 use super::{BatchHandler, DeserializedBatch, SliceHandler, TakenBatch};
@@ -23,7 +23,7 @@ use super::{BatchHandler, DeserializedBatch, SliceHandler, TakenBatch};
 /// onto a multi-thread runtime shares its handler in an `Arc` and still proves the future it
 /// spawns `Send`.
 #[doc(hidden)]
-pub trait LocalBatchHandler<Batch, C = (), S = ()> {
+pub trait LocalBatchHandler<Batch, Host, C = (), S = ()> {
     /// The buffer the decoded batch is built in. See [`BatchHandler::Scratch`].
     type Scratch: Default;
 
@@ -33,8 +33,9 @@ pub trait LocalBatchHandler<Batch, C = (), S = ()> {
     /// Takes one batch off the subscription.
     fn take(batch: Batch) -> Self::Taken;
 
-    /// Consumes one batch. See [`BatchHandler::handle_batch`].
-    fn handle_batch<Host: Detach>(
+    /// Consumes one batch, handing what its deliveries leave behind to `host`. See
+    /// [`BatchHandler::handle_batch`].
+    fn handle_batch(
         &self,
         batch: Self::Taken,
         scratch: &mut Self::Scratch,
@@ -45,9 +46,10 @@ pub trait LocalBatchHandler<Batch, C = (), S = ()> {
 
 // A forwarding call: the future is the `BatchHandler`'s own, so a runner that knows its handler
 // is a `BatchHandler` proves the body's future `Send` through this impl.
-impl<Batch, C, S, H> LocalBatchHandler<Batch, C, S> for Arc<H>
+impl<Batch, Host, C, S, H> LocalBatchHandler<Batch, Host, C, S> for Arc<H>
 where
     H: BatchHandler<Batch, C, S>,
+    Host: Detach,
 {
     type Scratch = H::Scratch;
     type Taken = H::Taken;
@@ -58,7 +60,7 @@ where
     }
 
     #[inline]
-    fn handle_batch<Host: Detach>(
+    fn handle_batch(
         &self,
         batch: H::Taken,
         scratch: &mut H::Scratch,
@@ -75,9 +77,10 @@ where
 #[derive(Debug)]
 pub struct LocalBatch<Adapter>(pub(crate) Adapter);
 
-impl<Batch, M, F, Inner, C, S> LocalBatchHandler<Batch, C, S>
+impl<Batch, Host, M, F, Inner, C, S> LocalBatchHandler<Batch, Host, C, S>
     for LocalBatch<DeserializedBatch<M, F, Inner>>
 where
+    Host: HostDetach,
     Batch: IntoIterator<Item = M>,
     M: LocalIncomingMessage,
     F: Deserialized,
@@ -92,7 +95,7 @@ where
         batch.into_iter().collect()
     }
 
-    fn handle_batch<Host: Detach>(
+    fn handle_batch(
         &self,
         batch: Vec<M>,
         scratch: &mut (),
