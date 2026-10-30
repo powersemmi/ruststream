@@ -449,6 +449,16 @@ fn warn_at_cap(name: &str, attempt: u64, destination: Option<&str>) {
     }
 }
 
+/// Whether the harness, rather than the runner, keeps this delivery's delayed copy.
+#[cfg_attr(not(feature = "testing"), allow(unused_variables))]
+fn harness_schedules<C>(delivery: &Delivery<C>) -> bool {
+    #[cfg(feature = "testing")]
+    if delivery.hooks.coordinator().is_some() {
+        return true;
+    }
+    false
+}
+
 /// Drops the original delivery and sends a copy of it to `destination`, now or after `delay`; a
 /// zero delay is now.
 ///
@@ -510,9 +520,26 @@ where
     // returns, so `drive` cannot settle between the two.
     #[cfg(feature = "testing")]
     let _hold = delivery.hooks.coordinator().map(Coordinator::hold);
+    // A delayed copy waits in the runner, so room for it is reserved before the original is
+    // dropped: a runner whose store is full gets the delivery requeued, and the broker keeps it.
+    let delay = delay.filter(|delay| !delay.is_zero());
+    let reserved = delay.is_some() && !harness_schedules(delivery);
+    if reserved && !host.reserve() {
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %subscription,
+            "the store of delayed retries is full; requeuing the delivery now",
+        );
+        return slot.take().nack(true).await;
+    }
     match slot.take().nack(false).await {
         Ok(()) | Err(AckError::Unsupported) => {}
-        Err(err) => return Err(err),
+        Err(err) => {
+            if reserved {
+                host.release();
+            }
+            return Err(err);
+        }
     }
 
     let republish = async move {
@@ -536,7 +563,7 @@ where
 
     // A zero delay is an immediate copy: a timer task for it would cost a task allocation and
     // two scheduler turns to publish the same copy a little later.
-    let Some(delay) = delay.filter(|delay| !delay.is_zero()) else {
+    let Some(delay) = delay else {
         // An immediate copy is awaited on the dispatch path: there is no timer to wait for, and a
         // detached task would let the loop pull the next delivery before this one is back.
         republish.await;
@@ -561,7 +588,7 @@ where
 mod tests {
     use alloc::borrow::ToOwned;
     use core::future::ready;
-    use core::sync::atomic::{AtomicU8, Ordering};
+    use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
     use std::io;
     use std::sync::LazyLock;
 
@@ -579,6 +606,7 @@ mod tests {
         RETRY_COUNT_HEADER, RetryDeclaration, Slot, settle_nack_after, settle_outcome,
     };
     use crate::IncomingMessage;
+    use crate::host::Detach;
     use crate::redelivery::bare_retry_publisher;
     use crate::testkit::Tracked;
     use crate::{Lend, Publisher, Subscriber};
@@ -868,6 +896,133 @@ mod tests {
         let mut stream = core::pin::pin!(sub.stream());
         let redelivered = stream.next().await.unwrap().unwrap();
         assert_eq!(redelivered.headers().get_str(RETRY_COUNT_HEADER), Some("5"));
+    }
+
+    /// A runner whose store for deferred copies holds `room` of them: it counts what it was
+    /// handed and what was given back unused.
+    struct Store {
+        room: AtomicUsize,
+        released: AtomicUsize,
+        tasks: TaskTracker,
+    }
+
+    impl Store {
+        fn with_room(room: usize) -> Self {
+            Self {
+                room: AtomicUsize::new(room),
+                released: AtomicUsize::new(0),
+                tasks: TaskTracker::new(),
+            }
+        }
+    }
+
+    impl Detach for Store {
+        fn detach<Work>(&self, work: Work)
+        where
+            Work: Future<Output = ()> + Send + 'static,
+        {
+            drop(self.tasks.spawn(work));
+        }
+
+        fn detach_after<Work>(&self, delay: Duration, work: Work)
+        where
+            Work: Future<Output = ()> + Send + 'static,
+        {
+            drop(self.tasks.spawn(async move {
+                time::sleep(delay).await;
+                work.await;
+            }));
+        }
+
+        fn reserve(&self) -> bool {
+            let room = self.room.load(Ordering::SeqCst);
+            if room == 0 {
+                return false;
+            }
+            self.room.store(room - 1, Ordering::SeqCst);
+            true
+        }
+
+        fn release(&self) {
+            self.room.fetch_add(1, Ordering::SeqCst);
+            self.released.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_full_store_requeues_the_delivery_instead_of_copying_it() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("orders");
+        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+        let host = Store::with_room(0);
+        let settled = Arc::new(AtomicU8::new(0));
+        settle_nack_after(
+            &mut Slot::new(plain(&[], &settled)),
+            "orders",
+            Duration::from_secs(30),
+            &delivery,
+            &host,
+            unit_cx,
+        )
+        .await
+        .unwrap();
+        // Requeued, not dropped: the broker keeps the message while the runner has no room.
+        assert_eq!(settled.load(Ordering::SeqCst), 2);
+
+        time::advance(Duration::from_secs(30)).await;
+        task::yield_now().await;
+        let mut stream = core::pin::pin!(sub.stream());
+        assert!(poll!(stream.next()).is_pending(), "no copy was scheduled");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_store_with_room_takes_the_copy() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("orders");
+        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+        let host = Store::with_room(1);
+        let settled = Arc::new(AtomicU8::new(0));
+        settle_nack_after(
+            &mut Slot::new(plain(&[], &settled)),
+            "orders",
+            Duration::from_secs(30),
+            &delivery,
+            &host,
+            unit_cx,
+        )
+        .await
+        .unwrap();
+        assert_eq!(settled.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            host.room.load(Ordering::SeqCst),
+            0,
+            "the copy holds its room"
+        );
+
+        time::advance(Duration::from_secs(30)).await;
+        task::yield_now().await;
+        let mut stream = core::pin::pin!(sub.stream());
+        assert_eq!(stream.next().await.unwrap().unwrap().payload(), b"body");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_rejected_settle_gives_the_room_back() {
+        let broker = MemoryBroker::new();
+        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+        let host = Store::with_room(1);
+        let settled = Arc::new(AtomicU8::new(0));
+        settle_nack_after(
+            &mut Slot::new(plain_on(&[], &settled, Settlement::Rejected)),
+            "orders",
+            Duration::from_secs(30),
+            &delivery,
+            &host,
+            unit_cx,
+        )
+        .await
+        .expect_err("the rejected settle is reported");
+        assert_eq!(host.released.load(Ordering::SeqCst), 1);
+        assert_eq!(host.room.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
