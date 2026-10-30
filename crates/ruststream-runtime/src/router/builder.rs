@@ -30,7 +30,7 @@ use crate::slot::{NoReply, OutAttachment, SlotCodec};
 
 use super::MergedRouter;
 use super::builders::RouterWith;
-use super::local::TakesWorkers;
+use super::local::{LayerFits, TakesWorkers};
 use super::mount_sink::MountSink;
 use super::routes::{
     BatchRoute, DeclaredRoute, HandleRoute, MountRoute, RetriedRoute, RetryDestinationsDeclared,
@@ -143,7 +143,10 @@ impl<B: LocalBroker + 'static, RouteCodec, RouteLayers, RoutePipe>
     /// ([`Router::layer`](Router::layer) on a registration), exactly as the other steps of the
     /// chain ride the position named before them.
     #[must_use]
-    pub fn layer<N>(self, layer: N) -> Router<B, (), RouteCodec, Stack<N, RouteLayers>, RoutePipe> {
+    pub fn layer<N>(self, layer: N) -> Router<B, (), RouteCodec, Stack<N, RouteLayers>, RoutePipe>
+    where
+        N: LayerFits<RoutePipe>,
+    {
         Router {
             routes: self.routes,
             codec: self.codec,
