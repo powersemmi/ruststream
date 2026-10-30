@@ -17,6 +17,7 @@ use std::sync::Arc;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
+use ruststream_core::LocalIncomingMessage;
 use ruststream_embassy_probe::frames::{
     Frame, FrameDelivery, FrameSubscriber, Frames, Settlements,
 };
@@ -52,7 +53,11 @@ struct Probe {
     checked: Cell<bool>,
 }
 
-/// A handler that waits on the runner's clock, then counts the delivery as handled.
+/// The payload a device's handler cannot use: it drops the frame at once.
+const SPOILED: &[u8] = b"spoiled";
+
+/// A handler that drops a [`SPOILED`] frame, and waits on the runner's clock for any other before
+/// it counts the delivery as handled.
 #[derive(Debug)]
 struct WaitOnClock {
     handled: &'static AtomicU32,
@@ -61,11 +66,15 @@ struct WaitOnClock {
 impl Handler<FrameDelivery> for WaitOnClock {
     fn handle(
         &self,
-        _delivery: &FrameDelivery,
+        delivery: &FrameDelivery,
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = HandlerOutcome> + Send {
         let handled = self.handled;
+        let spoiled = delivery.payload() == SPOILED;
         async move {
+            if spoiled {
+                return HandlerOutcome::drop();
+            }
             EmbassyClock.sleep(HANDLER_WAIT).await;
             handled.store(handled.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
             HandlerOutcome::ack()
@@ -139,6 +148,15 @@ async fn drive(probe: &'static Probe) {
         probe.settled.acked(),
         probe.settled.nacked(),
     );
+
+    let spoiled = Frame::new(SPOILED).expect("the payload fits a frame");
+    probe.frames.send(spoiled).await;
+    settle().await;
+    let dropped = (
+        probe.handled.load(Ordering::Relaxed),
+        probe.settled.acked(),
+        probe.settled.nacked(),
+    );
     let allocations = delivery_path.change().allocations;
 
     println!("cold allocations of the subscription task: {cold}");
@@ -155,6 +173,13 @@ async fn drive(probe: &'static Probe) {
         "handled, acked, nacked once the timer is due"
     );
     passed("ten seconds in, the delivery is handled and acked");
+
+    assert_eq!(
+        dropped,
+        (1, 1, 1),
+        "handled, acked, nacked once the handler dropped a frame"
+    );
+    passed("a dropped frame is nacked at once, without the clock");
 
     assert_eq!(allocations, 0, "allocations on the delivery path");
     passed("the delivery path allocates nothing");
