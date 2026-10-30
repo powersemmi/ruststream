@@ -10,18 +10,21 @@
 //! - Publishing: [`Publisher`], [`PublishPolicy`], [`DefaultPublish`], the payload forms
 //!   [`Lend`] and [`Take`].
 //! - Messages: [`IncomingMessage`], [`OutgoingMessage`], [`RawMessage`], [`HeaderMap`].
+//! - Headers in any storage: [`HeaderStore`] and [`HeaderStoreMut`], with `FixedHeaderMap` for a
+//!   device without a heap.
 //! - Capabilities a broker may add: [`BatchSubscriber`], [`Seekable`], [`TransactionalPublisher`],
 //!   [`RequestReply`], [`Partitioned`], [`Carries`].
 //! - What a service documents about itself: [`ServerSpec`], [`AppId`], [`Contact`], [`License`].
 //!
 //! # Features
 //!
-//! The crate is `#![no_std]`. Its features:
+//! The crate is `#![no_std]`. The headers traits build with no feature at all. Its features:
 //!
 //! - `alloc`: the contract itself. Headers, payloads and names live on the heap, so every trait
 //!   and message type needs an allocator.
 //! - `std` (default): `alloc`, the standard library's side of the dependencies, and
 //!   [`Bindable`](bindable::Bindable), whose slot is a `std` mutex.
+//! - `heapless`: `FixedHeaderMap`, headers in storage of a fixed size.
 //! - `json`: [`SecurityScheme`] values that carry JSON.
 //! - `asyncapi`: the binding types and the `*_bindings` methods of the contract.
 //! - `testing`: the hook the test harness reads a pairing through; it runs on a host.
@@ -60,8 +63,11 @@ mod describe;
 mod error;
 #[cfg(feature = "alloc")]
 mod field;
+#[cfg(feature = "heapless")]
+mod fixed_headers;
 #[cfg(feature = "alloc")]
 mod form;
+mod header_store;
 #[cfg(feature = "alloc")]
 mod headers;
 #[cfg(feature = "alloc")]
@@ -107,6 +113,9 @@ pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
 pub use error::{AckError, DeclareRetryError};
 #[cfg(feature = "alloc")]
 pub use field::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
+#[cfg(feature = "heapless")]
+pub use fixed_headers::{FixedHeaderMap, InsertHeaderError};
+pub use header_store::{HeaderStore, HeaderStoreMut};
 #[cfg(feature = "alloc")]
 pub use headers::HeaderMap;
 #[cfg(feature = "alloc")]

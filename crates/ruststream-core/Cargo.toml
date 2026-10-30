@@ -19,7 +19,7 @@ all-features = true
 default = ["std"]
 # The contract itself: its headers, payloads, names and errors live on the heap, so every trait and
 # message type needs it. A `no_std` build with an allocator turns on this feature alone.
-alloc = ["dep:bytes", "dep:bytes-utils", "dep:futures-core", "dep:serde", "dep:thiserror", "serde/alloc"]
+alloc = ["dep:bytes", "dep:bytes-utils", "dep:futures-core", "serde/alloc"]
 # The standard library's side of the dependencies, and the broker wrapper `Bindable`, whose slot is
 # a `std` mutex.
 std = [
@@ -30,6 +30,12 @@ std = [
     "thiserror/std",
     "serde_json?/std",
 ]
+# `FixedHeaderMap`: headers in storage of a fixed size, for a device without a heap.
+heapless = ["dep:heapless"]
+# `codec::Postcard`: the postcard format through the slice codec.
+postcard = ["dep:postcard"]
+# `codec::JsonCore`: JSON through the slice codec, without a heap.
+json-core = ["dep:serde-json-core"]
 # `SecurityScheme::oauth2` and `SecurityScheme::custom` take a JSON value.
 json = ["alloc", "dep:serde_json", "serde_json/alloc"]
 # The `*_bindings` methods of the contract and the binding types they return.
@@ -42,9 +48,13 @@ testing = ["std", "dep:tokio"]
 bytes = { workspace = true, optional = true }
 bytes-utils = { workspace = true, optional = true }
 futures-core = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
+heapless = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
+# The headers traits, typed headers and the slice codec speak serde with no feature at all.
+serde.workspace = true
+serde-json-core = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-thiserror = { workspace = true, optional = true }
+thiserror.workspace = true
 tokio = { workspace = true, optional = true }
 
 [dev-dependencies]

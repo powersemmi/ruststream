@@ -72,6 +72,10 @@ embassy-sync = "0.8"
 embassy-time = "0.5.1"
 # Fixed-capacity collections: the embedded runner's headers, frames and pending stores.
 heapless = { version = "0.9", default-features = false }
+# The slice codecs of a device without a heap: each writes into a buffer the caller owns and reads
+# borrowed values out of the frame.
+postcard = { version = "1.1", default-features = false }
+serde-json-core = { version = "0.7", default-features = false }
 
 # Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
 # release for release (a loose range let a partial `cargo update` pair a new core with an old

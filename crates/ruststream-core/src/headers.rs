@@ -1,10 +1,13 @@
 //! Message headers with typed accessors for well-known fields.
 
 use alloc::vec::Vec;
+use core::convert::Infallible;
 use core::{fmt, mem, str};
 
 use bytes::Bytes;
 use bytes_utils::Str;
+
+use crate::header_store::{HeaderStore, HeaderStoreMut};
 
 /// Case-insensitive map of broker-message headers.
 ///
@@ -368,6 +371,56 @@ where
     }
 }
 
+/// The trait's reads are the map's own methods.
+impl HeaderStore for HeaderMap {
+    #[inline]
+    fn get(&self, name: &str) -> Option<&[u8]> {
+        Self::get(self, name)
+    }
+
+    #[inline]
+    fn get_str(&self, name: &str) -> Option<&str> {
+        Self::get_str(self, name)
+    }
+
+    #[inline]
+    fn contains(&self, name: &str) -> bool {
+        Self::contains(self, name)
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        Self::len(self)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        Self::is_empty(self)
+    }
+
+    #[inline]
+    fn iter(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        Self::iter(self)
+    }
+}
+
+/// The trait's writes are the map's own methods: the name and value are copied into shared
+/// buffers, as [`HeaderMap::insert`] copies a borrowed `&str`, and the heap never runs out here.
+impl HeaderStoreMut for HeaderMap {
+    type InsertError = Infallible;
+
+    #[inline]
+    fn insert(&mut self, name: &str, value: &[u8]) -> Result<(), Infallible> {
+        Self::insert(self, name, Bytes::copy_from_slice(value));
+        Ok(())
+    }
+
+    #[inline]
+    fn remove(&mut self, name: &str) -> bool {
+        Self::remove(self, name).is_some()
+    }
+}
+
 /// The key a shared buffer carries: kept as it arrived when it is already lowercase, which is
 /// what every framework-issued key and every wire format that lowercases its own headers hands
 /// in. A key with capitals in it is copied, since a shared buffer cannot be lowercased in place.
@@ -459,6 +512,32 @@ mod tests {
         kept.insert("tenant", "acme");
         kept.overwrite_with(HeaderMap::new());
         assert_eq!(kept.get_str("tenant"), Some("acme"));
+    }
+
+    #[test]
+    fn the_traits_read_and_write_what_the_methods_do() {
+        fn write<Store: HeaderStoreMut>(store: &mut Store) {
+            store.insert("X-Tenant", b"acme").unwrap();
+            store.insert("x-gone", b"1").unwrap();
+            assert!(store.remove("X-GONE"));
+            assert!(!store.remove("x-gone"));
+        }
+        fn read<Store: HeaderStore>(store: &Store) -> (Option<&str>, bool, usize, bool) {
+            let names: Vec<_> = store.iter().map(|(name, _)| name).collect();
+            assert_eq!(names, vec!["x-tenant"]);
+            (
+                store.get_str("x-tenant"),
+                store.contains("X-TENANT"),
+                store.len(),
+                store.is_empty(),
+            )
+        }
+
+        let mut h = HeaderMap::new();
+        write(&mut h);
+        assert_eq!(h.get("x-tenant"), Some(b"acme".as_slice()));
+        assert_eq!(read(&h), (Some("acme"), true, 1, false));
+        assert!(HeaderStore::is_empty(&HeaderMap::new()));
     }
 
     #[test]
