@@ -74,7 +74,9 @@ pub use ruststream_runtime::{
     PublishedThrough, Reply, SlotPublisher, Unrestricted,
 };
 pub use ruststream_runtime::{Bindable, Bound, BrokerRegistration};
-pub use ruststream_runtime::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
+pub use ruststream_runtime::{
+    BlanketLayer, HandlerExt, Identity, Layer, LocalBlanketLayer, Stack, layers,
+};
 #[doc(hidden)]
 pub use ruststream_runtime::{CapsBatches, DefinitionInputCodec, MountsWith};
 pub use ruststream_runtime::{Clock, ShutdownWait};
@@ -101,8 +103,8 @@ pub use ruststream_runtime::{
     OutgoingMessageMetadata,
 };
 pub use ruststream_runtime::{
-    IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
-    RouterPublishingOut, RouterWith, forms,
+    IncludeDef, LocalPipeline, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut,
+    RouterPublishing, RouterPublishingOut, RouterWith, forms,
 };
 pub use ruststream_runtime::{Placement, RETRY_COUNT_HEADER, Workers};
 #[cfg(feature = "poll-diagnostics")]
@@ -137,4 +139,13 @@ pub mod cli;
 // The runner the `embassy` feature selects: every item of the embedded runner a service names is
 // re-exported here, at the path its tokio counterpart takes under `tokio`.
 #[cfg(feature = "embassy")]
-pub use ruststream_runtime_embassy::{Control, EmbassyClock, Health, Stopping};
+#[doc(hidden)]
+pub use ruststream_runtime_embassy::{
+    BrokerMount, CloseAll, EmbeddedPlan, HookList, Hooks, Keyed, Lanes, NoHooks, OneLane, Pool,
+    Room, SoFar, StartMounts,
+};
+#[cfg(feature = "embassy")]
+pub use ruststream_runtime_embassy::{
+    Control, EmbassyClock, EmbeddedApp, Health, MountChain, MountSteps, Mounts, Parts, RunError,
+    Scope, Stopping,
+};

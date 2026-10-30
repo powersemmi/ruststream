@@ -72,8 +72,9 @@
 //! * `tokio` (default): the [`runtime::RustStream`] application object on tokio's runtime, its
 //!   lifecycle and the generated entry point ([`runtime::cli`]).
 //! * `embassy`: the embedded runner on embassy's executor and clock, for a device with a heap
-//!   and no operating system. Its items (`Control`, `Health`, `EmbassyClock`) are re-exported in
-//!   [`runtime`], and their reference is the documentation of
+//!   and no operating system. Its items (the `EmbeddedApp` application object, its `Control`
+//!   and `Health`, the `EmbassyClock`) are re-exported in [`runtime`], and their reference is the
+//!   documentation of
 //!   [`ruststream-runtime-embassy`](https://docs.rs/ruststream-runtime-embassy).
 //!
 //! Codec features are mutually compatible and enable only the deserializers you need. They work
