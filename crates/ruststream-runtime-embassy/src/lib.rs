@@ -1,23 +1,24 @@
-//! The shared delivery body on embassy: a device's executor, clock and broker, hosted on a thread.
+//! The embedded runner of RustStream: a device service's app on embassy's executor and clock,
+//! on `no_std` with a heap.
 //!
-//! The body that runs the handler and settles a delivery, `ruststream_runtime::run_sequential`,
-//! is written once for every runtime. This crate holds it to the constraints of embassy, the
-//! executor of a device without an operating system:
+//! The app is one future that one embassy task awaits. Its type carries every broker, mount,
+//! state and hook, so nothing is boxed or erased, and a delivery allocates nothing.
 //!
-//! - the body is generic, and an embassy task is not, so a concrete task awaits a generic body;
-//! - the subscriber is not `Send`, so the body reaches the broker through the `Local*` contract
-//!   twins alone;
-//! - the body builds without tokio, and the delivery path allocates nothing: frames are
-//!   `heapless` buffers in a `static` channel, and the shutdown's wait list is a fixed array;
-//! - every timer is the clock's own future, polled by the task's own waker, which embassy's
-//!   integrated timer queue requires;
-//! - the shutdown check is one relaxed load.
+//! - [`EmbeddedApp`]: the app builder: `with_broker(broker, |b| chain)`, `with_state`, the
+//!   lifecycle hooks, and [`run`](EmbeddedApp::run). [`Mounts`] is the bound a function that
+//!   builds the app returns (`EmbeddedApp<impl Mounts>`); [`RunError`] says why a run ended
+//!   other than on request.
+//! - [`MountSteps`]: the runner's mount steps with counts fixed in the registration's type:
+//!   `.pool::<N>()`, `.keyed::<N>()` and `.retry_capacity::<CAP>()`. [`Scope`] is the local
+//!   router a broker's scope starts from; [`MountChain`] finishes what the scope returns.
+//! - [`Control`] and [`Health`]: the stop device code asks for and the health it reads, both in
+//!   a `static`.
+//! - [`EmbassyClock`]: the runner's clock over embassy-time.
+//! - [`frames`] and [`CountDetached`]: a broker stand-in over an embassy-sync channel and a host
+//!   that counts detached work, for the runner's host tests.
 //!
-//! [`EmbassyClock`] is the runner's clock, [`Control`] its shutdown and health, [`CountDetached`] the host a
-//! delivery hands leftover work to, and [`frames`] a broker stand-in over an embassy-sync channel.
-//! The test binary runs them on the `std` platform's executor and moves embassy-time's mock clock
-//! by hand.
-
+//! How a device service is built is taught on the site's embedded runtime page.
+//!
 #![no_std]
 
 extern crate alloc;
