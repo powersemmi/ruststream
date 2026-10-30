@@ -1742,10 +1742,15 @@ dependencies = [
 name = "ruststream-testing"
 version = "0.7.7"
 dependencies = [
+ "critical-section",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-time",
  "inventory",
  "ruststream",
  "ruststream-core",
  "ruststream-runtime",
+ "ruststream-runtime-embassy",
  "ruststream-runtime-tokio",
  "serde",
  "serde_json",
