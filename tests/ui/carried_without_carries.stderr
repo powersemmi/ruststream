@@ -16,7 +16,7 @@ help: `Subscribing` implements trait `ruststream::runtime::RouterMount<R, Def>`
 ...  |
    | |     Def::Input: Materialize<SoloDecoder<Def, B, RouteCodec>, LocalSourceMessage<B, Def::Source>>,
    | |     Def::Handler: 'static,
-   | |__________________________^ `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, ruststream_runtime::router::local::LocalPipeline<Pipe>>, Def>`
+   | |__________________________^ `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>`
    |
   ::: crates/ruststream-runtime/src/router/form_eager.rs
    |
