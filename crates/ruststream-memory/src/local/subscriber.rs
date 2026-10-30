@@ -42,7 +42,9 @@ use super::{ConnectedLocalMemoryBroker, LocalMemoryError};
 ///         .publish(OutgoingMessage::produced("sensors/temp", BytesMut::from(&[21u8][..])), None)
 ///         .await?;
 ///     let mut deliveries = core::pin::pin!(readings.stream());
-///     let reading = deliveries.next().await.expect("the bus is open")?;
+///     let Some(Ok(reading)) = deliveries.next().await else {
+///         unreachable!("the bus is open and its stream yields no error");
+///     };
 ///     let celsius = reading.payload()[0];
 ///     reading.ack().await.expect("the bus settles");
 ///     Ok(celsius)
