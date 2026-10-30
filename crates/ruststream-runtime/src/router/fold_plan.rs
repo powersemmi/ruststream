@@ -32,7 +32,7 @@ use crate::{
 use super::builder::Router;
 use super::fold::{OpenLayered, OpenedRoute, RunRoutes};
 use super::local::LocalPipeline;
-use super::routes::SubscribeRoute;
+use super::routes::{RetryDestinationsDeclared, SubscribeRoute};
 use super::routes_inject::InjectRoute;
 use super::routes_publish::{PublishingRoute, RawReplyRoute};
 
@@ -198,6 +198,9 @@ impl_planless!(
     RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     InjectRoute<Source, Def, DecodeCodec, Extra>,
 );
+
+// A plan changes how deliveries run, never where their retry copies go.
+impl<Route: RetryDestinationsDeclared, Plan> RetryDestinationsDeclared for Dispatched<Route, Plan> {}
 
 impl<Route, Plan> LocalPlanned for Dispatched<Route, Plan> {
     type Route = Route;
