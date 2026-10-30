@@ -11,6 +11,7 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::waitqueue::MultiWakerRegistration;
 use ruststream_runtime::{Halt, ShutdownWait};
+use tracing::error;
 
 /// How many tasks may wait on one control at once: the app's task and the device's own.
 ///
@@ -174,17 +175,23 @@ impl Control {
     }
 
     /// The runner reports every subscription open.
-    // Called by the app runner, which is the next unit on this crate.
-    #[allow(dead_code)]
     pub(crate) fn running(&self) {
         self.advance(Health::Running);
     }
 
     /// The runner reports every subscription ended.
-    // Called by the app runner, which is the next unit on this crate.
-    #[allow(dead_code)]
     pub(crate) fn stopped(&self) {
         self.advance(Health::Stopped);
+    }
+
+    /// The runner fails the app itself: a startup that did not complete, or a failing hook.
+    pub(crate) fn fail_app(&self, subscription: &str, reason: &str) {
+        Halt::fail(&self, subscription, reason);
+    }
+
+    /// Whether the app failed.
+    pub(crate) fn has_failed(&self) -> bool {
+        self.health() == Health::Failed
     }
 
     /// Moves the health forward to `next`: never back, and never out of `Failed` or `Stopped`.
@@ -233,7 +240,8 @@ impl ShutdownWait for &Control {
 }
 
 impl Halt for &Control {
-    fn fail(&self, _subscription: &str, _reason: &str) {
+    fn fail(&self, subscription: &str, reason: &str) {
+        error!(target: "ruststream::embassy", subscription, reason, "the app failed");
         self.stopped.store(true, Ordering::Relaxed);
         self.advance(Health::Failed);
     }
