@@ -345,6 +345,9 @@ pub mod __private {
     pub use std::string::{String, ToString};
     pub use std::vec;
     pub use std::vec::Vec;
+    // The log the embassy task `#[ruststream::app]` emits reports an app's error to.
+    #[cfg(feature = "embassy")]
+    pub use tracing;
 
     use crate::runtime::Serialized;
     #[cfg(feature = "asyncapi")]
