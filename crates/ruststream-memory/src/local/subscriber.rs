@@ -428,6 +428,9 @@ mod tests {
         OutgoingMessage,
     };
 
+    #[cfg(feature = "testing")]
+    use ruststream_runtime::testing::{Coordinator, LocalTestableBroker};
+
     use super::*;
     use crate::local::LocalMemoryBroker;
     use crate::local::drive::{ended, waiting};
@@ -557,6 +560,67 @@ mod tests {
             counts.push(last.redelivery_count());
             last.ack().await.unwrap();
             assert_eq!(counts, [Some(1), Some(2), Some(3), Some(4)]);
+        });
+    }
+
+    #[test]
+    fn a_requeue_after_shutdown_stays_refused_once_the_subscriber_left() {
+        block_on(async {
+            let (connected, mut subscriber) = open("cmd").await;
+            publish(&connected, "cmd", b"open").await;
+            let delivery = waiting(&mut pin!(subscriber.stream())).unwrap();
+            connected.shutdown().await.unwrap();
+            drop(subscriber);
+            assert!(matches!(
+                delivery.nack(true).await,
+                Err(AckError::Broker(refused)) if refused.to_string().contains("shut down")
+            ));
+        });
+    }
+
+    /// A coordinator installed on the bus, counting its deliveries in flight as `TestApp` does.
+    #[cfg(feature = "testing")]
+    fn counted(connected: &ConnectedLocalMemoryBroker<4>) -> Coordinator {
+        let coordinator = Coordinator::new(usize::MAX);
+        connected.install_coordinator(coordinator.clone());
+        coordinator
+    }
+
+    #[cfg(feature = "testing")]
+    fn quiescent(coordinator: &Coordinator) -> bool {
+        coordinator.drive().now_or_never().is_some()
+    }
+
+    #[cfg(feature = "testing")]
+    #[test]
+    fn dropping_the_subscriber_releases_what_waits_in_it() {
+        block_on(async {
+            let (connected, subscriber) = open("cmd").await;
+            let coordinator = counted(&connected);
+            publish(&connected, "cmd", b"open").await;
+            assert!(!quiescent(&coordinator));
+            drop(subscriber);
+            assert!(
+                quiescent(&coordinator),
+                "a delivery left waiting in a dropped subscription stays counted in flight"
+            );
+        });
+    }
+
+    #[cfg(feature = "testing")]
+    #[test]
+    fn a_requeue_after_the_subscriber_left_lands_nowhere() {
+        block_on(async {
+            let (connected, mut subscriber) = open("cmd").await;
+            let coordinator = counted(&connected);
+            publish(&connected, "cmd", b"open").await;
+            let delivery = waiting(&mut pin!(subscriber.stream())).unwrap();
+            drop(subscriber);
+            assert!(matches!(delivery.nack(true).await, Ok(())));
+            assert!(
+                quiescent(&coordinator),
+                "a requeue into a subscription nobody reads stays counted in flight"
+            );
         });
     }
 
