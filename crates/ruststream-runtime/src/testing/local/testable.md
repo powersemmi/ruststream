@@ -7,7 +7,7 @@ The items are those of [`TestableBroker`] without the `Send` and `Sync` bounds. 
 # Examples
 
 ```
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::rc::Rc;
 
 use ruststream::testing::{Coordinator, LocalTestableBroker};
@@ -17,7 +17,7 @@ use ruststream::{OutgoingMessage, RawMessage};
 #[derive(Default)]
 struct Transport {
     published: RefCell<Vec<RawMessage>>,
-    coordinator: RefCell<Option<Coordinator>>,
+    coordinator: OnceCell<Coordinator>,
 }
 
 pub struct QueueConnected {
@@ -26,7 +26,8 @@ pub struct QueueConnected {
 
 impl LocalTestableBroker for QueueConnected {
     fn install_coordinator(&self, coordinator: Coordinator) {
-        *self.transport.coordinator.borrow_mut() = Some(coordinator);
+        // A second install is ignored: the run keeps counting on the first coordinator.
+        self.transport.coordinator.get_or_init(|| coordinator);
     }
 
     fn inject(&self, message: OutgoingMessage<'_>) {
@@ -44,4 +45,13 @@ impl LocalTestableBroker for QueueConnected {
             .collect()
     }
 }
+# fn main() {
+#     let connected = QueueConnected { transport: Rc::default() };
+#     let first = Coordinator::new(1);
+#     first.enqueued();
+#     connected.install_coordinator(first);
+#     connected.install_coordinator(Coordinator::new(1));
+#     let kept = format!("{:?}", connected.transport.coordinator);
+#     assert!(kept.contains("in_flight: 1"), "{kept}");
+# }
 ```

@@ -12,7 +12,7 @@ use std::rc::Rc;
 
 use ruststream::LocalBroker;
 use ruststream::testing::LocalInProcess;
-# use std::cell::RefCell;
+# use std::cell::{OnceCell, RefCell};
 #
 # use ruststream::testing::{Coordinator, LocalTestableBroker};
 # use ruststream::{LocalConnectedBroker, OutgoingMessage, RawMessage};
@@ -21,7 +21,7 @@ use ruststream::testing::LocalInProcess;
 # #[derive(Default)]
 # struct Transport {
 #     published: RefCell<Vec<RawMessage>>,
-#     coordinator: RefCell<Option<Coordinator>>,
+#     coordinator: OnceCell<Coordinator>,
 # }
 #
 # pub struct QueueConnected {
@@ -30,7 +30,8 @@ use ruststream::testing::LocalInProcess;
 #
 # impl LocalTestableBroker for QueueConnected {
 #     fn install_coordinator(&self, coordinator: Coordinator) {
-#         *self.transport.coordinator.borrow_mut() = Some(coordinator);
+#         // A second install is ignored: the run keeps counting on the first coordinator.
+#         self.transport.coordinator.get_or_init(|| coordinator);
 #     }
 #
 #     fn inject(&self, message: OutgoingMessage<'_>) {
