@@ -13,7 +13,7 @@
 //!   integrated timer queue requires;
 //! - the shutdown check is one relaxed load.
 //!
-//! [`EmbassyClock`] is the runner's clock, [`Stop`] its shutdown, [`CountDetached`] the host a
+//! [`EmbassyClock`] is the runner's clock, [`Control`] its shutdown and health, [`CountDetached`] the host a
 //! delivery hands leftover work to, and [`frames`] a broker stand-in over an embassy-sync channel.
 //! The test binary runs them on the `std` platform's executor and moves embassy-time's mock clock
 //! by hand.
@@ -23,8 +23,8 @@
 mod clock;
 mod detach;
 pub mod frames;
-mod stop;
+mod control;
 
 pub use clock::EmbassyClock;
 pub use detach::CountDetached;
-pub use stop::{Stop, Stopping};
+pub use control::{Control, Stopping};

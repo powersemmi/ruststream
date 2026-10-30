@@ -17,18 +17,18 @@ const WAITERS: usize = 4;
 ///
 /// It lives in a `static`, so it is signalled from any task, executor or interrupt. The wait
 /// list is a fixed array behind a critical section; a loop beyond its capacity makes it wake
-/// every waiter, and each re-registers. A loop holds it by reference: `&Stop` is the runner's
+/// every waiter, and each re-registers. A loop holds it by reference: `&Control` is the runner's
 /// shutdown handle, and it records what the loops report to the app (a failure, a stream that
 /// ended).
 #[derive(Debug)]
-pub struct Stop {
+pub struct Control {
     stopped: AtomicBool,
     failed: AtomicBool,
     ended: AtomicBool,
     waiters: Mutex<CriticalSectionRawMutex, RefCell<MultiWakerRegistration<WAITERS>>>,
 }
 
-impl Stop {
+impl Control {
     /// A shutdown not yet signalled.
     #[must_use]
     pub const fn new() -> Self {
@@ -59,13 +59,13 @@ impl Stop {
     }
 }
 
-impl Default for Stop {
+impl Default for Control {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ShutdownWait for &Stop {
+impl ShutdownWait for &Control {
     type Wait<'a>
         = Stopping<'a>
     where
@@ -80,7 +80,7 @@ impl ShutdownWait for &Stop {
     }
 }
 
-impl Halt for &Stop {
+impl Halt for &Control {
     fn fail(&self, _subscription: &str, _reason: &str) {
         self.failed.store(true, Ordering::Relaxed);
         self.stop();
@@ -91,12 +91,12 @@ impl Halt for &Stop {
     }
 }
 
-/// The future [`cancelled`](ShutdownWait::cancelled) of a `&Stop` returns: resolves once shutdown is
+/// The future [`cancelled`](ShutdownWait::cancelled) of a `&Control` returns: resolves once shutdown is
 /// signalled.
 #[derive(Debug)]
 #[must_use = "a wait does nothing unless polled"]
 pub struct Stopping<'a> {
-    stop: &'a Stop,
+    stop: &'a Control,
 }
 
 impl Future for Stopping<'_> {

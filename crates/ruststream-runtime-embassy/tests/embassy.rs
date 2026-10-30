@@ -21,7 +21,7 @@ use ruststream_core::LocalIncomingMessage;
 use ruststream_runtime_embassy::frames::{
     Frame, FrameDelivery, FrameSubscriber, Frames, Settlements,
 };
-use ruststream_runtime_embassy::{CountDetached, EmbassyClock, Stop};
+use ruststream_runtime_embassy::{CountDetached, EmbassyClock, Control};
 use ruststream_runtime::{
     Clock, Context, Delivery, DispatchFailure, FailurePolicies, Handler, HandlerOutcome,
     run_sequential,
@@ -46,7 +46,7 @@ const SETTLE_ROUNDS: usize = 8;
 struct Probe {
     frames: Frames,
     settled: Settlements,
-    stop: Stop,
+    stop: Control,
     host: Arc<CountDetached>,
     handled: AtomicU32,
     ended: Cell<bool>,
@@ -205,7 +205,7 @@ fn main() {
     let probe: &'static Probe = PROBE.init(Probe {
         frames: Frames::new(),
         settled: Settlements::new(),
-        stop: Stop::new(),
+        stop: Control::new(),
         host: Arc::new(CountDetached::new()),
         handled: AtomicU32::new(0),
         ended: Cell::new(false),
