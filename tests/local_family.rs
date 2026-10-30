@@ -9,6 +9,7 @@ use std::error::Error;
 use std::future::ready;
 use std::pin::pin;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
 
 use futures::{Stream, StreamExt, stream};
@@ -18,13 +19,14 @@ use ruststream::memory::{
 };
 use ruststream::testing::LocalInProcess;
 use ruststream::{
-    AckError, Broker, BrokerMoves, BytesMut, DefaultPublish, HeaderMap, LocalBatchSubscriber,
-    LocalBroker, LocalConnectedBroker, LocalDefaultPublish, LocalDescribeServer,
-    LocalIncomingMessage, LocalOwnedTransactions, LocalPositioned, LocalPublishPolicy,
-    LocalPublisher, LocalRedeliveryAddressed, LocalRequestReply, LocalSeekable, LocalSeeker,
-    LocalSubscribe, LocalSubscriber, LocalSubscriptionSource, LocalTransaction,
-    LocalTransactionalPublisher, OutgoingFor, OutgoingMessage, PairError, PublishPolicy, Publisher,
-    Subscribe, Take,
+    AckError, BatchSubscriber, Broker, BrokerMoves, BytesMut, DefaultPublish, HeaderMap, Lend,
+    LocalBatchSubscriber, LocalBroker, LocalConnectedBroker, LocalDefaultPublish,
+    LocalDescribeServer, LocalIncomingMessage, LocalOwnedTransactions, LocalPositioned,
+    LocalPublishPolicy, LocalPublisher, LocalRedeliveryAddressed, LocalRequestReply, LocalSeekable,
+    LocalSeeker, LocalSubscribe, LocalSubscriber, LocalSubscriptionSource, LocalTransaction,
+    LocalTransactionalPublisher, OutgoingFor, OutgoingMessage, OwnedTransactions, PairError,
+    PublishPolicy, Publisher, RequestReply, Seekable, Subscribe, Subscriber, Take,
+    TransactionalPublisher,
 };
 use tokio::task::{self, LocalSet};
 
@@ -143,6 +145,80 @@ fn memory_broker_meets_every_capability_twin_through_the_blanket_impls() {
         MemoryTransaction,
         MemoryRequester,
     >();
+}
+
+/// A publisher whose last field is unsized, so `Self` is not `Sized`.
+struct Counting<Tail: ?Sized> {
+    sent: AtomicUsize,
+    tail: Tail,
+}
+
+impl Publisher for Counting<[u8]> {
+    type Payload = Lend;
+    type Error = Infallible;
+    type Options = ();
+
+    async fn publish(
+        &self,
+        msg: OutgoingFor<'_, Lend>,
+        _options: Option<&()>,
+    ) -> Result<(), Infallible> {
+        let (_name, payload, _headers) = msg.into_parts();
+        if payload.ends_with(&self.tail) {
+            self.sent.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+}
+
+/// A body over the local family that accepts an unsized publisher behind a reference.
+async fn publish_local<P>(publisher: &P, orders: &[&[u8]]) -> Result<(), P::Error>
+where
+    P: ?Sized + LocalPublisher<Payload = Lend>,
+{
+    for order in orders {
+        publisher
+            .publish(OutgoingMessage::new("orders", *order), None)
+            .await?;
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_unsized_publisher_publishes_through_its_local_twin() -> Result<(), BoxError> {
+    let sized = Counting {
+        sent: AtomicUsize::new(0),
+        tail: *b"-",
+    };
+    let publisher: &Counting<[u8]> = &sized;
+
+    publish_local(publisher, &[b"order-1", b"order-2", b"order-"]).await?;
+
+    assert_eq!(publisher.sent.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+
+/// Every Send trait that admits an unsized implementor reaches its twin through the blanket impl.
+#[test]
+fn unsized_implementations_meet_their_local_twins() {
+    fn local<Sub, Pub, Req>()
+    where
+        Sub: ?Sized + LocalSubscriber + LocalBatchSubscriber + LocalSeekable,
+        Pub: ?Sized + LocalPublisher + LocalTransactionalPublisher + LocalOwnedTransactions,
+        Req: ?Sized + LocalRequestReply,
+    {
+    }
+
+    fn send<Sub, Pub, Req>()
+    where
+        Sub: ?Sized + Subscriber + BatchSubscriber + Seekable,
+        Pub: ?Sized + Publisher + TransactionalPublisher + OwnedTransactions,
+        Req: ?Sized + RequestReply,
+    {
+        local::<Sub, Pub, Req>();
+    }
+
+    send::<MemorySubscriber<Retaining>, MemoryPublisher, MemoryRequester>();
 }
 
 // A broker over a client that keeps its state in `Rc` and `RefCell`: none of its types is `Send`,

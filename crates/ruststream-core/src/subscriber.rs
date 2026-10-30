@@ -27,7 +27,7 @@ crate::__contract_twin! {
         #[doc = include_str!("local/subscriber.md")]
         pub trait LocalSubscriber
     }
-    blanket { impl<T: Subscriber> LocalSubscriber for T }
+    blanket { impl<T: ?Sized + Subscriber> LocalSubscriber for T }
     forward { <T as Subscriber> }
     docs { Subscriber }
     types {

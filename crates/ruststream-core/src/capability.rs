@@ -76,7 +76,7 @@ crate::__contract_twin! {
         )]
         pub trait LocalBatchSubscriber: LocalSubscriber
     }
-    blanket { impl<T: BatchSubscriber> LocalBatchSubscriber for T }
+    blanket { impl<T: ?Sized + BatchSubscriber> LocalBatchSubscriber for T }
     forward { <T as BatchSubscriber> }
     docs { BatchSubscriber }
     types {
@@ -160,7 +160,7 @@ crate::__contract_twin! {
         #[doc = include_str!("local/seekable.md")]
         pub trait LocalSeekable: LocalSubscriber
     }
-    blanket { impl<T: Seekable> LocalSeekable for T }
+    blanket { impl<T: ?Sized + Seekable> LocalSeekable for T }
     forward { <T as Seekable> }
     docs { Seekable }
     types {
@@ -303,7 +303,7 @@ crate::__contract_twin! {
         )]
         pub trait LocalTransactionalPublisher: LocalPublisher
     }
-    blanket { impl<T: TransactionalPublisher> LocalTransactionalPublisher for T }
+    blanket { impl<T: ?Sized + TransactionalPublisher> LocalTransactionalPublisher for T }
     forward { <T as TransactionalPublisher> }
     docs { TransactionalPublisher }
     fns {
@@ -553,7 +553,7 @@ crate::__contract_twin! {
         )]
         pub trait LocalOwnedTransactions: LocalPublisher
     }
-    blanket { impl<T: OwnedTransactions> LocalOwnedTransactions for T }
+    blanket { impl<T: ?Sized + OwnedTransactions> LocalOwnedTransactions for T }
     forward { <T as OwnedTransactions> }
     docs { OwnedTransactions }
     types {
@@ -599,7 +599,7 @@ crate::__contract_twin! {
         )]
         pub trait LocalRequestReply: LocalPublisher
     }
-    blanket { impl<T: RequestReply> LocalRequestReply for T }
+    blanket { impl<T: ?Sized + RequestReply> LocalRequestReply for T }
     forward { <T as RequestReply> }
     docs { RequestReply }
     types {

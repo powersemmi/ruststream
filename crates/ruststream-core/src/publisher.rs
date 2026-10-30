@@ -342,7 +342,7 @@ crate::__contract_twin! {
         )]
         pub trait LocalPublisher
     }
-    blanket { impl<T: Publisher> LocalPublisher for T }
+    blanket { impl<T: ?Sized + Publisher> LocalPublisher for T }
     forward { <T as Publisher> }
     docs { Publisher }
     types {
