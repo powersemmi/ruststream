@@ -23,6 +23,9 @@ use ruststream::{subscriber, time};
 /// How long the reminder waits after the order is acknowledged.
 const REMINDER: Duration = Duration::from_secs(60);
 
+/// One step short of the reminder.
+const SHORT_OF_REMINDER: Duration = Duration::from_secs(59);
+
 /// A handler that schedules a reminder once the order is acknowledged; the reminder sleeps on
 /// the app's clock first.
 #[subscriber("orders")]
@@ -51,9 +54,7 @@ async fn a_service_sleep_follows_the_harness_clock() {
         .publish()
         .await
         .expect("publish");
-    tb.advance(REMINDER - Duration::from_secs(1))
-        .await
-        .expect("settle");
+    tb.advance(SHORT_OF_REMINDER).await.expect("settle");
     assert_eq!(
         reminded.load(Ordering::SeqCst),
         0,

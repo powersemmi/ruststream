@@ -208,3 +208,11 @@ below shows its attribute form and its manual form ([`subscriber`], [`Handle`]) 
 - [HTTP](https://powersemmi.github.io/ruststream/latest/components/application/running/http/):
   [`RustStream::start`] beside an HTTP server, [`RunningApp::stopping`] for its graceful
   shutdown and [`RunningApp::publisher`] for a live publisher on the request path.
+
+# Runtimes
+
+The delivery body is shared and generic over a runtime's [`Clock`] and over the wait on the app's
+shutdown, [`ShutdownWait`]. The tokio runner, [`Tokio`], runs it: the app's lifecycle, spawning,
+`workers(n)`, `threads(n)` and the signals are its own. Service code that waits calls
+[`crate::time::sleep`], which sleeps on the app's clock, so the test harness moves it with
+`advance` like every timer the framework arms.

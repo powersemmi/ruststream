@@ -69,6 +69,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Lifecycle](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#lifecycle): startup and shutdown hooks, the first publish after startup
 - [Middleware](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#middleware): consume and publish layers
 - [Failure policy](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#failure-policy): what a panic or an undecodable payload does to a delivery
+- [Runtimes](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#runtimes): the shared delivery body, the tokio runner, and `ruststream::time::sleep`, the sleep on the app's clock
 - [Running beside another server](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server): `start()` and the running handle
 - [Codecs](https://docs.rs/ruststream/latest/ruststream/codec/index.html): JSON, CBOR and MessagePack, where a codec is chosen, and payloads that carry their own bytes
 - [Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html): testing a service's production app with `TestApp`, every broker in process, addressed by its production type

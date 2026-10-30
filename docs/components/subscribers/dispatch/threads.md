@@ -18,7 +18,7 @@ The subscription's loop stays on the app's runtime and hands deliveries to the t
 It stops reading the broker only when every ring is full.
 Decoding, the handler, encoding a reply and settling run on the thread that got the delivery, and only there.
 So does everything the delivery leaves behind: a timer, a plain `tokio::spawn`, a continuation, the timer of a [`retry_after`](../messages/retry-after.md) copy.
-[`MainRuntime`](api:ruststream::runtime::MainRuntime) is the way back to the app's runtime: `Ctx<MainRuntime>` as a parameter, or [`main_runtime()`](api:ruststream::runtime::Context::main_runtime) on the context of a manual body.
+[`MainRuntime`](api:ruststream::runtime::MainRuntime) is the way back to the app's runtime: `Ctx<MainRuntime>` as a parameter, or [`main_runtime()`](api:ruststream::runtime::MainRuntimeExt::main_runtime) on the context of a manual body.
 [`spawn`](api:ruststream::runtime::MainRuntime::spawn) starts a task there, and [`run`](api:ruststream::runtime::MainRuntime::run) runs one there and returns its output; what they send must be `Send`.
 `threads(n, by_key)` sends each key to a fixed thread, so a key keeps its order, as with [workers](./workers.md).
 At the mount site the setting is [`.threads(n)`](api:ruststream::runtime::SubscriberSettings::threads) or [`.threads_by_key(n)`](api:ruststream::runtime::SubscriberSettings::threads_by_key); it fills the position `workers` fills, so a subscription takes one of them.
