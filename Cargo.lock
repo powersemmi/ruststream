@@ -1608,6 +1608,7 @@ dependencies = [
  "ruststream-core",
  "ruststream-runtime",
  "static_cell",
+ "stats_alloc",
 ]
 
 [[package]]
@@ -1951,6 +1952,12 @@ checksum = "0530892bb4fa575ee0da4b86f86c667132a94b74bb72160f58ee5a4afec74c23"
 dependencies = [
  "portable-atomic",
 ]
+
+[[package]]
+name = "stats_alloc"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c0e04424e733e69714ca1bbb9204c1a57f09f5493439520f9f68c132ad25eec"
 
 [[package]]
 name = "strsim"

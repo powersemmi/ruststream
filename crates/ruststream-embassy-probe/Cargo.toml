@@ -32,6 +32,9 @@ embassy-futures = "0.1.2"
 # process-wide mutex.
 critical-section = { version = "1.1", features = ["std"] }
 static_cell = "2.1"
+# Counts the process's allocations so the test reads what one delivery made: four atomic
+# counters per allocation, in the test binary only.
+stats_alloc = "0.1.10"
 
 # The executor owns the thread it runs on, and the mock clock is one per process, so the test is a
 # binary of its own with no test harness: it passes when the executor returns.
