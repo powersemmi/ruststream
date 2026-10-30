@@ -7,8 +7,9 @@
 
 use alloc::sync::Arc;
 use core::error::Error as StdError;
+use core::pin::pin;
 
-use futures::future::join;
+use futures::future::{Either, join, select};
 use ruststream_core::LocalBroker;
 use ruststream_runtime::{BoxError, Identity, LocalPipeline, Router, RunRoutes};
 use thiserror::Error;
@@ -447,7 +448,12 @@ where
             outcome
         };
         let serve = async {
-            opened.run(LoopSignal::new(control), &state, &host).await;
+            let signal = LoopSignal::new(control);
+            let loops = pin!(opened.run(signal, &state, &host));
+            // The loops end on the stop, or on their own once every stream has ended.
+            if let Either::Right(((), loops)) = select(loops, pin!(signal.watch())).await {
+                loops.await;
+            }
             // Every loop has ended, so nothing detaches more work: the host finishes what it holds.
             host.close();
         };
