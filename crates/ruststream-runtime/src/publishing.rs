@@ -21,16 +21,20 @@ use tracing::warn;
 use crate::codec::Codec;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Origin, PipelinePublish, publishing_to};
-use crate::{IncomingMessage, OutgoingMessage, PayloadForm, Publisher};
+use crate::{
+    IncomingMessage, LocalIncomingMessage, LocalPublisher, OutgoingMessage, PayloadForm, Publisher,
+};
 
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
+use super::handler::LocalHandler;
 use super::handler::{Handler, HandlerOutcome};
 use super::input::{InputKind, Materialize};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{
-    ForReply, PublishContext, PublishIdentity, PublishPipeline, PublishTransform, TypedPublisher,
+    ForReply, PublishContext, PublishIdentity, PublishPipeline, PublishTransform, SendThrough,
+    TypedPublisher,
 };
 use super::typed::{refused, unmaterialized};
 
@@ -88,6 +92,25 @@ pub(crate) trait EncodeReply: Send + Sync {
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
         Cx: Sync,
         PP: PublishPipeline;
+
+    /// Delivers `self` through the typed reply stack of a publisher of either family: the body
+    /// of [`deliver_typed`](Self::deliver_typed), whose future is `Send` exactly where the
+    /// stack's is.
+    #[doc(hidden)]
+    fn deliver_local<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
+        &self,
+        stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
+        name: &'e str,
+        pipeline: &PP,
+        cx: &PublishContext<'_, Cx>,
+        encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
+    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>>
+    where
+        Leaf: LocalPublisher,
+        ReplyCodec: Codec,
+        Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
+        Cx: Sync,
+        PP: SendThrough<Leaf>;
 }
 
 impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
@@ -107,6 +130,26 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
         Cx: Sync,
         PP: PublishPipeline,
+    {
+        stack.publish(name, self, pipeline, cx, encode)
+    }
+
+    // `Send` exactly where the stack's future is: the multi-thread path proves it there.
+    #[allow(clippy::future_not_send)]
+    fn deliver_local<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
+        &self,
+        stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
+        name: &'e str,
+        pipeline: &PP,
+        cx: &PublishContext<'_, Cx>,
+        encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
+    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>>
+    where
+        Leaf: LocalPublisher,
+        ReplyCodec: Codec,
+        Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
+        Cx: Sync,
+        PP: SendThrough<Leaf>,
     {
         stack.publish(name, self, pipeline, cx, encode)
     }
@@ -131,6 +174,26 @@ where
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
         Cx: Sync,
         PP: PublishPipeline,
+    {
+        stack.publish_pair(name, &self.headers, &self.body, pipeline, cx, encode)
+    }
+
+    // `Send` exactly where the stack's future is: the multi-thread path proves it there.
+    #[allow(clippy::future_not_send)]
+    fn deliver_local<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
+        &self,
+        stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
+        name: &'e str,
+        pipeline: &PP,
+        cx: &PublishContext<'_, Cx>,
+        encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
+    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>>
+    where
+        Leaf: LocalPublisher,
+        ReplyCodec: Codec,
+        Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
+        Cx: Sync,
+        PP: SendThrough<Leaf>,
     {
         stack.publish_pair(name, &self.headers, &self.body, pipeline, cx, encode)
     }
@@ -180,28 +243,69 @@ where
     // publisher. The axis only ever reports its error, so nothing downstream matches on it.
     type Error = Box<dyn error::Error + Send + Sync>;
 
-    async fn deliver<'e>(
+    fn deliver<'e>(
         &self,
         name: &'e str,
         reply: &'e Reply,
         _pipeline: &Pipeline,
         _cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> Result<(), Self::Error> {
-        // The dispatch loop's buffer, for a reply that writes its bytes rather than holding
-        // them; a reply that already holds them leaves it untouched. Which of the two a
-        // publisher is handed follows its own declaration, as on every other publish position.
-        let payload = <Bare::Payload as PayloadForm>::serialized(reply, encode)?;
-        let msg = OutgoingMessage::with_payload(name, payload);
-        #[cfg(feature = "testing")]
-        let recorded = PipelinePublish::capture::<_, Bare::Options>(&msg, None);
-        let sent = self.publish(msg, None).await;
-        #[cfg(feature = "testing")]
-        if sent.is_ok() {
-            recorded.sent().await;
-        }
-        sent.map_err(Into::into)
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        deliver_bare(self, name, reply, encode)
     }
+}
+
+/// The byte wiring of a local chain: a bare publisher of either family sends a
+/// [`Serialized`](super::Serialized) reply's own bytes, unencoded.
+impl<Reply, DeliveryCx, Pipeline, Bare> LocalReplySink<Reply, DeliveryCx, Pipeline> for &Bare
+where
+    Reply: super::Serialized,
+    Bare: LocalPublisher,
+{
+    type Payload = Bare::Payload;
+    type Error = Box<dyn error::Error + Send + Sync>;
+
+    // `Send` exactly where the stack's future is: the multi-thread path proves it there.
+    #[allow(clippy::future_not_send)]
+    fn deliver<'e>(
+        &self,
+        name: &'e str,
+        reply: &'e Reply,
+        _pipeline: &Pipeline,
+        _cx: &PublishContext<'_, DeliveryCx>,
+        encode: <Self::Payload as PayloadForm>::Encode<'e>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        deliver_bare(*self, name, reply, encode)
+    }
+}
+
+/// Sends a [`Serialized`](super::Serialized) reply's bytes through a bare publisher of either
+/// family: the body of both byte wirings, whose future is `Send` exactly where the publisher's
+/// is.
+#[allow(clippy::future_not_send)]
+async fn deliver_bare<'e, Reply, Bare>(
+    bare: &Bare,
+    name: &'e str,
+    reply: &'e Reply,
+    encode: <Bare::Payload as PayloadForm>::Encode<'e>,
+) -> Result<(), Box<dyn error::Error + Send + Sync>>
+where
+    Reply: super::Serialized,
+    Bare: LocalPublisher,
+{
+    // The dispatch loop's buffer, for a reply that writes its bytes rather than holding
+    // them; a reply that already holds them leaves it untouched. Which of the two a
+    // publisher is handed follows its own declaration, as on every other publish position.
+    let payload = <Bare::Payload as PayloadForm>::serialized(reply, encode)?;
+    let msg = OutgoingMessage::with_payload(name, payload);
+    #[cfg(feature = "testing")]
+    let recorded = PipelinePublish::capture::<_, Bare::Options>(&msg, None);
+    let sent = bare.publish(msg, None).await;
+    #[cfg(feature = "testing")]
+    if sent.is_ok() {
+        recorded.sent().await;
+    }
+    sent.map_err(Into::into)
 }
 
 /// A subscriber definition that produces a reply to publish.
@@ -364,6 +468,80 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
     meta
 }
 
+/// The reply-wiring axis as the delivery body reaches it: a sink of either family, whose
+/// future is `Send` exactly where the sink's is.
+///
+/// The multi-thread runner's wirings reach it through [`SendSink`], which forwards to their
+/// [`ReplySink`]; a local chain's typed stack implements it itself.
+pub(crate) trait LocalReplySink<Reply, DeliveryCx, Pipeline> {
+    /// See [`ReplySink::Payload`].
+    type Payload: PayloadForm;
+
+    /// See [`ReplySink::Error`].
+    type Error: fmt::Display;
+
+    /// See [`ReplySink::deliver`].
+    fn deliver<'e>(
+        &self,
+        name: &'e str,
+        reply: &'e Reply,
+        pipeline: &Pipeline,
+        cx: &PublishContext<'_, DeliveryCx>,
+        encode: <Self::Payload as PayloadForm>::Encode<'e>,
+    ) -> impl Future<Output = Result<(), Self::Error>>;
+}
+
+/// A [`ReplySink`] lent to the shared body: the forwarding call proves its future `Send`.
+pub(crate) struct SendSink<'w, Wiring>(&'w Wiring);
+
+impl<Reply, DeliveryCx, Pipeline, Wiring> LocalReplySink<Reply, DeliveryCx, Pipeline>
+    for SendSink<'_, Wiring>
+where
+    Wiring: ReplySink<Reply, DeliveryCx, Pipeline>,
+{
+    type Payload = Wiring::Payload;
+    type Error = Wiring::Error;
+
+    #[inline]
+    fn deliver<'e>(
+        &self,
+        name: &'e str,
+        reply: &'e Reply,
+        pipeline: &Pipeline,
+        cx: &PublishContext<'_, DeliveryCx>,
+        encode: <Self::Payload as PayloadForm>::Encode<'e>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        self.0.deliver(name, reply, pipeline, cx, encode)
+    }
+}
+
+/// The encoded wiring of a local chain: the reply serializes through the stack's codec, travels
+/// its transforms, and leaves through the chain's pipeline to a publisher of either family.
+impl<Reply, DeliveryCx, Pipeline, Leaf, ReplyCodec, Transforms>
+    LocalReplySink<Reply, DeliveryCx, Pipeline> for &TypedPublisher<Leaf, ReplyCodec, Transforms>
+where
+    Reply: EncodeReply,
+    DeliveryCx: Sync,
+    Pipeline: SendThrough<Leaf>,
+    Leaf: LocalPublisher,
+    ReplyCodec: Codec,
+    Transforms: PublishTransform<ForReply<DeliveryCx>, Leaf::Options>,
+{
+    type Payload = Leaf::Payload;
+    type Error = Box<dyn error::Error + Send + Sync>;
+
+    fn deliver<'e>(
+        &self,
+        name: &'e str,
+        reply: &'e Reply,
+        pipeline: &Pipeline,
+        cx: &PublishContext<'_, DeliveryCx>,
+        encode: <Self::Payload as PayloadForm>::Encode<'e>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        reply.deliver_local(self, name, pipeline, cx, encode)
+    }
+}
+
 /// The [`Handler`] built from a [`PublishingDef`]: decode, run, deliver the reply, ack.
 ///
 /// `DecodeCodec` decodes the incoming message; the reply leaves through the [`ReplySink`]
@@ -371,12 +549,7 @@ pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> Ha
 /// definition's [`reply_name`](PublishingDef::reply_name). A handler returning `Err(result)`
 /// skips the publish; a failed reply publish nacks the incoming message with `requeue = true`,
 /// so the broker redelivers it instead of silently losing the reply.
-pub(crate) struct PublishingHandler<
-    Def: PublishingDef,
-    DecodeCodec,
-    Wiring,
-    Pipeline = PublishIdentity,
-> {
+pub struct PublishingHandler<Def: PublishingDef, DecodeCodec, Wiring, Pipeline = PublishIdentity> {
     pub(crate) def: Def,
     pub(crate) codec: DecodeCodec,
     pub(crate) publisher: Wiring,
@@ -414,11 +587,34 @@ where
     Pipeline: Send + Sync,
     State: Send + Sync,
 {
-    async fn handle(
+    fn handle(
         &self,
         msg: &Msg,
         ctx: &mut Context<'_, Def::Context, State>,
-    ) -> HandlerOutcome {
+    ) -> impl Future<Output = HandlerOutcome> + Send {
+        self.handle_with(SendSink(&self.publisher), msg, ctx)
+    }
+}
+
+impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline>
+    PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>
+{
+    /// Decodes, runs the definition, publishes its reply through `sink` and settles: the
+    /// handler's body, for a delivery and a sink of either family.
+    // `Send` exactly where the delivery and the sink are: the `Handler` impl proves it there.
+    #[allow(clippy::future_not_send)]
+    pub(crate) async fn handle_with<Msg, State, Sink>(
+        &self,
+        sink: Sink,
+        msg: &Msg,
+        ctx: &mut Context<'_, Def::Context, State>,
+    ) -> HandlerOutcome
+    where
+        Msg: LocalIncomingMessage,
+        Def: PublishingCall<State>,
+        Def::Input: Materialize<DecodeCodec, Msg>,
+        Sink: LocalReplySink<Def::Reply, Def::Context, Pipeline>,
+    {
         // The publishing path: decode, run, publish the reply, then ack. A body's `Err` outcome
         // (with any `and_after` continuation it carries) settles the delivery directly. What the
         // delivery materialized into lives on this stack frame and the handler borrows its view.
@@ -450,13 +646,11 @@ where
         // did not; `BytesMut::new` allocates nothing, so the second costs the first nothing.
         let mut own = BytesMut::new();
         let encode = ctx.take_encode_buffer().unwrap_or(&mut own);
-        let slot = <<Wiring as ReplySink<Def::Reply, Def::Context, Pipeline>>::Payload as PayloadForm>::encode_slot(
+        let slot = <<Sink as LocalReplySink<Def::Reply, Def::Context, Pipeline>>::Payload as PayloadForm>::encode_slot(
             encode,
         );
         let pubcx = PublishContext::new(ctx.name(), ctx.delivery_headers(), ctx.cx_ref());
-        let publish = self
-            .publisher
-            .deliver(name, &reply, &self.pipeline, &pubcx, slot);
+        let publish = sink.deliver(name, &reply, &self.pipeline, &pubcx, slot);
         #[cfg(feature = "testing")]
         let publish = publishing_to(self.origin, publish);
         if let Err(err) = publish.await {
@@ -471,6 +665,31 @@ where
             return HandlerOutcome::retry();
         }
         HandlerOutcome::ack()
+    }
+}
+
+/// A [`PublishingHandler`] for a runner whose deliveries stay on one thread: the same body,
+/// reached through [`LocalHandler`], publishing its reply through the local chain's wiring.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct LocalPublishing<Publishing>(pub(crate) Publishing);
+
+impl<Msg, Def, DecodeCodec, Wiring, Pipeline, State> LocalHandler<Msg, Def::Context, State>
+    for LocalPublishing<PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>>
+where
+    Msg: LocalIncomingMessage,
+    Def: PublishingCall<State>,
+    Def::Input: Materialize<DecodeCodec, Msg>,
+    for<'w> &'w Wiring: LocalReplySink<Def::Reply, Def::Context, Pipeline>,
+{
+    // The delivery stays on the thread that polls it, which is what this twin is for.
+    #[allow(clippy::future_not_send)]
+    fn handle(
+        &self,
+        msg: &Msg,
+        ctx: &mut Context<'_, Def::Context, State>,
+    ) -> impl Future<Output = HandlerOutcome> {
+        self.0.handle_with(&self.0.publisher, msg, ctx)
     }
 }
 

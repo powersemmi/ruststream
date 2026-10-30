@@ -12,6 +12,8 @@
 
 use core::cell::Cell;
 use core::convert::Infallible;
+use core::error::Error;
+use core::fmt;
 use core::future::ready;
 use core::num::NonZeroUsize;
 use core::pin::Pin;
@@ -21,8 +23,9 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, Receiver};
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, BrokerMoves, HeaderMap, LocalBatchSubscriber, LocalBroker, LocalConnectedBroker,
-    LocalIncomingMessage, LocalSubscriber, LocalSubscriptionSource,
+    AckError, BrokerMoves, HeaderMap, Lend, LocalBatchSubscriber, LocalBroker,
+    LocalConnectedBroker, LocalDefaultPublish, LocalIncomingMessage, LocalPublishPolicy,
+    LocalPublisher, LocalSubscriber, LocalSubscriptionSource, OutgoingMessage, PairError,
 };
 use ruststream_runtime::IntoSource;
 
@@ -44,6 +47,12 @@ impl Frame {
     #[must_use]
     pub fn new(payload: &[u8]) -> Option<Self> {
         heapless::Vec::from_slice(payload).ok().map(Self)
+    }
+
+    /// The bytes the frame carries.
+    #[must_use]
+    pub fn payload(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -214,6 +223,8 @@ fn count(counter: &Cell<u32>) {
 pub struct FrameBroker {
     frames: &'static Frames,
     bursts: &'static Frames,
+    requests: &'static Frames,
+    replies: &'static Frames,
     settled: &'static Settlements,
 }
 
@@ -227,8 +238,26 @@ impl FrameBroker {
         Self {
             frames,
             bursts: frames,
+            requests: frames,
+            replies: frames,
             settled,
         }
+    }
+
+    /// The same broker with `requests` as the channel its request subscription reads.
+    #[must_use]
+    pub const fn with_requests(mut self, requests: &'static Frames) -> Self {
+        self.requests = requests;
+        self
+    }
+
+    /// The same broker with `replies` as the channel its publisher sends to.
+    ///
+    /// Until it is given one, its publisher sends to `frames`.
+    #[must_use]
+    pub const fn with_replies(mut self, replies: &'static Frames) -> Self {
+        self.replies = replies;
+        self
     }
 
     /// The same broker with `bursts` as the channel its burst subscription reads.
@@ -244,6 +273,8 @@ impl FrameBroker {
 pub struct FrameConnected {
     frames: &'static Frames,
     bursts: &'static Frames,
+    requests: &'static Frames,
+    replies: &'static Frames,
     settled: &'static Settlements,
 }
 
@@ -255,6 +286,8 @@ impl LocalBroker for FrameBroker {
         ready(Ok(FrameConnected {
             frames: self.frames,
             bursts: self.bursts,
+            requests: self.requests,
+            replies: self.replies,
             settled: self.settled,
         }))
     }
@@ -273,7 +306,15 @@ impl LocalConnectedBroker for FrameConnected {
 #[derive(Debug, Clone, Copy)]
 pub struct FrameSource {
     name: &'static str,
-    bursts: bool,
+    lane: Lane,
+}
+
+/// Which of the broker's channels a [`FrameSource`] reads.
+#[derive(Debug, Clone, Copy)]
+enum Lane {
+    Frames,
+    Bursts,
+    Requests,
 }
 
 impl FrameSource {
@@ -282,14 +323,26 @@ impl FrameSource {
     pub const fn new(name: &'static str) -> Self {
         Self {
             name,
-            bursts: false,
+            lane: Lane::Frames,
         }
     }
 
     /// The subscription to the broker's burst channel (see [`FrameBroker::with_bursts`]).
     #[must_use]
     pub const fn bursts(name: &'static str) -> Self {
-        Self { name, bursts: true }
+        Self {
+            name,
+            lane: Lane::Bursts,
+        }
+    }
+
+    /// The subscription to the broker's request channel (see [`FrameBroker::with_requests`]).
+    #[must_use]
+    pub const fn requests(name: &'static str) -> Self {
+        Self {
+            name,
+            lane: Lane::Requests,
+        }
     }
 }
 
@@ -307,10 +360,10 @@ impl LocalSubscriptionSource<FrameConnected> for FrameSource {
         self,
         connected: &FrameConnected,
     ) -> impl Future<Output = Result<FrameSubscriber, Infallible>> {
-        let frames = if self.bursts {
-            connected.bursts
-        } else {
-            connected.frames
+        let frames = match self.lane {
+            Lane::Frames => connected.frames,
+            Lane::Bursts => connected.bursts,
+            Lane::Requests => connected.requests,
         };
         ready(Ok(FrameSubscriber::new(frames, connected.settled)))
     }
@@ -321,5 +374,75 @@ impl IntoSource for FrameSource {
 
     fn into_source(self) -> Self {
         self
+    }
+}
+
+/// The broker's one publish policy: frames sent to its reply channel.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FramePublish;
+
+impl LocalPublishPolicy<FrameConnected> for FramePublish {
+    type Live = FramePublisher;
+
+    fn pair(
+        self,
+        connected: &FrameConnected,
+    ) -> impl Future<Output = Result<FramePublisher, PairError>> {
+        ready(Ok(FramePublisher {
+            replies: connected.replies,
+        }))
+    }
+}
+
+impl LocalDefaultPublish for FrameConnected {
+    type Policy = FramePublish;
+}
+
+/// What a frame publish fails with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FramePublishError {
+    /// The payload is longer than a frame holds.
+    TooLong,
+    /// The reply channel holds [`DEPTH`] frames already.
+    Full,
+}
+
+impl fmt::Display for FramePublishError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLong => write!(f, "the payload is longer than {PAYLOAD} bytes"),
+            Self::Full => write!(f, "the reply channel holds {DEPTH} frames"),
+        }
+    }
+}
+
+impl Error for FramePublishError {}
+
+/// The live publisher: copies the payload it is lent into a frame on the reply channel, so a
+/// publish allocates nothing.
+#[derive(Debug, Clone, Copy)]
+pub struct FramePublisher {
+    replies: &'static Frames,
+}
+
+impl LocalPublisher for FramePublisher {
+    // The frame copies the bytes inline, so the client keeps nothing of the buffer.
+    type Payload = Lend;
+    type Error = FramePublishError;
+    type Options = ();
+
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_, &[u8]>,
+        _options: Option<&()>,
+    ) -> impl Future<Output = Result<(), FramePublishError>> {
+        let sent = Frame::new(msg.payload())
+            .ok_or(FramePublishError::TooLong)
+            .and_then(|frame| {
+                self.replies
+                    .try_send(frame)
+                    .map_err(|_| FramePublishError::Full)
+            });
+        ready(sent)
     }
 }

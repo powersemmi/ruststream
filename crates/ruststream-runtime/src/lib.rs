@@ -275,6 +275,9 @@ pub use crate::bindable::{Bindable, Bound, BrokerRegistration};
 pub use publish::message_of;
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
+pub use publishing::{LocalPublishing, PublishingHandler};
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
 pub use redelivery::{
     CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere, RetryPairing,
     RetrySetup, ScopeDelivery, open_mounted_subscriber,

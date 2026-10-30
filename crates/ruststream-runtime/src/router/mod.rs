@@ -16,12 +16,14 @@
 mod builder;
 mod builders;
 mod fold;
+mod fold_publish;
 mod form_eager;
 mod form_out;
 mod form_publish;
 pub mod forms;
 mod include;
 mod local;
+mod local_publish;
 mod mount;
 mod mount_sink;
 mod routes;
@@ -129,11 +131,11 @@ type BatchInjectedRouter<B, S, D, C, E, RC, RL, RP, R> =
 /// source `S` (decoded with `C`, replying through the policy `RP` and resolving its startup
 /// injections against the attachment `E`) onto `R` produces. See [`IncludedRouter`] for the
 /// carried parameters.
-type PublishingRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
+pub(crate) type PublishingRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
     Router<B, (PublishingRoute<S, D, C, Reply, E>, R), RC, RL, RP>;
 
 /// The byte-reply counterpart of [`PublishingRouter`].
-type RawReplyRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
+pub(crate) type RawReplyRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
     Router<B, (RawReplyRoute<S, D, C, Reply, E>, R), RC, RL, RP>;
 
 /// The router that mounting a batch publishing

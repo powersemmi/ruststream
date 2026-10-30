@@ -123,6 +123,27 @@ pub struct OpenedRoute<Sub, Body, Cx, Layers> {
     policies: FailurePolicies,
 }
 
+impl<Sub, Body, Cx, Layers> OpenedRoute<Sub, Body, Cx, Layers> {
+    /// An opened subscription, ready to run.
+    pub(super) const fn new(
+        subscriber: Sub,
+        handler: Body,
+        layers: Layers,
+        name: Arc<str>,
+        delivery: Delivery<Cx>,
+        policies: FailurePolicies,
+    ) -> Self {
+        Self {
+            subscriber,
+            handler,
+            layers,
+            name,
+            delivery,
+            policies,
+        }
+    }
+}
+
 impl<B: LocalBroker, State> OpenLayered<B, State> for () {
     type Opened<Layers: LocalBlanketLayer + Clone> = ();
 

@@ -344,19 +344,17 @@ impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Routes,
     >
     where
-        B: Broker,
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
+        Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
         Def: PublishingDef + 'static,
-        Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
+        Def::Input: Materialize<DecodeCodec, LocalSourceMessage<B, Source>>,
         // Not `Codec`: `Materialize` already carries what the input asks of it, and a byte
         // input asks for nothing - the route is built with `()` there.
         DecodeCodec: 'static,
         ReplySource: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def)
-            .materialized_with::<Def::Input, DecodeCodec, SourceMessage<B, Source>>()
-            .describing::<Connected<B>, _>(&source);
+            .materialized_with::<Def::Input, DecodeCodec, LocalSourceMessage<B, Source>>()
+            .describing::<LocalConnected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         self.with_route(PublishingRoute {
@@ -394,19 +392,17 @@ impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Routes,
     >
     where
-        B: Broker,
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: Send + 'static,
+        Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
         Def: PublishingDef + 'static,
-        Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
+        Def::Input: Materialize<DecodeCodec, LocalSourceMessage<B, Source>>,
         // Not `Codec`: `Materialize` already carries what the input asks of it, and a byte
         // input asks for nothing - the route is built with `()` there.
         DecodeCodec: 'static,
         ReplySource: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def)
-            .materialized_with::<Def::Input, DecodeCodec, SourceMessage<B, Source>>()
-            .describing::<Connected<B>, _>(&source);
+            .materialized_with::<Def::Input, DecodeCodec, LocalSourceMessage<B, Source>>()
+            .describing::<LocalConnected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         self.with_route(RawReplyRoute {
