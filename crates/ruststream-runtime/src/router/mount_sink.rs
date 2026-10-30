@@ -80,4 +80,40 @@ pub trait MountSink<B: Broker, State> {
         Sub::Batch: 'static,
         Cx: Send + Sync + 'static,
         Body: BatchHandler<Sub::Batch, Cx, State> + 'static;
+    /// A subscription whose handler the mount built in full, layers included: the runner takes
+    /// it now and shares it with the loop it spawns once `open` has opened the subscriber. The
+    /// rest is [`push_workers`](Self::push_workers).
+    fn push_mounted<Open, Opening, Sub, Body, Cx>(
+        &mut self,
+        meta: HandlerMetadata,
+        policies: FailurePolicies,
+        workers: Workers,
+        handler: Body,
+        open: Open,
+    ) where
+        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
+        Opening: Future<Output = Result<(Sub, Delivery<Cx>), BoxError>> + Send,
+        Sub: Subscriber + Send + 'static,
+        Sub::Message: Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        State: Send + Sync + 'static,
+        Body: Handler<Sub::Message, Cx, State> + 'static;
+
+    /// The batch counterpart of [`push_mounted`](Self::push_mounted).
+    fn push_batch_mounted<Open, Opening, Sub, Body, Cx>(
+        &mut self,
+        meta: HandlerMetadata,
+        policies: FailurePolicies,
+        workers: Workers,
+        batch_size: NonZeroUsize,
+        handler: Body,
+        open: Open,
+    ) where
+        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
+        Opening: Future<Output = Result<(Sub, Delivery<Cx>), BoxError>> + Send,
+        Sub: BatchSubscriber + Send + 'static,
+        Sub::Message: Send + 'static,
+        Sub::Batch: 'static,
+        Cx: Send + Sync + 'static,
+        Body: BatchHandler<Sub::Batch, Cx, State> + 'static;
 }

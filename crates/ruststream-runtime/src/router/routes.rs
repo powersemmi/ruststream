@@ -13,7 +13,7 @@ use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
 use crate::handler::Handler;
 use crate::metadata::HandlerMetadata;
-use crate::middleware::{BlanketLayer, Identity};
+use crate::middleware::BlanketLayer;
 use crate::publish::{PublishIdentity, PublishPipeline};
 use crate::redelivery::{
     CopyPathAddress, CopyPathPairing, RetryPairing, RetrySetup, ScopeDelivery, open_subscription,
@@ -434,16 +434,13 @@ where
         let setup = setup.resolve::<S::Copies, _>(retry_pipeline, &mut meta);
         let source = self.source;
         // Applied here, at mount: the runner's own application below is the identity.
-        sink.push_workers(
+        sink.push_mounted(
             meta,
             self.policies,
             self.workers,
-            Identity,
+            handler,
             async move |connected: Arc<Connected<B>>, scope: Arc<ScopeDelivery>, name: Arc<str>| {
-                let (subscriber, delivery) =
-                    open_subscription::<B, _, _>(source, connected.as_ref(), &scope, &name, setup)
-                        .await?;
-                Ok((subscriber, handler, delivery))
+                open_subscription::<B, _, _>(source, connected.as_ref(), &scope, &name, setup).await
             },
         );
     }
@@ -480,16 +477,14 @@ where
         let mut meta = self.meta;
         let setup = setup.resolve::<S::Copies, _>(retry_pipeline, &mut meta);
         let (source, handler) = (self.source, self.handler);
-        sink.push_batch::<_, _, _, _, Cx>(
+        sink.push_batch_mounted::<_, _, _, _, Cx>(
             meta,
             self.policies,
             self.workers,
             self.batch_size,
+            handler,
             async move |connected: Arc<Connected<B>>, scope: Arc<ScopeDelivery>, name: Arc<str>| {
-                let (subscriber, delivery) =
-                    open_subscription::<B, _, _>(source, connected.as_ref(), &scope, &name, setup)
-                        .await?;
-                Ok((subscriber, handler, delivery))
+                open_subscription::<B, _, _>(source, connected.as_ref(), &scope, &name, setup).await
             },
         );
     }

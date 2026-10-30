@@ -10,8 +10,8 @@ use crate::dispatch::{spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_worke
 use crate::shutdown::Shutdown;
 use crate::{
     BatchHandler, BatchSubscriber, BlanketLayer, BoxError, BoxFuture, Broker, BuildContext,
-    Connected, DispatchFailure, FailurePolicies, Handler, HandlerMetadata, MountSink, Opened,
-    ScopeDelivery, Subscriber, Workers, open_mounted_subscriber,
+    Connected, Delivery, DispatchFailure, FailurePolicies, Handler, HandlerMetadata, MountSink,
+    Opened, ScopeDelivery, Subscriber, Workers, open_mounted_subscriber,
 };
 
 /// A deferred registration: given the broker's connected form (produced by
@@ -171,6 +171,93 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> MountSink<B, State>
                     Ok(spawn_batch_dispatch::<_, _, Cx, _>(
                         subscriber,
                         Arc::new(handler),
+                        shutdown,
+                        name,
+                        state,
+                        Arc::new(Hosted::new(delivery, tasks)),
+                        failure,
+                        workers,
+                        batch_size,
+                    )?)
+                })
+            },
+        ));
+        self.handlers.push(meta);
+    }
+
+    // See the trait: each part is the registration's own.
+    #[allow(clippy::too_many_arguments)]
+    fn push_mounted<Open, Opening, Sub, Body, Cx>(
+        &mut self,
+        meta: HandlerMetadata,
+        policies: FailurePolicies,
+        workers: Workers,
+        handler: Body,
+        open: Open,
+    ) where
+        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
+        Opening: Future<Output = Result<(Sub, Delivery<Cx>), BoxError>> + Send,
+        Sub: Subscriber + Send + 'static,
+        Sub::Message: Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        State: Send + Sync + 'static,
+        Body: Handler<Sub::Message, Cx, State> + 'static,
+    {
+        // Shared at mount, so starting the app allocates only what the subscription itself is.
+        let handler = Arc::new(handler);
+        let name: Arc<str> = Arc::from(meta.name.as_ref());
+        self.starters.push(Box::new(
+            move |connected: Arc<Connected<B>>, state, scope, tasks, shutdown| {
+                Box::pin(async move {
+                    let (subscriber, delivery) = open(connected, scope, Arc::clone(&name)).await?;
+                    let failure = DispatchFailure::new(policies, shutdown.clone());
+                    Ok(spawn_dispatch_workers(
+                        subscriber,
+                        handler,
+                        shutdown,
+                        name,
+                        state,
+                        Arc::new(Hosted::new(delivery, tasks)),
+                        failure,
+                        workers,
+                    )?)
+                })
+            },
+        ));
+        self.handlers.push(meta);
+    }
+
+    // See the trait: each part is the registration's own.
+    #[allow(clippy::too_many_arguments)]
+    fn push_batch_mounted<Open, Opening, Sub, Body, Cx>(
+        &mut self,
+        meta: HandlerMetadata,
+        policies: FailurePolicies,
+        workers: Workers,
+        batch_size: NonZeroUsize,
+        handler: Body,
+        open: Open,
+    ) where
+        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
+        Opening: Future<Output = Result<(Sub, Delivery<Cx>), BoxError>> + Send,
+        Sub: BatchSubscriber + Send + 'static,
+        Sub::Message: Send + 'static,
+        Sub::Batch: 'static,
+        Cx: Send + Sync + 'static,
+        Body: BatchHandler<Sub::Batch, Cx, State> + 'static,
+    {
+        // See `push_mounted`.
+        let handler = Arc::new(handler);
+        let name: Arc<str> = Arc::from(meta.name.as_ref());
+        self.starters.push(Box::new(
+            move |connected: Arc<Connected<B>>, state, scope, tasks, shutdown| {
+                Box::pin(async move {
+                    let (subscriber, delivery) = open(connected, scope, Arc::clone(&name)).await?;
+                    let failure = DispatchFailure::new(policies, shutdown.clone());
+                    // Turbofish: see `push_batch`.
+                    Ok(spawn_batch_dispatch::<_, _, Cx, _>(
+                        subscriber,
+                        handler,
                         shutdown,
                         name,
                         state,
