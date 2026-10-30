@@ -17,7 +17,18 @@ export CARGO_BUILD_WARNINGS := env("CARGO_BUILD_WARNINGS", "deny")
 # What the benchmarks are built with: the production surface of a service that consumes JSON over
 # the in-memory broker, and nothing else. `testing` in particular is a compile error in the
 # benchmarks - it compiles a recording branch into every delivery.
-bench_features := "memory,macros,json"
+bench_features := "memory,macros,json,tokio"
+
+# The two runtimes, `tokio` and `embassy`, exclude each other, so no build enables every feature.
+# Each runtime has its set instead: the tokio set is every feature of the facade but `embassy`,
+# and the embassy set is every feature that builds beside it.
+tokio_set := "asyncapi,cbor,cli,conformance,json,logging,macros,memory,metrics,msgpack,otel,poll-diagnostics,testing,tokio"
+embassy_set := "cbor,embassy,json,macros,memory,msgpack"
+
+# What a workspace leg enables. A name without a package turns that feature on in every member
+# that has it, so each member builds with every feature the tokio set reaches. The memory crate's
+# local bus builds beside its tokio bus, so it joins the tokio legs and their coverage.
+workspace_features := tokio_set + ",ruststream-memory/embassy"
 
 # The scenarios that count instructions and allocations, one benchmark file each. A run against a
 # baseline holds the gated ones to an instruction limit; the ungated one is measured and reported,
@@ -30,16 +41,18 @@ default: check
 
 check:
     cargo fmt --all -- --check
-    # The benchmarks are left out of the all-features legs on purpose: they are built with the
+    # The benchmarks are left out of the workspace legs on purpose: they are built with the
     # production feature set, and the harness feature is a compile error in them. Their own leg
     # follows.
-    cargo clippy --workspace --lib --bins --tests --examples --all-features -- -D warnings
+    cargo clippy --workspace --lib --bins --tests --examples --features {{ workspace_features }} \
+        -- -D warnings
     # No clippy here: this feature combination has clippy lints of its own that no gate has ever
     # run, and cleaning them is not what a benchmark change is for.
     cargo check --benches --no-default-features --features {{ bench_features }}
-    cargo check --workspace --lib --bins --tests --examples --all-features
-    # The probe always asks for `macros` and `json`, and a workspace build unifies a dependency's
-    # features across members, so the reduced legs leave it out and check it on its own.
+    cargo check --workspace --lib --bins --tests --examples --features {{ workspace_features }}
+    # The probe always asks for `macros`, `json` and `tokio`, and a workspace build unifies a
+    # dependency's features across members, so the reduced legs leave it out and check it on its
+    # own.
     cargo check --workspace --exclude ruststream-no-std-probe --no-default-features
     # The codec-free build. A codec is optional, so the self-carrying lanes
     # (`Serialized` / `Deserialized`) and the typed publish entry point over them must stand with
@@ -65,16 +78,38 @@ check:
     RUSTFLAGS="" cargo build -p ruststream-runtime-embassy --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream-memory --no-default-features --features embassy \
         --target thumbv7em-none-eabihf
+    # The embassy runtime: the facade with the embassy set, where every target that needs tokio
+    # names it and drops out, then the embedded runner and the local bus with their tests.
+    cargo clippy -p ruststream --all-targets --no-default-features --features {{ embassy_set }} \
+        -- -D warnings
+    cargo clippy -p ruststream-runtime-embassy -p ruststream-memory --all-targets \
+        --no-default-features --features embassy -- -D warnings
+    # The embassy set keeps tokio out of the facade's dependency graph.
+    tree="$(cargo tree -p ruststream --no-default-features --features {{ embassy_set }} \
+        -e normal -i tokio)"; \
+    if [ -n "$tree" ]; then \
+        echo "error: the embassy set pulls tokio into the facade:" >&2; echo "$tree" >&2; exit 1; \
+    fi
+    # Both runtimes at once are a compile error that names them.
+    if out="$(cargo check -p ruststream --features embassy 2>&1)"; then \
+        echo "error: the facade built with both runtimes" >&2; exit 1; \
+    fi; \
+    grep -qF 'the `tokio` and `embassy` features select the runtime and exclude each other; enable one' \
+        <<< "$out" || { echo "$out" >&2; exit 1; }
     # Rustdoc sees what rustc cannot: broken intra-doc links and redundant targets. CI gates on
     # it, so a link to an item a refactor removed must fail here rather than three jobs later.
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --features {{ workspace_features }} --no-deps
     # The shared delivery body also documents without the tokio runner's feature, the way a crate
     # on another runtime builds it: a link to an item that feature gates must not break there.
     RUSTDOCFLAGS="-D warnings" cargo doc -p ruststream-runtime --no-deps \
         --features json,msgpack,cbor,asyncapi,metrics,otel,testing,poll-diagnostics
     # The types the public API of each published crate names from its dependencies, as CI checks
-    # them: the facade, and each crate behind it where its items are defined.
-    for manifest in Cargo.toml crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do \
+    # them: the facade with each runtime, and each crate behind it where its items are defined.
+    cargo +nightly-2026-03-20 check-external-types --features {{ tokio_set }} \
+        --manifest-path Cargo.toml --config external-types.toml
+    cargo +nightly-2026-03-20 check-external-types --no-default-features \
+        --features {{ embassy_set }} --manifest-path Cargo.toml --config external-types.toml
+    for manifest in crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do \
         cargo +nightly-2026-03-20 check-external-types --all-features \
             --manifest-path "$manifest" --config external-types.toml || exit 1; \
     done
@@ -82,17 +117,20 @@ check:
     # selects, which is what CI records them with. REQUIRE_UI_TESTS turns a skip into a failure,
     # so a lost opt-in shows here. `ui_codec_free` holds the errors that exist only where no
     # codec resolves, so it builds without one.
-    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --all-features --test suite ui::
+    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --features {{ tokio_set }} --test suite ui::
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features macros,memory,testing --test suite ui_codec_free::
 
 test:
     # The examples' tests are modules of one test binary, so `--tests` builds none per example;
     # `check` compiles every example on its own. `--tests` leaves the doc examples out, so they
     # run on their own line.
-    cargo test --workspace --all-features --tests
-    cargo test --workspace --all-features --doc
+    cargo test --workspace --features {{ workspace_features }} --tests
+    cargo test --workspace --features {{ workspace_features }} --doc
+    # The embassy runtime's host tests: the embedded runner and the local bus.
+    cargo test -p ruststream-runtime-embassy -p ruststream-memory --no-default-features \
+        --features embassy
     # The reduced-feature legs CI runs, in CI's order. A module compiled only with a feature off
-    # is invisible to the all-features run above, so an API a refactor removed can survive there
+    # is invisible to the workspace run above, so an API a refactor removed can survive there
     # until CI says otherwise: `codec_free_lanes` and `ui_codec_free` build only where no codec
     # resolves, and `lane_traits_without_macros` only where the derives are gone. The UI
     # snapshots themselves run in `check`; the run here is what compiles the module.
@@ -108,7 +146,7 @@ test:
     # facade alone, since the crates behind it build their doc examples against the facade with
     # the features those examples name, which a workspace run would turn on for the facade too.
     cargo test -p ruststream
-    # Both feature edges, because an all-features run hides a doc example that names a
+    # Both feature edges, because a run with every feature hides a doc example that names a
     # feature-gated item without gating itself.
     cargo test -p ruststream --doc
     cargo test -p ruststream --doc --no-default-features
@@ -197,15 +235,15 @@ deny:
 # raise it here and in ci.yml together if coverage climbs further. Needs
 # cargo-llvm-cov: cargo install cargo-llvm-cov --locked
 cov:
-    cargo llvm-cov --workspace --all-features --fail-under-lines 95
+    cargo llvm-cov --workspace --features {{ workspace_features }} --fail-under-lines 95
 
 # HTML coverage report at target/llvm-cov/html/index.html, for finding the
 # uncovered lines the gate complains about.
 cov-html:
-    cargo llvm-cov --workspace --all-features --html
+    cargo llvm-cov --workspace --features {{ workspace_features }} --html
 
 build:
-    cargo build --workspace --release --all-features
+    cargo build --workspace --release --features {{ workspace_features }}
 
 clean:
     cargo clean
