@@ -6,5 +6,7 @@ pub use ruststream_runtime::testing::{
     PublishedAssertions, SubscriberAssertions, TestError, TestableBroker, TestableRegistration,
     expect_published,
 };
-#[cfg(feature = "testing")]
+#[cfg(all(feature = "testing", feature = "embassy"))]
+pub use ruststream_testing::embedded::{BrokerHandle, InjectSink, TestApp};
+#[cfg(all(feature = "testing", feature = "tokio"))]
 pub use ruststream_testing::{BrokerHandle, InjectSink, TestApp, TestBrokers};

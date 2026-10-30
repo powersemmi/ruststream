@@ -981,18 +981,21 @@ features = [
 [features]
 default = ["json", "tokio"]
 # The runtime: `tokio` or `embassy`. The two exclude each other, and every feature that runs on
-# tokio's runner, the harness and the observability layers among them, turns `tokio` on.
+# tokio's runner, the observability layers among them, turns `tokio` on. The harness, `testing`,
+# drives the app of whichever runtime the build selects.
 tokio = [
     "dep:ruststream-runtime-tokio",
     "dep:ruststream-cli",
     "ruststream-macros?/tokio",
     "ruststream-memory?/std",
+    "ruststream-testing?/tokio",
 ]
 embassy = [
     "dep:ruststream-runtime-embassy",
     "dep:tracing",
     "ruststream-macros?/embassy",
     "ruststream-memory?/embassy",
+    "ruststream-testing?/embassy",
 ]
 memory = ["dep:ruststream-memory"]
 conformance = ["tokio", "testing", "dep:ruststream-conformance"]
@@ -1028,13 +1031,14 @@ poll-diagnostics = [
     "ruststream-runtime-tokio/poll-diagnostics",
     "ruststream-observability?/poll-diagnostics",
 ]
+# The harness of the runtime the build selects: `TestApp` over the tokio app or over the embedded
+# app on the host.
 testing = [
-    "tokio",
     "dep:inventory",
     "dep:ruststream-testing",
     "ruststream-core/testing",
     "ruststream-runtime/testing",
-    "ruststream-runtime-tokio/testing",
+    "ruststream-runtime-tokio?/testing",
     "ruststream-memory?/testing",
 ]
 otel = ["tokio", "dep:ruststream-observability", "ruststream-observability/otel"]
