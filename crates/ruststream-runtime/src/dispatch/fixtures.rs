@@ -1,9 +1,9 @@
 //! The test doubles the dispatch loop's tests and the settle tests share.
 
-use std::future::ready;
+use alloc::sync::Arc;
+use core::future::ready;
+use core::sync::atomic::{AtomicU8, Ordering};
 use std::io;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
 
 use bytes::Bytes;
 

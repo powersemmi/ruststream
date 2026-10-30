@@ -17,8 +17,8 @@
 //!   a registration commits only when no `MissingSlot` remains, so a forgotten binding is a
 //!   compile error naming the slot.
 
-use std::marker::PhantomData;
-use std::time::Duration;
+use core::marker::PhantomData;
+use core::time::Duration;
 
 use crate::metadata::OutgoingMessageMetadata;
 use crate::publish::{DestinationUse, Names, Reads};

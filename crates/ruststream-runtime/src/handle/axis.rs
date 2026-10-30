@@ -25,7 +25,7 @@
 //! axis without carrying a borrow.
 
 use core::marker::PhantomData;
-use std::{error, fmt};
+use core::{error, fmt};
 
 use serde::de::DeserializeOwned;
 

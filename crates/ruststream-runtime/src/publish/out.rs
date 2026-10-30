@@ -17,7 +17,7 @@
 //! [`PublishLayer`](super::PublishLayer) is generic over the publisher it runs for, so it cannot
 //! name an options type.
 
-use std::error::Error as StdError;
+use core::error::Error as StdError;
 
 use thiserror::Error;
 

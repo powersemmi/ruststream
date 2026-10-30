@@ -7,10 +7,10 @@
 //! call. Which positions exist at a call site is decided by the message type's
 //! [`OutgoingDestination`] declaration, so an under-specified publish does not compile.
 
-use std::borrow::Cow;
-use std::error::Error as StdError;
-use std::fmt;
-use std::marker::PhantomData;
+use alloc::borrow::Cow;
+use core::error::Error as StdError;
+use core::fmt;
+use core::marker::PhantomData;
 
 use bytes::BytesMut;
 use serde::Serialize;

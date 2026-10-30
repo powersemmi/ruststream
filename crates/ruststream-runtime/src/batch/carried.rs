@@ -6,11 +6,11 @@
 //! body returned. The value at index `i` belongs to the `i`-th delivery; a delivery past the end
 //! of the slice carries no value and settles by the decode-failure policy.
 
-use std::any::type_name;
-use std::fmt;
-use std::marker::PhantomData;
 #[cfg(feature = "testing")]
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::any::type_name;
+use core::fmt;
+use core::marker::PhantomData;
 
 use tracing::{error, warn};
 

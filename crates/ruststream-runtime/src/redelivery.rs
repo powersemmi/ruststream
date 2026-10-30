@@ -8,12 +8,12 @@
 //! ([`SubscriptionSource::Copies`](crate::SubscriptionSource::Copies)), so the mount site is told
 //! at compile time and nothing here refuses to start over an address.
 
-use std::any::type_name;
-use std::borrow::Cow;
-use std::fmt;
-use std::future::ready;
-use std::num::NonZeroU32;
-use std::sync::Arc;
+use alloc::borrow::Cow;
+use alloc::sync::Arc;
+use core::any::type_name;
+use core::fmt;
+use core::future::ready;
+use core::num::NonZeroU32;
 
 use thiserror::Error;
 use tracing::info;

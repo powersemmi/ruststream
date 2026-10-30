@@ -1,9 +1,9 @@
 //! The definition chain behind [`subscriber`]: the value the constructor returns, the steps it
 //! grows by, and the `.build()` seal the mount machinery accepts.
 
-use std::borrow::Cow;
-use std::fmt;
-use std::marker::PhantomData;
+use alloc::borrow::Cow;
+use core::fmt;
+use core::marker::PhantomData;
 
 use crate::settings::{CapsBatches, SubscriberBuilder};
 

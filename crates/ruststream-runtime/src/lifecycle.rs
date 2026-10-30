@@ -9,9 +9,10 @@
 //! connected broker travels from the erased `connect` to the typed starters through a shared
 //! slot ([`ConnectedSlot`]), populated before any subscription opens.
 
+use alloc::sync::Arc;
 #[cfg(feature = "testing")]
-use std::any::{Any, TypeId};
-use std::{any::type_name, error::Error as StdError, fmt, pin::Pin, sync::Arc};
+use core::any::{Any, TypeId};
+use core::{any::type_name, error::Error as StdError, fmt, pin::Pin};
 
 use crate::bindable::ConnectedSlot;
 use crate::{Broker, ConnectedBroker};
