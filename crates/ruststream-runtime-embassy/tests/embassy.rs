@@ -110,7 +110,7 @@ impl Handle<Reading<'_>> for CountReadings {
 
 /// The app's routes, as a device service declares them.
 fn routes(seen: &'static AtomicU32) -> impl OpenRoutes<FrameBroker> {
-    Router::<FrameBroker>::new()
+    Router::<FrameBroker, _, _, _, _>::local()
         .include(subscriber(FrameSource::new("readings"), CountReadings { seen }).build())
 }
 
