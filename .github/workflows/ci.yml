@@ -232,6 +232,21 @@ jobs:
           } >> "$RUNNER_TEMP/smoke/Cargo.toml"
           cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"
 
+      # The contract without `std`: a Cortex-M4F with an allocator, and a Cortex-M0+, which has no
+      # compare-and-swap. There `bytes` takes `extra-platforms`, and the library build takes
+      # `portable-atomic`'s single-core option in place of the one a firmware binary chooses.
+      - name: Build the contract for no_std targets
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        env:
+          CARGO_BUILD_WARNINGS: deny
+        run: |
+          rustup target add thumbv7em-none-eabihf thumbv6m-none-eabi
+          cargo build --locked -p ruststream-core --no-default-features --features alloc \
+            --target thumbv7em-none-eabihf
+          RUSTFLAGS="--cfg portable_atomic_unsafe_assume_single_core" cargo build --locked \
+            -p ruststream-core --no-default-features --features alloc,bytes/extra-platforms \
+            --target thumbv6m-none-eabi
+
       # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
       # It also rewrites the manifests while it runs, which is why this is the last step and the
       # one without --locked. A feature that leaves code unreached on its own fails on the

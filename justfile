@@ -43,6 +43,15 @@ check:
     # (`Serialized` / `Deserialized`) and the typed publish entry point over them must stand with
     # no codec feature at all; only encoding and decoding may demand one.
     cargo check --workspace --no-default-features --features testing,memory,macros
+    # The contract builds without `std`, for a Cortex-M4F with an allocator and for a Cortex-M0+,
+    # which has no compare-and-swap: there `bytes` takes `extra-platforms`, and the library build
+    # takes `portable-atomic`'s single-core option in place of the one a firmware binary chooses.
+    # RUSTFLAGS is set so that a host's own flags (a target CPU, a linker) stay off these targets.
+    rustup target add thumbv7em-none-eabihf thumbv6m-none-eabi
+    RUSTFLAGS="" cargo build -p ruststream-core --no-default-features --features alloc \
+        --target thumbv7em-none-eabihf
+    RUSTFLAGS="--cfg portable_atomic_unsafe_assume_single_core" cargo build -p ruststream-core \
+        --no-default-features --features alloc,bytes/extra-platforms --target thumbv6m-none-eabi
     # Rustdoc sees what rustc cannot: broken intra-doc links and redundant targets. CI gates on
     # it, so a link to an item a refactor removed must fail here rather than three jobs later.
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
