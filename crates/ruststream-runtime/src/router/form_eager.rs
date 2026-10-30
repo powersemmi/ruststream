@@ -5,13 +5,15 @@
 //! [`codec`](crate::SubscriberBuilder::codec) override wins, else the chain's codec or
 //! the default applies).
 
-use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, Connected, LocalBroker, LocalSubscriptionSource, SubscriptionSource,
+};
 
 use crate::batch::{BatchDef, SourceCarriesBatch};
 use crate::input::{Carried, DecodeWith, Materialize, Provided};
 use crate::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::subscriber_def::SubscriberDef;
-use crate::{SourceMessage, SourceSubscriber};
+use crate::{LocalConnected, LocalSourceMessage, SourceSubscriber};
 
 use super::builder::Router;
 use super::mount::RouterMount;
@@ -22,16 +24,15 @@ use super::{
 /// What a definition's single-delivery input decodes with when it mounts on a router of broker
 /// `B` with the surface codec `RouteCodec`.
 type SoloDecoder<Def, B, RouteCodec> =
-    DefMountCodec<Def, <Def as SubscriberDef>::Input, RouteCodec, Connected<B>>;
+    DefMountCodec<Def, <Def as SubscriberDef>::Input, RouteCodec, LocalConnected<B>>;
 
 impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for forms::Subscribing
 where
-    B: Broker + 'static,
-    Def: SubscriberDef + MountsWith<<Def as SubscriberDef>::Input, RouteCodec, Connected<B>>,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: Send + 'static,
-    Def::Input: Materialize<SoloDecoder<Def, B, RouteCodec>, SourceMessage<B, Def::Source>>,
+    B: LocalBroker + 'static,
+    Def: SubscriberDef + MountsWith<<Def as SubscriberDef>::Input, RouteCodec, LocalConnected<B>>,
+    Def::Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
+    Def::Input: Materialize<SoloDecoder<Def, B, RouteCodec>, LocalSourceMessage<B, Def::Source>>,
     Def::Handler: 'static,
 {
     type Out = IncludedRouter<
@@ -58,10 +59,9 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, F>
     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>
     for forms::RawSubscribing
 where
-    B: Broker + 'static,
+    B: LocalBroker + 'static,
     Def: SubscriberDef<Input = Provided<F>>,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: Send + 'static,
+    Def::Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
     Def::Handler: 'static,
     F: Send + Sync + 'static,
 {

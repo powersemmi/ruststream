@@ -508,9 +508,9 @@ where
 ///
 /// The delivery body runs every handler through this trait, so a runner whose executor polls on
 /// one thread (a device's embassy executor, a thread-per-core runtime) hosts handlers that hold
-/// `Rc`s or `RefCell`s across an await. Every [`Handler`] is one through a forwarding impl, and a
-/// runner that spawns onto a multi-thread runtime bounds on [`Handler`], so the future it spawns
-/// is still proven `Send`.
+/// `Rc`s or `RefCell`s across an await. An `Arc` of every [`Handler`] is one through a
+/// forwarding impl: a runner that spawns onto a multi-thread runtime shares its handler in an
+/// `Arc` and bounds on [`Handler`], so the future it spawns is still proven `Send`.
 ///
 /// Import it only where a handler is written for such a runner: with both traits in scope, a
 /// call to `handle` on a value that implements both is ambiguous.
@@ -548,14 +548,16 @@ pub trait LocalHandler<M: ?Sized, C = (), S = ()> {
 }
 
 // A forwarding call: the future is the `Handler`'s own, so a runner that knows its handler is a
-// `Handler` proves the body's future `Send` through this impl.
-impl<M: ?Sized, C, S, H> LocalHandler<M, C, S> for H
+// `Handler` proves the body's future `Send` through this impl. It is the `Arc` and not every
+// `Handler` that forwards, so an adapter generic over its message implements `LocalHandler`
+// directly without overlapping a `Handler` impl some other crate could write for it.
+impl<M: ?Sized, C, S, H> LocalHandler<M, C, S> for Arc<H>
 where
     H: Handler<M, C, S>,
 {
     #[inline]
     fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = HandlerOutcome> {
-        <H as Handler<M, C, S>>::handle(self, msg, ctx)
+        <H as Handler<M, C, S>>::handle(&**self, msg, ctx)
     }
 }
 
