@@ -116,10 +116,8 @@ pub trait RouteSubscription<B: Broker> {
 /// Every registration of this router says where its retry copies go.
 ///
 /// A route says so unless it bound the deferred-retry position on a descriptor that addresses
-/// nothing and then named no destination. `.build()` asks for it; a scope's guard does not,
-/// because it commits when the statement ends and the chain has no state to fail on before the
-/// `.to(name)` is written - there the startup refusal reports it instead. Machinery; never named
-/// directly.
+/// nothing and then named no destination. The chain asks for it where it commits, at `.build()`
+/// or at the next `.include(..)`. Machinery; never named directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "this registration does not say where its retry copies go",

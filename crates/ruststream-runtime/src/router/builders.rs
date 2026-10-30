@@ -17,8 +17,8 @@
 //! A [`Router`](super::Router) is a consuming builder, so the chain commits through an explicit
 //! terminal, [`build`](RouterWith::build): `Drop` cannot return the router the registration grew
 //! into. A chain left unfinished never becomes a router, so a forgotten `.build()` is a compile
-//! error at the next use. A [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) drives the same chain
-//! through a guard that commits when the statement ends.
+//! error at the next use. A [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) opens the same chain,
+//! and the app commits it through the same terminal once the `with_broker` closure returns it.
 
 use alloc::borrow::Cow;
 use core::fmt;
@@ -342,9 +342,8 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// owes. The other way is a transform that names the destination per delivery, and the two
     /// are mutually exclusive, as a declared reply and a naming transform are.
     ///
-    /// A `Router` chain refuses a registration that names neither at `.build()`. A scope's
-    /// registration commits when the statement ends, so there the refusal is the subscription's
-    /// at startup.
+    /// The chain refuses a registration that names neither where it commits, at `.build()` or
+    /// at the next `.include(..)`, on a router and on a broker scope alike.
     ///
     /// A name given here is a channel the registration sends to, and the generated `AsyncAPI`
     /// document reports it with a `send` operation. The address a descriptor takes its own
@@ -485,7 +484,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     where
         Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
     {
-        self.commit_chain()
+        self.attach.commit(self.def, self.router)
     }
 
     /// Commits the registration and mounts the next definition: `.build().include(def)`, so a
@@ -537,20 +536,6 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         Next::Form: RouterMount<<Attach as RouterCommit<Mount, R, Def>>::Out, Next::Settings>,
 {
         <Next::Form as RouterMount<_, Next::Settings>>::begin(def.declare(), self.build())
-    }
-
-    /// Commits the chain without asking whether every registration named a destination.
-    ///
-    /// A scope's guard commits when the statement ends, so the chain there passes through no
-    /// state that could carry the question: `.to(name)` is written after `out_retry(policy)`, and
-    /// by then the guard would already have had to be committable. That surface takes the startup
-    /// refusal instead, and this is the commit it uses.
-    #[doc(hidden)]
-    pub fn commit_chain(self) -> <Attach as RouterCommit<Mount, R, Def>>::Out
-    where
-        Attach: RouterCommit<Mount, R, Def>,
-    {
-        self.attach.commit(self.def, self.router)
     }
 }
 
