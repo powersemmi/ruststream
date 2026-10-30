@@ -34,7 +34,9 @@ use crate::slot::{
 };
 
 use super::builder::RouterBroker;
+use super::mount::RouterMount;
 use super::routes::RetryDestinationsDeclared;
+use crate::settings::Declared;
 
 /// One commit strategy of a mount chain's attachment, keyed by its `Mount` token and the chain
 /// it grew on. Machinery; never named directly.
@@ -60,6 +62,9 @@ pub trait RouterCommit<Mount, R, Def>: Sized {
 /// each unbound until its `.out(marker, ..)`). `Last` is the position the chain named most
 /// recently, which is what the steps after it ride; it starts as
 /// [`NoOutBound`](crate::NoOutBound), where those steps do not exist.
+///
+/// The chain commits with [`build`](Self::build), or with the next
+/// [`include`](Self::include), which commits it and mounts the next definition.
 #[must_use = "a router registration is only added once .build() commits it"]
 pub struct RouterWith<Mount, R, Def, Attach, Last = NoOutBound> {
     def: Def,
@@ -480,6 +485,55 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
     {
         self.commit_chain()
+    }
+
+    /// Commits the registration and mounts the next definition: `.build().include(def)`, so a
+    /// mount with steps is followed directly by the next one.
+    ///
+    /// It exists where [`build`](Self::build) does, so a chain with an unbound position still
+    /// does not compile.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Order { id: u64 }
+    /// # #[derive(serde::Serialize, ruststream::Outgoing)]
+    /// # struct Receipt { id: u64 }
+    ///
+    /// #[subscriber("orders", reply("receipts"))]
+    /// async fn confirm(order: &Order) -> Receipt {
+    ///     Receipt { id: order.id }
+    /// }
+    ///
+    /// #[subscriber("audit")]
+    /// async fn audit(order: &Order) -> HandlerOutcome {
+    ///     let _ = order.id;
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn routes() -> impl RouterDef<MemoryBroker> {
+    ///     Router::<MemoryBroker>::new()
+    ///         .include(confirm)
+    ///         .out_reply(Publish)
+    ///         .include(audit)
+    /// }
+    /// # }
+    /// ```
+    #[allow(clippy::type_complexity)] // the next mount's own output; an alias would hide it
+    pub fn include<Next>(
+        self,
+        def: Next,
+    ) -> <Next::Form as RouterMount<<Attach as RouterCommit<Mount, R, Def>>::Out, Next::Settings>>::Out
+    where
+        Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
+        Next: Declared,
+        Next::Form: RouterMount<<Attach as RouterCommit<Mount, R, Def>>::Out, Next::Settings>,
+{
+        <Next::Form as RouterMount<_, Next::Settings>>::begin(def.declare(), self.build())
     }
 
     /// Commits the chain without asking whether every registration named a destination.
