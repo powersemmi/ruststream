@@ -27,7 +27,7 @@ impl Clock for EmbassyClock {
 }
 
 /// A clock the runner's own timers wait on: it names the deadline a delay ends at.
-pub(crate) trait Schedule: Clock<Instant: Send, Sleep: Unpin> + Send + Sync {
+pub(crate) trait Schedule: Clock<Sleep: Unpin> {
     /// The instant `after` from now.
     fn deadline(&self, after: Duration) -> Self::Instant;
 }
