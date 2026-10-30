@@ -564,6 +564,20 @@ mod tests {
     }
 
     #[test]
+    fn a_publish_to_the_redelivery_address_reaches_the_subscription() {
+        block_on(async {
+            let connected = LocalMemoryBroker::<4>::new().connect().await.unwrap();
+            let source = LocalMemorySource::new("cmd");
+            let address = source.redelivery_address(&connected).await.unwrap();
+            let mut subscriber = source.subscribe(&connected).await.unwrap();
+            publish(&connected, address.as_str(), b"again").await;
+            let copy = waiting(&mut pin!(subscriber.stream())).unwrap();
+            assert_eq!(copy.payload(), b"again");
+            copy.ack().await.unwrap();
+        });
+    }
+
+    #[test]
     fn a_requeue_after_shutdown_stays_refused_once_the_subscriber_left() {
         block_on(async {
             let (connected, mut subscriber) = open("cmd").await;
