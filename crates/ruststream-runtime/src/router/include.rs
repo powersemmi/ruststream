@@ -6,7 +6,7 @@
 //! [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html). Forms that take a publish policy hand back a
 //! mount chain; because a router is a consuming builder, the chain commits through an explicit
 //! terminal (`.build()`, after an `.out(marker, policy)` per position) and returns the grown
-//! router.
+//! router, or goes straight on to the next `include`, which commits it the same way.
 //!
 //! The subscription source always comes from the definition: `#[subscriber(..)]` takes the
 //! broker's own source expression, builder chain included, and a value constructor takes it as
@@ -23,8 +23,9 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Mounts a `#[subscriber]` definition of any form, on the source the definition names: a
     /// plain or batch handler grows the router directly, a `reply("dest")` or `Out`-taking one
-    /// hands back a mount chain to finish with `.build()`, naming a publish policy per position
-    /// with `.out(Reply, policy)` / `.out(marker, policy)` first.
+    /// hands back a mount chain to finish with `.build()` or with the next `.include(def)`,
+    /// naming a publish policy per position with `.out(Reply, policy)` / `.out(marker, policy)`
+    /// first.
     ///
     /// A batch definition's subscriber must implement
     /// [`BatchSubscriber`](crate::BatchSubscriber) - natively, or through
