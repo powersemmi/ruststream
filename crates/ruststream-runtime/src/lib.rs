@@ -296,6 +296,9 @@ pub use router::{
     RouteSubscription, RouterBroker, RouterCommit, RouterMount, RunRoutes,
 };
 #[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use router::{Dispatched, LocalDispatch, LocalPlanned, LocalRoute, OpenedDispatch, Sequential};
+#[cfg(feature = "alloc")]
 pub use router::{
     IncludeDef, LocalPipeline, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut,
     RouterPublishing, RouterPublishingOut, RouterWith, forms,

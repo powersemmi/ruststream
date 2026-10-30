@@ -16,6 +16,7 @@
 mod builder;
 mod builders;
 mod fold;
+mod fold_plan;
 mod form_eager;
 mod form_out;
 mod form_publish;
@@ -39,6 +40,10 @@ pub use local::LocalPipeline;
 // types (the default attach of a sealed reply definition), so it is public and hidden.
 #[doc(hidden)]
 pub use fold::{OpenLayered, OpenRoutes, OpenedRoute, RunRoutes};
+#[doc(hidden)]
+pub use fold_plan::{
+    Dispatched, LocalDispatch, LocalPlanned, LocalRoute, OpenedDispatch, Sequential,
+};
 #[doc(hidden)]
 pub use mount::DefaultReply;
 pub use mount::IncludeDef;
