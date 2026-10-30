@@ -19,7 +19,7 @@ members = [
 exclude = ["templates"]
 
 [workspace.package]
-version = "0.7.6"
+version = "0.7.7"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
@@ -60,16 +60,16 @@ pin-project-lite = "0.2"
 # Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
 # release for release (a loose range let a partial `cargo update` pair a new core with an old
 # macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
-ruststream-macros = { version = "=0.7.6", path = "crates/ruststream-macros" }
+ruststream-macros = { version = "=0.7.7", path = "crates/ruststream-macros" }
 # The crates the facade re-exports, pinned exactly for the same reason as the macros crate.
-ruststream-core = { version = "=0.7.6", path = "crates/ruststream-core" }
-ruststream-runtime = { version = "=0.7.6", path = "crates/ruststream-runtime" }
-ruststream-memory = { version = "=0.7.6", path = "crates/ruststream-memory" }
-ruststream-asyncapi = { version = "=0.7.6", path = "crates/ruststream-asyncapi" }
-ruststream-observability = { version = "=0.7.6", path = "crates/ruststream-observability" }
-ruststream-testing = { version = "=0.7.6", path = "crates/ruststream-testing" }
-ruststream-cli = { version = "=0.7.6", path = "crates/ruststream-cli" }
-ruststream-conformance = { version = "=0.7.6", path = "crates/ruststream-conformance" }
+ruststream-core = { version = "=0.7.7", path = "crates/ruststream-core" }
+ruststream-runtime = { version = "=0.7.7", path = "crates/ruststream-runtime" }
+ruststream-memory = { version = "=0.7.7", path = "crates/ruststream-memory" }
+ruststream-asyncapi = { version = "=0.7.7", path = "crates/ruststream-asyncapi" }
+ruststream-observability = { version = "=0.7.7", path = "crates/ruststream-observability" }
+ruststream-testing = { version = "=0.7.7", path = "crates/ruststream-testing" }
+ruststream-cli = { version = "=0.7.7", path = "crates/ruststream-cli" }
+ruststream-conformance = { version = "=0.7.7", path = "crates/ruststream-conformance" }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases
 # that were never built against.
