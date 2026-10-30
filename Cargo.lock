@@ -1700,6 +1700,7 @@ dependencies = [
  "embassy-time",
  "futures",
  "futures-core",
+ "hash32",
  "heapless",
  "ruststream-core",
  "ruststream-memory",
