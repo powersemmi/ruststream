@@ -22,13 +22,14 @@ use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream_core::LocalBroker;
 use ruststream_core::LocalIncomingMessage;
+use ruststream_core::{BytesMut, CallerName, OutgoingDestination};
 use ruststream_runtime::{
     Clock, Context, Delivery, DispatchFailure, FailurePolicies, HandlerOutcome, HeadersAtOnce,
     LocalHandler, run_sequential,
 };
 use ruststream_runtime::{
-    Deserialized, Handle, Input, LocalBlanketLayer, OpenRoutes, Router, RunRoutes,
-    SoloDeserialized, SubscriberSettings, subscriber,
+    Deserialized, Handle, Input, LocalBlanketLayer, OpenRoutes, ReplyShape, Router, RunRoutes,
+    Serialized, SerializedReply, SoloDeserialized, SubscriberSettings, WireBytes, subscriber,
 };
 use ruststream_runtime_embassy::frames::{
     Frame, FrameBroker, FrameDelivery, FrameSource, FrameSubscriber, Frames, Settlements,
@@ -77,6 +78,9 @@ struct App {
     /// The batches its batch handler took, and the readings in them.
     batches: AtomicU32,
     batched: AtomicU32,
+    /// The request channel its reply subscription reads, and the channel its replies go to.
+    requests: Frames,
+    replies: Frames,
     ended: Cell<bool>,
 }
 
@@ -171,6 +175,43 @@ impl Handle<[Reading<'_>]> for CountBursts {
     }
 }
 
+/// The app's answer to a request: its own bytes, lent to the publisher as they are.
+struct Pong;
+
+impl Serialized for Pong {
+    type Error = Infallible;
+
+    fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
+        Ok(WireBytes::Own(b"pong"))
+    }
+}
+
+// What `#[derive(Outgoing)]` writes: the mount site names where the reply goes.
+impl OutgoingDestination for Pong {
+    type Form = CallerName;
+}
+
+// The hand-written half of `#[derive(Serialized)]`: the reply leaves as its own bytes.
+impl ReplyShape for Pong {
+    type Body = Self;
+    type Headers = ();
+    type Wire = SerializedReply;
+}
+
+/// The app's request handler: answers every request with a [`Pong`].
+struct Answer;
+
+impl Handle<Reading<'_>, Pong> for Answer {
+    fn handle(
+        &self,
+        _request: &Reading<'_>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<Pong, HandlerOutcome>> + Send {
+        ready(Ok(Pong))
+    }
+}
+
 /// The app's routes, as a device service declares them.
 fn routes(app: &'static App) -> impl OpenRoutes<FrameBroker> {
     let bursts = CountBursts {
@@ -193,6 +234,13 @@ fn routes(app: &'static App) -> impl OpenRoutes<FrameBroker> {
                 .batch(BURST)
                 .build(),
         )
+        .include(
+            subscriber(FrameSource::requests("requests"), Answer)
+                .reply()
+                .to("pongs")
+                .build(),
+        )
+        .build()
 }
 
 /// The app's task: connects the broker, opens every route the router holds and runs them in one
@@ -204,6 +252,8 @@ async fn app(broker: FrameBroker, app: &'static App, host: &'static CountDetache
         .open(&connected)
         .await
         .expect("every route opens");
+    // The task's future is its static storage: embassy keeps it in place, so it is not boxed.
+    #[allow(clippy::large_futures)]
     opened.run(&app.stop, &Arc::new(()), host).await;
     app.ended.set(true);
 }
@@ -380,6 +430,7 @@ async fn check_the_app(app: &App) {
     passed("the router's layer wraps its handlers");
 
     check_the_bursts(app).await;
+    check_the_replies(app).await;
     assert_eq!(allocations, 0, "allocations on the router's delivery path");
     passed("the router's delivery path allocates nothing");
 
@@ -415,6 +466,28 @@ async fn check_the_bursts(app: &App) {
     passed("a batch allocates what the form allocates on any runner");
 }
 
+/// Sends a request to the app's reply subscription, and reads the reply it published.
+async fn check_the_replies(app: &App) {
+    let acked = app.settled.acked();
+    let replying = Region::new(ALLOCATOR);
+    app.requests
+        .send(Frame::new(b"ping").expect("the payload fits a frame"))
+        .await;
+    settle().await;
+    let allocations = replying.change().allocations;
+    let reply = app.replies.try_receive().ok();
+
+    assert_eq!(
+        reply.as_ref().map(Frame::payload),
+        Some(b"pong".as_slice()),
+        "the reply on the reply channel"
+    );
+    assert_eq!(app.settled.acked() - acked, 1, "the request is acked");
+    passed("a reply definition publishes its reply and acks the request");
+    assert_eq!(allocations, 0, "allocations of one request and its reply");
+    passed("a reply through a lending publisher allocates nothing");
+}
+
 /// What one batch of the self-deserializing form allocates on any runner: the deliveries it
 /// collects and the values it builds from them.
 const BATCH_ALLOCATIONS: usize = 2;
@@ -440,6 +513,8 @@ fn main() {
             bursts: Frames::new(),
             batches: AtomicU32::new(0),
             batched: AtomicU32::new(0),
+            requests: Frames::new(),
+            replies: Frames::new(),
             ended: Cell::new(false),
         },
     });
@@ -448,7 +523,9 @@ fn main() {
             let subscriber = FrameSubscriber::new(&probe.frames, &probe.settled);
             spawner.spawn(subscription(subscriber, probe).expect("the subscription task is free"));
             let broker = FrameBroker::new(&probe.app.frames, &probe.app.settled)
-                .with_bursts(&probe.app.bursts);
+                .with_bursts(&probe.app.bursts)
+                .with_requests(&probe.app.requests)
+                .with_replies(&probe.app.replies);
             spawner.spawn(app(broker, &probe.app, &probe.host).expect("the app task is free"));
             spawner.spawn(drive(probe).expect("the driver task is free"));
         },

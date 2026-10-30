@@ -16,7 +16,10 @@ use super::{
 };
 #[cfg(feature = "asyncapi")]
 use crate::bindings::Bindings;
-use crate::{ConnectedBroker, PairError, PublishPolicy, TransactionalPublisher};
+use crate::{
+    ConnectedBroker, LocalConnectedBroker, LocalPublishPolicy, PairError, PublishPolicy,
+    TransactionalPublisher,
+};
 
 /// The publish policy of a byte-for-byte reply, as the mount chain carries it.
 ///
@@ -37,6 +40,24 @@ impl<Policy> RawReplyWiring<Policy> {
 impl<Policy> fmt::Debug for RawReplyWiring<Policy> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawReplyWiring").finish_non_exhaustive()
+    }
+}
+
+impl<Policy> RawReplyWiring<Policy> {
+    /// Pairs the wiring against a connected broker of the local family: the policy's own live
+    /// form, as on the multi-thread runner.
+    ///
+    /// # Errors
+    ///
+    /// What the policy's pairing reports.
+    // Written for a runner that polls on one thread; nothing spawns this future.
+    #[allow(clippy::future_not_send)]
+    pub(crate) async fn pair_local<CB>(self, connected: &CB) -> Result<Policy::Live, PairError>
+    where
+        CB: LocalConnectedBroker,
+        Policy: LocalPublishPolicy<CB>,
+    {
+        self.0.pair(connected).await
     }
 }
 
@@ -382,6 +403,34 @@ where
     #[cfg(feature = "asyncapi")]
     fn reply_address_location(&self) -> Option<&'static str> {
         self.policy.reply_address_location()
+    }
+}
+
+impl<Policy, Enc, PL, BL> ReplyWiring<Policy, Enc, PL, BL, Direct> {
+    /// Pairs the wiring against a connected broker of the local family: the policy's live form
+    /// under the resolved codec and the transform stacks, as on the multi-thread runner.
+    ///
+    /// # Errors
+    ///
+    /// What the policy's pairing reports.
+    // Written for a runner that polls on one thread; nothing spawns this future.
+    #[allow(clippy::future_not_send)]
+    pub(crate) async fn pair_local<CB>(
+        self,
+        connected: &CB,
+    ) -> Result<TypedPublisher<Policy::Live, Enc::Codec, PL, BL>, PairError>
+    where
+        CB: LocalConnectedBroker,
+        Policy: LocalPublishPolicy<CB>,
+        Enc: PublishCodec<Codec: Clone>,
+    {
+        let codec = self.enc.codec().clone();
+        Ok(TypedPublisher::live(
+            self.policy.pair(connected).await?,
+            codec,
+            self.layers,
+            self.batch_layers,
+        ))
     }
 }
 

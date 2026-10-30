@@ -14,7 +14,7 @@ use core::fmt;
 use core::future::ready;
 use core::marker::PhantomData;
 
-use crate::{Broker, Connected, IncomingMessage, PairError};
+use crate::{Broker, Connected, IncomingMessage, LocalBroker, LocalConnected, PairError};
 
 use super::context::Context;
 use super::dispatch::Workers;
@@ -175,6 +175,32 @@ impl<B: Broker, Sub: Sync, Extra: Send> FromStartup<B, Sub, Extra> for () {
     fn resolve(
         _extra: Extra,
         _connected: &Connected<B>,
+        _subscriber: &Sub,
+    ) -> impl Future<Output = Result<Self, PairError>> {
+        ready(Ok(()))
+    }
+}
+
+/// A handler parameter resolved once per subscription at startup, on a broker of the local
+/// family: the [`FromStartup`] a runner that hosts the app on one thread resolves.
+pub(crate) trait LocalFromStartup<B: LocalBroker, Sub, Extra>: Sized {
+    /// Resolves the injected value. See [`FromStartup::resolve`].
+    ///
+    /// # Errors
+    ///
+    /// See [`FromStartup::resolve`].
+    fn resolve_local(
+        extra: Extra,
+        connected: &LocalConnected<B>,
+        subscriber: &Sub,
+    ) -> impl Future<Output = Result<Self, PairError>>;
+}
+
+/// A definition with no injected parameters resolves to nothing on either family.
+impl<B: LocalBroker, Sub, Extra> LocalFromStartup<B, Sub, Extra> for () {
+    fn resolve_local(
+        _extra: Extra,
+        _connected: &LocalConnected<B>,
         _subscriber: &Sub,
     ) -> impl Future<Output = Result<Self, PairError>> {
         ready(Ok(()))
