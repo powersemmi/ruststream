@@ -32,7 +32,7 @@ use crate::{OutgoingMessage, RawMessage};
 
 use super::TestError;
 use super::attribution::{PublishedEntry, RecordedOptions, RuntimePublish, Span};
-use super::hooks::{DueCall, DuePublish, Hooks, PublishTarget, Within};
+use super::hooks::{DueCall, DuePublish, HookRunner, Hooks, PublishTarget, Within};
 
 mod scope;
 
@@ -155,6 +155,19 @@ impl Coordinator {
     #[doc(hidden)]
     #[must_use]
     pub fn new(max_steps: usize) -> Self {
+        Self::with_hooks(max_steps, HookRunner::Thread)
+    }
+
+    /// Creates a coordinator for an app that runs as one future inside the test's own: as
+    /// [`new`](Self::new), and a hook runs inside the future that recorded its event, so the
+    /// test's step that polls the app runs it.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn in_place(max_steps: usize) -> Self {
+        Self::with_hooks(max_steps, HookRunner::InPlace)
+    }
+
+    fn with_hooks(max_steps: usize, runner: HookRunner) -> Self {
         Self {
             inner: Arc::new(Inner {
                 in_flight: AtomicUsize::new(0),
@@ -168,7 +181,7 @@ impl Coordinator {
                 brokers: Mutex::new(Vec::new()),
                 redeliveries: Mutex::new(Vec::new()),
                 timers: Mutex::new(Vec::new()),
-                hooks: Hooks::default(),
+                hooks: Hooks::new(runner),
             }),
         }
     }
@@ -364,6 +377,18 @@ impl Coordinator {
                     .map(|address| (address, scope_id))
             })
             .collect();
+    }
+
+    /// Notes the connected broker at `origin` as the one registered at `scope_id`, for a run whose
+    /// brokers connect one by one and are not `Send`.
+    pub(crate) fn locate_local(&self, origin: Origin, scope_id: usize) {
+        if let Some(address) = origin.address() {
+            self.inner
+                .brokers
+                .lock()
+                .expect("coordinator brokers mutex poisoned")
+                .push((address, scope_id));
+        }
     }
 
     /// The clock as the test starts a publish of its own, for

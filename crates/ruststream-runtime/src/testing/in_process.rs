@@ -12,7 +12,7 @@ use core::fmt;
 use crate::redelivery::ScopeDelivery;
 
 use super::broker::{LocalInProcess, LocalTestableBroker};
-use super::coordinator::{Coordinator, TestHooks};
+use super::coordinator::{Coordinator, Origin, TestHooks};
 
 /// The record of one in-process run of an app that runs as one future, shared by the runner,
 /// which notes each broker it connects, and the harness, which reads them.
@@ -106,6 +106,9 @@ impl InProcessRun {
         connected.install_coordinator(self.coordinator.clone());
         let mut brokers = self.brokers.borrow_mut();
         let scope_id = brokers.len();
+        // A publisher the runtime pairs against this broker names it by this address.
+        self.coordinator
+            .locate_local(Origin::of::<B::Connected>(connected), scope_id);
         let shared: Rc<dyn LocalTestableBroker> = connected.clone();
         brokers.push(RunBroker {
             broker: TypeId::of::<B>(),
