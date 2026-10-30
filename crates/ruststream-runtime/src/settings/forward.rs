@@ -11,6 +11,8 @@
 //! Associated types are named through the wrapped definition rather than through `Self`: the
 //! builder implements every definition form, so a bare `Self::Input` would be ambiguous.
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use crate::ConnectedBroker;

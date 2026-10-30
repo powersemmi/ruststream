@@ -3,6 +3,9 @@
 //! [`PublishedAssertions::on_publish`](super::PublishedAssertions::on_publish)), and how the
 //! harness runs them at the event.
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::any::Any;
 use core::marker::PhantomData;
 use core::pin::Pin;

@@ -11,6 +11,8 @@ use crate::metadata::OutgoingMessageMetadata;
 use crate::router::IncludeDef;
 use crate::slot::{BindSlots, HasSlots, OutSlot};
 use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
+use alloc::string::String;
+use alloc::vec::Vec;
 
 use super::arena::{EntryMarkers, Outs};
 use super::entry::Slot;

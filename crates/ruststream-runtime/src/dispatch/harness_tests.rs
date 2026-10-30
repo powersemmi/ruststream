@@ -3,6 +3,7 @@
 
 use alloc::sync::Arc;
 use alloc::vec;
+use alloc::vec::Vec;
 use core::convert::Infallible;
 use core::future::ready;
 use core::num::NonZeroUsize;

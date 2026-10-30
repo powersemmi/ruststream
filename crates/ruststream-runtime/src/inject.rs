@@ -8,6 +8,8 @@
 //! element-by-element against a matching extra tuple, and a single handler adapter serves
 //! every combination - fully monomorphized, nothing to check on the hot path.
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 use core::future::ready;
 use core::marker::PhantomData;
@@ -367,6 +369,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
     use core::future::ready;
 
     use super::{InjectCall, InjectDef, InjectHandler};
@@ -447,6 +450,7 @@ mod tests {
         use crate::inject::InjectHandler;
         use crate::testkit::delivery::one_delivery;
         use crate::testkit::log_capture::{find, start};
+        use alloc::string::String;
         use ruststream::memory::MemoryBroker;
 
         /// The diagnostic names the subscription and the type that was expected, so the

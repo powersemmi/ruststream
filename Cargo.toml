@@ -39,7 +39,9 @@ bytes = { version = "1", default-features = false }
 # 0.1.3 is the real floor: `Str::from_static`, which is how a constant key costs nothing, arrived
 # there.
 bytes-utils = { version = "0.1.3", default-features = false }
-futures = "0.3"
+# The combinators of the delivery body, which builds without `std`; each crate that needs `std` or
+# the default features names them.
+futures = { version = "0.3", default-features = false }
 # The `Stream` trait the contract names, without the rest of `futures` and without `std`.
 futures-core = { version = "0.3", default-features = false }
 # The ring that feeds each dedicated thread of a `threads(n)` subscription: a preallocated SPSC
@@ -58,7 +60,7 @@ tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "sync", "ti
 tokio-util = { version = "0.7.10", features = ["rt"] }
 # 0.1.29 is the real floor: it is the first release whose own `tracing-core` bound reaches 0.1.21,
 # where `Value` for `Option<T>` landed - the dispatch spans record optional fields.
-tracing = "0.1.29"
+tracing = { version = "0.1.29", default-features = false }
 # The cycle counter the poll-time diagnostics read: `rdtsc` on x86_64 with an invariant TSC, the
 # system counter on aarch64, the monotonic clock elsewhere.
 quanta = "0.13.0"
@@ -78,8 +80,8 @@ heapless = { version = "0.9", default-features = false }
 # macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
 ruststream-macros = { version = "=0.7.7", path = "crates/ruststream-macros" }
 # The crates the facade re-exports, pinned exactly for the same reason as the macros crate.
-ruststream-core = { version = "=0.7.7", path = "crates/ruststream-core" }
-ruststream-runtime = { version = "=0.7.7", path = "crates/ruststream-runtime" }
+ruststream-core = { version = "=0.7.7", path = "crates/ruststream-core", default-features = false }
+ruststream-runtime = { version = "=0.7.7", path = "crates/ruststream-runtime", default-features = false }
 ruststream-runtime-tokio = { version = "=0.7.7", path = "crates/ruststream-runtime-tokio" }
 ruststream-runtime-embassy = { version = "=0.7.7", path = "crates/ruststream-runtime-embassy" }
 ruststream-memory = { version = "=0.7.7", path = "crates/ruststream-memory" }
@@ -995,7 +997,7 @@ otel = ["dep:ruststream-observability", "ruststream-observability/otel"]
 
 [dependencies]
 ruststream-core = { workspace = true, features = ["std"] }
-ruststream-runtime.workspace = true
+ruststream-runtime = { workspace = true, features = ["std"] }
 ruststream-runtime-tokio.workspace = true
 ruststream-memory = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }

@@ -744,6 +744,7 @@ impl<D: Declared> SubscriberSettings for D {}
 #[cfg(test)]
 mod tests {
     use super::{AllOpen, BatchSized, Declared, SubscriberBuilder, SubscriberSettings};
+    use alloc::format;
     // Reading a source's name needs some connected broker to name the impl, and the in-process
     // one is the only broker the core ships. The settings themselves are broker-agnostic, so
     // that one assertion is gated rather than the whole module.

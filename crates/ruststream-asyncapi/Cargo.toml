@@ -16,13 +16,13 @@ readme = "../../README.md"
 all-features = true
 
 [dependencies]
-ruststream-core = { workspace = true, features = ["asyncapi"] }
+ruststream-core = { workspace = true, features = ["std", "asyncapi"] }
 ruststream-runtime = { workspace = true, features = ["asyncapi"] }
 ruststream-runtime-tokio.workspace = true
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde_norway.workspace = true
-tracing.workspace = true
+tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

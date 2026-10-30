@@ -2,6 +2,7 @@
 //! position: `.transform(..)`, `.codec(..)`, policy edits and the transactional reply.
 
 use alloc::borrow::Cow;
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use super::{BindSlot, DestinationOffer, OutSlot, Reply, SlotPos, WithSource};

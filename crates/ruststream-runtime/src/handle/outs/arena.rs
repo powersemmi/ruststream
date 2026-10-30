@@ -1,6 +1,7 @@
 //! The arena itself: the entries a body declared, picked by marker, and the marker tuple an
 //! entry tuple stands for.
 
+use alloc::vec::Vec;
 use core::fmt;
 
 use crate::inject::FromStartup;

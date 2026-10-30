@@ -1,3 +1,10 @@
+// The parent module brings `ToOwned` in for its OpenTelemetry attributes, and the glob below
+// re-exports it there.
+#[cfg(not(feature = "otel"))]
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::string::ToString;
+use alloc::vec;
 use core::future::ready;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;

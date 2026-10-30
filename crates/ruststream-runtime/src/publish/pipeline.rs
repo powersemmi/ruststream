@@ -1,5 +1,6 @@
 //! The publish pipeline: the static layer chain and its opt-in dynamic counterpart.
 
+use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::fmt;
 

@@ -1,8 +1,20 @@
 //! The per-subscriber dispatch loop: pulls messages off one subscriber and invokes its handler
 //! until shutdown is signalled or the stream ends. The runner spawns it, on the runtime it owns.
 
+#[cfg(feature = "testing")]
+use alloc::borrow::ToOwned;
+#[cfg(feature = "std")]
+use alloc::format;
 use alloc::sync::Arc;
+#[cfg(feature = "testing")]
+use alloc::vec;
+#[cfg(feature = "testing")]
+use alloc::vec::Vec;
+#[cfg(feature = "std")]
 use core::any::Any;
+#[cfg(not(feature = "std"))]
+use core::convert::Infallible;
+#[cfg(feature = "std")]
 use core::panic::AssertUnwindSafe;
 use core::pin::Pin;
 use core::task::{Context as TaskContext, Poll};
@@ -10,17 +22,23 @@ use core::task::{Context as TaskContext, Poll};
 #[cfg(feature = "testing")]
 use bytes::Bytes;
 use bytes::BytesMut;
-use futures::{FutureExt, Stream};
+#[cfg(feature = "std")]
+use futures::FutureExt;
+use futures::Stream;
 use tracing::error;
 
 use crate::{BuildContext, HeaderMap, LocalIncomingMessage, LocalSubscriber};
 
 use super::batch::{BatchHandler, TakenBatch};
 use super::context::{Context, FromDelivery};
-use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
+use super::failure::DispatchFailure;
+#[cfg(feature = "std")]
+use super::failure::{FailurePolicy, panic_reason};
+use super::handler::Handler;
+#[cfg(feature = "std")]
+use super::handler::HandlerOutcome;
 #[cfg(doc)]
 use super::handler::HandlerResult;
-use super::handler::{Handler, HandlerOutcome};
 use super::host::{Detach, Halt, ShutdownWait};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
@@ -348,17 +366,21 @@ pub async fn dispatch<H, M, C, St, Signal, Host>(
             ),
         )
         .await;
-        #[cfg(not(feature = "testing"))]
+        #[cfg(all(feature = "std", not(feature = "testing")))]
         let result = observed!(
             delivery,
             AssertUnwindSafe(async { handler.handle(msg, &mut ctx).await }).catch_unwind()
         )
         .await;
+        // Without `std` a panic aborts, so the handler's future runs uncaught.
+        #[cfg(not(feature = "std"))]
+        let result = Ok::<_, Infallible>(observed!(delivery, handler.handle(msg, &mut ctx)).await);
         #[cfg(feature = "testing")]
         let panicked = result.is_err();
         // Resolve into a `HandlerOutcome` regardless of whether the handler panicked.
         let settle = match result {
             Ok(s) => Some(s),
+            #[cfg(feature = "std")]
             Err(payload) => outcome_after_panic(payload.as_ref(), name, failure),
         };
         // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
@@ -426,6 +448,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host>(
     }
 }
 
+#[cfg(feature = "std")]
 /// What a delivery whose handler panicked settles by: the panic policy's settlement, or `None`
 /// where a fail-fast panic tore the service down and left the delivery unsettled (a broker with
 /// redelivery hands it back after the restart).
@@ -547,13 +570,23 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
         ),
     )
     .await;
-    #[cfg(not(feature = "testing"))]
+    #[cfg(all(feature = "std", not(feature = "testing")))]
     let result = observed!(
         delivery,
         AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx, host).await })
             .catch_unwind()
     )
     .await;
+    // Without `std` a panic aborts, so the handler's future runs uncaught.
+    #[cfg(not(feature = "std"))]
+    let result: Result<(), Infallible> = {
+        observed!(
+            delivery,
+            handler.handle_batch(batch, scratch, &mut ctx, host)
+        )
+        .await;
+        Ok(())
+    };
     match result {
         Ok(()) => {
             // As on the single-message path: a batch that registered no hook pays the branch.
@@ -563,6 +596,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
                 }
             }
         }
+        #[cfg(feature = "std")]
         Err(payload) => {
             let reason = panic_reason(payload.as_ref());
             error!(

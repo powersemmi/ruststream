@@ -9,6 +9,9 @@
 //! at compile time and nothing here refuses to start over an address.
 
 use alloc::borrow::Cow;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::sync::Arc;
 use core::any::type_name;
 use core::fmt;

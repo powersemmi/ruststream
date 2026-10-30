@@ -27,7 +27,7 @@ ruststream-runtime = { workspace = true, features = ["testing"] }
 ruststream-runtime-tokio = { workspace = true, features = ["testing"] }
 inventory.workspace = true
 serde = { workspace = true, features = ["std"] }
-tracing.workspace = true
+tracing = { workspace = true, features = ["std", "attributes"] }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-util.workspace = true
 

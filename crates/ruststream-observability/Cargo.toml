@@ -33,11 +33,11 @@ otel = [
 poll-diagnostics = ["ruststream-runtime/poll-diagnostics"]
 
 [dependencies]
-ruststream-core.workspace = true
-ruststream-runtime.workspace = true
+ruststream-core = { workspace = true, features = ["std"] }
+ruststream-runtime = { workspace = true, features = ["std"] }
 ruststream-runtime-tokio.workspace = true
 thiserror = { workspace = true, features = ["std"] }
-tracing.workspace = true
+tracing = { workspace = true, features = ["std", "attributes"] }
 prometheus = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 opentelemetry = { workspace = true, optional = true }

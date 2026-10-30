@@ -19,6 +19,7 @@
 //! of [`handle`](super)).
 
 use crate::handler::HandlerOutcome;
+use alloc::vec::Vec;
 
 use super::axis::{Axis, Input};
 
