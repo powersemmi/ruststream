@@ -18,6 +18,7 @@ mod in_messages;
 mod lanes;
 mod outgoing;
 mod parse;
+mod runtime;
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -218,6 +219,48 @@ use parse::{SubscriberArgs, derive_generics, doc_description};
 /// clauses above are exactly the calls a user would write at the mount site (see
 /// `SubscriberSettings` in the core crate). A setting the attribute names is fixed in the
 /// definition's type and its builder method no longer applies, so the two can never disagree.
+///
+/// # On the embassy runtime
+///
+/// With the facade's `embassy` feature the attribute emits the local forms: the body implements
+/// `LocalHandle` instead of `Handle`, and `Out<impl Publisher>` asks for the `LocalPublisher` of
+/// the board's broker (each publisher capability maps to its `Local` twin). The body's future is
+/// polled on the app's one task, so it may hold values that are not `Send` across an `.await`. A
+/// batch handler takes no `Out` parameter there, and a handler with one does not reply.
+///
+/// ```ignore
+/// use std::rc::Rc;
+///
+/// use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
+/// use ruststream::prelude::*;
+/// use ruststream::runtime::{EmbeddedApp, Mounts};
+///
+/// #[derive(Deserialized)]
+/// struct Level<'a>(&'a [u8]);
+///
+/// #[derive(Outgoing, Serialized)]
+/// #[outgoing(name = "alerts")]
+/// struct Alert(Vec<u8>);
+///
+/// #[derive(OutSlot)]
+/// #[publishes(Alert)]
+/// struct Alerts;
+///
+/// #[subscriber(LocalMemorySource::new("levels"))]
+/// async fn on_level(level: &Level<'_>, Out(alerts): Out<impl Publisher, Alerts>) -> HandlerOutcome {
+///     // Held across the publish: the future is not `Send`, and on this runtime it need not be.
+///     let seen = Rc::new(level.0.to_vec());
+///     match alerts.message(&Alert(seen.to_vec())).publish().await {
+///         Ok(()) => HandlerOutcome::ack(),
+///         Err(_) => HandlerOutcome::retry(),
+///     }
+/// }
+///
+/// #[ruststream::app]
+/// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
+///     EmbeddedApp::new().with_broker(bus, |b| b.include(on_level).out(Alerts, LocalMemoryPublish))
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as SubscriberArgs);
