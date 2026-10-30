@@ -10,13 +10,14 @@ use core::marker::PhantomData;
 
 use crate::batch::BatchDef;
 use crate::input::{Materialize, Provided};
+use crate::lifecycle::BoxError;
 use crate::middleware::Identity;
-use crate::publish::PublishIdentity;
+use crate::publish::{Outgoing, PublishIdentity, SendThrough};
 use crate::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::subscriber_def::SubscriberDef;
 use crate::{
-    LocalBatchSubscriber, LocalBroker, LocalConnected, LocalSourceMessage, LocalSourceSubscriber,
-    LocalSubscriptionSource,
+    LocalBatchSubscriber, LocalBroker, LocalConnected, LocalPublisher, LocalSourceMessage,
+    LocalSourceSubscriber, LocalSubscriptionSource, PayloadForm,
 };
 
 use super::builder::Router;
@@ -104,6 +105,23 @@ impl<B: LocalBroker + 'static> Router<B, (), (), Identity, LocalPipeline> {
             pipeline: LocalPipeline(PublishIdentity),
             _broker: PhantomData,
         }
+    }
+}
+
+// A local chain's replies and slot publishes go straight to the broker: the publish layers of
+// the multi-thread runner's app do not reach it.
+impl<P: LocalPublisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
+    // The publisher's own future, which is `Send` exactly where the publisher's is.
+    #[allow(clippy::future_not_send)]
+    async fn send_through<'a>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        send: &'a P,
+        options: Option<&'a P::Options>,
+    ) -> Result<(), BoxError> {
+        // The broker is the last reader of this message, as in `PublishIdentity`.
+        let msg = <P::Payload as PayloadForm>::leaving(out);
+        send.publish(msg, options).await.map_err(BoxError::from)
     }
 }
 
