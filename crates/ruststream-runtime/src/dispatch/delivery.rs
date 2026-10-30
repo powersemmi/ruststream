@@ -311,8 +311,8 @@ mod tests {
 
     use bytes::BytesMut;
 
-    use super::super::dispatch;
     use super::super::fixtures::{PlainMessage, RejectingPublisher, Settlement};
+    use super::super::{HeadersOnDemand, dispatch};
     use super::*;
     use crate::HeaderMap;
     use crate::context::Context;
@@ -363,6 +363,7 @@ mod tests {
             &delivery,
             &host,
             &failure,
+            HeadersOnDemand,
         );
         size_of_val(&dispatching)
     }

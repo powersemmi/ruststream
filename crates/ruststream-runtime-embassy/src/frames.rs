@@ -2,15 +2,14 @@
 //! heap between the publisher and the settlement.
 //!
 //! The channel locks with `NoopRawMutex`, so it is not `Sync`, and the subscriber that holds its
-//! receiver is not `Send`. The subscriber and its delivery therefore implement only the `Local*`
-//! contract twins, and the body reaches them through those alone. The delivery is `Sync`, as the
-//! body requires of a message it lends to the handler: it holds its frame and a reference to the
-//! subscription's atomic counters.
+//! receiver is not `Send`. The delivery counts its settlement in the subscription's cells, so it
+//! is neither `Send` nor `Sync`. The subscriber and its delivery therefore implement only the
+//! `Local*` contract twins, and the body reaches them through those alone.
 
+use core::cell::Cell;
 use core::convert::Infallible;
 use core::future::ready;
 use core::pin::Pin;
-use core::sync::atomic::{AtomicU32, Ordering};
 use core::task::{Context, Poll};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -42,8 +41,8 @@ impl Frame {
 /// How the deliveries of a subscription were settled.
 #[derive(Debug, Default)]
 pub struct Settlements {
-    acked: AtomicU32,
-    nacked: AtomicU32,
+    acked: Cell<u32>,
+    nacked: Cell<u32>,
 }
 
 impl Settlements {
@@ -51,21 +50,21 @@ impl Settlements {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            acked: AtomicU32::new(0),
-            nacked: AtomicU32::new(0),
+            acked: Cell::new(0),
+            nacked: Cell::new(0),
         }
     }
 
     /// How many deliveries were acknowledged.
     #[must_use]
     pub fn acked(&self) -> u32 {
-        self.acked.load(Ordering::Relaxed)
+        self.acked.get()
     }
 
     /// How many deliveries were negatively acknowledged.
     #[must_use]
     pub fn nacked(&self) -> u32 {
-        self.nacked.load(Ordering::Relaxed)
+        self.nacked.get()
     }
 }
 
@@ -144,8 +143,7 @@ impl LocalIncomingMessage for FrameDelivery {
     }
 }
 
-/// Adds one with a load and a store: a device without atomic read-modify-write has both, and one
-/// executor thread settles a subscription's deliveries.
-fn count(counter: &AtomicU32) {
-    counter.store(counter.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+/// Adds one: the executor's one thread settles a subscription's deliveries.
+fn count(counter: &Cell<u32>) {
+    counter.set(counter.get() + 1);
 }
