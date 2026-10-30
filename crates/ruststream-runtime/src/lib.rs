@@ -297,8 +297,8 @@ pub use router::{
 };
 #[cfg(feature = "alloc")]
 pub use router::{
-    IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
-    RouterPublishingOut, RouterWith, forms,
+    IncludeDef, LocalPipeline, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut,
+    RouterPublishing, RouterPublishingOut, RouterWith, forms,
 };
 #[cfg(feature = "alloc")]
 pub use settings::{
