@@ -67,6 +67,11 @@ mod sealed {
 /// keeps working; this trait only adds the type-erased surface the CLI and spec generator consume.
 /// The run futures are `Send` because the service is driven across task boundaries (the CLI's
 /// `block_on`, `tokio::spawn` in tests), so the bound belongs in the signature.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a tokio app",
+    note = "an EmbeddedApp runs on embassy: await `EmbeddedApp::run(&CONTROL)` in an embassy task; \
+            the CLI, MainRuntime, metrics and OTel run on the tokio runtime"
+)]
 pub trait App: sealed::Sealed + Sized {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`), then shuts down gracefully.
     ///
