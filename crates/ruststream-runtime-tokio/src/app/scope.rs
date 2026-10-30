@@ -47,14 +47,20 @@ pub struct BrokerScope<
 
 /// A startup publish a scope registered: the hook, already paired against the scope's broker.
 #[doc(hidden)]
+// Machinery that holds a closure, a router or a handler; nothing prints it.
+#[allow(missing_debug_implementations)]
 pub struct ScopedStartup<State>(LifecycleHook<State>);
 
 /// A whole router a scope mounted ahead of its chain.
 #[doc(hidden)]
+// Machinery that holds a closure, a router or a handler; nothing prints it.
+#[allow(missing_debug_implementations)]
 pub struct ScopedRouter<R>(R);
 
 /// A subscriber a scope mounted by hand ahead of its chain, with its handler and metadata.
 #[doc(hidden)]
+// Machinery that holds a closure, a router or a handler; nothing prints it.
+#[allow(missing_debug_implementations)]
 pub struct ScopedHandle<S, H, Cx> {
     subscriber: S,
     handler: H,
@@ -336,27 +342,6 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline, Pre>
         R: RouterDef<B, State>,
     {
         self.grow(ScopedRouter(router))
-    }
-}
-
-// The registrations are a closure, a router and a handler, none of which has a form to print.
-impl<State> fmt::Debug for ScopedStartup<State> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ScopedStartup").finish_non_exhaustive()
-    }
-}
-
-impl<R> fmt::Debug for ScopedRouter<R> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ScopedRouter").finish_non_exhaustive()
-    }
-}
-
-impl<S, H, Cx> fmt::Debug for ScopedHandle<S, H, Cx> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ScopedHandle")
-            .field("meta", &self.meta)
-            .finish_non_exhaustive()
     }
 }
 
