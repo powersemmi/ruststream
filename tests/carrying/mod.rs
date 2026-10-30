@@ -450,6 +450,8 @@ impl<Log: LogMode> RowBatch<Log> {
 }
 
 impl<Log> CarriesBatch<Row> for RowBatch<Log> {
+    type Item = Row;
+
     fn carried(&self) -> &[Row] {
         &self.rows
     }

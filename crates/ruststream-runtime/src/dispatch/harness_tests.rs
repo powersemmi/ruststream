@@ -66,6 +66,8 @@ struct Page {
 }
 
 impl CarriesBatch<Counted> for Page {
+    type Item = Counted;
+
     fn carried(&self) -> &[Counted] {
         &self.values
     }

@@ -317,6 +317,7 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 /// #         fn carried(&self) -> Option<&SendEmail> { self.row.as_ref() }
 /// #     }
 /// #     impl CarriesBatch<SendEmail> for Page {
+/// #         type Item = SendEmail;
 /// #         fn carried(&self) -> &[SendEmail] { &self.rows }
 /// #     }
 /// #     impl IntoIterator for Page {
