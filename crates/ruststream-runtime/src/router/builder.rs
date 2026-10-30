@@ -575,11 +575,11 @@ impl<B: Broker + 'static, Routes: RouterHandlers, C, Layers, Pipe>
 /// the broker the policy pairs against. Machinery; never named directly.
 #[doc(hidden)]
 pub trait RouterBroker {
-    /// The broker every registration of this router mounts on.
-    type Broker: Broker + 'static;
+    /// The broker every registration of this router mounts on, of either family.
+    type Broker: LocalBroker + 'static;
 }
 
-impl<B: Broker + 'static, Routes, C, Layers, Pipe> RouterBroker
+impl<B: LocalBroker + 'static, Routes, C, Layers, Pipe> RouterBroker
     for Router<B, Routes, C, Layers, Pipe>
 {
     type Broker = B;
@@ -792,7 +792,7 @@ where
 }
 
 // A whole router answers when its registrations do.
-impl<B: Broker, Routes: RetryDestinationsDeclared, C, Layers, Pipe> RetryDestinationsDeclared
+impl<B: LocalBroker, Routes: RetryDestinationsDeclared, C, Layers, Pipe> RetryDestinationsDeclared
     for Router<B, Routes, C, Layers, Pipe>
 {
 }

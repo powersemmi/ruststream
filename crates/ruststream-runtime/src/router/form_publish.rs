@@ -12,9 +12,9 @@ use crate::{BatchSubscriber, Broker, Connected, DefaultPublish, SubscriptionSour
 
 use crate::batch_publishing::BatchPublishingDef;
 use crate::input::{DecodeWith, Materialize};
-use crate::publish::RawReplyWiring;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::publish::ReplyWiring;
+use crate::publish::{PublishPipeline, RawReplyWiring};
 use crate::publishing::PublishingDef;
 use crate::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::slot::{IntoSlotSource, WithSource};
@@ -44,6 +44,7 @@ macro_rules! reply_form {
             RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for $form
         where
             B: Broker + 'static,
+            RoutePipe: PublishPipeline,
         {
             type Out = RouterPublishing<
                 $mount,
@@ -75,6 +76,7 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, Policy>
     for (WithSource<Policy>, ())
 where
     B: Broker + 'static,
+    RoutePipe: PublishPipeline,
     // Resolved against the input kind: a byte input decodes with `()`, so a byte-in route
     // carries no demand for a default codec the build may not have.
     Def: PublishingDef
@@ -116,6 +118,7 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
     for (DefaultReply, ())
 where
     B: Broker + 'static,
+    RoutePipe: PublishPipeline,
     B::Connected: DefaultPublish,
     (
         WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>,
@@ -153,6 +156,7 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, Policy>
     for (WithSource<Policy>, ())
 where
     B: Broker + 'static,
+    RoutePipe: PublishPipeline,
     // Resolved against the input kind: a byte input decodes with `()`, so a byte-in route
     // carries no demand for a default codec the build may not have.
     Def: PublishingDef
@@ -194,6 +198,7 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
     for (DefaultReply, ())
 where
     B: Broker + 'static,
+    RoutePipe: PublishPipeline,
     B::Connected: DefaultPublish,
     (
         WithSource<RawReplyWiring<<B::Connected as DefaultPublish>::Policy>>,
