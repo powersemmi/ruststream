@@ -99,6 +99,18 @@ impl<const CAP: usize> LocalMemoryBroker<CAP> {
     /// let connected = embassy_futures::block_on(bus().connect());
     /// assert!(connected.is_ok());
     /// ```
+    ///
+    /// A bus whose subscriptions hold nothing is a build error:
+    ///
+    /// ```compile_fail,E0080
+    /// use ruststream_memory::local::LocalMemoryBroker;
+    ///
+    /// fn bus() -> LocalMemoryBroker<0> {
+    ///     LocalMemoryBroker::new()
+    /// }
+    ///
+    /// drop(bus());
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         const {
