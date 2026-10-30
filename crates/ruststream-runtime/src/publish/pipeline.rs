@@ -8,7 +8,7 @@ use super::{Outgoing, PublishFut};
 use crate::lifecycle::BoxError;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::PipelinePublish;
-use crate::{PayloadForm, Publisher};
+use crate::{LocalPublisher, PayloadForm, Publisher};
 
 /// A static, app-wide publish pipeline: an around-style chain of [`PublishLayer`] ending in
 /// the broker send.
@@ -30,6 +30,35 @@ pub trait PublishPipeline: Send + Sync {
         send: &'a P,
         options: Option<&'a P::Options>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
+}
+
+/// The last step of a typed publish: how the message reaches the leaf publisher `P`.
+///
+/// Every [`PublishPipeline`] is one for every [`Publisher`], through a forwarding impl whose
+/// future is the pipeline's own, so the multi-thread runner's publish stays `Send`. The pipeline
+/// of a [`Router::local`](crate::Router::local) chain is one for every
+/// [`LocalPublisher`](crate::LocalPublisher). Machinery; never named directly.
+#[doc(hidden)]
+pub(crate) trait SendThrough<P: LocalPublisher> {
+    /// Sends `out` to `send` with the per-message settings the call site adjusted.
+    fn send_through<'a>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        send: &'a P,
+        options: Option<&'a P::Options>,
+    ) -> impl Future<Output = Result<(), BoxError>> + 'a;
+}
+
+impl<Pipeline: PublishPipeline, P: Publisher> SendThrough<P> for Pipeline {
+    #[inline]
+    fn send_through<'a>(
+        &'a self,
+        out: &'a mut Outgoing<'a>,
+        send: &'a P,
+        options: Option<&'a P::Options>,
+    ) -> impl Future<Output = Result<(), BoxError>> + 'a {
+        self.run(out, send, options)
+    }
 }
 
 /// The terminal [`PublishPipeline`]: no middleware, just the broker send. The default for an app

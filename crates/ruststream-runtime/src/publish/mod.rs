@@ -53,6 +53,7 @@ pub use out::{
     LowerOutTransforms, NamedDestinationSend, NarrowToUse, OutPipeline, PipelinePublishError,
     SendOnlyPolicy, SlotStackUse, SlotTransforms,
 };
+pub(crate) use pipeline::SendThrough;
 pub use pipeline::{
     PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity, PublishLayer, PublishNext,
     PublishPipeline, PublishStack,
