@@ -158,27 +158,29 @@ impl Publisher for Counting<[u8]> {
     type Error = Infallible;
     type Options = ();
 
-    async fn publish(
+    fn publish(
         &self,
         msg: OutgoingFor<'_, Lend>,
         _options: Option<&()>,
-    ) -> Result<(), Infallible> {
+    ) -> impl Future<Output = Result<(), Infallible>> + Send {
         let (_name, payload, _headers) = msg.into_parts();
         if payload.ends_with(&self.tail) {
             self.sent.fetch_add(1, Ordering::Relaxed);
         }
-        Ok(())
+        ready(Ok(()))
     }
 }
 
 /// A body over the local family that accepts an unsized publisher behind a reference.
+// The local family's futures carry no `Send` bound; this body runs on the test's own thread.
+#[allow(clippy::future_not_send)]
 async fn publish_local<P>(publisher: &P, orders: &[&[u8]]) -> Result<(), P::Error>
 where
     P: ?Sized + LocalPublisher<Payload = Lend>,
 {
     for order in orders {
         publisher
-            .publish(OutgoingMessage::new("orders", *order), None)
+            .publish(OutgoingMessage::new("orders", order), None)
             .await?;
     }
     Ok(())
