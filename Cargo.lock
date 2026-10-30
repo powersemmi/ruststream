@@ -1528,6 +1528,7 @@ dependencies = [
  "ruststream-memory",
  "ruststream-observability",
  "ruststream-runtime",
+ "ruststream-runtime-embassy",
  "ruststream-runtime-tokio",
  "ruststream-testing",
  "schemars",
