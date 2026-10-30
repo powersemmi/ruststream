@@ -24,6 +24,7 @@ mod form_eager;
 mod form_out;
 mod form_publish;
 pub mod forms;
+mod head;
 mod include;
 mod local;
 mod local_out;
@@ -40,6 +41,8 @@ pub use builder::{AttachDeclaration, AttachRetry, RouterBroker};
 #[doc(hidden)]
 pub use builders::RouterCommit;
 pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOut, RouterWith};
+#[doc(hidden)]
+pub use head::{ChainHead, SplitHead};
 pub use local::LocalPipeline;
 #[doc(hidden)]
 pub use local::{LayerFits, PoolFits, RouterPipe, TakesWorkers};

@@ -316,11 +316,11 @@ pub use retry::{
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use router::{
-    AttachDeclaration, AttachRetry, Balance, BatchPublishInjectMount, BatchPublishMount,
+    AttachDeclaration, AttachRetry, Balance, BatchPublishInjectMount, BatchPublishMount, ChainHead,
     DefaultReply, LayerFits, MountSink, OpenLayered, OpenRoutes, Opened, OpenedBatchRoute,
     OpenedRoute, PoolFits, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount,
     ReplyAttachment, RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker,
-    RouterCommit, RouterMount, RouterPipe, RunRoutes, RunsBatches, TakesWorkers,
+    RouterCommit, RouterMount, RouterPipe, RunRoutes, RunsBatches, SplitHead, TakesWorkers,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
