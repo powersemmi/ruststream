@@ -56,6 +56,13 @@ check:
         --target thumbv7em-none-eabihf
     RUSTFLAGS="--cfg portable_atomic_unsafe_assume_single_core" cargo build -p ruststream-core \
         --no-default-features --features alloc,bytes/extra-platforms --target thumbv6m-none-eabi
+    # The shared delivery body builds without `std`: with a heap for a Cortex-M4F, and as the
+    # runner traits alone for both targets. The embedded runner builds for the Cortex-M4F.
+    RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --features alloc \
+        --target thumbv7em-none-eabihf
+    RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --target thumbv7em-none-eabihf
+    RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --target thumbv6m-none-eabi
+    RUSTFLAGS="" cargo build -p ruststream-runtime-embassy --target thumbv7em-none-eabihf
     # Rustdoc sees what rustc cannot: broken intra-doc links and redundant targets. CI gates on
     # it, so a link to an item a refactor removed must fail here rather than three jobs later.
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
