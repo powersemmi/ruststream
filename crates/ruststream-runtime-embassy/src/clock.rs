@@ -18,16 +18,27 @@ impl Clock for EmbassyClock {
     }
 
     fn sleep(&self, duration: Duration) -> Timer {
-        // A delay past the clock's range waits forever rather than panicking on the addition
-        // `Timer::after` makes.
-        let deadline = Ticks::try_from(duration)
-            .ok()
-            .and_then(|ticks| Instant::now().checked_add(ticks))
-            .unwrap_or(Instant::MAX);
-        Timer::at(deadline)
+        Timer::at(self.deadline(duration))
     }
 
     fn sleep_until(&self, deadline: Instant) -> Timer {
         Timer::at(deadline)
+    }
+}
+
+/// A clock the runner's own timers wait on: it names the deadline a delay ends at.
+pub(crate) trait Schedule: Clock<Sleep: Unpin + Send + 'static> + Send + Sync {
+    /// The instant `after` from now.
+    fn deadline(&self, after: Duration) -> Self::Instant;
+}
+
+impl Schedule for EmbassyClock {
+    fn deadline(&self, after: Duration) -> Instant {
+        // A delay past the clock's range waits forever rather than panicking on the addition
+        // `Timer::after` makes.
+        Ticks::try_from(after)
+            .ok()
+            .and_then(|ticks| Instant::now().checked_add(ticks))
+            .unwrap_or(Instant::MAX)
     }
 }
