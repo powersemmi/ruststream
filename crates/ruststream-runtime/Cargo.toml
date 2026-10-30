@@ -102,7 +102,7 @@ prost = "0.14"
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std", "registry"] }
 # The doc examples are a service's code, so they import the facade; the unit tests reach the
 # in-memory broker through it. A path dependency without a version is dropped on publish.
-ruststream = { path = "../..", features = ["macros", "memory", "json", "asyncapi", "testing", "conformance", "poll-diagnostics"] }
+ruststream = { path = "../..", features = ["macros", "memory", "json", "asyncapi", "testing", "conformance", "poll-diagnostics", "metrics", "otel"] }
 # The local family's doc examples mount on the local in-memory broker.
 ruststream-memory = { path = "../ruststream-memory", features = ["embassy"] }
 
