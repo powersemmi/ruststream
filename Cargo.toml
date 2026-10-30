@@ -1069,7 +1069,17 @@ harness = false
 required-features = ["memory", "json", "macros"]
 
 [[bench]]
+name = "continuation"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
 name = "retry_copy"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "retry_copy_deferred"
 harness = false
 required-features = ["memory", "json", "macros"]
 

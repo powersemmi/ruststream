@@ -23,8 +23,8 @@ bench_features := "memory,macros,json"
 # baseline holds the gated ones to an instruction limit; the ungated one is measured and reported,
 # and held to no number. The wall-clock one is in neither list: it runs under a different harness,
 # which takes none of the arguments below.
-gated_benches := "--bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench consume_pool --bench consume_threads --bench middleware --bench batch --bench reply --bench reply_lending --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply"
-ungated_benches := "--bench retry_copy"
+gated_benches := "--bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench consume_pool --bench consume_threads --bench middleware --bench batch --bench reply --bench reply_lending --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench continuation"
+ungated_benches := "--bench retry_copy --bench retry_copy_deferred"
 
 default: check
 
