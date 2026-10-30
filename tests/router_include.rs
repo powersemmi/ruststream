@@ -12,8 +12,8 @@ use crate::common;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use common::Order;
-use ruststream::memory::{MemoryBroker, MemoryMessage};
+use common::{Order, Receipt};
+use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish};
 use ruststream::runtime::{
     AppInfo, Context, Handler, HandlerOutcome, Layer, Router, RustStream, SubscriberSettings,
     layers::TracingLayer,
@@ -140,4 +140,34 @@ async fn a_registration_layer_wraps_only_the_registration_it_follows() {
         1,
         "the layer rides the registration named before it, and no other",
     );
+}
+
+#[subscriber("rc-in", reply("rc-out"))]
+async fn rc_confirm(o: &Order) -> Receipt {
+    Receipt { id: o.id }
+}
+
+/// A mount with steps is followed directly by the next `include`: the chain commits the
+/// registration it was building and mounts the next one, as `.build().include(..)` does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mount_chain_goes_on_to_the_next_include() {
+    let router = Router::<MemoryBroker>::new()
+        .include(rc_confirm)
+        .out_reply(MemoryPublish)
+        .include(ri_plain);
+
+    let app = RustStream::new(AppInfo::new("chain", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup failed");
+    drive_all(&tb, &["ri-plain"]).await;
+    tb.message(&Order { id: 7 })
+        .to("rc-in")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("rc-out")
+        .assert_called_once()
+        .with(&Receipt { id: 7 });
 }
