@@ -31,7 +31,7 @@ use ruststream_core::AckError;
 #[cfg(feature = "asyncapi")]
 use ruststream_core::DescribeServer;
 use ruststream_core::{
-    Broker, Connected, IncomingMessage, Publisher, Subscribe, Subscriber, SubscriptionSource,
+    Broker, Connected, LocalIncomingMessage, Publisher, Subscribe, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::testing::InProcess;
 #[cfg(doc)]
@@ -40,7 +40,10 @@ use ruststream_runtime::testing::{Backlog, TestableBroker};
 use ruststream_runtime_tokio::{AppInfo, RustStream};
 use tokio::{runtime, sync::oneshot, time::timeout};
 
+mod local;
 mod routing;
+
+pub use local::{local_lifecycle, run_local_suite};
 
 pub(crate) use routing::unknown_backlog;
 use routing::{
@@ -415,7 +418,7 @@ where
 pub(crate) async fn expect_next<S, M, E>(stream: &mut S, label: &str) -> M
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     E: fmt::Debug,
 {
     let item = timeout(DEFAULT_TIMEOUT, stream.next())
@@ -428,7 +431,7 @@ where
 pub(crate) async fn expect_no_more<S, M, E>(stream: &mut S, label: &str)
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     E: fmt::Debug,
 {
     let result = timeout(NEGATIVE_WAIT, stream.next()).await;
