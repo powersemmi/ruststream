@@ -1,6 +1,11 @@
 //! How a broker describes the server it connects to, for the `servers` section of an `AsyncAPI`
 //! document: its coordinates and the security schemes it accepts.
 
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+#[cfg(any(feature = "asyncapi", feature = "json"))]
+use alloc::string::ToString;
+use alloc::vec::Vec;
 #[cfg(any(feature = "asyncapi", feature = "json"))]
 use serde_json::Value;
 #[cfg(feature = "asyncapi")]

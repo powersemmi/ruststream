@@ -47,7 +47,9 @@ a mounting that needs one does not compile.
 
 The traits, the runtime and each optional layer are crates of their own, and `ruststream`
 re-exports them under one set of paths. The compiler holds the layering: the contract crate,
-`ruststream-core`, depends on no other crate of the framework. A cargo feature of `ruststream`
+`ruststream-core`, depends on no other crate of the framework. It builds with `#![no_std]` and
+needs only an allocator, so a device can depend on it; `ruststream` turns on its `std` feature.
+A cargo feature of `ruststream`
 turns an optional layer on: the [memory broker](../components/memory/index.md), AsyncAPI,
 metrics, logging, OpenTelemetry, [testing](../components/application/testing/index.md) and the
 command line. Features only add, and none of them changes what another one does.

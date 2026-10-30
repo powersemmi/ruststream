@@ -1,7 +1,8 @@
 //! What a subscription declares about its retries: who publishes the copies, and the cap and
 //! dead-letter destination of one registration.
 
-use std::{borrow::Cow, num::NonZeroU32};
+use alloc::borrow::Cow;
+use core::num::NonZeroU32;
 
 #[cfg(doc)]
 use super::{RedeliveryAddressed, SubscriptionSource};

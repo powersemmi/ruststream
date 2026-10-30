@@ -29,6 +29,7 @@ mod app;
 mod batch;
 mod batch_inject;
 mod batch_publishing;
+mod buffered;
 mod context;
 mod dispatch;
 mod dynstack;
@@ -82,6 +83,7 @@ pub use app::{
 pub use app::{ConnectedEntry, LifecycleHook, RegisteredBroker, ShutdownHooks, Starter, Teardown};
 #[doc(hidden)]
 pub use app::{IncludeMount, ScopeCommit};
+pub use buffered::{Buffered, BufferedSubscriber};
 // The definition-trait dispatch SPI the retired legacy emission used to implement in user
 // crates is internal machinery now: the modules stay, but only what the crate's own mounts
 // reach through this path is re-exported.

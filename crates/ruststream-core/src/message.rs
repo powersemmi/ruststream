@@ -1,7 +1,7 @@
 //! Message types and the [`IncomingMessage`] trait.
 
-use std::future;
-use std::time::Duration;
+use core::future;
+use core::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
@@ -782,6 +782,10 @@ pub trait IncomingMessage: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use std::string::String;
+    use std::vec;
+    use std::vec::Vec;
+
     use super::*;
 
     #[test]

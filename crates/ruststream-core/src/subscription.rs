@@ -10,7 +10,8 @@
 //! takes a source (a name string or a broker config value), the runtime resolves it once against
 //! the [`ConnectedBroker`] form produced by [`Broker::connect`](crate::Broker::connect).
 
-use std::{borrow::Cow, fmt};
+use alloc::borrow::Cow;
+use core::fmt;
 
 #[cfg(doc)]
 use crate::Subscribe;

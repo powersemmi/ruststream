@@ -77,7 +77,7 @@ impl ReplyPlan<'_> {
             Self::None => quote!(()),
             Self::Reply { ty, .. } => {
                 if batched {
-                    quote!(::std::vec::Vec<#ty>)
+                    quote!(::ruststream::__private::Vec<#ty>)
                 } else {
                     quote!(#ty)
                 }
@@ -532,7 +532,7 @@ fn verdict_pieces(
         let batch_len = quote!(let __rs_batch_len = __rs_input.len(););
         match reply {
             ReplyPlan::None => VerdictPieces {
-                verdict_ty: quote!(::core::result::Result<(), ::std::vec::Vec<#outcome>>),
+                verdict_ty: quote!(::core::result::Result<(), ::ruststream::__private::Vec<#outcome>>),
                 batch_len,
                 reject: quote! {
                     return ::ruststream::runtime::batch_verdict(
@@ -547,7 +547,7 @@ fn verdict_pieces(
             },
             ReplyPlan::Reply { ty, body, .. } => VerdictPieces {
                 verdict_ty: quote! {
-                    ::core::result::Result<::std::vec::Vec<#ty>, ::std::vec::Vec<#outcome>>
+                    ::core::result::Result<::ruststream::__private::Vec<#ty>, ::ruststream::__private::Vec<#outcome>>
                 },
                 batch_len,
                 reject: quote! {
@@ -557,7 +557,7 @@ fn verdict_pieces(
                     ))
                 },
                 glue: quote! {
-                    let __rs_replies: ::core::result::Result<::std::vec::Vec<#ty>, #outcome> =
+                    let __rs_replies: ::core::result::Result<::ruststream::__private::Vec<#ty>, #outcome> =
                         { #body };
                     __rs_replies.map_err(|__rs_uniform| {
                         ::ruststream::runtime::uniform_batch(__rs_uniform, __rs_batch_len)
@@ -776,7 +776,7 @@ fn probed_docs_expr(parts: &HandlerParts<'_>, reply: &ReplyPlan<'_>) -> TokenStr
         });
         quote! {
             ::core::option::Option::Some({
-                let mut __rs_outgoing = ::std::vec::Vec::new();
+                let mut __rs_outgoing = ::ruststream::__private::Vec::new();
                 #reply_entry
                 #(#slots)*
                 __rs_outgoing

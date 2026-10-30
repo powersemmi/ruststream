@@ -2,9 +2,11 @@
 //! (or string-keyed map) reads one header per field, parsing the string-encoded value into
 //! whatever scalar the field expects.
 
-use std::slice::Iter;
-use std::str;
-use std::str::FromStr;
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+use core::slice::Iter;
+use core::str;
+use core::str::FromStr;
 
 use serde::de::value::{BorrowedStrDeserializer, StrDeserializer};
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, Visitor};
@@ -315,6 +317,8 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'de> {
 mod tests {
     use std::collections::BTreeMap;
     use std::fmt;
+    use std::vec;
+    use std::vec::Vec;
 
     use bytes::Bytes;
     use serde::de::{DeserializeOwned, Deserializer, IgnoredAny};

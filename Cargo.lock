@@ -1297,7 +1297,7 @@ version = "0.7.7"
 dependencies = [
  "bytes",
  "bytes-utils",
- "futures",
+ "futures-core",
  "ruststream",
  "serde",
  "serde_json",
@@ -1338,6 +1338,14 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "ruststream-no-std-probe"
+version = "0.0.0"
+dependencies = [
+ "ruststream",
+ "serde",
 ]
 
 [[package]]

@@ -156,7 +156,6 @@ pub use ruststream_core::{
 };
 pub use ruststream_core::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
 pub use ruststream_core::{Broker, Connected, ConnectedBroker};
-pub use ruststream_core::{Buffered, BufferedSubscriber};
 pub use ruststream_core::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
 pub use ruststream_core::{
     CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,
@@ -169,6 +168,7 @@ pub use ruststream_core::{DeserializeHeadersError, SerializeHeadersError};
 pub use ruststream_core::{IncomingMessage, OutgoingMessage, RawMessage};
 
 pub use ruststream_core::nonzero;
+pub use ruststream_runtime::{Buffered, BufferedSubscriber};
 
 pub mod codec;
 
@@ -289,6 +289,16 @@ pub mod otel;
 #[doc(hidden)]
 pub mod __private {
     use core::marker::PhantomData;
+
+    // The standard names the macros emit, reached through the facade so that a `#![no_std]`
+    // crate, which has neither `::std` nor these names in its prelude, can use the derives.
+    pub use core::error::Error;
+    pub use std::boxed::Box;
+    pub use std::format;
+    pub use std::process::ExitCode;
+    pub use std::string::{String, ToString};
+    pub use std::vec;
+    pub use std::vec::Vec;
 
     use crate::runtime::Serialized;
     #[cfg(feature = "asyncapi")]

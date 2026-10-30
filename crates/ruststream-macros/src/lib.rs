@@ -379,7 +379,7 @@ fn expand_app(runtime: &AppRuntimeArgs, func: &ItemFn) -> syn::Result<TokenStrea
     Ok(quote! {
         #func
 
-        fn main() -> ::std::process::ExitCode {
+        fn main() -> ::ruststream::__private::ExitCode {
             ::ruststream::runtime::cli::run_main_on(#runtime, #name)
         }
     }
@@ -650,8 +650,8 @@ fn slot_outgoing_metadata(name: &Ident, dictionary: &[Type]) -> TokenStream2 {
         }
     });
     quote! {
-        fn outgoing() -> ::std::vec::Vec<::ruststream::runtime::OutgoingMessageMetadata> {
-            let mut __rs_entries = ::std::vec::Vec::new();
+        fn outgoing() -> ::ruststream::__private::Vec<::ruststream::runtime::OutgoingMessageMetadata> {
+            let mut __rs_entries = ::ruststream::__private::Vec::new();
             #(#entries)*
             __rs_entries
         }
@@ -737,9 +737,9 @@ pub fn derive_out_messages(item: TokenStream) -> TokenStream {
             #(#models: ::ruststream::runtime::OutMessages<__RsM>,)*
         {
             fn outgoing()
-                -> ::std::vec::Vec<::ruststream::runtime::OutgoingMessageMetadata>
+                -> ::ruststream::__private::Vec<::ruststream::runtime::OutgoingMessageMetadata>
             {
-                let mut __rs_entries = ::std::vec::Vec::new();
+                let mut __rs_entries = ::ruststream::__private::Vec::new();
                 #(#entries)*
                 __rs_entries
             }

@@ -255,8 +255,8 @@ pub(crate) fn derive_deserialized(input: &DeriveInput) -> syn::Result<TokenStrea
             type Output<#out> = #output;
             // Erased: the derive cannot name the format's own error, and the construction
             // failure is reported, never matched on.
-            type Error = ::std::boxed::Box<
-                dyn ::std::error::Error + ::core::marker::Send + ::core::marker::Sync,
+            type Error = ::ruststream::__private::Box<
+                dyn ::ruststream::__private::Error + ::core::marker::Send + ::core::marker::Sync,
             >;
 
             fn from_payload(

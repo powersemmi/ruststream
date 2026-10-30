@@ -1,6 +1,7 @@
 //! Message headers with typed accessors for well-known fields.
 
-use std::{fmt, mem, str};
+use alloc::vec::Vec;
+use core::{fmt, mem, str};
 
 use bytes::Bytes;
 use bytes_utils::Str;
@@ -380,6 +381,8 @@ fn normalize_owned(s: Str) -> Str {
 
 #[cfg(test)]
 mod tests {
+    use std::vec;
+
     use super::*;
 
     #[test]

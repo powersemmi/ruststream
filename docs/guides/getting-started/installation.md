@@ -55,6 +55,19 @@ default features:
 ruststream = { version = "0.7", default-features = false }
 ```
 
+## The contract without the standard library
+
+A broker crate for a device can depend on the contract alone. `ruststream-core` holds the traits
+and the message types. It builds with `#![no_std]` and needs an allocator:
+
+```toml
+[dependencies]
+ruststream-core = { version = "0.7", default-features = false, features = ["alloc"] }
+```
+
+Its `std` feature is on by default, and `ruststream` turns it on. The runtime, the codecs and the
+test harness need `std`.
+
 ## The CLI
 
 The `ruststream` binary ships with the crate behind the `cli` cargo feature. It runs `cargo` with

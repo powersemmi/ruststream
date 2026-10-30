@@ -2,6 +2,9 @@
 //! field of a flat struct (or string-keyed map) becomes one header entry with a string-encoded
 //! value.
 
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+use alloc::string::ToString;
 use bytes::Bytes;
 use bytes_utils::Str;
 use serde::ser::{

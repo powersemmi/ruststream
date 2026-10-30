@@ -1,6 +1,7 @@
 //! The [`Publisher`] trait and its declaration-side counterpart, [`PublishPolicy`].
 
-use std::error::Error as StdError;
+use alloc::boxed::Box;
+use core::error::Error as StdError;
 
 use bytes::BytesMut;
 use thiserror::Error;

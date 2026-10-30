@@ -55,6 +55,19 @@ serde = { version = "1", features = ["derive"] }
 ruststream = { version = "0.7", default-features = false }
 ```
 
+## Контракт без стандартной библиотеки
+
+Адаптации библиотеки брокера для устройства достаточно одного контракта. Крейт `ruststream-core`
+содержит трейты и типы сообщений. Он собирается с `#![no_std]` и требует распределителя памяти:
+
+```toml
+[dependencies]
+ruststream-core = { version = "0.7", default-features = false, features = ["alloc"] }
+```
+
+Фича `std` включена по умолчанию, и `ruststream` её включает. Рантайму, кодекам и тестовой обвязке
+нужна стандартная библиотека.
+
 ## CLI
 
 Фича `cli` добавляет бинарник `ruststream`. Он запускает `cargo` с подкомандами фреймворка: `run` и

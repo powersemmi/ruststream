@@ -1,6 +1,6 @@
 # RustStream
 
-> RustStream is a Rust framework for services that subscribe to message brokers and publish to them. The core crate `ruststream` re-exports the crates that hold the traits, the router runtime, the codecs and an in-memory broker. Each broker (NATS, Redis, RabbitMQ, Kafka, AMQP 1.0, Google Cloud Pub/Sub, SQS / SNS, Pulsar, MQTT 5, ZeroMQ, stream files, Kinesis) is a crate of its own.
+> RustStream is a Rust framework for services that subscribe to message brokers and publish to them. The core crate `ruststream` re-exports the crates that hold the traits, the router runtime, the codecs and an in-memory broker. The contract crate, `ruststream-core`, builds with `#![no_std]` and an allocator. Each broker (NATS, Redis, RabbitMQ, Kafka, AMQP 1.0, Google Cloud Pub/Sub, SQS / SNS, Pulsar, MQTT 5, ZeroMQ, stream files, Kinesis) is a crate of its own.
 
 A handler is an `async fn` under `#[subscriber(..)]`, mounted on a broker with `b.include(handler)`. It takes `&T` for one message or `&[T]` for a batch. A service imports `ruststream::prelude::*` or its broker crate's prelude. The codec is a compile-time type chosen at the mount site; JSON is the default. Misuse is rejected at compile time, and the compiler error names the fix.
 

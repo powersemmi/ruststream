@@ -16,21 +16,36 @@ readme = "../../README.md"
 all-features = true
 
 [features]
+default = ["std"]
+# The contract itself: its headers, payloads, names and errors live on the heap, so every trait and
+# message type needs it. A `no_std` build with an allocator turns on this feature alone.
+alloc = ["dep:bytes", "dep:bytes-utils", "dep:futures-core", "dep:serde", "dep:thiserror", "serde/alloc"]
+# The standard library's side of the dependencies, and the broker wrapper `Bindable`, whose slot is
+# a `std` mutex.
+std = [
+    "alloc",
+    "bytes/std",
+    "bytes-utils/std",
+    "serde/std",
+    "thiserror/std",
+    "serde_json?/std",
+]
 # `SecurityScheme::oauth2` and `SecurityScheme::custom` take a JSON value.
-json = ["dep:serde_json"]
+json = ["alloc", "dep:serde_json", "serde_json/alloc"]
 # The `*_bindings` methods of the contract and the binding types they return.
 asyncapi = ["json"]
-# The hook a `Bound` token pairs through, which the test harness reads.
-testing = []
+# The hook a `Bound` token pairs through, which the test harness reads: a tokio task-local, so the
+# harness's side of the contract runs on a host.
+testing = ["std", "dep:tokio"]
 
 [dependencies]
-bytes.workspace = true
-bytes-utils.workspace = true
-futures.workspace = true
-serde.workspace = true
+bytes = { workspace = true, optional = true }
+bytes-utils = { workspace = true, optional = true }
+futures-core = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-thiserror.workspace = true
-tokio.workspace = true
+thiserror = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = "1"

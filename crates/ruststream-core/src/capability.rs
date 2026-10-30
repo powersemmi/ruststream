@@ -4,10 +4,10 @@
 //! depends on a capability adds it as a bound, leaving brokers that do not support it free of
 //! emulation cost.
 
-use std::any::type_name;
-use std::{error::Error as StdError, num::NonZeroUsize, time::Duration};
+use core::any::type_name;
+use core::{error::Error as StdError, num::NonZeroUsize, time::Duration};
 
-use futures::Stream;
+use futures_core::Stream;
 
 use crate::subscription::copy_path::Sealed as CopyPathDeclares;
 use crate::{
@@ -20,8 +20,8 @@ use crate::{
 /// Every broker offers this: those that batch on the wire (`Kafka` polls, `JetStream` pull
 /// consumers, `Redis` `XREADGROUP COUNT`) translate the batch size into their client's own
 /// parameter, and those whose transport delivers one message at a time assemble batches on the
-/// client through the [`Buffered`](crate::Buffered) adapter. The batch a handler sees is exactly
-/// the batch the broker delivered: the runtime never splits or merges one.
+/// client through the [`Buffered`] adapter. The batch a handler sees is exactly the batch the
+/// broker delivered: the runtime never splits or merges one.
 ///
 /// # Implementing it
 ///
@@ -37,8 +37,8 @@ use crate::{
 /// failing to compile.
 ///
 /// A transport that delivers one message at a time implements it anyway, through
-/// [`Buffered`](crate::Buffered). The size is not the broker's to choose; the deadline that closes
-/// a partial batch is. Expose it on the subscription descriptor (`.max_wait(..)`) and hand it to
+/// [`Buffered`]. The size is not the broker's to choose; the deadline that closes a partial batch
+/// is. Expose it on the subscription descriptor (`.max_wait(..)`) and hand it to
 /// the wrapper as the subscription opens: the wrapper's 10 ms default suits an in-process bus,
 /// and the broker crates that sit behind a network round trip settle between 10 and 50 ms.
 ///
@@ -50,6 +50,8 @@ use crate::{
 /// [`conformance::capabilities::batches`](https://docs.rs/ruststream/latest/ruststream/conformance/capabilities/fn.batches.html) checks that
 /// a batch never comes back larger than the size it was opened with. It is not part of
 /// `harness::run_suite`: a crate calls it for this capability itself.
+///
+/// [`Buffered`]: https://docs.rs/ruststream/latest/ruststream/struct.Buffered.html
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not deliver messages in batches",
     label = "this subscription has no batching of its own",
@@ -58,8 +60,9 @@ use crate::{
             this capability through the `Buffered` adapter (see `BatchSubscriber` and `Buffered`)"
 )]
 pub trait BatchSubscriber: Subscriber {
-    /// Container yielded by [`batches`]. Implementations choose between [`Vec`], custom
-    /// iterators, or anything else that yields the underlying [`Subscriber::Message`].
+    /// Container yielded by [`batches`]. Implementations choose between
+    /// [`Vec`](alloc::vec::Vec), custom iterators, or anything else that yields the underlying
+    /// [`Subscriber::Message`].
     ///
     /// [`batches`]: Self::batches
     type Batch: IntoIterator<Item = <Self as Subscriber>::Message> + Send;
@@ -74,8 +77,9 @@ pub trait BatchSubscriber: Subscriber {
     /// A batch must never carry more than `size` messages; it may carry fewer (that is what a
     /// partial batch or a deadline is for). Implementations translate `size` into whatever their
     /// client already speaks (`XREADGROUP COUNT`, a pull batch size, a poll limit); one with no
-    /// native batching wraps its subscriber in [`Buffered`](crate::Buffered), which honours the
-    /// size on the client.
+    /// native batching wraps its subscriber in [`Buffered`], which honours the size on the client.
+    ///
+    /// [`Buffered`]: https://docs.rs/ruststream/latest/ruststream/struct.Buffered.html
     ///
     /// # Cancel safety
     ///

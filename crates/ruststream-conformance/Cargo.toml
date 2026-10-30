@@ -23,12 +23,12 @@ asyncapi = ["dep:ruststream-asyncapi", "dep:serde_json", "ruststream-runtime/asy
 ruststream-core = { workspace = true, features = ["testing"] }
 ruststream-runtime = { workspace = true, features = ["testing"] }
 ruststream-asyncapi = { workspace = true, optional = true }
-bytes.workspace = true
+bytes = { workspace = true, features = ["std"] }
 inventory.workspace = true
 futures.workspace = true
-thiserror.workspace = true
+thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["test-util"] }
-serde_json = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true, features = ["std"] }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

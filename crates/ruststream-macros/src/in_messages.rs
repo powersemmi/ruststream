@@ -106,8 +106,8 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     #decode
                 }
 
-                fn incoming() -> ::std::vec::Vec<::ruststream::runtime::IncomingMessageMetadata> {
-                    ::std::vec![#(#entries),*]
+                fn incoming() -> ::ruststream::__private::Vec<::ruststream::runtime::IncomingMessageMetadata> {
+                    ::ruststream::__private::vec![#(#entries),*]
                 }
             }
         }
@@ -127,8 +127,8 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     #decode
                 }
 
-                fn incoming() -> ::std::vec::Vec<::ruststream::runtime::IncomingMessageMetadata> {
-                    ::std::vec![#(#entries),*]
+                fn incoming() -> ::ruststream::__private::Vec<::ruststream::runtime::IncomingMessageMetadata> {
+                    ::ruststream::__private::vec![#(#entries),*]
                 }
             }
         }

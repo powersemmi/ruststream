@@ -37,4 +37,4 @@ Broker 的专有概念都在它自己的 crate 里：订阅形式的描述符、
 
 编解码器是一个类型：挂载时指定的[编解码器](../components/subscribers/codecs/index.md)，或由启用的特性选出的默认编解码器。没有启用任何编解码器特性时就没有默认值，需要编解码器的挂载无法通过编译。
 
-trait、运行时和每个可选层都是独立的 crate，`ruststream` 在同一套路径下重新导出它们。分层由编译器保证：契约 crate `ruststream-core` 不依赖框架中的任何其他 crate。`ruststream` 的 cargo 特性打开一个可选层：[内存 Broker](../components/memory/index.md)、AsyncAPI、指标、日志、OpenTelemetry、[测试](../components/application/testing/index.md)和命令行。特性只会增加功能，不会改变其他特性的行为。
+trait、运行时和每个可选层都是独立的 crate，`ruststream` 在同一套路径下重新导出它们。分层由编译器保证：契约 crate `ruststream-core` 不依赖框架中的任何其他 crate。它以 `#![no_std]` 构建，只需要内存分配器，因此设备也可以依赖它；`ruststream` 会打开它的 `std` 特性。`ruststream` 的 cargo 特性打开一个可选层：[内存 Broker](../components/memory/index.md)、AsyncAPI、指标、日志、OpenTelemetry、[测试](../components/application/testing/index.md)和命令行。特性只会增加功能，不会改变其他特性的行为。
