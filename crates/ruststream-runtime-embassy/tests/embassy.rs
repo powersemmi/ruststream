@@ -18,10 +18,10 @@ use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream_core::LocalIncomingMessage;
-use ruststream_embassy_probe::frames::{
+use ruststream_runtime_embassy::frames::{
     Frame, FrameDelivery, FrameSubscriber, Frames, Settlements,
 };
-use ruststream_embassy_probe::{CountDetached, EmbassyClock, Stop};
+use ruststream_runtime_embassy::{CountDetached, EmbassyClock, Stop};
 use ruststream_runtime::{
     Clock, Context, Delivery, DispatchFailure, FailurePolicies, Handler, HandlerOutcome,
     run_sequential,
