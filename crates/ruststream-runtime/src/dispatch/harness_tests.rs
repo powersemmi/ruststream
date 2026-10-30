@@ -10,6 +10,7 @@ use std::vec;
 
 use bytes::BytesMut;
 use futures::{Stream, stream};
+use tokio_util::task::TaskTracker;
 
 use super::{Delivery, DispatchFailure, run_batch};
 use crate::batch::CarriedBatch;
@@ -18,6 +19,7 @@ use crate::failure::FailurePolicies;
 use crate::handler::HandlerOutcome;
 use crate::testing::coordinator::Coordinator;
 use crate::testkit::Shutdown;
+use crate::testkit::Tracked;
 use crate::{
     AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, NamedCopies, Subscriber,
     SubscriptionSource,
@@ -138,6 +140,7 @@ async fn clones_made_dispatching(delivery: &Delivery<()>) -> usize {
         "pages",
         &(),
         delivery,
+        &Tracked(TaskTracker::new()),
         &DispatchFailure::new(FailurePolicies::default(), Shutdown::new()),
     )
     .await;

@@ -11,15 +11,15 @@ use std::task::Poll;
 use bytes::BytesMut;
 use futures::Stream;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
-use tokio_util::task::TaskTracker;
 use tracing::error;
 
 use ruststream_runtime::DeliverySlot as Slot;
 use ruststream_runtime::{
-    BatchHandler, Delivery, DispatchFailure, Handler, Placement, Turn, Workers, dispatch, placed,
-    run_batch, run_sequential,
+    BatchHandler, DispatchFailure, Handler, Placement, Turn, Workers, dispatch, placed, run_batch,
+    run_sequential,
 };
 
+pub(crate) use crate::detach::Hosted;
 use crate::detach::OnThread;
 use crate::shutdown::Shutdown;
 use crate::{BatchSubscriber, IncomingMessage, Subscriber};
@@ -34,7 +34,7 @@ pub(crate) fn spawn_dispatch<S, H, C, St>(
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
+    hosted: Arc<Hosted<C>>,
     failure: DispatchFailure<Shutdown>,
 ) -> JoinHandle<()>
 where
@@ -47,7 +47,14 @@ where
     tokio::spawn(async move {
         let _consuming = consuming;
         run_sequential(
-            subscriber, handler, shutdown, name, state, delivery, failure,
+            subscriber,
+            handler,
+            shutdown,
+            name,
+            state,
+            &hosted.delivery,
+            &hosted.host,
+            failure,
         )
         .await;
     })
@@ -95,10 +102,9 @@ pub(crate) fn spawn_dispatch_workers<S, H, C, St>(
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
+    hosted: Arc<Hosted<C>>,
     failure: DispatchFailure<Shutdown>,
     workers: Workers,
-    tasks: &TaskTracker,
 ) -> Result<JoinHandle<()>, StartThreadError>
 where
     S: Subscriber + Send + 'static,
@@ -107,19 +113,19 @@ where
     C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
-    let workers = placed(workers, &delivery);
+    let workers = placed(workers, &hosted.delivery);
     if workers.is_sequential() {
         return Ok(spawn_dispatch(
-            subscriber, handler, shutdown, name, state, delivery, failure,
+            subscriber, handler, shutdown, name, state, hosted, failure,
         ));
     }
     if matches!(workers.placement(), Placement::Threads) {
         return spawn_dispatch_threads(
-            subscriber, handler, shutdown, name, state, delivery, failure, workers, tasks,
+            subscriber, handler, shutdown, name, state, hosted, failure, workers,
         );
     }
     Ok(pool::spawn_dispatch_pool(
-        subscriber, handler, shutdown, name, state, delivery, failure, workers,
+        subscriber, handler, shutdown, name, state, hosted, failure, workers,
     ))
 }
 
@@ -133,10 +139,9 @@ fn spawn_dispatch_threads<S, H, C, St>(
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
+    hosted: Arc<Hosted<C>>,
     failure: DispatchFailure<Shutdown>,
     workers: Workers,
-    tasks: &TaskTracker,
 ) -> Result<JoinHandle<()>, StartThreadError>
 where
     S: Subscriber + Send + 'static,
@@ -149,7 +154,7 @@ where
         handler,
         name,
         state,
-        delivery,
+        hosted,
         failure,
     });
     let threads = Threads::start(
@@ -158,9 +163,8 @@ where
         workers.by_key(),
         |own| {
             let shared = Arc::clone(&shared);
-            let delivery = shared
-                .delivery
-                .on_thread(Arc::new(OnThread::new(tasks.clone(), own)));
+            let delivery = shared.hosted.delivery.on_thread();
+            let host = OnThread::new(shared.hosted.host.tasks().clone(), own);
             // One encode buffer per thread, for the reason the sequential loop has one.
             let mut encode = BytesMut::new();
             async move |msg: S::Message| {
@@ -172,6 +176,7 @@ where
                     &shared.name,
                     &shared.state,
                     &delivery,
+                    &host,
                     &shared.failure,
                 )
                 .await;
@@ -227,11 +232,10 @@ pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
+    hosted: Arc<Hosted<C>>,
     failure: DispatchFailure<Shutdown>,
     workers: Workers,
     batch_size: NonZeroUsize,
-    tasks: &TaskTracker,
 ) -> Result<JoinHandle<()>, StartThreadError>
 where
     S: BatchSubscriber + Send + 'static,
@@ -241,18 +245,17 @@ where
     C: Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
-    let workers = placed(workers, &delivery);
+    let workers = placed(workers, &hosted.delivery);
     if matches!(workers.placement(), Placement::Threads) {
         return spawn_batch_threads(
-            subscriber, handler, shutdown, name, state, delivery, failure, workers, batch_size,
-            tasks,
+            subscriber, handler, shutdown, name, state, hosted, failure, workers, batch_size,
         );
     }
     let shared = pool::Shared {
         handler,
         name,
         state,
-        delivery,
+        hosted,
         failure,
     };
     let consuming = shutdown.consuming();
@@ -317,14 +320,15 @@ async fn batch_loop<S, H, C, St>(
             Turn::Delivery(Ok(batch)) if workers.is_sequential() => {
                 // Turbofish: the adapter handlers are generic over the batch context, so the
                 // spawn's own parameter names it.
-                run_batch::<_, _, C, _, _>(
+                run_batch::<_, _, C, _, _, _>(
                     &*shared.handler,
                     batch,
                     &mut scratch,
                     &mut encode,
                     &shared.name,
                     &shared.state,
-                    &shared.delivery,
+                    &shared.hosted.delivery,
+                    &shared.hosted.host,
                     &shared.failure,
                 )
                 .await;
@@ -367,17 +371,18 @@ where
     let handler = Arc::clone(&shared.handler);
     let name = Arc::clone(&shared.name);
     let state = Arc::clone(&shared.state);
-    let delivery = Arc::clone(&shared.delivery);
+    let hosted = Arc::clone(&shared.hosted);
     let failure = shared.failure.clone();
     async move {
-        run_batch::<_, _, C, _, _>(
+        run_batch::<_, _, C, _, _, _>(
             &*handler,
             batch,
             &mut scratch,
             &mut encode,
             &name,
             &state,
-            &delivery,
+            &hosted.delivery,
+            &hosted.host,
             &failure,
         )
         .await;
@@ -395,11 +400,10 @@ fn spawn_batch_threads<S, H, C, St>(
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
+    hosted: Arc<Hosted<C>>,
     failure: DispatchFailure<Shutdown>,
     workers: Workers,
     batch_size: NonZeroUsize,
-    tasks: &TaskTracker,
 ) -> Result<JoinHandle<()>, StartThreadError>
 where
     S: BatchSubscriber + Send + 'static,
@@ -413,18 +417,17 @@ where
         handler,
         name,
         state,
-        delivery,
+        hosted,
         failure,
     });
     let threads = Threads::start(&shared.name, workers.count().get(), false, |own| {
         let shared = Arc::clone(&shared);
-        let delivery = shared
-            .delivery
-            .on_thread(Arc::new(OnThread::new(tasks.clone(), own)));
+        let delivery = shared.hosted.delivery.on_thread();
+        let host = OnThread::new(shared.hosted.host.tasks().clone(), own);
         let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
         let mut encode = BytesMut::new();
         async move |batch: S::Batch| {
-            run_batch::<_, _, C, _, _>(
+            run_batch::<_, _, C, _, _, _>(
                 &*shared.handler,
                 batch,
                 &mut scratch,
@@ -432,6 +435,7 @@ where
                 &shared.name,
                 &shared.state,
                 &delivery,
+                &host,
                 &shared.failure,
             )
             .await;

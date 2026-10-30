@@ -14,9 +14,9 @@ use crate::redelivery::ScopeDelivery;
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber};
 
 /// What opening one subscription at startup hands the runner: the subscriber, its handler and the
-/// publish context its deliveries run under.
+/// publish context its deliveries run under, which the runner keeps beside its own handle.
 #[doc(hidden)]
-pub type Opened<Sub, Body, Cx> = (Sub, Body, Arc<Delivery<Cx>>);
+pub type Opened<Sub, Body, Cx> = (Sub, Body, Delivery<Cx>);
 
 /// The collector a router's registrations are pushed into when it mounts.
 ///

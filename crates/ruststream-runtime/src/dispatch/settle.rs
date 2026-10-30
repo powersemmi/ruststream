@@ -13,6 +13,7 @@ use super::{Delivery, RETRY_COUNT_HEADER, Slot};
 #[cfg(doc)]
 use crate::IncomingMessage;
 use crate::handler::HandlerResult;
+use crate::host::Detach;
 use crate::publish::PublishContext;
 use crate::redelivery::DeferredRetry;
 #[cfg(feature = "testing")]
@@ -32,22 +33,26 @@ fn current_retry_count(headers: &HeaderMap) -> u64 {
 /// The single place a settlement reaches the broker, single-message and batch paths alike: a
 /// second one would be free to answer a [`NackAfter`](HandlerResult::NackAfter) differently, and
 /// the retry path below is exactly the part that is easy to leave out.
-pub(crate) async fn settle_outcome<M, C>(
+pub(crate) async fn settle_outcome<M, C, Host>(
     slot: &mut Slot<M>,
     outcome: HandlerResult,
     name: &str,
     delivery: &Delivery<C>,
+    host: &Host,
     build_cx: fn(&M) -> C,
 ) where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
+    Host: Detach,
 {
     let ack_result = match outcome {
         HandlerResult::Ack => slot.take().ack().await,
         HandlerResult::Nack { requeue: false } => slot.take().nack(false).await,
-        HandlerResult::Nack { requeue: true } => settle_retry(slot, name, delivery, build_cx).await,
+        HandlerResult::Nack { requeue: true } => {
+            settle_retry(slot, name, delivery, host, build_cx).await
+        }
         HandlerResult::NackAfter { delay } => {
-            settle_nack_after(slot, name, delay, delivery, build_cx).await
+            settle_nack_after(slot, name, delay, delivery, host, build_cx).await
         }
     };
     if let Err(err) = ack_result {
@@ -129,15 +134,17 @@ fn redelivery_of<'d, M: LocalIncomingMessage>(
 /// # Errors
 ///
 /// Returns the [`AckError`] from settling the original delivery.
-async fn settle_retry<M, C>(
+async fn settle_retry<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
     delivery: &Delivery<C>,
+    host: &Host,
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
+    Host: Detach,
 {
     if delivery.declaration.declares_nothing() {
         return slot.take().nack(true).await;
@@ -156,12 +163,34 @@ where
         }
         Redelivery::Subscription => {
             let destination = retry.destination.clone();
-            publish_copy(slot, name, destination, None, retry, delivery, build_cx).await
+            publish_copy(
+                slot,
+                name,
+                destination,
+                None,
+                retry,
+                delivery,
+                host,
+                build_cx,
+            )
+            .await
         }
         Redelivery::DeadLetter {
             destination,
             at_cap,
-        } => dead_letter(slot, name, destination, at_cap, retry, delivery, build_cx).await,
+        } => {
+            dead_letter(
+                slot,
+                name,
+                destination,
+                at_cap,
+                retry,
+                delivery,
+                host,
+                build_cx,
+            )
+            .await
+        }
         Redelivery::Reject => reject_spent(slot, name).await,
     }
 }
@@ -214,16 +243,18 @@ where
 /// without a graceful shutdown) before the timer fires, the copy is lost, since the original has
 /// already been dropped. Brokers that need at-least-once delayed redelivery across a crash must
 /// provide native support.
-async fn settle_nack_after<M, C>(
+async fn settle_nack_after<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
     delay: Duration,
     delivery: &Delivery<C>,
+    host: &Host,
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
+    Host: Detach,
 {
     if slot.get().supports_nack_after() {
         // The cap is read before the delay reaches the broker: a native redelivery would otherwise
@@ -238,8 +269,17 @@ where
             match redelivery_of(slot.get(), &delivery.declaration) {
                 // Under a cap a destination takes only the spent deliveries.
                 Redelivery::DeadLetter { destination, .. } => {
-                    return dead_letter(slot, name, destination, true, retry, delivery, build_cx)
-                        .await;
+                    return dead_letter(
+                        slot,
+                        name,
+                        destination,
+                        true,
+                        retry,
+                        delivery,
+                        host,
+                        build_cx,
+                    )
+                    .await;
                 }
                 Redelivery::Reject => return reject_spent(slot, name).await,
                 Redelivery::Subscription => {}
@@ -271,6 +311,7 @@ where
                 Some(delay),
                 retry,
                 delivery,
+                host,
                 build_cx,
             )
             .await
@@ -280,7 +321,19 @@ where
         Redelivery::DeadLetter {
             destination,
             at_cap,
-        } => dead_letter(slot, name, destination, at_cap, retry, delivery, build_cx).await,
+        } => {
+            dead_letter(
+                slot,
+                name,
+                destination,
+                at_cap,
+                retry,
+                delivery,
+                host,
+                build_cx,
+            )
+            .await
+        }
         Redelivery::Reject => reject_spent(slot, name).await,
     }
 }
@@ -318,18 +371,22 @@ async fn requeue_now<M: LocalIncomingMessage>(
 /// # Errors
 ///
 /// Returns the [`AckError`] from dropping the original, as [`publish_copy`] does.
-async fn dead_letter<M, C>(
+// Each part is the delivery's own or the runner's; bundling them would hide which is which.
+#[allow(clippy::too_many_arguments)]
+async fn dead_letter<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
     destination: &str,
     at_cap: bool,
     retry: &DeferredRetry<C>,
     delivery: &Delivery<C>,
+    host: &Host,
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
+    Host: Detach,
 {
     if at_cap {
         warn_at_cap(name, attempt_of(slot.get()), Some(destination));
@@ -342,6 +399,7 @@ where
         None,
         retry,
         delivery,
+        host,
         build_cx,
     )
     .await
@@ -394,18 +452,24 @@ fn warn_at_cap(name: &str, attempt: u64, destination: Option<&str>) {
 /// Returns the [`AckError`] from dropping the original where that failed and the transport does
 /// settle: the delivery then stays with the broker, and a copy on top of it would duplicate the
 /// message.
-async fn publish_copy<M, C>(
+// The delivery is read only where a harness watches the copy.
+#[cfg_attr(not(feature = "testing"), allow(unused_variables))]
+// Each part is the delivery's own or the runner's; bundling them would hide which is which.
+#[allow(clippy::too_many_arguments)]
+async fn publish_copy<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
     destination: Option<Arc<str>>,
     delay: Option<Duration>,
     retry: &DeferredRetry<C>,
     delivery: &Delivery<C>,
+    host: &Host,
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
+    Host: Detach,
 {
     let publisher = Arc::clone(&retry.publisher);
     let subscription: Arc<str> = Arc::from(name);
@@ -478,7 +542,7 @@ where
     }
     // The timer is the delivery's own work, so it runs where the delivery ran; being tracked, a
     // graceful shutdown waits for it and the copy leaves before the broker closes.
-    delivery.spawn_later(delay, Box::pin(republish));
+    host.detach_after(delay, republish);
     Ok(())
 }
 
@@ -504,6 +568,7 @@ mod tests {
     };
     use crate::IncomingMessage;
     use crate::redelivery::bare_retry_publisher;
+    use crate::testkit::Tracked;
     use crate::{Lend, Publisher, Subscriber};
     use ruststream::memory::MemoryBroker;
 
@@ -582,6 +647,7 @@ mod tests {
             HandlerResult::Ack,
             "orders",
             &Delivery::empty(),
+            &Tracked(TaskTracker::new()),
             unit_cx,
         )
         .await;
@@ -590,6 +656,7 @@ mod tests {
             HandlerResult::drop(),
             "orders",
             &Delivery::empty(),
+            &Tracked(TaskTracker::new()),
             unit_cx,
         )
         .await;
@@ -597,17 +664,15 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_failed_deferred_republish_is_logged_rather_than_propagated() {
-        let delivery = Delivery::deferring_to(
-            bare_retry_publisher(RejectingPublisher),
-            "orders",
-            TaskTracker::new(),
-        );
+        let delivery = Delivery::deferring_to(bare_retry_publisher(RejectingPublisher), "orders");
+        let host = Tracked(TaskTracker::new());
         let settled = Arc::new(AtomicU8::new(0));
         settle_nack_after(
             &mut Slot::new(plain(&[], &settled)),
             "orders",
             Duration::from_secs(1),
             &delivery,
+            &host,
             unit_cx,
         )
         .await
@@ -630,8 +695,8 @@ mod tests {
         let delivery = Delivery::deferring_to(
             bare_retry_publisher(FormReportingPublisher(reported)),
             "orders",
-            TaskTracker::new(),
         );
+        let host = Tracked(TaskTracker::new());
 
         let settled = Arc::new(AtomicU8::new(0));
         let delivered = plain(&[], &settled);
@@ -641,6 +706,7 @@ mod tests {
             "orders",
             Duration::from_secs(30),
             &delivery,
+            &host,
             unit_cx,
         )
         .await
@@ -663,11 +729,8 @@ mod tests {
         let broker = MemoryBroker::new();
         // Subscribe before publishing: the in-memory broker does not buffer earlier messages.
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery::deferring_to(
-            bare_retry_publisher(broker.publisher()),
-            "orders",
-            TaskTracker::new(),
-        );
+        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+        let host = Tracked(TaskTracker::new());
 
         let settled = Arc::new(AtomicU8::new(0));
         let msg = plain(&[], &settled);
@@ -676,6 +739,7 @@ mod tests {
             "orders-workers",
             Duration::from_secs(30),
             &delivery,
+            &host,
             unit_cx,
         )
         .await
@@ -704,11 +768,8 @@ mod tests {
     async fn fallback_defers_republish_when_the_transport_cannot_settle() {
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery::deferring_to(
-            bare_retry_publisher(broker.publisher()),
-            "orders",
-            TaskTracker::new(),
-        );
+        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+        let host = Tracked(TaskTracker::new());
 
         let settled = Arc::new(AtomicU8::new(0));
         let msg = plain_on(&[], &settled, Settlement::Unsupported);
@@ -717,6 +778,7 @@ mod tests {
             "orders",
             Duration::from_secs(30),
             &delivery,
+            &host,
             unit_cx,
         )
         .await
@@ -741,11 +803,8 @@ mod tests {
     async fn a_rejected_settle_aborts_the_fallback() {
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery::deferring_to(
-            bare_retry_publisher(broker.publisher()),
-            "orders",
-            TaskTracker::new(),
-        );
+        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+        let host = Tracked(TaskTracker::new());
 
         let settled = Arc::new(AtomicU8::new(0));
         let msg = plain_on(&[], &settled, Settlement::Rejected);
@@ -754,6 +813,7 @@ mod tests {
             "orders",
             Duration::from_secs(30),
             &delivery,
+            &host,
             unit_cx,
         )
         .await
@@ -774,11 +834,8 @@ mod tests {
     async fn fallback_increments_an_existing_retry_count() {
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery::deferring_to(
-            bare_retry_publisher(broker.publisher()),
-            "orders",
-            TaskTracker::new(),
-        );
+        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+        let host = Tracked(TaskTracker::new());
 
         let settled = Arc::new(AtomicU8::new(0));
         let msg = plain(&[(RETRY_COUNT_HEADER, "4")], &settled);
@@ -787,6 +844,7 @@ mod tests {
             "orders",
             Duration::from_secs(1),
             &delivery,
+            &host,
             unit_cx,
         )
         .await
@@ -803,6 +861,7 @@ mod tests {
     #[tokio::test]
     async fn without_a_copy_path_a_delay_falls_back_to_a_requeue() {
         let delivery = Delivery::empty();
+        let host = Tracked(TaskTracker::new());
         let settled = Arc::new(AtomicU8::new(0));
         let msg = plain(&[], &settled);
         settle_nack_after(
@@ -810,6 +869,7 @@ mod tests {
             "orders",
             Duration::from_secs(30),
             &delivery,
+            &host,
             unit_cx,
         )
         .await
@@ -833,11 +893,8 @@ mod tests {
         // A separate broker backs the retry publisher; if the fallback fired, the republish would
         // land here and never on `sub`.
         let other = MemoryBroker::new();
-        let delivery = Delivery::deferring_to(
-            bare_retry_publisher(other.publisher()),
-            "orders",
-            TaskTracker::new(),
-        );
+        let delivery = Delivery::deferring_to(bare_retry_publisher(other.publisher()), "orders");
+        let host = Tracked(TaskTracker::new());
 
         let msg = {
             let mut stream = std::pin::pin!(sub.stream());
@@ -849,6 +906,7 @@ mod tests {
             "orders",
             Duration::from_secs(5),
             &delivery,
+            &host,
             unit_cx,
         )
         .await
@@ -870,12 +928,14 @@ mod tests {
     async fn a_broker_moved_subscription_keeps_its_own_requeue_under_a_cap() {
         let delivery = Delivery::empty()
             .declaring(RetryDeclaration::new().with_max_attempts(crate::nonzero!(3u32)));
+        let host = Tracked(TaskTracker::new());
         let settled = Arc::new(AtomicU8::new(0));
         settle_outcome(
             &mut Slot::new(plain(&[], &settled)),
             HandlerResult::retry(),
             "orders",
             &delivery,
+            &host,
             unit_cx,
         )
         .await;
@@ -892,12 +952,14 @@ mod tests {
                 .with_max_attempts(crate::nonzero!(1u32))
                 .with_dead_letter("orders.dead"),
         );
+        let host = Tracked(TaskTracker::new());
         let settled = Arc::new(AtomicU8::new(0));
         settle_outcome(
             &mut Slot::new(plain(&[], &settled)),
             HandlerResult::retry(),
             "orders",
             &delivery,
+            &host,
             unit_cx,
         )
         .await;
@@ -909,17 +971,15 @@ mod tests {
     #[tokio::test]
     async fn an_undeclared_immediate_retry_stays_a_broker_requeue() {
         let broker = MemoryBroker::new();
-        let delivery = Delivery::deferring_to(
-            bare_retry_publisher(broker.publisher()),
-            "orders",
-            TaskTracker::new(),
-        );
+        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+        let host = Tracked(TaskTracker::new());
         let settled = Arc::new(AtomicU8::new(0));
         settle_outcome(
             &mut Slot::new(plain(&[], &settled)),
             HandlerResult::retry(),
             "orders",
             &delivery,
+            &host,
             unit_cx,
         )
         .await;

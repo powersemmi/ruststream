@@ -19,7 +19,6 @@ use thiserror::Error;
 use tracing::info;
 
 use crate::dispatch::Delivery;
-use crate::host::Detach;
 use crate::lifecycle::{BoxError, BoxFuture};
 use crate::metadata::{HandlerMetadata, PublishDescription};
 #[cfg(feature = "poll-diagnostics")]
@@ -510,9 +509,6 @@ impl<B: Broker + 'static, Cx: Send + Sync + 'static> RetryPairing<B, Cx> {
 /// of the app it is.
 #[doc(hidden)]
 pub struct ScopeDelivery {
-    /// The runner that runs what a delivery leaves behind, tracked app-wide so a graceful
-    /// shutdown drains it.
-    host: Arc<dyn Detach>,
     /// The harness's recording-and-quiescence hooks for this scope.
     #[cfg(feature = "testing")]
     hooks: Arc<TestHooks>,
@@ -530,9 +526,13 @@ pub struct ScopeDelivery {
 
 impl fmt::Debug for ScopeDelivery {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ScopeDelivery")
-            .field("host", &self.host)
-            .finish_non_exhaustive()
+        f.debug_struct("ScopeDelivery").finish_non_exhaustive()
+    }
+}
+
+impl Default for ScopeDelivery {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -546,9 +546,8 @@ impl ScopeDelivery {
     /// without them still calls it.
     #[doc(hidden)]
     #[must_use]
-    pub fn new(host: Arc<dyn Detach>) -> Self {
+    pub fn new() -> Self {
         Self {
-            host,
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
@@ -590,11 +589,6 @@ impl ScopeDelivery {
     #[cfg(feature = "poll-diagnostics")]
     pub(crate) const fn poll(&self) -> &PollDiagnostics {
         &self.poll
-    }
-
-    /// The runner post-settle continuations are handed to.
-    pub(crate) fn host(&self) -> &Arc<dyn Detach> {
-        &self.host
     }
 
     /// The harness hooks this scope dispatches under.
@@ -687,7 +681,7 @@ pub(crate) async fn open_subscription<B, Source, Cx>(
     scope: &ScopeDelivery,
     subscription: &str,
     setup: RetrySetup<B, Cx>,
-) -> Result<(Source::Subscriber, Arc<Delivery<Cx>>), BoxError>
+) -> Result<(Source::Subscriber, Delivery<Cx>), BoxError>
 where
     B: Broker + 'static,
     Cx: Send + Sync + 'static,
@@ -753,12 +747,7 @@ where
         .map_err(BoxError::from)?;
     Ok((
         subscriber,
-        Arc::new(Delivery::for_subscription(
-            scope,
-            subscription,
-            retry,
-            declaration,
-        )),
+        Delivery::for_subscription(scope, subscription, retry, declaration),
     ))
 }
 
@@ -801,11 +790,6 @@ fn announce<Cx>(
 /// there is no retry path to build.
 #[doc(hidden)]
 #[must_use]
-pub fn open_mounted_subscriber<Cx>(scope: &ScopeDelivery, subscription: &str) -> Arc<Delivery<Cx>> {
-    Arc::new(Delivery::for_subscription(
-        scope,
-        subscription,
-        None,
-        RetryDeclaration::new(),
-    ))
+pub fn open_mounted_subscriber<Cx>(scope: &ScopeDelivery, subscription: &str) -> Delivery<Cx> {
+    Delivery::for_subscription(scope, subscription, None, RetryDeclaration::new())
 }

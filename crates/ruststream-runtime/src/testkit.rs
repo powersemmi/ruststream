@@ -15,7 +15,6 @@ use tokio::time;
 use tokio_util::task::TaskTracker;
 
 use crate::host::{Detach, Halt};
-use crate::lifecycle::BoxFuture;
 
 /// The runner a delivery built by a unit test hands its leftovers to: tasks on the test's own
 /// runtime, tracked by `0`, so a test can wait for them or count them.
@@ -30,11 +29,17 @@ impl fmt::Debug for Tracked {
 }
 
 impl Detach for Tracked {
-    fn detach(&self, work: BoxFuture<'static, ()>) {
+    fn detach<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
         drop(self.0.spawn(work));
     }
 
-    fn detach_after(&self, delay: Duration, work: BoxFuture<'static, ()>) {
+    fn detach_after<Work>(&self, delay: Duration, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
         drop(self.0.spawn(async move {
             time::sleep(delay).await;
             work.await;

@@ -22,6 +22,7 @@ use crate::{
 use super::super::context::Context;
 use super::super::dispatch::{Slot, settle_outcome};
 use super::super::failure::FailurePolicy;
+use super::super::host::Detach;
 #[cfg(feature = "otel")]
 use super::record_batch_size;
 use super::{
@@ -176,11 +177,12 @@ where
         }
     }
 
-    async fn handle_batch(
+    async fn handle_batch<Host: Detach>(
         &self,
         taken: Self::Taken,
         _scratch: &mut (),
         ctx: &mut Context<'_, C, S>,
+        host: &Host,
     ) {
         let subscription = ctx.subscription();
         let delivery = ctx.delivery();
@@ -238,12 +240,13 @@ where
                 outcome,
                 subscription,
                 delivery,
+                host,
                 <C as BuildBatchContext<M>>::build,
             )
             .await;
         }
         if let Some(result) = result {
-            settle_lent_batch(deliveries, result, subscription, delivery, recorded).await;
+            settle_lent_batch(deliveries, result, subscription, delivery, host, recorded).await;
         }
     }
 }

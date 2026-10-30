@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use bytes::Bytes;
 use tokio_util::task::TaskTracker;
 
-use crate::detach::Tracked;
+use crate::detach::Hosted;
 use crate::{AckError, Delivery, HeaderMap, IncomingMessage};
 
 /// What a test delivery's transport does when asked to settle. The cases differ in kind, not
@@ -64,14 +64,14 @@ impl IncomingMessage for PlainMessage {
     }
 }
 
-/// A delivery context outside any app, its leftovers tracked on the test's own runtime.
+/// A subscription's context outside any app, its leftovers tracked on the test's own runtime.
 pub(super) trait Unscoped {
-    /// An empty delivery context: no deferred retry, a fresh continuation tracker.
+    /// An empty context: no deferred retry, a fresh continuation tracker.
     fn empty() -> Self;
 }
 
-impl<C> Unscoped for Delivery<C> {
+impl<C> Unscoped for Hosted<C> {
     fn empty() -> Self {
-        Self::unscoped(Arc::new(Tracked::new(TaskTracker::new())))
+        Self::new(Delivery::unscoped(), TaskTracker::new())
     }
 }

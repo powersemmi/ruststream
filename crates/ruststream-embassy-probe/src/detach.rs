@@ -3,7 +3,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
-use ruststream_runtime::{BoxFuture, Detach};
+use ruststream_runtime::Detach;
 
 /// A host that counts the work deliveries leave behind instead of running it.
 ///
@@ -31,11 +31,17 @@ impl CountDetached {
 }
 
 impl Detach for CountDetached {
-    fn detach(&self, _work: BoxFuture<'static, ()>) {
+    fn detach<Work>(&self, _work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
         self.detached.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn detach_after(&self, _delay: Duration, _work: BoxFuture<'static, ()>) {
+    fn detach_after<Work>(&self, _delay: Duration, _work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
         self.detached.fetch_add(1, Ordering::Relaxed);
     }
 }

@@ -7,11 +7,13 @@ use std::time::Duration;
 use tokio::time;
 use tokio_util::task::TaskTracker;
 
-use crate::BoxFuture;
-use crate::Detach;
+use crate::{Delivery, Detach};
 
 /// The runner of a subscription on the app's runtime: what its deliveries leave behind is a task
 /// of the app's tracker, which the teardown drains.
+///
+/// A clone shares the tracker: it costs a reference count, never an allocation.
+#[derive(Clone)]
 pub(crate) struct Tracked {
     tasks: TaskTracker,
 }
@@ -20,6 +22,11 @@ impl Tracked {
     /// The runner over the app's tracker `tasks`.
     pub(crate) const fn new(tasks: TaskTracker) -> Self {
         Self { tasks }
+    }
+
+    /// The app's tracker, which a dedicated thread's runner shares.
+    pub(crate) const fn tasks(&self) -> &TaskTracker {
+        &self.tasks
     }
 }
 
@@ -32,11 +39,17 @@ impl fmt::Debug for Tracked {
 }
 
 impl Detach for Tracked {
-    fn detach(&self, work: BoxFuture<'static, ()>) {
+    fn detach<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
         drop(self.tasks.spawn(work));
     }
 
-    fn detach_after(&self, delay: Duration, work: BoxFuture<'static, ()>) {
+    fn detach_after<Work>(&self, delay: Duration, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
         drop(self.tasks.spawn(async move {
             time::sleep(delay).await;
             work.await;
@@ -69,14 +82,51 @@ impl fmt::Debug for OnThread {
 }
 
 impl Detach for OnThread {
-    fn detach(&self, work: BoxFuture<'static, ()>) {
+    fn detach<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
         drop(self.tasks.spawn(self.own.track_future(work)));
     }
 
-    fn detach_after(&self, delay: Duration, work: BoxFuture<'static, ()>) {
+    fn detach_after<Work>(&self, delay: Duration, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
         drop(self.tasks.spawn(self.own.track_future(async move {
             time::sleep(delay).await;
             work.await;
         })));
+    }
+}
+
+/// What one subscription's loop dispatches under: the shared body's delivery context and the
+/// runner it hands leftovers to, kept in the one allocation a subscription makes for its context.
+#[derive(Debug)]
+pub(crate) struct Hosted<C> {
+    pub(crate) delivery: Delivery<C>,
+    pub(crate) host: Tracked,
+}
+
+impl<C> Hosted<C> {
+    /// `delivery` dispatched on the app's runtime, its leftovers tracked by `tasks`.
+    pub(crate) const fn new(delivery: Delivery<C>, tasks: TaskTracker) -> Self {
+        Self {
+            delivery,
+            host: Tracked::new(tasks),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio_util::task::TaskTracker;
+
+    use super::Tracked;
+
+    #[test]
+    fn the_runner_debug_form_reports_its_pending_continuations() {
+        let host = format!("{:?}", Tracked::new(TaskTracker::new()));
+        assert!(host.contains("pending_continuations: 0"), "{host}");
     }
 }

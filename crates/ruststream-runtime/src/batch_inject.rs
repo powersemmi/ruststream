@@ -15,6 +15,7 @@ use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
+use super::host::Detach;
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 
@@ -148,19 +149,21 @@ where
         batch.into_iter().collect()
     }
 
-    async fn handle_batch(
+    async fn handle_batch<Host: Detach>(
         &self,
         batch: Vec<Msg>,
         values: &mut Self::Scratch,
         ctx: &mut Context<'_, Def::Context, State>,
+        host: &Host,
     ) {
         let subscription = ctx.subscription();
-        let accepted = decode_batch::<Msg, Def::Input, DecodeCodec, Def::Context, State>(
+        let accepted = decode_batch::<Msg, Def::Input, DecodeCodec, Def::Context, State, Host>(
             batch,
             values,
             &self.codec,
             self.decode,
             ctx,
+            host,
         )
         .await;
         if accepted.is_empty() {
@@ -169,7 +172,7 @@ where
         let delivery = ctx.delivery();
         let result = self.def.call(values, &self.injections, ctx).await;
         values.clear();
-        settle_batch(accepted, result, subscription, delivery).await;
+        settle_batch(accepted, result, subscription, delivery, host).await;
     }
 }
 
@@ -180,6 +183,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use futures::StreamExt;
+    use tokio_util::task::TaskTracker;
 
     use super::super::batch::handled;
     use super::super::dispatch::Delivery;
@@ -187,6 +191,7 @@ mod tests {
     use super::super::input::Decoded;
     use super::*;
     use crate::codec::JsonCodec;
+    use crate::testkit::Tracked;
     use crate::testkit::batch::{publish_payloads, pull_batch};
     use crate::{HeaderMap, Name, Subscriber, SubscriptionSource};
     use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker};
@@ -287,11 +292,12 @@ mod tests {
 
         let state = ();
         let delivery = Delivery::empty();
+        let host = Tracked(TaskTracker::new());
         let headers = HeaderMap::new();
         let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);
-        handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+        handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
         assert_eq!(*seen.lock().unwrap(), [10, 20]);
         // The uniform Ack settled both deliveries, so neither comes back.
@@ -318,11 +324,12 @@ mod tests {
 
         let state = ();
         let delivery = Delivery::empty();
+        let host = Tracked(TaskTracker::new());
         let headers = HeaderMap::new();
         let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);
-        handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+        handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         let mut stream = std::pin::pin!(sub.stream());

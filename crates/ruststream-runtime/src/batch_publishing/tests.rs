@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::StreamExt;
+use tokio_util::task::TaskTracker;
 
 use super::super::batch::handled;
 use super::super::dispatch::Delivery;
@@ -11,6 +12,7 @@ use super::super::publish::{Transactional, TypedPublisher};
 use super::*;
 use crate::codec::JsonCodec;
 use crate::input::Decoded;
+use crate::testkit::Tracked;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 use crate::testkit::log_capture;
 use crate::{HeaderMap, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource, Take};
@@ -100,11 +102,12 @@ async fn a_batch_reply_answers_for_the_whole_delivered_batch() {
     publish_numbers(&broker, "orders", &[1, 2, 3]).await;
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     assert_eq!(batch.len(), 3, "the whole batch is delivered at once");
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     assert_eq!(
         calls.load(Ordering::SeqCst),
@@ -143,10 +146,11 @@ async fn handler_error_publishes_nothing_and_settles_the_batch() {
     publish_numbers(&broker, "orders", &[1, 2]).await;
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     // Nothing was published, and the whole input batch is back for redelivery.
     let mut reply_stream = std::pin::pin!(replies.stream());
@@ -221,11 +225,12 @@ async fn a_fully_undecodable_batch_never_reaches_the_handler() {
     publish_payloads(&broker, "orders", &[b"not json", b"also not json"]).await;
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     assert_eq!(batch.len(), 2);
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let mut reply_stream = std::pin::pin!(replies.stream());
@@ -297,10 +302,11 @@ async fn a_failed_reply_publish_retries_the_whole_batch() {
     publish_numbers(&broker, "orders", &[1, 2]).await;
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     let published = pull_batch(&mut replies).await;
     let payloads: Vec<&[u8]> = published.iter().map(IncomingMessage::payload).collect();
@@ -340,12 +346,13 @@ async fn a_failed_reply_publish_is_logged_with_its_reply_channel() {
     publish_numbers(&broker, "orders", &[1]).await;
     let state = ();
     let delivery = Delivery::empty();
+    let host = Tracked(TaskTracker::new());
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
 
     let (events, guard) = log_capture::start();
-    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
     drop(guard);
 
     let failure = log_capture::find(&events, "batch reply publish failed");

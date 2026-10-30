@@ -24,6 +24,7 @@ use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerOutcome;
+use super::host::Detach;
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
@@ -210,19 +211,21 @@ where
         batch.into_iter().collect()
     }
 
-    async fn handle_batch(
+    async fn handle_batch<Host: Detach>(
         &self,
         batch: Vec<M>,
         values: &mut Self::Scratch,
         ctx: &mut Context<'_, D::Context, S>,
+        host: &Host,
     ) {
         let subscription = ctx.subscription();
-        let accepted = decode_batch::<M, D::Input, C, D::Context, S>(
+        let accepted = decode_batch::<M, D::Input, C, D::Context, S, Host>(
             batch,
             values,
             &self.codec,
             self.decode,
             ctx,
+            host,
         )
         .await;
         if accepted.is_empty() {
@@ -262,7 +265,7 @@ where
             Err(result) => result,
         };
         values.clear();
-        settle_batch(accepted, result, subscription, ctx.delivery()).await;
+        settle_batch(accepted, result, subscription, ctx.delivery(), host).await;
     }
 }
 

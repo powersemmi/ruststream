@@ -16,14 +16,12 @@ use crate::HandlerMetadata;
 use crate::PollDiagnostics;
 use crate::ScopeDelivery;
 use crate::bindable::ConnectedSlot;
-use crate::detach::Tracked;
 use crate::sink::RouterSink;
 #[cfg(feature = "testing")]
 use crate::testing::TestHooks;
 use crate::{BoxError, BrokerCell, BrokerLifecycle};
 use crate::{Identity, Stack};
 use crate::{PublishIdentity, PublishLayer, PublishStack};
-use ruststream_runtime::Detach;
 
 use super::health::SubscriptionEnd;
 use super::scope::BrokerScope;
@@ -884,9 +882,6 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         } = scope;
         self.after_startup.extend(startup_hooks);
         let (starters, handlers) = sink.into_parts();
-        // One handle on the app's continuation tracker for every subscription of this scope:
-        // each subscription clones it rather than allocating its own.
-        let host: Arc<dyn Detach> = Arc::new(Tracked::new(self.continuations.clone()));
         for (bound, meta) in starters.into_iter().zip(handlers) {
             let slot = Arc::clone(&slot);
             // A live harness waits only for what reaches a subscription the app mounts, and tells
@@ -896,7 +891,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             // The scope id is the index this broker will occupy once pushed below; the harness
             // uses it to scope recorded deliveries per broker.
             let tasks = self.continuations.clone();
-            let scope_delivery = ScopeDelivery::new(Arc::clone(&host));
+            let scope_delivery = ScopeDelivery::new();
             #[cfg(feature = "testing")]
             let scope_delivery = scope_delivery.with_harness(
                 self.test_hooks.clone(),

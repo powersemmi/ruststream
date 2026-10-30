@@ -79,7 +79,7 @@ async fn subscription(subscriber: FrameSubscriber, probe: &'static Probe) {
     let handler = Arc::new(WaitOnClock {
         handled: &probe.handled,
     });
-    let delivery = Arc::new(Delivery::<()>::unscoped(probe.host.clone()));
+    let delivery = Delivery::<()>::unscoped();
     let failure = DispatchFailure::new(FailurePolicies::default(), &probe.stop);
     run_sequential(
         subscriber,
@@ -87,7 +87,8 @@ async fn subscription(subscriber: FrameSubscriber, probe: &'static Probe) {
         &probe.stop,
         Arc::from("readings"),
         Arc::new(()),
-        delivery,
+        &delivery,
+        &*probe.host,
         failure,
     )
     .await;

@@ -19,7 +19,7 @@ use tokio::task::JoinHandle;
 use tracing::error;
 
 use super::{
-    Delivery, DispatchFailure, Handler, Shutdown, Slot, Turn, Workers, dispatch, lane_of,
+    DispatchFailure, Handler, Hosted, Shutdown, Slot, Turn, Workers, dispatch, lane_of,
     log_worker_exit,
 };
 use crate::{BuildContext, IncomingMessage, Subscriber};
@@ -30,7 +30,7 @@ pub(super) struct Shared<Body, State, Cx> {
     pub(super) handler: Arc<Body>,
     pub(super) name: Arc<str>,
     pub(super) state: Arc<State>,
-    pub(super) delivery: Arc<Delivery<Cx>>,
+    pub(super) hosted: Arc<Hosted<Cx>>,
     pub(super) failure: DispatchFailure<Shutdown>,
 }
 
@@ -100,7 +100,8 @@ async fn work<Message, Body, Cx, State>(
             &mut encode,
             &shared.name,
             &shared.state,
-            &shared.delivery,
+            &shared.hosted.delivery,
+            &shared.hosted.host,
             &shared.failure,
         )
         .await;
@@ -176,7 +177,7 @@ pub(super) fn spawn_dispatch_pool<Sub, Body, Cx, State>(
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<State>,
-    delivery: Arc<Delivery<Cx>>,
+    hosted: Arc<Hosted<Cx>>,
     failure: DispatchFailure<Shutdown>,
     workers: Workers,
 ) -> JoinHandle<()>
@@ -196,7 +197,7 @@ where
             handler,
             name,
             state,
-            delivery,
+            hosted,
             failure,
         });
         let Started {

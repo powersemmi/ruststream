@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use super::fixtures::{PlainMessage, Settlement, Unscoped};
 use super::*;
 use crate::testkit::log_capture;
-use crate::{Context, FailurePolicies, HandlerOutcome, HeaderMap, SubscriptionEnd};
+use crate::{Context, Detach, FailurePolicies, HandlerOutcome, HeaderMap, SubscriptionEnd};
 
 #[derive(Debug, thiserror::Error)]
 #[error("subscriber stream failed")]
@@ -168,10 +168,9 @@ async fn dispatched_under(workers: Workers, payloads: &[&'static str]) -> Vec<By
         Shutdown::new(),
         Arc::from("orders"),
         Arc::new(()),
-        Arc::new(Delivery::empty()),
+        Arc::new(Hosted::empty()),
         dispatch_failure(),
         workers,
-        &TaskTracker::new(),
     )
     .expect("the dispatch starts");
 
@@ -232,11 +231,12 @@ impl BatchHandler<Vec<PlainMessage>, (), ()> for ReportingBatchHandler {
         batch
     }
 
-    fn handle_batch(
+    fn handle_batch<Host: Detach>(
         &self,
         batch: Vec<PlainMessage>,
         _scratch: &mut Self::Scratch,
         _ctx: &mut Context<'_, (), ()>,
+        _host: &Host,
     ) -> impl Future<Output = ()> + Send {
         let seen = self.seen.clone();
         async move {
@@ -279,10 +279,9 @@ where
             shutdown,
             Arc::from("orders"),
             Arc::new(()),
-            Arc::new(Delivery::empty()),
+            Arc::new(Hosted::empty()),
             dispatch_failure(),
             workers,
-            &TaskTracker::new(),
         )
         .expect("the dispatch starts")
     }
@@ -303,11 +302,10 @@ where
             shutdown,
             Arc::from("orders"),
             Arc::new(()),
-            Arc::new(Delivery::empty()),
+            Arc::new(Hosted::empty()),
             dispatch_failure(),
             workers,
             crate::nonzero!(1usize),
-            &TaskTracker::new(),
         )
         .expect("the dispatch starts")
     }
@@ -632,10 +630,9 @@ async fn an_aborted_loop_takes_its_running_workers_down() {
             shutdown.clone(),
             Arc::from("orders"),
             Arc::new(()),
-            Arc::new(Delivery::empty()),
+            Arc::new(Hosted::empty()),
             dispatch_failure(),
             form,
-            &TaskTracker::new(),
         )
         .expect("the dispatch starts");
         running.recv().await.expect("the handler started");
@@ -690,10 +687,9 @@ async fn a_pool_whose_worker_died_stops_rather_than_shrinks() {
         Shutdown::new(),
         Arc::from("orders"),
         Arc::new(()),
-        Arc::new(Delivery::empty()),
+        Arc::new(Hosted::empty()),
         dispatch_failure(),
         WORKER_FORMS[1],
-        &TaskTracker::new(),
     )
     .expect("the dispatch starts");
     // The keyed lanes and the sequential loop stop on a worker that is gone; a pool that kept

@@ -21,7 +21,7 @@ use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 #[cfg(doc)]
 use super::handler::HandlerResult;
 use super::handler::{Handler, HandlerOutcome};
-use super::host::{Halt, ShutdownWait};
+use super::host::{Detach, Halt, ShutdownWait};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
     Coordinator, Delivered, HarnessScope, Record, calls_in_harness_scope, in_harness_scope,
@@ -101,13 +101,14 @@ macro_rules! observed {
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
-pub async fn run_sequential<S, H, C, St, Signal>(
+pub async fn run_sequential<S, H, C, St, Signal, Host>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: Signal,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
+    delivery: &Delivery<C>,
+    host: &Host,
     failure: DispatchFailure<Signal>,
 ) where
     S: LocalSubscriber,
@@ -116,6 +117,7 @@ pub async fn run_sequential<S, H, C, St, Signal>(
     // See `dispatch`.
     C: BuildContext<S::Message> + Send + Sync + 'static,
     Signal: ShutdownWait + Halt,
+    Host: Detach,
 {
     let mut stream = std::pin::pin!(subscriber.stream());
     let mut cancelled = std::pin::pin!(shutdown.cancelled());
@@ -140,7 +142,8 @@ pub async fn run_sequential<S, H, C, St, Signal>(
                     &mut encode,
                     &name,
                     &state,
-                    &delivery,
+                    delivery,
+                    host,
                     &failure
                 ));
                 handling.await;
@@ -274,13 +277,16 @@ pub fn placed<C>(workers: Workers, delivery: &Delivery<C>) -> Workers {
 // it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
-pub async fn dispatch<H, M, C, St, Signal>(
+// Each part is the delivery's own or the runner's; bundling them would hide which is which.
+#[allow(clippy::too_many_arguments)]
+pub async fn dispatch<H, M, C, St, Signal, Host>(
     handler: &H,
     slot: &mut Slot<M>,
     encode: &mut BytesMut,
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
+    host: &Host,
     failure: &DispatchFailure<Signal>,
 ) where
     H: Handler<M, C, St>,
@@ -290,6 +296,7 @@ pub async fn dispatch<H, M, C, St, Signal>(
     // The context reads the headers through a `Sync` view of the delivery.
     M: LocalIncomingMessage + Sync,
     Signal: Halt,
+    Host: Detach,
 {
     // Settling the message is what releases the harness's quiescence wait, and the post-settle
     // continuations are spawned after it; one in-flight token spanning the whole dispatch keeps a
@@ -383,13 +390,13 @@ pub async fn dispatch<H, M, C, St, Signal>(
     if let Some(mut s) = settle {
         // Named for the same reason as the delivery's own future above: the settle path is
         // built where it is polled instead of being copied into this future's state.
-        let settling = settle_outcome(slot, s.outcome(), name, delivery, C::build);
+        let settling = settle_outcome(slot, s.outcome(), name, delivery, host, C::build);
         settling.await;
         // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
         if let Some(after) = s.take_after() {
-            delivery.spawn_after(after);
+            host.detach(after);
         }
     } else {
         // A fail-fast left the delivery unsettled: it is released here, as it always was at the
@@ -401,7 +408,7 @@ pub async fn dispatch<H, M, C, St, Signal>(
     // covers both - the harness's `drain` and the shutdown's alike.
     if let Some(continuations) = continuations {
         for fut in continuations {
-            delivery.spawn_after(fut);
+            host.detach(fut);
         }
     }
     // The hooks a test registered on this subscription run once the call is settled, inside the
@@ -477,7 +484,7 @@ fn record_call<C>(
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
-pub async fn run_batch<H, Batch, C, St, Signal>(
+pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     handler: &H,
     batch: Batch,
     scratch: &mut H::Scratch,
@@ -485,10 +492,12 @@ pub async fn run_batch<H, Batch, C, St, Signal>(
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
+    host: &Host,
     failure: &DispatchFailure<Signal>,
 ) where
     H: BatchHandler<Batch, C, St>,
     Signal: Halt,
+    Host: Detach,
 {
     let batch = H::take(batch);
     // A batch spans many deliveries, so its context carries only subscription-scoped data, built
@@ -527,7 +536,7 @@ pub async fn run_batch<H, Batch, C, St, Signal>(
         harness_scope(delivery),
         observed!(
             delivery,
-            AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx).await })
+            AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx, host).await })
                 .catch_unwind()
         ),
     )
@@ -535,7 +544,7 @@ pub async fn run_batch<H, Batch, C, St, Signal>(
     #[cfg(not(feature = "testing"))]
     let result = observed!(
         delivery,
-        AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx).await })
+        AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx, host).await })
             .catch_unwind()
     )
     .await;
@@ -544,7 +553,7 @@ pub async fn run_batch<H, Batch, C, St, Signal>(
             // As on the single-message path: a batch that registered no hook pays the branch.
             if ctx.has_hooks() {
                 for fut in ctx.take_settle_hooks() {
-                    delivery.spawn_after(fut);
+                    host.detach(fut);
                 }
             }
         }

@@ -3,18 +3,12 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::time::Duration;
-
-#[cfg(test)]
-use tokio_util::task::TaskTracker;
 
 #[cfg(doc)]
 use crate::IncomingMessage;
 use crate::RetryDeclaration;
 #[cfg(doc)]
 use crate::context::Context;
-use crate::host::Detach;
-use crate::lifecycle::BoxFuture;
 #[cfg(feature = "poll-diagnostics")]
 use crate::poll_diagnostics::PollDiagnostics;
 #[cfg(feature = "poll-diagnostics")]
@@ -24,13 +18,11 @@ use crate::redelivery::ErasedRetryPublisher;
 use crate::redelivery::{DeferredRetry, ScopeDelivery};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::TestHooks;
-#[cfg(test)]
-use crate::testkit::Tracked;
 
 /// Per-subscription publish context threaded into every delivery's [`Context`]: the
-/// broker-agnostic `retry_after` fallback of this registration and the runner that runs what a
-/// delivery leaves behind. An `and_after` continuation is handed to the runner, which tracks it
-/// so a graceful shutdown drains it.
+/// broker-agnostic `retry_after` fallback of this registration and what the mount site declared
+/// about it. What a delivery leaves behind goes to the runner's
+/// [`Detach`](crate::host::Detach), which the loop carries beside it.
 #[doc(hidden)]
 pub struct Delivery<C = ()> {
     /// The retry path of this subscription: the publisher a copy of a delivery leaves through,
@@ -41,10 +33,6 @@ pub struct Delivery<C = ()> {
     /// What the mount site declared with `max_attempts(..)` and `dead_letter(..)`. Read only
     /// where the runtime is the one moving the delivery.
     pub(crate) declaration: RetryDeclaration,
-    /// The runner that runs what a delivery leaves behind (a continuation, a post-settle hook,
-    /// the timer of a deferred retry copy), where the delivery runs: the subscription's own, or
-    /// under `threads(n)` the dedicated thread's, which waits for it before it ends.
-    pub(crate) host: Arc<dyn Detach>,
     /// The harness's recording-and-quiescence hooks for this scope. Empty (uninstalled) outside a
     /// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) run, so the per-delivery read is a single atomic load.
     #[cfg(feature = "testing")]
@@ -73,7 +61,6 @@ impl<C> Delivery<C> {
         Self {
             retry,
             declaration,
-            host: Arc::clone(scope.host()),
             #[cfg(feature = "testing")]
             hooks: Arc::clone(scope.hooks()),
             #[cfg(feature = "testing")]
@@ -89,11 +76,10 @@ impl<C> Delivery<C> {
     /// the dispatch functions under.
     #[doc(hidden)]
     #[must_use]
-    pub fn unscoped(host: Arc<dyn Detach>) -> Self {
+    pub fn unscoped() -> Self {
         Self {
             retry: None,
             declaration: RetryDeclaration::new(),
-            host,
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
@@ -108,10 +94,10 @@ impl<C> Delivery<C> {
     /// A delivery context outside any scope, for tests that drive the dispatch functions
     /// directly.
     #[cfg(test)]
-    pub(crate) fn detached(retry: Option<DeferredRetry<C>>, tasks: TaskTracker) -> Self {
+    pub(crate) fn detached(retry: Option<DeferredRetry<C>>) -> Self {
         Self {
             retry,
-            ..Self::unscoped(Arc::new(Tracked(tasks)))
+            ..Self::unscoped()
         }
     }
 
@@ -121,15 +107,11 @@ impl<C> Delivery<C> {
     pub(crate) fn deferring_to(
         publisher: Arc<dyn ErasedRetryPublisher<C>>,
         destination: &str,
-        tasks: TaskTracker,
     ) -> Self {
-        Self::detached(
-            Some(DeferredRetry {
-                publisher,
-                destination: Some(Arc::from(destination)),
-            }),
-            tasks,
-        )
+        Self::detached(Some(DeferredRetry {
+            publisher,
+            destination: Some(Arc::from(destination)),
+        }))
     }
 
     /// The same context with a declaration on it, as a mount site's `max_attempts(..)` and
@@ -140,44 +122,25 @@ impl<C> Delivery<C> {
         self
     }
 
-    /// An empty delivery context: no deferred retry, a fresh continuation tracker. For tests.
+    /// An empty delivery context: no deferred retry. For tests.
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
-        Self::with_tasks(TaskTracker::new())
-    }
-
-    /// An empty delivery context carrying a caller-owned continuation tracker, so a test can
-    /// observe the post-settle continuations spawned through it.
-    #[cfg(test)]
-    pub(crate) fn with_tasks(tasks: TaskTracker) -> Self {
-        Self::detached(None, tasks)
+        Self::detached(None)
     }
 }
 
 impl<C> Delivery<C> {
-    /// Hands work the delivery leaves behind (a continuation, a post-settle hook) to the runner,
-    /// which runs it where the delivery runs, tracked so a graceful shutdown waits for it.
-    pub(crate) fn spawn_after(&self, work: BoxFuture<'static, ()>) {
-        self.host.detach(work);
-    }
-
-    /// Hands the runner work to run once `delay` has passed: the timer of a deferred copy.
-    pub(crate) fn spawn_later(&self, delay: Duration, work: BoxFuture<'static, ()>) {
-        self.host.detach_after(delay, work);
-    }
-
-    /// The same context for one dedicated thread, whose runner `host` runs what the thread's
-    /// deliveries leave behind.
+    /// The same context for one dedicated thread: its poll diagnostics sample the thread's
+    /// handler on their own.
     #[doc(hidden)]
     #[must_use]
-    pub fn on_thread(&self, host: Arc<dyn Detach>) -> Self {
+    pub fn on_thread(&self) -> Self {
         Self {
             retry: self.retry.as_ref().map(|retry| DeferredRetry {
                 publisher: Arc::clone(&retry.publisher),
                 destination: retry.destination.clone(),
             }),
             declaration: self.declaration.clone(),
-            host,
             #[cfg(feature = "testing")]
             hooks: Arc::clone(&self.hooks),
             #[cfg(feature = "testing")]
@@ -198,7 +161,6 @@ impl<C> fmt::Debug for Delivery<C> {
                 &self.retry.as_ref().map(|retry| &retry.destination),
             )
             .field("declaration", &self.declaration)
-            .field("host", &self.host)
             .finish_non_exhaustive()
     }
 }
@@ -272,20 +234,17 @@ mod tests {
     use crate::failure::{DispatchFailure, FailurePolicies};
     use crate::handler::{Handler, HandlerOutcome};
     use crate::redelivery::bare_retry_publisher;
-    use crate::testkit::Shutdown;
+    use crate::testkit::{Shutdown, Tracked};
     use crate::{AckError, HeaderMap, IncomingMessage};
+    use tokio_util::task::TaskTracker;
 
     #[test]
     fn the_delivery_debug_form_reports_wiring_without_leaking_the_publisher() {
         let empty = format!("{:?}", Delivery::<()>::empty());
         assert!(empty.contains("retry_destination: None"), "{empty}");
-        assert!(empty.contains("pending_continuations: 0"), "{empty}");
 
-        let wired: Delivery = Delivery::deferring_to(
-            bare_retry_publisher(RejectingPublisher),
-            "orders",
-            TaskTracker::new(),
-        );
+        let wired: Delivery =
+            Delivery::deferring_to(bare_retry_publisher(RejectingPublisher), "orders");
         assert!(format!("{wired:?}").contains("retry_destination: Some(Some(\"orders\"))"));
     }
 
@@ -353,6 +312,7 @@ mod tests {
         let failure = DispatchFailure::new(FailurePolicies::default(), Shutdown::new());
         let mut encode = BytesMut::new();
         let mut slot = Slot::new(SizedMessage::<BULK>::new());
+        let host = Tracked(TaskTracker::new());
         let dispatching = dispatch(
             &AckAnything,
             &mut slot,
@@ -360,6 +320,7 @@ mod tests {
             "orders",
             &state,
             &delivery,
+            &host,
             &failure,
         );
         size_of_val(&dispatching)

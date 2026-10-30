@@ -6,13 +6,11 @@
 //! how a parked loop learns that the app is stopping. A runner crate implements these traits for
 //! its runtime and spawns the body; the body is generic over them, so a timer is the runtime's
 //! own future and a shutdown check is the runtime's own flag, with nothing boxed between them.
-//! What runs off the delivery path (a fail-fast, a continuation, a deferred copy) goes through
-//! the object-safe [`Halt`] and [`Detach`].
+//! A fail-fast goes through the object-safe [`Halt`], which a delivery's context holds; the work
+//! a delivery leaves behind (a continuation, a deferred copy) goes to the runner's [`Detach`],
+//! which the loop carries as a type parameter.
 
-use core::fmt;
 use core::time::Duration;
-
-use crate::lifecycle::BoxFuture;
 
 /// A runtime's clock: the time it reads and the timers it arms.
 ///
@@ -185,14 +183,18 @@ pub trait Halt: Sync {
 /// Work a delivery leaves behind, handed to the runner that runs it: an `and_after`
 /// continuation, a post-settle hook, the timer of a deferred retry copy.
 ///
-/// The runner tracks what it is handed, so a graceful shutdown waits for it. The work arrives
-/// boxed because the continuations a handler returns already are; the delayed form takes the
-/// delay rather than a timer, so the runner arms it on its own clock.
+/// The runner tracks what it is handed, so a graceful shutdown waits for it. The body reaches it
+/// by static dispatch: the work is the caller's own future, spawned as it is, and the delayed
+/// form takes the delay rather than a timer, so the runner arms it on its own clock.
 #[doc(hidden)]
-pub trait Detach: Send + Sync + fmt::Debug {
+pub trait Detach: Send + Sync {
     /// Runs `work` beside the delivery that left it.
-    fn detach(&self, work: BoxFuture<'static, ()>);
+    fn detach<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static;
 
     /// Runs `work` once `delay` has passed on the runner's clock.
-    fn detach_after(&self, delay: Duration, work: BoxFuture<'static, ()>);
+    fn detach_after<Work>(&self, delay: Duration, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static;
 }

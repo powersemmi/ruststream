@@ -8,6 +8,7 @@ use tracing::error;
 use super::{BatchResult, uniform_batch};
 use crate::dispatch::{Delivery, Slot, settle_outcome};
 use crate::handler::{HandlerOutcome, HandlerResult};
+use crate::host::Detach;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator;
 #[cfg(feature = "testing")]
@@ -21,18 +22,20 @@ use crate::{BuildBatchContext, IncomingMessage};
 /// Settles a batch whose rejected elements were deferred past the handler call: each rejected
 /// index settles by its recorded outcome, and the accepted remainder settles by the handler's
 /// [`BatchResult`] in order, exactly as [`settle_batch`] applies it.
-pub(super) async fn settle_split_batch<M, C>(
+pub(super) async fn settle_split_batch<M, C, Host>(
     batch: Vec<M>,
     rejected: Vec<(usize, HandlerResult)>,
     result: BatchResult,
     subscription: &str,
     delivery: &Delivery<C>,
+    host: &Host,
 ) where
     M: IncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
+    Host: Detach,
 {
     if rejected.is_empty() {
-        return settle_batch(batch, result, subscription, delivery).await;
+        return settle_batch(batch, result, subscription, delivery, host).await;
     }
     let accepted_len = batch.len() - rejected.len();
     let per_element = match result {
@@ -55,6 +58,7 @@ pub(super) async fn settle_split_batch<M, C>(
                 outcome,
                 subscription,
                 delivery,
+                host,
                 C::build,
             )
             .await;
@@ -73,11 +77,12 @@ pub(super) async fn settle_split_batch<M, C>(
             result.outcome(),
             subscription,
             delivery,
+            host,
             C::build,
         )
         .await;
         if let Some(after) = after {
-            delivery.spawn_after(after);
+            host.detach(after);
         }
     }
     #[cfg(feature = "testing")]
@@ -88,20 +93,23 @@ pub(super) async fn settle_split_batch<M, C>(
 
 /// Applies one [`BatchResult`] to the accepted deliveries behind it - uniformly, or element by
 /// element, spawning each per-element continuation on the tracked set after its settle.
-pub(crate) async fn settle_batch<M, C>(
+pub(crate) async fn settle_batch<M, C, Host>(
     accepted: Vec<M>,
     result: BatchResult,
     subscription: &str,
     delivery: &Delivery<C>,
+    host: &Host,
 ) where
     M: IncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
+    Host: Detach,
 {
     settle_lent_batch(
         accepted,
         result,
         subscription,
         delivery,
+        host,
         LentValues::default(),
     )
     .await;
@@ -139,15 +147,17 @@ pub(crate) type LentValues = ();
 
 /// [`settle_batch`] for a batch that lent its handler the values its deliveries carry: the
 /// harness records each value beside the delivery it belongs to.
-pub(crate) async fn settle_lent_batch<M, C>(
+pub(crate) async fn settle_lent_batch<M, C, Host>(
     accepted: Vec<M>,
     result: BatchResult,
     subscription: &str,
     delivery: &Delivery<C>,
+    host: &Host,
     lent: LentValues,
 ) where
     M: IncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
+    Host: Detach,
 {
     // Every batch form funnels its batch through here, which is the one place that knows both
     // the deliveries and the settlements they got; the harness reads the batch off it.
@@ -167,6 +177,7 @@ pub(crate) async fn settle_lent_batch<M, C>(
                     status,
                     subscription,
                     delivery,
+                    host,
                     C::build,
                 )
                 .await;
@@ -175,7 +186,7 @@ pub(crate) async fn settle_lent_batch<M, C>(
             // tracked set so a graceful shutdown drains it (at-most-once, like the
             // per-element ones below).
             if let Some(after) = after {
-                delivery.spawn_after(after);
+                host.detach(after);
             }
         }
         BatchResult::PerElement(results) => {
@@ -191,6 +202,7 @@ pub(crate) async fn settle_lent_batch<M, C>(
                     result.outcome(),
                     subscription,
                     delivery,
+                    host,
                     C::build,
                 )
                 .await;
@@ -198,7 +210,7 @@ pub(crate) async fn settle_lent_batch<M, C>(
                 // graceful shutdown drains it. At-most-once: a lost or panicking continuation
                 // never redelivers the already-settled message.
                 if let Some(after) = after {
-                    delivery.spawn_after(after);
+                    host.detach(after);
                 }
             }
         }

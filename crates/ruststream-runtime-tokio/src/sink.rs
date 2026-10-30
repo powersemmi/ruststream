@@ -5,6 +5,7 @@ use std::{fmt, num::NonZeroUsize, sync::Arc};
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 
+use crate::detach::Hosted;
 use crate::dispatch::{spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers};
 use crate::shutdown::Shutdown;
 use crate::{
@@ -80,14 +81,15 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> MountSink<B, State>
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
-            move |_connected, state, scope, _tasks, shutdown| {
+            move |_connected, state, scope, tasks, shutdown| {
                 Box::pin(async move {
                     // No descriptor to ask where a copy of a delivery would go, and no mount chain
                     // that can bind one here, so this mount carries no retry path at all.
-                    let delivery = open_mounted_subscriber(&scope, &name);
+                    let hosted =
+                        Arc::new(Hosted::new(open_mounted_subscriber(&scope, &name), tasks));
                     let failure = DispatchFailure::new(policies, shutdown.clone());
                     Ok(spawn_dispatch(
-                        subscriber, handler, shutdown, name, state, delivery, failure,
+                        subscriber, handler, shutdown, name, state, hosted, failure,
                     ))
                 })
             },
@@ -131,10 +133,9 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> MountSink<B, State>
                         shutdown,
                         name,
                         state,
-                        delivery,
+                        Arc::new(Hosted::new(delivery, tasks)),
                         failure,
                         workers,
-                        &tasks,
                     )?)
                 })
             },
@@ -173,11 +174,10 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> MountSink<B, State>
                         shutdown,
                         name,
                         state,
-                        delivery,
+                        Arc::new(Hosted::new(delivery, tasks)),
                         failure,
                         workers,
                         batch_size,
-                        &tasks,
                     )?)
                 })
             },
