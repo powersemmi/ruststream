@@ -17,11 +17,13 @@ all-features = true
 
 [features]
 # The Prometheus layers.
-metrics = ["dep:prometheus", "ruststream-runtime/metrics"]
+metrics = ["dep:prometheus", "dep:arc-swap", "dep:boxcar", "ruststream-runtime/metrics"]
 # The `tracing` subscriber a service installs at startup.
 logging = ["dep:tracing-subscriber"]
 # The OpenTelemetry propagation, export and dispatch metrics.
 otel = [
+    "dep:arc-swap",
+    "dep:boxcar",
     "dep:opentelemetry",
     "dep:opentelemetry_sdk",
     "dep:opentelemetry-otlp",
@@ -39,6 +41,8 @@ ruststream-runtime-tokio.workspace = true
 thiserror = { workspace = true, features = ["std"] }
 tracing.workspace = true
 prometheus = { workspace = true, optional = true }
+arc-swap = { workspace = true, optional = true }
+boxcar = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }

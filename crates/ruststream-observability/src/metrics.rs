@@ -2,12 +2,13 @@
 //!
 //! Re-exported as [`ruststream::metrics`](https://docs.rs/ruststream/latest/ruststream/metrics/).
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use std::{error, fmt};
 
 use prometheus::{
-    Encoder, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
+    Encoder, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, Opts, Registry,
+    TextEncoder,
 };
 
 use ruststream_runtime::HandlerResult;
@@ -16,6 +17,7 @@ use ruststream_runtime::{
     PublishPipeline,
 };
 
+use crate::by_name::{ByName, CAPACITY};
 #[cfg(feature = "poll-diagnostics")]
 use poll::PollCollector;
 #[cfg(feature = "poll-diagnostics")]
@@ -31,6 +33,65 @@ struct Inner {
     consumed: IntCounterVec,
     consume_duration: HistogramVec,
     published: IntCounterVec,
+    /// The series of every subscription a delivery has named.
+    consumers: ByName<ConsumeSeries>,
+    /// The series of every destination a publish has named.
+    publishers: ByName<PublishSeries>,
+}
+
+/// The series one subscription records into. The duration is resolved with the entry, which the
+/// first delivery builds; a status counter is resolved the first time a delivery settles with
+/// it, so the registry exports only the statuses that happened.
+struct ConsumeSeries {
+    name: Box<str>,
+    duration: Histogram,
+    /// One per entry of [`CONSUME_STATUSES`].
+    consumed: [OnceLock<IntCounter>; 2],
+}
+
+impl ConsumeSeries {
+    fn new(metrics: &Inner, name: &str) -> Self {
+        Self {
+            name: Box::from(name),
+            duration: metrics.consume_duration.with_label_values(&[name]),
+            consumed: [OnceLock::new(), OnceLock::new()],
+        }
+    }
+
+    /// The counter of the deliveries settled with `result`.
+    fn consumed(&self, counters: &IntCounterVec, result: HandlerResult) -> &IntCounter {
+        let status = consume_status(result);
+        self.consumed[status]
+            .get_or_init(|| counters.with_label_values(&[&*self.name, CONSUME_STATUSES[status]]))
+    }
+}
+
+/// The series one destination's publishes count into, each resolved the first time a publish
+/// ends with its status.
+struct PublishSeries {
+    name: Box<str>,
+    ok: OnceLock<IntCounter>,
+    error: OnceLock<IntCounter>,
+}
+
+impl PublishSeries {
+    fn new(name: &str) -> Self {
+        Self {
+            name: Box::from(name),
+            ok: OnceLock::new(),
+            error: OnceLock::new(),
+        }
+    }
+
+    /// The counter of the publishes that ended `ok` or not.
+    fn published(&self, counters: &IntCounterVec, ok: bool) -> &IntCounter {
+        let (cell, status) = if ok {
+            (&self.ok, "ok")
+        } else {
+            (&self.error, "error")
+        };
+        cell.get_or_init(|| counters.with_label_values(&[&*self.name, status]))
+    }
 }
 
 /// Collects consume and publish metrics into a shared Prometheus registry.
@@ -139,6 +200,8 @@ impl Metrics {
                 consumed,
                 consume_duration,
                 published,
+                consumers: ByName::new(CAPACITY),
+                publishers: ByName::new(CAPACITY),
             }),
         })
     }
@@ -215,11 +278,16 @@ impl Metrics {
     }
 }
 
-const fn consume_status(result: HandlerResult) -> &'static str {
+/// The `status` values of `ruststream_messages_consumed_total`, in the order
+/// [`consume_status`] indexes them.
+const CONSUME_STATUSES: [&str; 2] = ["ack", "nack"];
+
+/// The index into [`CONSUME_STATUSES`] of a delivery settled with `result`.
+const fn consume_status(result: HandlerResult) -> usize {
     match result {
-        HandlerResult::Ack => "ack",
+        HandlerResult::Ack => 0,
         // A delayed nack is still a nack for counting purposes.
-        HandlerResult::Nack { .. } | HandlerResult::NackAfter { .. } => "nack",
+        HandlerResult::Nack { .. } | HandlerResult::NackAfter { .. } => 1,
     }
 }
 
@@ -285,20 +353,19 @@ where
         msg: &M,
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = HandlerOutcome> + Send {
-        let name = ctx.name().to_owned();
+        let metrics = &*self.metrics;
+        // Looked up before the body borrows the context: the series of a subscription are
+        // resolved once, the first time it is named.
+        let series = metrics
+            .consumers
+            .get_or_build(ctx.name(), |name| ConsumeSeries::new(metrics, name));
         async move {
             let started = Instant::now();
             // Classify by the outcome inside the settlement; the continuation (if any) passes
             // through untouched to the dispatcher.
             let settle = self.inner.handle(msg, ctx).await;
-            self.metrics
-                .consume_duration
-                .with_label_values(&[name.as_str()])
-                .observe(started.elapsed().as_secs_f64());
-            self.metrics
-                .consumed
-                .with_label_values(&[name.as_str(), consume_status(settle.outcome())])
-                .inc();
+            series.duration.observe(started.elapsed().as_secs_f64());
+            series.consumed(&metrics.consumed, settle.outcome()).inc();
             settle
         }
     }
@@ -322,13 +389,16 @@ impl PublishLayer for MetricsPublish {
         out: &'a mut Outgoing<'a>,
         next: PublishNext<'a, N, P>,
     ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>> + Send + 'a {
-        let name = out.name().to_owned();
+        // The message moves into the rest of the pipeline, so the destination's series are
+        // looked up while its name is still readable and kept by reference past the send.
+        let series = self
+            .inner
+            .publishers
+            .get_or_build(out.name(), PublishSeries::new);
         async move {
             let result = next.run(out).await;
-            let status = if result.is_ok() { "ok" } else { "error" };
-            self.inner
-                .published
-                .with_label_values(&[name.as_str(), status])
+            series
+                .published(&self.inner.published, result.is_ok())
                 .inc();
             result
         }
@@ -445,7 +515,7 @@ mod tests {
 
     use prometheus::Registry;
 
-    use super::{Metrics, consume_status};
+    use super::{CONSUME_STATUSES, Metrics, consume_status};
     use ruststream_runtime::HandlerResult;
 
     #[test]
@@ -458,10 +528,11 @@ mod tests {
         assert!(metrics.registry().register(Box::new(dup)).is_err());
 
         // Every outcome maps to its counter label.
-        assert_eq!(consume_status(HandlerResult::Ack), "ack");
-        assert_eq!(consume_status(HandlerResult::drop()), "nack");
+        let status = |result| CONSUME_STATUSES[consume_status(result)];
+        assert_eq!(status(HandlerResult::Ack), "ack");
+        assert_eq!(status(HandlerResult::drop()), "nack");
         assert_eq!(
-            consume_status(HandlerResult::retry_after(Duration::from_secs(1))),
+            status(HandlerResult::retry_after(Duration::from_secs(1))),
             "nack"
         );
     }

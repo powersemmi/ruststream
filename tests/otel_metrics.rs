@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use allocation_counter::measure;
 use opentelemetry::global;
 use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry_sdk::metrics::data::{
@@ -20,10 +21,11 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 use ruststream::memory::{MemoryBroker, MemoryPublish, Retention};
 use ruststream::otel::{Otel, PUBLISH_TIME_HEADER};
 use ruststream::runtime::{
-    AppInfo, HandlerOutcome, PublishExt, Reply, RustStream, SubscriberSettings,
+    App, AppInfo, HandlerOutcome, PublishExt, Reply, RustStream, SubscriberSettings,
 };
 use ruststream::testing::{TestApp, expect_published};
 use ruststream::{Broker, ConnectedBroker, nonzero, subscriber};
+use tokio::runtime::Builder;
 use tokio::sync::Mutex;
 
 use common::{Order, Wire, connected};
@@ -571,5 +573,77 @@ async fn batch_dispatch_records_the_batch_size_histogram() {
             .iter()
             .all(|(_, _, dest)| dest.as_deref() == Some("otel.batches")),
         "every point must carry the destination attribute: {points:?}",
+    );
+}
+
+/// Drives `rounds` request/reply rounds through the harness: each one a delivery to `confirm`
+/// and the reply it publishes.
+async fn request_rounds(tb: &TestApp<()>, rounds: u32) {
+    for id in 0..rounds {
+        tb.message(&Order { id })
+            .to("otel.requests")
+            .publish()
+            .await
+            .expect("publish failed");
+    }
+}
+
+/// The allocations this thread makes over 32 request/reply rounds of `app`, after a warm-up that
+/// pays every first time: the SDK's tracker per attribute set, the harness's buffers.
+///
+/// Every task runs on this thread's own runtime, so the count holds the whole dispatch and the
+/// tests the harness runs beside this one do not enter it.
+fn steady_allocations<A: App<State = ()>>(app: A) -> u64 {
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a current-thread runtime builds");
+    let tb = runtime
+        .block_on(TestApp::start(app))
+        .expect("harness start failed");
+    runtime.block_on(request_rounds(&tb, 8));
+    let counted = measure(|| runtime.block_on(request_rounds(&tb, 32)));
+    runtime
+        .block_on(tb.shutdown())
+        .expect("graceful shutdown failed");
+    counted.count_total
+}
+
+/// The dispatch metrics cost a delivery and its reply no allocation: the attribute sets are built
+/// once per destination and reused, so a service with the layers allocates exactly what one
+/// without them does.
+#[test]
+fn the_dispatch_metrics_allocate_nothing_per_message() {
+    // A tracing subscriber `init()` installs between the two counts would give one of them the
+    // events the other did not format.
+    let _globals = GLOBAL_PROVIDERS.blocking_lock();
+    let exporter = InMemoryMetricExporter::default();
+    let meter_provider = SdkMeterProvider::builder()
+        .with_periodic_exporter(exporter)
+        .build();
+    // The publish-time stamp is a header the message carries, data the broker sends, so it
+    // stays out of a count of what recording costs.
+    let otel = Otel::builder()
+        .messaging_system("memory")
+        .stamp_publish_time(false)
+        .attach(SdkTracerProvider::builder().build(), meter_provider);
+
+    let bare = steady_allocations(RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(confirm);
+        },
+    ));
+    let recorded = steady_allocations(
+        RustStream::new(AppInfo::new("svc", "0.1.0"))
+            .layer(otel.consume_layer())
+            .publish_layer(otel.publish_layer())
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(confirm);
+            }),
+    );
+    assert_eq!(
+        recorded, bare,
+        "32 recorded rounds allocate {recorded} times, the same rounds unrecorded {bare}",
     );
 }

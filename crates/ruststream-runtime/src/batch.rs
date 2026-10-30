@@ -10,6 +10,8 @@
 
 use std::iter;
 #[cfg(feature = "otel")]
+use std::slice;
+#[cfg(feature = "otel")]
 use std::sync::LazyLock;
 use std::{any, fmt, marker::PhantomData};
 
@@ -588,7 +590,7 @@ where
         }
         #[cfg(feature = "otel")]
         if !values.is_empty() {
-            record_batch_size(subscription, values.len());
+            record_batch_size(delivery.destination(subscription), values.len());
         }
         let result = if values.is_empty() {
             BatchResult::PerElement(Vec::new())
@@ -618,18 +620,12 @@ static BATCH_SIZE: LazyLock<Histogram<u64>> = LazyLock::new(|| {
         .build()
 });
 
-/// Records one decoded batch's size under its destination.
+/// Records one decoded batch's size under its subscription's destination attribute.
 #[cfg(feature = "otel")]
-pub(crate) fn record_batch_size(destination: &str, len: usize) {
+pub(crate) fn record_batch_size(destination: &KeyValue, len: usize) {
     // Batches beyond u64 elements do not exist.
     #[allow(clippy::cast_possible_truncation)]
-    BATCH_SIZE.record(
-        len as u64,
-        &[KeyValue::new(
-            "messaging.destination.name",
-            destination.to_owned(),
-        )],
-    );
+    BATCH_SIZE.record(len as u64, slice::from_ref(destination));
 }
 
 /// Decodes each element of one raw batch independently into `values`, returning the deliveries
@@ -671,7 +667,7 @@ where
     // callers and would skew the size distribution with zeros.
     #[cfg(feature = "otel")]
     if !values.is_empty() {
-        record_batch_size(subscription, values.len());
+        record_batch_size(delivery.destination(subscription), values.len());
     }
     if rejected.is_empty() {
         return batch;

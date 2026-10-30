@@ -88,6 +88,10 @@ rmp-serde = "1"
 # calls arrived in that release.
 ciborium = "0.2.1"
 prometheus = { version = "0.14", default-features = false }
+# The metric layers' per-destination entries: an index replaced whole on a new name, read with no
+# lock, over an append-only vector whose entries stay put while a publish holds one.
+arc-swap = "1.7"
+boxcar = "0.2.14"
 schemars = "1"
 serde_norway = "0.9"
 clap = { version = "4", features = ["derive"] }

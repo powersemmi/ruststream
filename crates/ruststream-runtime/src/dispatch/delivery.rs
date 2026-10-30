@@ -3,6 +3,11 @@
 
 use std::fmt;
 use std::sync::Arc;
+#[cfg(feature = "otel")]
+use std::sync::OnceLock;
+
+#[cfg(feature = "otel")]
+use opentelemetry::KeyValue;
 
 #[cfg(doc)]
 use crate::IncomingMessage;
@@ -55,6 +60,11 @@ pub struct Delivery<C = ()> {
     /// Times every Nth poll of this subscription's handler.
     #[cfg(feature = "poll-diagnostics")]
     pub(crate) poll: PollSampler,
+    /// The subscription's `messaging.destination.name` attribute, built at its first batch: the
+    /// batch-size histogram records every batch under it, and building it per batch would copy
+    /// the name each time. A subscription that never batches never builds it.
+    #[cfg(feature = "otel")]
+    destination: OnceLock<KeyValue>,
 }
 
 impl<C> Delivery<C> {
@@ -80,6 +90,8 @@ impl<C> Delivery<C> {
             subscription: scope.subscription(),
             #[cfg(feature = "poll-diagnostics")]
             poll: scope.poll().register(subscription),
+            #[cfg(feature = "otel")]
+            destination: OnceLock::new(),
         }
     }
 
@@ -101,6 +113,8 @@ impl<C> Delivery<C> {
             subscription: 0,
             #[cfg(feature = "poll-diagnostics")]
             poll: PollDiagnostics::new().register("detached"),
+            #[cfg(feature = "otel")]
+            destination: OnceLock::new(),
         }
     }
 
@@ -164,7 +178,19 @@ impl<C> Delivery<C> {
             subscription: self.subscription,
             #[cfg(feature = "poll-diagnostics")]
             poll: self.poll.for_thread(),
+            #[cfg(feature = "otel")]
+            destination: self.destination.clone(),
         }
+    }
+}
+
+#[cfg(feature = "otel")]
+impl<C> Delivery<C> {
+    /// The `messaging.destination.name` attribute of this subscription, named `subscription`.
+    pub(crate) fn destination(&self, subscription: &str) -> &KeyValue {
+        self.destination.get_or_init(|| {
+            KeyValue::new("messaging.destination.name", Arc::<str>::from(subscription))
+        })
     }
 }
 
