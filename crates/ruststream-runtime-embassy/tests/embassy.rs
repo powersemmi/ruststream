@@ -18,14 +18,14 @@ use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream_core::LocalIncomingMessage;
-use ruststream_runtime_embassy::frames::{
-    Frame, FrameDelivery, FrameSubscriber, Frames, Settlements,
-};
-use ruststream_runtime_embassy::{CountDetached, EmbassyClock, Control};
 use ruststream_runtime::{
     Clock, Context, Delivery, DispatchFailure, FailurePolicies, Handler, HandlerOutcome,
     run_sequential,
 };
+use ruststream_runtime_embassy::frames::{
+    Frame, FrameDelivery, FrameSubscriber, Frames, Settlements,
+};
+use ruststream_runtime_embassy::{Control, CountDetached, EmbassyClock, Health};
 use static_cell::StaticCell;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 
@@ -187,7 +187,11 @@ async fn drive(probe: &'static Probe) {
     probe.stop.stop();
     settle().await;
     assert!(probe.ended.get(), "the loop outlives shutdown");
-    assert!(!probe.stop.failed(), "the loop reported a failure");
+    assert_ne!(
+        probe.stop.health(),
+        Health::Failed,
+        "the loop reported a failure"
+    );
     assert!(
         !probe.stop.stream_ended(),
         "the loop reported its stream ended"
