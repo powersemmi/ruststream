@@ -95,7 +95,7 @@ pub use ruststream_runtime::{
 };
 pub use ruststream_runtime::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use ruststream_runtime::{FailurePolicies, FailurePolicy};
-pub use ruststream_runtime::{Handler, HandlerOutcome};
+pub use ruststream_runtime::{Handler, HandlerOutcome, LocalHandler};
 pub use ruststream_runtime::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
     OutgoingMessageMetadata,
