@@ -31,16 +31,23 @@ mod detach;
 pub mod frames;
 mod hooks;
 mod host;
+#[cfg(feature = "testing")]
+mod in_process;
 mod lanes;
 mod mailbox;
 mod mounts;
 
+#[doc(hidden)]
+pub use app::AppBrokers;
 pub use app::{EmbeddedApp, Mounts, Parts, RunError, Scope};
 pub use clock::EmbassyClock;
 pub use control::{Control, Health, Stopping};
 pub use detach::CountDetached;
 #[doc(hidden)]
 pub use hooks::{HookList, Hooks, NoHooks};
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use in_process::{InProcessConnection, StartInProcess};
 pub use lanes::MountSteps;
 #[doc(hidden)]
 pub use lanes::{EmbeddedPlan, Keyed, Lanes, NoRoom, OneLane, Pool, Room, SoFar};

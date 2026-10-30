@@ -15,6 +15,11 @@ readme = "../../README.md"
 [package.metadata.docs.rs]
 all-features = true
 
+[features]
+# The in-process run the test harness drives the app through: every broker connected through its
+# in-process transition. A host test build turns it on through the facade's `testing` feature.
+testing = ["ruststream-runtime/testing"]
+
 [dependencies]
 ruststream-core = { workspace = true, features = ["alloc"] }
 ruststream-runtime = { workspace = true, features = ["alloc"] }
