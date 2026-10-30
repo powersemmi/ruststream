@@ -1,25 +1,25 @@
 //! Where the work a delivery leaves behind runs: futures kept beside the subscriptions and polled
 //! by the app's own task, so every timer they arm is the task's own.
 
+// The store holds work that is not `Send`, and the driver runs it on the app's one task.
+#![allow(clippy::future_not_send)]
+
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::future::poll_fn;
 use core::pin::Pin;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::task::{Context, Poll, Waker};
 use core::time::Duration;
 
-use embassy_sync::blocking_mutex::Mutex;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use ruststream_runtime::{Clock, Detach};
+use ruststream_runtime::{Clock, LocalDetach};
 
 use crate::clock::{EmbassyClock, Schedule};
 
 /// A piece of detached work: a continuation, or a delayed copy of `retry_after` with the
 /// instant it is due at.
 struct Work<At> {
-    future: Pin<Box<dyn Future<Output = ()> + Send>>,
+    future: Pin<Box<dyn Future<Output = ()>>>,
     /// When a delayed copy is due; `None` for a continuation, which runs at once.
     due: Option<At>,
 }
@@ -32,20 +32,21 @@ struct Inbox<At> {
 
 /// The work deliveries left behind, run by [`drive`](Self::drive) on the task that polls it.
 ///
-/// A delivery hands work over through [`Detach`]; the driver takes it at its next poll and polls
+/// A delivery hands work over through [`LocalDetach`]; the driver takes it at its next poll and polls
 /// it with the task's waker, as embassy's integrated timer queue requires of a timer. `room`
 /// bounds the delayed copies of `retry_after`: a reservation past it is refused, and the body
 /// requeues the delivery. A delayed copy is not polled before it is due: the driver waits for
-/// the earliest one on one timer, so a wake costs one timer however many copies wait. Handing
-/// work over takes a critical section; an idle driver reads one flag and compares its waker.
+/// the earliest one on one timer, so a wake costs one timer however many copies wait. The work
+/// need not be `Send`: deliveries hand it over and the driver runs it on the app's one task, so
+/// the inbox is a plain cell and an idle driver reads one flag and compares its waker.
 pub(crate) struct Detached<Timers: Clock = EmbassyClock> {
-    inbox: Mutex<CriticalSectionRawMutex, RefCell<Inbox<Timers::Instant>>>,
+    inbox: RefCell<Inbox<Timers::Instant>>,
     /// Set when the inbox holds work the driver has not taken.
-    handed: AtomicBool,
+    handed: Cell<bool>,
     /// Set once nothing more will be handed over: the driver ends when it has run what it holds.
-    closed: AtomicBool,
+    closed: Cell<bool>,
     /// Delayed copies reserved, waiting or running.
-    reserved: AtomicUsize,
+    reserved: Cell<usize>,
     room: usize,
     clock: Timers,
 }
@@ -70,13 +71,13 @@ impl<Timers: Schedule> Detached<Timers> {
     /// A host on `clock` with room for `room` delayed copies at once.
     pub(crate) const fn on_clock(clock: Timers, room: usize) -> Self {
         Self {
-            inbox: Mutex::new(RefCell::new(Inbox {
+            inbox: RefCell::new(Inbox {
                 works: Vec::new(),
                 waker: None,
-            })),
-            handed: AtomicBool::new(false),
-            closed: AtomicBool::new(false),
-            reserved: AtomicUsize::new(0),
+            }),
+            handed: Cell::new(false),
+            closed: Cell::new(false),
+            reserved: Cell::new(0),
             room,
             clock,
         }
@@ -84,7 +85,7 @@ impl<Timers: Schedule> Detached<Timers> {
 
     /// Stops taking work: the driver ends once what it holds has finished.
     pub(crate) fn close(&self) {
-        self.closed.store(true, Ordering::Relaxed);
+        self.closed.set(true);
         self.wake();
     }
 
@@ -103,14 +104,13 @@ impl<Timers: Schedule> Detached<Timers> {
                 .is_some_and(|waker| waker.will_wake(cx.waker()))
             {
                 let waker = cx.waker().clone();
-                self.inbox
-                    .lock(|inbox| inbox.borrow_mut().waker = Some(waker.clone()));
+                self.inbox.borrow_mut().waker = Some(waker.clone());
                 known = Some(waker);
             }
             // Read before the inbox is taken, so work handed over after the take raises it again.
-            let closed = self.closed.load(Ordering::Relaxed);
-            if self.handed.load(Ordering::Relaxed) {
-                self.handed.store(false, Ordering::Relaxed);
+            let closed = self.closed.get();
+            if self.handed.get() {
+                self.handed.set(false);
                 self.take_handed(&mut held);
             }
             if !held.waiting.is_empty() {
@@ -119,11 +119,7 @@ impl<Timers: Schedule> Detached<Timers> {
             if !held.running.is_empty() {
                 self.poll_running(&mut held.running, cx);
             }
-            if closed
-                && held.running.is_empty()
-                && held.waiting.is_empty()
-                && !self.handed.load(Ordering::Relaxed)
-            {
+            if closed && held.running.is_empty() && held.waiting.is_empty() && !self.handed.get() {
                 Poll::Ready(())
             } else {
                 Poll::Pending
@@ -134,18 +130,16 @@ impl<Timers: Schedule> Detached<Timers> {
     /// Moves what was handed over into the driver: continuations to run, delayed copies to
     /// wait, the timer moved earlier when a new copy is due first.
     fn take_handed(&self, held: &mut Held<Timers>) {
-        self.inbox.lock(|inbox| {
-            for work in inbox.borrow_mut().works.drain(..) {
-                let Some(due) = work.due else {
-                    held.running.push(work);
-                    continue;
-                };
-                if held.next.as_ref().is_none_or(|(next, _)| due < *next) {
-                    held.next = Some((due, self.clock.sleep_until(due)));
-                }
-                held.waiting.push(work);
+        for work in self.inbox.borrow_mut().works.drain(..) {
+            let Some(due) = work.due else {
+                held.running.push(work);
+                continue;
+            };
+            if held.next.as_ref().is_none_or(|(next, _)| due < *next) {
+                held.next = Some((due, self.clock.sleep_until(due)));
             }
-        });
+            held.waiting.push(work);
+        }
     }
 
     /// Polls the earliest copy's timer; once it ends, moves every copy due by then to the
@@ -189,32 +183,26 @@ impl<Timers: Schedule> Detached<Timers> {
     }
 
     fn hand(&self, work: Work<Timers::Instant>) {
-        self.inbox.lock(|inbox| inbox.borrow_mut().works.push(work));
-        self.handed.store(true, Ordering::Relaxed);
+        self.inbox.borrow_mut().works.push(work);
+        self.handed.set(true);
         self.wake();
     }
 
     fn wake(&self) {
-        self.inbox.lock(|inbox| {
-            if let Some(waker) = &inbox.borrow().waker {
-                waker.wake_by_ref();
-            }
-        });
+        if let Some(waker) = &self.inbox.borrow().waker {
+            waker.wake_by_ref();
+        }
     }
 
     fn give_back(&self) {
-        // One task hands over and drives, so a load and a store suffice where a
-        // read-modify-write is not available.
-        let reserved = self.reserved.load(Ordering::Relaxed);
-        self.reserved
-            .store(reserved.saturating_sub(1), Ordering::Relaxed);
+        self.reserved.set(self.reserved.get().saturating_sub(1));
     }
 }
 
-impl<Timers: Schedule> Detach for Detached<Timers> {
+impl<Timers: Schedule> LocalDetach for Detached<Timers> {
     fn detach<Work>(&self, work: Work)
     where
-        Work: Future<Output = ()> + Send + 'static,
+        Work: Future<Output = ()> + 'static,
     {
         self.hand(self::Work {
             future: Box::pin(work),
@@ -224,7 +212,7 @@ impl<Timers: Schedule> Detach for Detached<Timers> {
 
     fn detach_after<Work>(&self, delay: Duration, work: Work)
     where
-        Work: Future<Output = ()> + Send + 'static,
+        Work: Future<Output = ()> + 'static,
     {
         self.hand(self::Work {
             future: Box::pin(work),
@@ -233,11 +221,11 @@ impl<Timers: Schedule> Detach for Detached<Timers> {
     }
 
     fn reserve(&self) -> bool {
-        let reserved = self.reserved.load(Ordering::Relaxed);
+        let reserved = self.reserved.get();
         if reserved >= self.room {
             return false;
         }
-        self.reserved.store(reserved + 1, Ordering::Relaxed);
+        self.reserved.set(reserved + 1);
         true
     }
 
@@ -265,7 +253,10 @@ mod tests {
     use core::task::{Context, Poll, Waker};
     use core::time::Duration;
 
-    use ruststream_runtime::{Clock, Detach};
+    use alloc::rc::Rc;
+    use core::cell::Cell;
+
+    use ruststream_runtime::{Clock, LocalDetach};
 
     // The driver on embassy's clock polls embassy's timer, whose queue lives in the executor.
     use embassy_executor as _;
@@ -388,6 +379,25 @@ mod tests {
         host.close();
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Ready(()));
         assert!(ran.load(Ordering::Relaxed), "the handed work ran");
+    }
+
+    #[test]
+    fn the_store_runs_work_that_is_not_send() {
+        let host = Detached::on_clock(Probe::default(), 1);
+        let ran = Rc::new(Cell::new(0));
+        let mut driver = pin!(host.drive());
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+        let held = Rc::clone(&ran);
+        LocalDetach::detach(&host, async move { held.set(held.get() + 1) });
+        assert!(LocalDetach::reserve(&host), "room for the copy");
+        let held = Rc::clone(&ran);
+        LocalDetach::detach_after(&host, Duration::ZERO, async move {
+            held.set(held.get() + 1);
+        });
+        host.close();
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Ready(()));
+        assert_eq!(ran.get(), 2, "pieces of work that hold an `Rc` and ran");
     }
 
     #[test]

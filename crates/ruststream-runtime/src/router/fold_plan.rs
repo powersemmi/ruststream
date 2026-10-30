@@ -18,7 +18,7 @@ use core::marker::PhantomData;
 use crate::dispatch::{Delivery, HeadersAtOnce, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::LocalHandler;
-use crate::host::{Detach, Halt, ShutdownWait};
+use crate::host::{Halt, LocalDetach, OnOneThread, ShutdownWait};
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
 use crate::middleware::LocalBlanketLayer;
@@ -55,7 +55,7 @@ pub trait LocalDispatch {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach;
+        Host: LocalDetach;
 }
 
 /// One opened route as a plan receives it: the subscriber, the handler with its layers applied,
@@ -88,7 +88,7 @@ impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach,
+        Host: LocalDetach,
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
         run_sequential(
@@ -97,7 +97,7 @@ impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
             signal,
             self.name,
             Arc::clone(state),
-            (&self.delivery, host),
+            (&self.delivery, &OnOneThread(host)),
             failure,
             (),
             HeadersAtOnce,
@@ -124,7 +124,7 @@ impl LocalDispatch for SequentialPlan {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach,
+        Host: LocalDetach,
     {
         route.run_sequential(signal, state, host)
     }
@@ -273,7 +273,7 @@ where
     async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: Detach,
+        Host: LocalDetach,
     {
         let Self {
             route,
