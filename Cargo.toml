@@ -84,7 +84,8 @@ ruststream-core = { version = "=0.7.7", path = "crates/ruststream-core", default
 ruststream-runtime = { version = "=0.7.7", path = "crates/ruststream-runtime", default-features = false }
 ruststream-runtime-tokio = { version = "=0.7.7", path = "crates/ruststream-runtime-tokio" }
 ruststream-runtime-embassy = { version = "=0.7.7", path = "crates/ruststream-runtime-embassy" }
-ruststream-memory = { version = "=0.7.7", path = "crates/ruststream-memory" }
+# Without its default `std`: the facade's runtime feature picks the tokio side or the embassy side.
+ruststream-memory = { version = "=0.7.7", path = "crates/ruststream-memory", default-features = false }
 ruststream-asyncapi = { version = "=0.7.7", path = "crates/ruststream-asyncapi" }
 ruststream-observability = { version = "=0.7.7", path = "crates/ruststream-observability" }
 ruststream-testing = { version = "=0.7.7", path = "crates/ruststream-testing" }
@@ -121,7 +122,7 @@ required-features = ["cli"]
 
 [[example]]
 name = "macro_app"
-required-features = ["macros", "memory"]
+required-features = ["macros", "memory", "tokio"]
 
 [[example]]
 name = "otel_propagation"
@@ -144,7 +145,7 @@ required-features = ["macros", "memory", "json", "metrics", "asyncapi", "logging
 
 [[example]]
 name = "quickstart"
-required-features = ["macros", "memory", "json"]
+required-features = ["macros", "memory", "json", "tokio"]
 
 [[example]]
 name = "threads"
@@ -167,7 +168,7 @@ required-features = ["testing", "macros", "memory", "json"]
 [[example]]
 name = "manual_quickstart"
 path = "examples/manual/quickstart.rs"
-required-features = ["memory", "json"]
+required-features = ["memory", "json", "tokio"]
 
 # The counterpart of `protobuf` with the derives written out: no codec feature, and no `macros`
 # either, which is what shows the lanes are public traits rather than macro-only sugar.
@@ -209,7 +210,7 @@ required-features = ["memory", "json", "asyncapi"]
 [[example]]
 name = "manual_subscribers"
 path = "examples/manual/subscribers.rs"
-required-features = ["memory", "json"]
+required-features = ["memory", "json", "tokio"]
 
 [[example]]
 name = "manual_seek"
@@ -305,7 +306,7 @@ required-features = ["testing", "memory", "json"]
 [[example]]
 name = "manual_lifespan"
 path = "examples/manual/lifespan.rs"
-required-features = ["memory", "json"]
+required-features = ["memory", "json", "tokio"]
 
 [[example]]
 name = "manual_asyncapi_http"
@@ -372,7 +373,7 @@ required-features = ["testing", "memory", "json", "metrics"]
 [[example]]
 name = "manual_http_outbox"
 path = "examples/manual/http_outbox.rs"
-required-features = ["memory", "json"]
+required-features = ["memory", "json", "tokio"]
 
 [[example]]
 name = "manual_logging"
@@ -387,7 +388,7 @@ required-features = ["testing", "memory", "json", "logging"]
 [[example]]
 name = "manual_routed_service_orders"
 path = "examples/manual/routed_service_orders.rs"
-required-features = ["memory", "json"]
+required-features = ["memory", "json", "tokio"]
 
 [[example]]
 name = "manual_otel_export"
@@ -412,7 +413,7 @@ required-features = ["macros", "memory", "json", "asyncapi"]
 
 [[example]]
 name = "subscribers"
-required-features = ["macros", "memory", "json"]
+required-features = ["macros", "memory", "json", "tokio"]
 
 [[example]]
 name = "memory_broker"
@@ -706,7 +707,7 @@ required-features = ["testing", "macros", "memory", "json"]
 
 [[example]]
 name = "lifespan"
-required-features = ["macros", "memory", "json"]
+required-features = ["macros", "memory", "json", "tokio"]
 
 [[example]]
 name = "asyncapi_http"
@@ -718,7 +719,7 @@ required-features = ["testing", "macros", "memory", "json", "metrics"]
 
 [[example]]
 name = "http_outbox"
-required-features = ["macros", "memory", "json"]
+required-features = ["macros", "memory", "json", "tokio"]
 
 [[example]]
 name = "logging"
@@ -915,12 +916,14 @@ test = true
 [[test]]
 name = "suite"
 path = "tests/main.rs"
+required-features = ["tokio"]
 
 # The tests of the examples, one module per example: a binary of its own, so it compiles beside
 # the suite instead of after it.
 [[test]]
 name = "examples"
 path = "tests/examples.rs"
+required-features = ["tokio"]
 
 # The OpenTelemetry metrics own their process: `init()` installs the global tracing subscriber
 # and providers, and the batch-size histogram binds to the global meter at the first batch the
@@ -928,6 +931,7 @@ path = "tests/examples.rs"
 [[test]]
 name = "otel_metrics"
 path = "tests/otel_metrics.rs"
+required-features = ["tokio"]
 
 [package]
 name = "ruststream"
@@ -946,16 +950,47 @@ autotests = false
 # The repository's own build settings stay out of the package; a dependent never reads them.
 exclude = [".cargo"]
 
-# The whole surface is behind additive features, and `default` is `json` alone, so a default build
-# on docs.rs publishes a reference with the runtime, codec, AsyncAPI, metrics, testing and
-# conformance modules missing - the ones the guides send readers to.
+# The whole surface is behind features, so a default build on docs.rs publishes a reference with
+# the codec, AsyncAPI, metrics, testing and conformance modules missing - the ones the guides send
+# readers to. The two runtimes exclude each other, so the page documents the tokio set: every
+# feature but `embassy`. The embedded runner's reference is the page of
+# `ruststream-runtime-embassy`, and the local bus's is `ruststream-memory`'s, both built with all
+# their features.
 [package.metadata.docs.rs]
-all-features = true
+features = [
+    "asyncapi",
+    "cbor",
+    "cli",
+    "conformance",
+    "json",
+    "logging",
+    "macros",
+    "memory",
+    "metrics",
+    "msgpack",
+    "otel",
+    "poll-diagnostics",
+    "testing",
+    "tokio",
+]
 
 [features]
-default = ["json"]
+default = ["json", "tokio"]
+# The runtime: `tokio` or `embassy`. The two exclude each other, and every feature that runs on
+# tokio's runner, the harness and the observability layers among them, turns `tokio` on.
+tokio = [
+    "dep:ruststream-runtime-tokio",
+    "dep:ruststream-cli",
+    "ruststream-macros?/tokio",
+    "ruststream-memory?/std",
+]
+embassy = [
+    "dep:ruststream-runtime-embassy",
+    "ruststream-macros?/embassy",
+    "ruststream-memory?/embassy",
+]
 memory = ["dep:ruststream-memory"]
-conformance = ["testing", "dep:ruststream-conformance"]
+conformance = ["tokio", "testing", "dep:ruststream-conformance"]
 json = [
     "ruststream-core/json",
     "ruststream-runtime/json",
@@ -965,6 +1000,7 @@ msgpack = ["ruststream-runtime/msgpack", "ruststream-testing?/msgpack"]
 cbor = ["ruststream-runtime/cbor", "ruststream-testing?/cbor"]
 macros = ["dep:ruststream-macros"]
 asyncapi = [
+    "tokio",
     "json",
     "dep:schemars",
     "dep:ruststream-asyncapi",
@@ -973,19 +1009,22 @@ asyncapi = [
     "ruststream-cli/asyncapi",
     "ruststream-conformance?/asyncapi",
 ]
-metrics = ["dep:ruststream-observability", "ruststream-observability/metrics"]
+metrics = ["tokio", "dep:ruststream-observability", "ruststream-observability/metrics"]
 logging = [
+    "tokio",
     "dep:ruststream-observability",
     "ruststream-observability/logging",
     "ruststream-cli/logging",
 ]
-cli = ["dep:anyhow", "ruststream-cli/tool"]
+cli = ["tokio", "dep:anyhow", "ruststream-cli/tool"]
 poll-diagnostics = [
+    "tokio",
     "ruststream-runtime/poll-diagnostics",
     "ruststream-runtime-tokio/poll-diagnostics",
     "ruststream-observability?/poll-diagnostics",
 ]
 testing = [
+    "tokio",
     "dep:inventory",
     "dep:ruststream-testing",
     "ruststream-core/testing",
@@ -993,17 +1032,18 @@ testing = [
     "ruststream-runtime-tokio/testing",
     "ruststream-memory?/testing",
 ]
-otel = ["dep:ruststream-observability", "ruststream-observability/otel"]
+otel = ["tokio", "dep:ruststream-observability", "ruststream-observability/otel"]
 
 [dependencies]
 ruststream-core = { workspace = true, features = ["std"] }
 ruststream-runtime = { workspace = true, features = ["std"] }
-ruststream-runtime-tokio.workspace = true
+ruststream-runtime-tokio = { workspace = true, optional = true }
+ruststream-runtime-embassy = { workspace = true, optional = true }
 ruststream-memory = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }
 ruststream-testing = { workspace = true, optional = true }
-ruststream-cli.workspace = true
+ruststream-cli = { workspace = true, optional = true }
 ruststream-conformance = { workspace = true, optional = true }
 bytes = { workspace = true, features = ["std"] }
 bytes-utils = { workspace = true, features = ["std"] }
@@ -1018,87 +1058,87 @@ inventory = { workspace = true, optional = true }
 [[bench]]
 name = "consume_json"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "consume_json_kilobyte"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "consume_lane"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "consume_pool"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "consume_threads"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "middleware"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "batch"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "reply"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "reply_lending"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "out_slot"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "typed_headers_write"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "typed_headers_read"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "request_reply"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "continuation"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "retry_copy"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "retry_copy_deferred"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
 name = "wall_clock"
 harness = false
-required-features = ["memory", "json", "macros"]
+required-features = ["memory", "json", "macros", "tokio"]
 
 [dev-dependencies]
 futures = "0.3"

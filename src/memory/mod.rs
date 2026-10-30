@@ -12,11 +12,16 @@
 //! - [Patterns][patterns]: a [`MemoryPattern`] subscription reads every name its pattern
 //!   matches, and the broker's [`Routing`] decides who receives a shared match.
 //!
+//! - [Local memory broker][local]: `memory::local`, the bus a service on the `embassy` runtime
+//!   mounts on, whose types are not `Send`.
+//!
 //! [memory]: https://powersemmi.github.io/ruststream/latest/components/memory/
 //! [retention]: https://powersemmi.github.io/ruststream/latest/components/memory/retention/
 //! [patterns]: https://powersemmi.github.io/ruststream/latest/components/memory/patterns/
+//! [local]: https://powersemmi.github.io/ruststream/latest/components/memory/local/
 
 #[doc(inline)]
 pub use ruststream_memory::*;
 
+#[cfg(feature = "tokio")]
 pub mod prelude;

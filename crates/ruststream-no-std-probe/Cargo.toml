@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 # A path dependency without a version: the crate is never published.
-ruststream = { path = "../..", default-features = false, features = ["macros", "json"] }
+ruststream = { path = "../..", default-features = false, features = ["macros", "json", "tokio"] }
 serde.workspace = true
 
 [lints]
