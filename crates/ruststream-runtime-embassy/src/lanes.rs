@@ -380,7 +380,7 @@ fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
 /// # let _ = app(LocalMemoryBroker::new());
 /// ```
 ///
-/// A count of zero does not build:
+/// A count of zero does not build, for a pool:
 ///
 /// ```compile_fail
 /// # use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
@@ -397,6 +397,50 @@ fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
 /// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
 ///     EmbeddedApp::new().with_broker(bus, |b| {
 ///         b.include(subscriber(LocalMemorySource::new("motor"), Drive).build()).pool::<0>()
+///     })
+/// }
+/// # let _ = app(LocalMemoryBroker::new());
+/// ```
+///
+/// for keyed lanes:
+///
+/// ```compile_fail
+/// # use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
+/// # use ruststream_runtime::{Context, Deserialized, Handle, HandlerOutcome, Input, SoloDeserialized, subscriber};
+/// # use ruststream_runtime_embassy::{EmbeddedApp, MountSteps, Mounts};
+/// # struct Command;
+/// # impl Deserialized for Command { type Output<'a> = Command; type Error = core::convert::Infallible;
+/// #     fn from_payload(_: &[u8]) -> Result<Command, Self::Error> { Ok(Command) } }
+/// # impl Input for Command { type Axis = SoloDeserialized<Command>; }
+/// # struct Drive;
+/// # impl Handle<Command> for Drive {
+/// #     fn handle(&self, _: &Command, _: &(), _: &mut Context<'_>)
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> + Send { core::future::ready(Ok(())) } }
+/// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
+///     EmbeddedApp::new().with_broker(bus, |b| {
+///         b.include(subscriber(LocalMemorySource::new("motor"), Drive).build()).keyed::<0>()
+///     })
+/// }
+/// # let _ = app(LocalMemoryBroker::new());
+/// ```
+///
+/// or for the retry room:
+///
+/// ```compile_fail
+/// # use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
+/// # use ruststream_runtime::{Context, Deserialized, Handle, HandlerOutcome, Input, SoloDeserialized, subscriber};
+/// # use ruststream_runtime_embassy::{EmbeddedApp, MountSteps, Mounts};
+/// # struct Command;
+/// # impl Deserialized for Command { type Output<'a> = Command; type Error = core::convert::Infallible;
+/// #     fn from_payload(_: &[u8]) -> Result<Command, Self::Error> { Ok(Command) } }
+/// # impl Input for Command { type Axis = SoloDeserialized<Command>; }
+/// # struct Drive;
+/// # impl Handle<Command> for Drive {
+/// #     fn handle(&self, _: &Command, _: &(), _: &mut Context<'_>)
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> + Send { core::future::ready(Ok(())) } }
+/// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
+///     EmbeddedApp::new().with_broker(bus, |b| {
+///         b.include(subscriber(LocalMemorySource::new("motor"), Drive).build()).retry_capacity::<0>()
 ///     })
 /// }
 /// # let _ = app(LocalMemoryBroker::new());

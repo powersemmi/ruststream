@@ -341,6 +341,7 @@ async fn check_pool(spawner: Spawner, stand: &'static Stand) {
     }
     settle().await;
     let busy = stand.record.in_flight.load(Ordering::Relaxed);
+    let held_by_subscription = stand.pooled_wire.len();
     advance(WORK).await;
     let after_first = (
         stand.pooled_acked.get(),
@@ -362,6 +363,10 @@ async fn check_pool(spawner: Spawner, stand: &'static Stand) {
     );
     assert_eq!(after_second, 5, "acked once the fifth finished");
     assert_eq!(peak, 4, "the most deliveries ever in flight");
+    assert_eq!(
+        held_by_subscription, 1,
+        "deliveries the subscription still holds while every worker is busy"
+    );
     passed("a fifth delivery waits for a free worker");
     assert_eq!(
         allocations, 0,
