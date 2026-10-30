@@ -30,6 +30,11 @@ embassy_set := "cbor,embassy,json,macros,memory,msgpack"
 # local bus builds beside its tokio bus, so it joins the tokio legs and their coverage.
 workspace_features := tokio_set + ",ruststream-memory/embassy"
 
+# The members a workspace leg leaves out: the embedded runner's tests and doc examples build the
+# facade with the embassy set, as a device service does, and the tokio set beside it is the
+# two-runtime compile error. Its own legs below build it.
+tokio_legs_exclude := "--exclude ruststream-runtime-embassy"
+
 # The scenarios that count instructions and allocations, one benchmark file each. A run against a
 # baseline holds the gated ones to an instruction limit; the ungated one is measured and reported,
 # and held to no number. The wall-clock one is in neither list: it runs under a different harness,
@@ -44,12 +49,14 @@ check:
     # The benchmarks are left out of the workspace legs on purpose: they are built with the
     # production feature set, and the harness feature is a compile error in them. Their own leg
     # follows.
-    cargo clippy --workspace --lib --bins --tests --examples --features {{ workspace_features }} \
+    cargo clippy --workspace {{ tokio_legs_exclude }} --lib --bins --tests --examples \
+        --features {{ workspace_features }} \
         -- -D warnings
     # No clippy here: this feature combination has clippy lints of its own that no gate has ever
     # run, and cleaning them is not what a benchmark change is for.
     cargo check --benches --no-default-features --features {{ bench_features }}
-    cargo check --workspace --lib --bins --tests --examples --features {{ workspace_features }}
+    cargo check --workspace {{ tokio_legs_exclude }} --lib --bins --tests --examples \
+        --features {{ workspace_features }}
     # The probe always asks for `macros`, `json` and `tokio`, and a workspace build unifies a
     # dependency's features across members, so the reduced legs leave it out and check it on its
     # own.
@@ -82,8 +89,9 @@ check:
     # names it and drops out, then the embedded runner and the local bus with their tests.
     cargo clippy -p ruststream --all-targets --no-default-features --features {{ embassy_set }} \
         -- -D warnings
-    cargo clippy -p ruststream-runtime-embassy -p ruststream-memory --all-targets \
-        --no-default-features --features embassy -- -D warnings
+    cargo clippy -p ruststream-runtime-embassy --all-targets -- -D warnings
+    cargo clippy -p ruststream-memory --all-targets --no-default-features --features embassy \
+        -- -D warnings
     # The embassy set keeps tokio out of the facade's dependency graph.
     tree="$(cargo tree -p ruststream --no-default-features --features {{ embassy_set }} \
         -e normal -i tokio)"; \
@@ -119,16 +127,17 @@ check:
     # codec resolves, so it builds without one.
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --features {{ tokio_set }} --test suite ui::
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features macros,memory,testing --test suite ui_codec_free::
+    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-runtime-embassy --test ui
 
 test:
     # The examples' tests are modules of one test binary, so `--tests` builds none per example;
     # `check` compiles every example on its own. `--tests` leaves the doc examples out, so they
     # run on their own line.
-    cargo test --workspace --features {{ workspace_features }} --tests
-    cargo test --workspace --features {{ workspace_features }} --doc
+    cargo test --workspace {{ tokio_legs_exclude }} --features {{ workspace_features }} --tests
+    cargo test --workspace {{ tokio_legs_exclude }} --features {{ workspace_features }} --doc
     # The embassy runtime's host tests: the embedded runner and the local bus.
-    cargo test -p ruststream-runtime-embassy -p ruststream-memory --no-default-features \
-        --features embassy
+    cargo test -p ruststream-runtime-embassy
+    cargo test -p ruststream-memory --no-default-features --features embassy
     # The reduced-feature legs CI runs, in CI's order. A module compiled only with a feature off
     # is invisible to the workspace run above, so an API a refactor removed can survive there
     # until CI says otherwise: `codec_free_lanes` and `ui_codec_free` build only where no codec
@@ -235,12 +244,12 @@ deny:
 # raise it here and in ci.yml together if coverage climbs further. Needs
 # cargo-llvm-cov: cargo install cargo-llvm-cov --locked
 cov:
-    cargo llvm-cov --workspace --features {{ workspace_features }} --fail-under-lines 95
+    cargo llvm-cov --workspace {{ tokio_legs_exclude }} --features {{ workspace_features }} --fail-under-lines 95
 
 # HTML coverage report at target/llvm-cov/html/index.html, for finding the
 # uncovered lines the gate complains about.
 cov-html:
-    cargo llvm-cov --workspace --features {{ workspace_features }} --html
+    cargo llvm-cov --workspace {{ tokio_legs_exclude }} --features {{ workspace_features }} --html
 
 build:
     cargo build --workspace --release --features {{ workspace_features }}
