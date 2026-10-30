@@ -59,7 +59,8 @@ done
 ## Checking a change to the core
 
 ```bash
-just check   # rustfmt, clippy, cargo check on the feature edges, rustdoc, compile-fail snapshots
+just check   # rustfmt, clippy, cargo check on the feature edges, the contract on two no_std
+             # targets, rustdoc, compile-fail snapshots
 just test    # the test suite, the reduced-feature legs, doctests on both feature edges
 just ci      # both
 ```

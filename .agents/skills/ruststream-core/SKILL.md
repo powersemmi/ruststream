@@ -57,7 +57,10 @@ impl Subject {
 ## Rules
 
 - **Layering.** A crate depends only on the crates below it, and `ruststream-core` on no other
-  crate of the family; the compiler holds this. A new public item is re-exported by the facade at
+  crate of the family; the compiler holds this. `ruststream-core` is `#![no_std]`: it names
+  `core` and `alloc` paths, and an item that needs the standard library sits behind its `std`
+  feature. The macros emit standard names through `ruststream::__private`, and the `#![no_std]`
+  crate `ruststream-no-std-probe` fails to build when they name `std` again. A new public item is re-exported by the facade at
   its public path. A module overview lives in the facade, and a doc link that leaves its crate
   points at the facade's page on docs.rs. A doc example imports the facade.
 - **Visibility.** Default to `pub(crate)`; `pub` is what the crate root re-exports. An item another
