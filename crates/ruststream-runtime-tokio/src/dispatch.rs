@@ -318,7 +318,7 @@ async fn batch_loop<S, H, C, St>(
                 // Turbofish: the adapter handlers are generic over the batch context, so the
                 // spawn's own parameter names it.
                 run_batch::<_, _, C, _, _, _>(
-                    &*shared.handler,
+                    &shared.handler,
                     batch,
                     &mut scratch,
                     &mut encode,
@@ -372,7 +372,7 @@ where
     let failure = shared.failure.clone();
     async move {
         run_batch::<_, _, C, _, _, _>(
-            &*handler,
+            &handler,
             batch,
             &mut scratch,
             &mut encode,
@@ -425,7 +425,7 @@ where
         let mut encode = BytesMut::new();
         async move |batch: S::Batch| {
             run_batch::<_, _, C, _, _, _>(
-                &*shared.handler,
+                &shared.handler,
                 batch,
                 &mut scratch,
                 &mut encode,

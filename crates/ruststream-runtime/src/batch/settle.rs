@@ -18,7 +18,7 @@ use crate::testing::coordinator::Delivered;
 use crate::testing::coordinator::PendingRecord;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::RecordedValue;
-use crate::{BuildBatchContext, IncomingMessage};
+use crate::{BuildBatchContext, LocalIncomingMessage};
 
 /// Settles a batch whose rejected elements were deferred past the handler call: each rejected
 /// index settles by its recorded outcome, and the accepted remainder settles by the handler's
@@ -31,7 +31,7 @@ pub(super) async fn settle_split_batch<M, C, Host>(
     delivery: &Delivery<C>,
     host: &Host,
 ) where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
     Host: Detach,
 {
@@ -101,7 +101,7 @@ pub(crate) async fn settle_batch<M, C, Host>(
     delivery: &Delivery<C>,
     host: &Host,
 ) where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
     Host: Detach,
 {
@@ -156,7 +156,7 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
     host: &Host,
     lent: LentValues,
 ) where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
     Host: Detach,
 {
@@ -235,7 +235,7 @@ struct BatchLog {
 
 #[cfg(feature = "testing")]
 impl BatchLog {
-    fn of<'m, M: IncomingMessage + 'm>(
+    fn of<'m, M: LocalIncomingMessage + 'm>(
         accepted: impl IntoIterator<Item = &'m M>,
         lent: LentValues,
     ) -> Self {
@@ -255,7 +255,10 @@ impl BatchLog {
     }
 
     /// The log of a split batch: the deliveries the body saw, which are the ones not `rejected`.
-    fn of_accepted<M: IncomingMessage>(batch: &[M], rejected: &[(usize, HandlerResult)]) -> Self {
+    fn of_accepted<M: LocalIncomingMessage>(
+        batch: &[M],
+        rejected: &[(usize, HandlerResult)],
+    ) -> Self {
         Self::of(
             batch
                 .iter()

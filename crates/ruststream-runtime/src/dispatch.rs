@@ -29,7 +29,7 @@ use tracing::error;
 
 use crate::{BuildContext, HeaderMap, LocalIncomingMessage, LocalSubscriber};
 
-use super::batch::{BatchHandler, TakenBatch};
+use super::batch::{LocalBatchHandler, TakenBatch};
 use super::context::Context;
 use super::failure::DispatchFailure;
 #[cfg(feature = "std")]
@@ -530,7 +530,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     host: &Host,
     failure: &DispatchFailure<Signal>,
 ) where
-    H: BatchHandler<Batch, C, St>,
+    H: LocalBatchHandler<Batch, C, St>,
     Signal: Halt,
     Host: Detach,
 {

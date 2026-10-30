@@ -8,16 +8,20 @@
 
 use core::marker::PhantomData;
 
+use crate::batch::BatchDef;
 use crate::input::{Materialize, Provided};
 use crate::middleware::Identity;
 use crate::publish::PublishIdentity;
-use crate::settings::{DefMountCodec, MountsWith};
+use crate::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::subscriber_def::SubscriberDef;
-use crate::{LocalBroker, LocalConnected, LocalSourceMessage, LocalSubscriptionSource};
+use crate::{
+    LocalBatchSubscriber, LocalBroker, LocalConnected, LocalSourceMessage, LocalSourceSubscriber,
+    LocalSubscriptionSource,
+};
 
 use super::builder::Router;
 use super::mount::RouterMount;
-use super::{IncludedRouter, forms};
+use super::{IncludedRawBatchRouter, IncludedRouter, forms};
 
 /// The publish pipeline of a [`Router::local`] chain: the `Pipe` its `Out` slots send through,
 /// marked as the pipeline of a runner that polls every delivery on one thread.
@@ -168,5 +172,38 @@ where
     ) -> Self::Out {
         let source = def.source();
         router.mount_subscriber(source, def, ())
+    }
+}
+
+// A self-deserializing batch decodes nothing, so the chain's codec parameter stays
+// unconstrained here too.
+impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def, F>
+    RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
+    for forms::RawBatch
+where
+    B: LocalBroker + 'static,
+    Def: BatchDef<Input = Provided<F>> + BatchSized,
+    Def::Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
+    LocalSourceSubscriber<B, Def::Source>: LocalBatchSubscriber,
+    Def::Handler: 'static,
+    F: Send + Sync + 'static,
+{
+    type Out = IncludedRawBatchRouter<
+        B,
+        Def::Source,
+        Def,
+        F,
+        RouteCodec,
+        RouteLayers,
+        LocalPipeline<Pipe>,
+        Routes,
+    >;
+
+    fn begin(
+        def: Def,
+        router: Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>,
+    ) -> Self::Out {
+        let source = def.source();
+        router.mount_raw_batch(source, def)
     }
 }

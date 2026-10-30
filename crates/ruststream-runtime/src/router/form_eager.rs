@@ -115,6 +115,7 @@ where
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
     Def::Handler: 'static,
     F: Send + Sync + 'static,
+    RoutePipe: PublishPipeline,
 {
     type Out =
         IncludedRawBatchRouter<B, Def::Source, Def, F, RouteCodec, RouteLayers, RoutePipe, Routes>;
