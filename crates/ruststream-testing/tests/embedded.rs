@@ -369,6 +369,7 @@ fn a_second_harness_on_one_thread_is_refused() {
     });
 }
 
+// --8<-- [start:out]
 #[test]
 fn an_out_slot_publish_is_recorded_with_its_slot() -> Result<(), Box<dyn Error>> {
     block_on(async {
@@ -384,6 +385,7 @@ fn an_out_slot_publish_is_recorded_with_its_slot() -> Result<(), Box<dyn Error>>
         Ok(())
     })
 }
+// --8<-- [end:out]
 
 #[test]
 fn a_call_hook_runs_in_the_publish_that_caused_the_call() -> Result<(), Box<dyn Error>> {
@@ -412,6 +414,7 @@ fn a_call_hook_runs_in_the_publish_that_caused_the_call() -> Result<(), Box<dyn 
     })
 }
 
+// --8<-- [start:on-publish]
 #[test]
 fn a_slot_publish_hook_runs_in_the_publish_that_caused_it() -> Result<(), Box<dyn Error>> {
     block_on(async {
@@ -433,6 +436,7 @@ fn a_slot_publish_hook_runs_in_the_publish_that_caused_it() -> Result<(), Box<dy
         Ok(())
     })
 }
+// --8<-- [end:on-publish]
 
 #[test]
 fn a_hook_waiting_on_the_clock_finishes_once_it_is_advanced() -> Result<(), Box<dyn Error>> {
@@ -567,6 +571,7 @@ fn tank(bus: Bus) -> EmbeddedApp<impl Mounts<State = Limits>> {
         .with_broker(bus, |b| b.include(on_tank).out(Alerts, LocalMemoryPublish))
 }
 
+// --8<-- [start:with-state]
 #[test]
 fn the_test_hands_the_app_its_state() -> Result<(), Box<dyn Error>> {
     block_on(async {
@@ -590,6 +595,7 @@ fn the_test_hands_the_app_its_state() -> Result<(), Box<dyn Error>> {
         Ok(())
     })
 }
+// --8<-- [end:with-state]
 
 #[test]
 fn without_a_state_of_its_own_the_test_runs_the_apps() -> Result<(), Box<dyn Error>> {

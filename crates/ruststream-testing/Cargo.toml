@@ -90,3 +90,9 @@ required-features = ["embassy", "json"]
 name = "embedded_retry"
 path = "tests/embedded_retry.rs"
 required-features = ["embassy", "json"]
+
+# The same device service declared without the macros.
+[[test]]
+name = "embedded_manual"
+path = "tests/embedded_manual.rs"
+required-features = ["embassy", "json"]
