@@ -11,7 +11,6 @@
 // Written over the local twins of the contract for a runner that polls on one thread.
 #![allow(clippy::future_not_send)]
 
-use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::marker::PhantomData;
 
@@ -22,18 +21,20 @@ use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, ShutdownWait};
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
 use crate::middleware::LocalBlanketLayer;
-use crate::redelivery::{CopyPublisher, NoCopies, PairCopies};
-use crate::redelivery::{ScopeDelivery, open_local_route};
+use crate::redelivery::{
+    AppliesDeclaration, CopyPublisher, DeclaredOn, NoCopies, PairCopies, Undeclared,
+};
+use crate::redelivery::{ScopeDelivery, open_local_subscription};
 use crate::typed::{LocalTyped, Typed};
 use crate::{
     BuildContext, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
-    LocalSubscriptionSource,
+    LocalSubscriptionSource, RetryDeclaration,
 };
 
 use super::builder::Router;
 use super::fold::{OpenLayered, OpenedRoute, RunRoutes};
 use super::local::LocalPipeline;
-use super::routes::{RetryDestinationsDeclared, SubscribeRoute};
+use super::routes::{DeclaredRoute, RetryDestinationsDeclared, SubscribeRoute};
 use super::routes_inject::InjectRoute;
 use super::routes_publish::{PublishingRoute, RawReplyRoute};
 
@@ -203,6 +204,17 @@ impl_planless!(
 // A plan changes how deliveries run, never where their retry copies go.
 impl<Route: RetryDestinationsDeclared, Plan> RetryDestinationsDeclared for Dispatched<Route, Plan> {}
 
+// A declaration rides the registration, so a step after it plans the registration it wraps.
+impl<Route: LocalPlanned> LocalPlanned for DeclaredRoute<Route> {
+    type Route = DeclaredRoute<Route::Route>;
+    type Plan = Route::Plan;
+
+    fn into_planned(self) -> (Self::Route, Self::Plan) {
+        let (route, plan) = self.route.into_planned();
+        (DeclaredRoute::new(route, self.declaration), plan)
+    }
+}
+
 impl<Route, Plan> LocalPlanned for Dispatched<Route, Plan> {
     type Route = Route;
     type Plan = Plan;
@@ -256,6 +268,10 @@ where
 pub trait OpenLocalRoute<B: LocalBroker, State> {
     /// The descriptor the registration subscribes through.
     type Source;
+    /// What the registration declared about its retries: [`Undeclared`], or
+    /// [`DeclaredOn`] the descriptor's copy path where the mount site declared a cap or a
+    /// dead-letter destination.
+    type Declaration;
     /// The opened subscription.
     type Sub: LocalSubscriber;
     /// The handler each delivery runs.
@@ -266,16 +282,19 @@ pub trait OpenLocalRoute<B: LocalBroker, State> {
     /// The descriptor, read before the registration opens.
     fn source(&self) -> &Self::Source;
 
-    /// Subscribes against `connected` and builds the handler.
+    /// Subscribes against `connected` and builds the handler; `declaration` is what the mount
+    /// site declared about the registration's retries, taken into the descriptor first.
     ///
     /// # Errors
     ///
-    /// The broker's refusal to subscribe, or to pair a publisher the handler holds.
+    /// The broker's refusal of the declaration, of the subscription, or to pair a publisher the
+    /// handler holds.
     #[allow(clippy::type_complexity)] // the route's own parts, named once here
     fn open_route(
         self,
         connected: &LocalConnected<B>,
         scope: &ScopeDelivery,
+        declaration: RetryDeclaration,
     ) -> impl Future<Output = Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError>>;
 }
 
@@ -287,6 +306,7 @@ macro_rules! open_plain {
         where
             B: LocalBroker,
             $route: OpenLocalRoute<B, State>,
+            NoCopies: AppliesDeclaration<<$route as OpenLocalRoute<B, State>>::Declaration>,
         {
             type Opened<Layers: LocalBlanketLayer + Clone> = OpenedRoute<
                 <$route as OpenLocalRoute<B, State>>::Sub,
@@ -301,7 +321,7 @@ macro_rules! open_plain {
                 layers: &Layers,
                 scope: &ScopeDelivery,
             ) -> Result<Self::Opened<Layers>, BoxError> {
-                let route = self.open_route(connected, scope).await?;
+                let route = self.open_route(connected, scope, RetryDeclaration::new()).await?;
                 Ok(OpenedRoute::new(
                     route.subscriber,
                     route.handler,
@@ -320,7 +340,36 @@ open_plain!(
     [Source, Def, DecodeCodec, Wiring, Extra] PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     [Source, Def, DecodeCodec, Wiring, Extra] RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra>,
+    [Route] DeclaredRoute<Route>,
 );
+
+// A declared registration opens as the one it wraps, with the declaration its mount chain made.
+impl<B, State, Route> OpenLocalRoute<B, State> for DeclaredRoute<Route>
+where
+    B: LocalBroker,
+    Route: OpenLocalRoute<B, State, Declaration = Undeclared>,
+    Route::Source: LocalSubscriptionSource<LocalConnected<B>>,
+{
+    type Source = Route::Source;
+    type Declaration =
+        DeclaredOn<<Route::Source as LocalSubscriptionSource<LocalConnected<B>>>::Copies>;
+    type Sub = Route::Sub;
+    type Body = Route::Body;
+    type Cx = Route::Cx;
+
+    fn source(&self) -> &Self::Source {
+        self.route.source()
+    }
+
+    fn open_route(
+        self,
+        connected: &LocalConnected<B>,
+        scope: &ScopeDelivery,
+        _declaration: RetryDeclaration,
+    ) -> impl Future<Output = Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError>> {
+        self.route.open_route(connected, scope, self.declaration)
+    }
+}
 
 impl<B, State, Source, M, Input, DecodeCodec, Inner, Cx> OpenLocalRoute<B, State>
     for SubscribeRoute<Source, Typed<M, Input, DecodeCodec, Inner>, Cx>
@@ -334,6 +383,7 @@ where
     Cx: BuildContext<M> + Send + Sync + 'static,
 {
     type Source = Source;
+    type Declaration = Undeclared;
     type Sub = Source::Subscriber;
     type Body = LocalTyped<Typed<M, Input, DecodeCodec, Inner>>;
     type Cx = Cx;
@@ -346,14 +396,10 @@ where
         self,
         connected: &LocalConnected<B>,
         scope: &ScopeDelivery,
+        declaration: RetryDeclaration,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Cx>, BoxError> {
-        let name: Arc<str> = Arc::from(self.source.name());
-        let delivery = open_local_route(scope, &name);
-        let subscriber = self
-            .source
-            .subscribe(connected)
-            .await
-            .map_err(|err| -> BoxError { Box::new(err) })?;
+        let (name, subscriber, delivery) =
+            open_local_subscription::<B, _, _>(self.source, connected, scope, declaration).await?;
         Ok(LocalRoute {
             subscriber,
             handler: LocalTyped(self.handler),
@@ -368,7 +414,9 @@ impl<B, State, Route, Plan> OpenLayered<B, State> for Dispatched<Route, Plan>
 where
     B: LocalBroker,
     Route: OpenLocalRoute<B, State>,
-    Plan: LocalDispatch<Copies: PairCopies<B, Route::Source>>,
+    Plan: LocalDispatch<
+        Copies: PairCopies<B, Route::Source> + AppliesDeclaration<Route::Declaration>,
+    >,
 {
     type Opened<Layers: LocalBlanketLayer + Clone> = OpenedDispatch<
         Route::Sub,
@@ -391,7 +439,9 @@ where
         let path =
             <Plan::Copies as PairCopies<B, Route::Source>>::pair(route.source(), connected).await?;
         Ok(OpenedDispatch {
-            route: route.open_route(connected, scope).await?,
+            route: route
+                .open_route(connected, scope, RetryDeclaration::new())
+                .await?,
             layers: layers.clone(),
             plan,
             path,

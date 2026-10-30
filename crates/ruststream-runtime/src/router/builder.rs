@@ -533,7 +533,12 @@ impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     {
         self.out(Retry, policy)
     }
+}
 
+// A declaration names no publisher, so it is made the same way on a router of either family.
+impl<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
+    Router<B, (Head, Tail), RouteCodec, RouteLayers, RoutePipe>
+{
     /// Caps the deliveries one message of the registration just added gets, counting the first.
     ///
     /// See [`RouterWith::max_attempts`]: the declaration is the same on every form, and this is
@@ -776,7 +781,6 @@ pub trait AttachDeclaration: Sized {
 
 impl<B, Head, Tail, C, Layers, Pipe> AttachDeclaration for Router<B, (Head, Tail), C, Layers, Pipe>
 where
-    B: Broker + 'static,
     Head: RetryOpen + RouteMetadata,
 {
     type Out = Router<B, (DeclaredRoute<Head>, Tail), C, Layers, Pipe>;

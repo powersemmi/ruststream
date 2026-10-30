@@ -298,9 +298,10 @@ pub use publishing::{LocalPublishing, PublishingHandler};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use redelivery::{
-    AddressedCopy, CopiesAddressed, CopyPathAddress, CopyPathPairing, CopyPublisher, KeepCopies,
-    KeptAddress, NoCopies, NoCopyPath, PairCopies, PublishesCopiesHere, RetryPairing, RetrySetup,
-    ScopeDelivery, open_mounted_subscriber,
+    AddressedCopy, AppliesDeclaration, CopiesAddressed, CopyPathAddress, CopyPathPairing,
+    CopyPublisher, DeclaredOn, KeepCopies, KeptAddress, NoCopies, NoCopyPath, PairCopies,
+    PublishesCopiesHere, RetryPairing, RetrySetup, ScopeDelivery, Undeclared,
+    open_mounted_subscriber,
 };
 #[cfg(feature = "alloc")]
 pub use retry::Retry;

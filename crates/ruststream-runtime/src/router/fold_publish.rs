@@ -6,8 +6,6 @@
 // futures are `Send` exactly where the types they run are, and nothing here spawns them.
 #![allow(clippy::future_not_send)]
 
-use alloc::boxed::Box;
-use alloc::sync::Arc;
 use core::any::type_name;
 
 use crate::inject::LocalFromStartup;
@@ -20,12 +18,12 @@ use crate::publish::{
 use crate::publishing::{
     EncodeReply, LocalPublishing, LocalPublishingCall, PublishingHandler, warn_ignored_reply_name,
 };
-use crate::redelivery::{ScopeDelivery, open_local_route};
+use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Origin;
 use crate::{
     BuildContext, LocalBroker, LocalConnected, LocalIncomingMessage, LocalPublishPolicy,
-    LocalPublisher, LocalSubscriber, LocalSubscriptionSource, Serialized,
+    LocalPublisher, LocalSubscriber, LocalSubscriptionSource, RetryDeclaration, Serialized,
 };
 
 use super::fold_plan::{LocalRoute, OpenLocalRoute};
@@ -42,27 +40,6 @@ type LocalStack<Policy, B, Enc, PL> = TypedPublisher<
 /// The local handler of a reply definition whose reply leaves through `Wiring`.
 type LocalReply<Def, DecodeCodec, Wiring> =
     LocalPublishing<PublishingHandler<Def, DecodeCodec, Wiring, LocalPipeline>>;
-
-/// The subscription `source` opens, with the name it reports.
-///
-/// # Errors
-///
-/// The broker's refusal.
-async fn subscribe<B, Source>(
-    source: Source,
-    connected: &LocalConnected<B>,
-) -> Result<(Arc<str>, Source::Subscriber), BoxError>
-where
-    B: LocalBroker,
-    Source: LocalSubscriptionSource<LocalConnected<B>>,
-{
-    let name: Arc<str> = Arc::from(source.name());
-    let subscriber = source
-        .subscribe(connected)
-        .await
-        .map_err(|err| -> BoxError { Box::new(err) })?;
-    Ok((name, subscriber))
-}
 
 // A single-message reply runs the per-message transforms only, as on the multi-thread runner,
 // so its wiring carries no batch stack.
@@ -90,6 +67,7 @@ where
     PL: PublishTransform<ForReply<Def::Context>, <Policy::Live as LocalPublisher>::Options>,
 {
     type Source = Source;
+    type Declaration = Undeclared;
     type Sub = Source::Subscriber;
     type Body = LocalReply<Def, DecodeCodec, LocalStack<Policy, B, Enc, PL>>;
     type Cx = Def::Context;
@@ -102,6 +80,7 @@ where
         self,
         connected: &LocalConnected<B>,
         scope: &ScopeDelivery,
+        declaration: RetryDeclaration,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
@@ -112,8 +91,8 @@ where
             policies,
             ..
         } = self;
-        let (name, subscriber) = subscribe::<B, _>(source, connected).await?;
-        let delivery = open_local_route(scope, &name);
+        let (name, subscriber, delivery) =
+            open_local_subscription::<B, _, _>(source, connected, scope, declaration).await?;
         warn_ignored_reply_name(
             &name,
             type_name::<Def::Reply>(),
@@ -163,6 +142,7 @@ where
     Policy::Live: LocalPublisher,
 {
     type Source = Source;
+    type Declaration = Undeclared;
     type Sub = Source::Subscriber;
     type Body = LocalReply<Def, DecodeCodec, Policy::Live>;
     type Cx = Def::Context;
@@ -175,6 +155,7 @@ where
         self,
         connected: &LocalConnected<B>,
         scope: &ScopeDelivery,
+        declaration: RetryDeclaration,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
@@ -185,8 +166,8 @@ where
             policies,
             ..
         } = self;
-        let (name, subscriber) = subscribe::<B, _>(source, connected).await?;
-        let delivery = open_local_route(scope, &name);
+        let (name, subscriber, delivery) =
+            open_local_subscription::<B, _, _>(source, connected, scope, declaration).await?;
         warn_ignored_reply_name(
             &name,
             type_name::<Def::Reply>(),

@@ -1,0 +1,21 @@
+error[E0277]: a cap or a dead-letter destination on this registration has no store of copies to apply it
+  --> tests/ui/declaration_without_store.rs:15:50
+   |
+15 | fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
+   |                                                  ^^^^^^^^^^^ declared here without `.retry_capacity::<CAP>()`
+   |
+   = help: the trait `ruststream_runtime::redelivery::kept::AppliesDeclaration<ruststream_runtime::redelivery::kept::DeclaredOn<AddressedCopies>>` is not implemented for `ruststream_runtime::redelivery::kept::NoCopies`
+   = note: this process publishes the copies of the registration's descriptor, and on the embedded runner a copy waits in the mount's own store: add `.retry_capacity::<CAP>()` after the declaration, with room for the copies that wait at once
+help: `ruststream_runtime::redelivery::kept::NoCopies` implements trait `ruststream_runtime::redelivery::kept::AppliesDeclaration<Declaration>`
+  --> $WORKSPACE/crates/ruststream-runtime/src/redelivery/kept.rs
+   |
+   | impl AppliesDeclaration<Undeclared> for NoCopies {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime::redelivery::kept::AppliesDeclaration<ruststream_runtime::redelivery::kept::Undeclared>`
+...
+   | impl AppliesDeclaration<DeclaredOn<BrokerMoves>> for NoCopies {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime::redelivery::kept::AppliesDeclaration<ruststream_runtime::redelivery::kept::DeclaredOn<BrokerMoves>>`
+   = note: required for `ruststream_runtime::router::routes::DeclaredRoute<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>>` to implement `ruststream_runtime::router::fold::OpenLayered<ruststream::memory::local::LocalMemoryBroker<4>, ()>`
+   = note: required for `Router<ruststream::memory::local::LocalMemoryBroker<4>, (ruststream_runtime::router::routes::DeclaredRoute<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>>, ()), (), Identity, LocalPipeline>` to implement `ruststream_runtime::router::fold::OpenRoutes<ruststream::memory::local::LocalMemoryBroker<4>>`
+   = note: required for `ruststream::runtime::BrokerMount<ruststream::memory::local::LocalMemoryBroker<4>, Router<ruststream::memory::local::LocalMemoryBroker<4>, (ruststream_runtime::router::routes::DeclaredRoute<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>>, ()), (), Identity, LocalPipeline>>` to implement `ruststream::runtime::StartMounts<()>`
+   = note: required for `ruststream::runtime::BrokerMount<ruststream::memory::local::LocalMemoryBroker<4>, Router<ruststream::memory::local::LocalMemoryBroker<4>, (ruststream_runtime::router::routes::DeclaredRoute<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>>, ()), (), Identity, LocalPipeline>>` to implement `ruststream_runtime_embassy::app::AppBrokers<()>`
+   = note: required for `ruststream::runtime::Parts<(), (ruststream::runtime::BrokerMount<ruststream::memory::local::LocalMemoryBroker<4>, Router<ruststream::memory::local::LocalMemoryBroker<4>, (ruststream_runtime::router::routes::DeclaredRoute<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>>, ()), (), Identity, LocalPipeline>>, ()), ruststream::runtime::Hooks<(), (), ()>>` to implement `Mounts`

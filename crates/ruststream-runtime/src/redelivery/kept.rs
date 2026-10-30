@@ -9,10 +9,11 @@ use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::string::String;
 use core::future::ready;
+use core::marker::PhantomData;
 
 use crate::lifecycle::BoxError;
 use crate::{
-    AddressedCopies, HeaderMap, LocalBroker, LocalConnected, LocalDefaultPublish,
+    AddressedCopies, BrokerMoves, HeaderMap, LocalBroker, LocalConnected, LocalDefaultPublish,
     LocalPublishPolicy, LocalPublisher, LocalRedeliveryAddressed, LocalSubscriptionSource,
     OutgoingMessage, PayloadForm,
 };
@@ -112,6 +113,44 @@ pub struct NoCopies;
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct KeepCopies;
+
+/// A registration whose mount chain declared nothing about its retries. Machinery; never named
+/// directly.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Undeclared;
+
+/// A registration whose mount chain declared a cap or a dead-letter destination, on a descriptor
+/// whose copies take the path `Copies`. Machinery; never named directly.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DeclaredOn<Copies>(PhantomData<fn() -> Copies>);
+
+/// Whether a plan that keeps these copies applies what the registration declared.
+///
+/// A cap and a dead-letter destination are applied by whoever publishes the copies: the broker,
+/// where the descriptor says it moves the delivery itself, and the mount's own store otherwise.
+/// A registration whose copies this process publishes declares them only beside the store that
+/// holds them. Machinery; never named directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "a cap or a dead-letter destination on this registration has no store of copies \
+               to apply it",
+    label = "declared here without `.retry_capacity::<CAP>()`",
+    note = "this process publishes the copies of the registration's descriptor, and on the \
+            embedded runner a copy waits in the mount's own store: add `.retry_capacity::<CAP>()` \
+            after the declaration, with room for the copies that wait at once"
+)]
+pub trait AppliesDeclaration<Declaration> {}
+
+impl AppliesDeclaration<Undeclared> for NoCopies {}
+
+impl AppliesDeclaration<Undeclared> for KeepCopies {}
+
+// The broker moves a spent delivery itself and takes the declaration into its own topology.
+impl AppliesDeclaration<DeclaredOn<BrokerMoves>> for NoCopies {}
+
+impl<Copies> AppliesDeclaration<DeclaredOn<Copies>> for KeepCopies {}
 
 /// What a plan's copies need when its registration opens on broker `B` through `Source`.
 /// Machinery; never named directly.
