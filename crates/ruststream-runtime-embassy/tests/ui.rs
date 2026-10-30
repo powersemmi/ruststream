@@ -5,14 +5,16 @@
 //! TRYBUILD=overwrite RUN_UI_TESTS=1 cargo test -p ruststream-runtime-embassy --test ui
 //! ```
 
+use std::env;
+
 /// Whether this run skips the snapshots, and whether skipping them is allowed.
 ///
 /// # Panics
 ///
 /// Panics when a run that requires the snapshots is not set up to run them.
 fn skip_snapshots() -> bool {
-    let opted_in = std::env::var("RUN_UI_TESTS").as_deref() == Ok("1");
-    let required = std::env::var("REQUIRE_UI_TESTS").as_deref() == Ok("1");
+    let opted_in = env::var("RUN_UI_TESTS").as_deref() == Ok("1");
+    let required = env::var("REQUIRE_UI_TESTS").as_deref() == Ok("1");
     assert!(
         opted_in || !required,
         "REQUIRE_UI_TESTS=1 but RUN_UI_TESTS is not 1: this run would have skipped the UI \
