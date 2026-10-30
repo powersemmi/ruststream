@@ -50,6 +50,7 @@ done
 | Task | Tool | Install |
 | --- | --- | --- |
 | `just deny` | cargo-deny | `cargo install cargo-deny --locked` |
+| `just check` (external types) | cargo-check-external-types on a pinned nightly | `rustup toolchain install nightly-2026-03-20` and `cargo install --locked cargo-check-external-types@0.5.0` |
 | `just cov` | cargo-llvm-cov | `cargo install cargo-llvm-cov --locked` |
 | `just bench` | valgrind | the system package manager; the recipe installs the benchmark runner itself, at the release `Cargo.lock` pins |
 | `just brokers` | jq | the system package manager |
