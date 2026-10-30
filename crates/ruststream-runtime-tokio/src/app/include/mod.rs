@@ -16,7 +16,7 @@
 mod parity_tests;
 
 use crate::{BlanketLayer, Broker, Declared, PublishIdentity, PublishPipeline};
-use crate::{ChainHead, Identity, RetryDestinationsDeclared, SplitHead};
+use crate::{ChainHead, Identity, PoolFits, RetryDestinationsDeclared, SplitHead};
 use crate::{Router, RouterCommit, RouterDef, RouterMount, RouterWith};
 
 use super::LifecycleHook;
@@ -179,6 +179,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline, Pre>
     ) -> <D::Form as RouterMount<ScopeRouter<B, C, Pipeline, Pre>, D::Settings>>::Out
     where
         D: Declared,
+        D::Settings: PoolFits<Pipeline>,
         D::Form: RouterMount<ScopeRouter<B, C, Pipeline, Pre>, D::Settings>,
     {
         Router::for_scope_with(self.pre, self.codec, self.pipeline).include(def)

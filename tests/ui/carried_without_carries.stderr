@@ -6,18 +6,28 @@ error[E0277]: the subscription `MemorySource` does not carry `Row`
    |
    = help: the trait `ruststream_runtime::input::SourceCarries<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
    = note: mount it on a subscription whose deliveries implement `Carries<Row>`; a `Row` that arrives as bytes derives `Deserialize` instead and rides the codec
-help: the trait `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>` is conditionally implemented for `Subscribing`
-  --> crates/ruststream-runtime/src/router/form_eager.rs
+help: `Subscribing` implements trait `ruststream::runtime::RouterMount<R, Def>`
+  --> crates/ruststream-runtime/src/router/local.rs
+   |
+   | / impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
+   | |     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
+   | |     for forms::Subscribing
+   | | where
+...  |
+   | |     Def::Input: Materialize<SoloDecoder<Def, B, RouteCodec>, LocalSourceMessage<B, Def::Source>>,
+   | |     Def::Handler: 'static,
+   | |__________________________^ `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, ruststream_runtime::router::local::LocalPipeline<Pipe>>, Def>`
+   |
+  ::: crates/ruststream-runtime/src/router/form_eager.rs
    |
    | / impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
    | |     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for forms::Subscribing
    | | where
    | |     B: Broker + 'static,
 ...  |
-   | |     Def::Input: Materialize<SoloDecoder<Def, B, RouteCodec>, SourceMessage<B, Def::Source>>,
-   | |                 --------------------------------------------------------------------------- unsatisfied requirement introduced here: `<SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)> as ruststream_runtime::subscriber_def::SubscriberDef>::Input: ruststream_runtime::input::Materialize<<SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)> as ruststream::runtime::MountsWith<<SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)> as ruststream_runtime::subscriber_def::SubscriberDef>::Input, (), <MemoryBroker as ruststream::Broker>::Connected>>::Codec, <<<SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)> as ruststream_runtime::subscriber_def::SubscriberDef>::Source as SubscriptionSource<<MemoryBroker as ruststream::Broker>::Connected>>::Subscriber as Subscriber>::Message>`
    | |     Def::Handler: 'static,
-   | |__________________________^
+   | |     RoutePipe: PublishPipeline,
+   | |_______________________________^ `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>`
    = note: required for `ruststream_runtime::input::Carried<Row>` to implement `ruststream_runtime::input::Materialize<ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`
    = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
 
