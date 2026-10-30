@@ -132,7 +132,8 @@ pub use context::{After, Context};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use dispatch::{
-    Delivery, Lent, Slot as DeliverySlot, Turn, dispatch, placed, run_batch, run_sequential,
+    Delivery, HeadersAtOnce, HeadersOnDemand, LendHeaders, Lent, Slot as DeliverySlot, Turn,
+    dispatch, placed, run_batch, run_sequential,
 };
 #[cfg(feature = "alloc")]
 pub use dispatch::{Placement, RETRY_COUNT_HEADER, Workers};

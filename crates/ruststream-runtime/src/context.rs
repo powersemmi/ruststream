@@ -38,7 +38,8 @@ use crate::main_runtime::MainRuntime;
 /// The map is a broker accessor, and answering it is work on most transports: a shadow buffer
 /// over the record's header block, a parse, and the buffer's destruction. Most deliveries never
 /// read the answer, so the context holds the source rather than the map and asks it at most once.
-pub(crate) trait HeaderSource {
+#[doc(hidden)]
+pub trait HeaderSource {
     /// This delivery's headers as the broker reports them.
     fn headers(&self) -> &HeaderMap;
 }
@@ -80,8 +81,23 @@ impl<'a> From<&'a HeaderMap> for DeliveryHeaders<'a> {
     }
 }
 
+/// A map a delivery already answered: what the dispatch path hands the context of a delivery it
+/// cannot share across threads.
+impl HeaderSource for &HeaderMap {
+    fn headers(&self) -> &HeaderMap {
+        self
+    }
+}
+
 /// The delivery itself, which is what the dispatch path hands the context.
-pub(crate) struct FromDelivery<'m, M>(pub(crate) &'m M);
+#[doc(hidden)]
+pub struct FromDelivery<'m, M>(pub(crate) &'m M);
+
+impl<M> fmt::Debug for FromDelivery<'_, M> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FromDelivery").finish_non_exhaustive()
+    }
+}
 
 impl<M: LocalIncomingMessage> HeaderSource for FromDelivery<'_, M> {
     fn headers(&self) -> &HeaderMap {

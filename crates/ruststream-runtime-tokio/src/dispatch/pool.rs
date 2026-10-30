@@ -19,8 +19,8 @@ use tokio::task::JoinHandle;
 use tracing::error;
 
 use super::{
-    DispatchFailure, Handler, Hosted, Shutdown, Slot, Turn, Workers, dispatch, lane_of,
-    log_worker_exit,
+    DispatchFailure, Handler, HeadersOnDemand, Hosted, Shutdown, Slot, Turn, Workers, dispatch,
+    lane_of, log_worker_exit,
 };
 use crate::{BuildContext, IncomingMessage, Subscriber};
 
@@ -103,6 +103,7 @@ async fn work<Message, Body, Cx, State>(
             &shared.hosted.delivery,
             &shared.hosted.host,
             &shared.failure,
+            HeadersOnDemand,
         )
         .await;
         // The loop keeps its end open until the workers are joined; a closed one means the loop
