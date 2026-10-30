@@ -16,8 +16,8 @@ readme = "../../README.md"
 all-features = true
 
 [dependencies]
-ruststream-core.workspace = true
-ruststream-runtime.workspace = true
+ruststream-core = { workspace = true, features = ["alloc"] }
+ruststream-runtime = { workspace = true, features = ["alloc"] }
 futures-core.workspace = true
 # The clock a device reads. The driver is the binary's choice: a host test picks the mock driver.
 embassy-time.workspace = true
