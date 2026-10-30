@@ -1,6 +1,10 @@
 //! The error the test harness returns: the dispatch reports it while driving a reaction, and
 //! `TestApp` returns it from every step.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
 use core::error;
 use core::time::Duration;
 

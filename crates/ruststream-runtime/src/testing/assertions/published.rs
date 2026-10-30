@@ -4,6 +4,9 @@
 // chaining, so ending a chain on one is fine and none of them is `#[must_use]`.
 #![allow(clippy::return_self_not_must_use, clippy::must_use_candidate)]
 
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::any;
 use core::marker::PhantomData;
 
@@ -463,6 +466,8 @@ impl<T: 'static> PublishedAssertions<T> {
 mod tests {
     use super::*;
     use crate::codec::JsonCodec;
+    use alloc::borrow::ToOwned;
+    use alloc::vec;
 
     #[derive(Debug, PartialEq, serde::Deserialize)]
     struct Order {

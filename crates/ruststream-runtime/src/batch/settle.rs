@@ -1,6 +1,7 @@
 //! Settling a dispatched batch: the handler's [`BatchResult`] applied to each delivery behind it,
 //! and what the harness records of the batch on the way.
 
+use alloc::vec::Vec;
 #[cfg(feature = "testing")]
 use bytes::Bytes;
 use tracing::error;

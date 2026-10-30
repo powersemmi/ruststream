@@ -24,7 +24,7 @@ logging = ["dep:ruststream-observability", "ruststream-observability/logging"]
 tool = ["dep:clap", "dep:anyhow"]
 
 [dependencies]
-ruststream-runtime.workspace = true
+ruststream-runtime = { workspace = true, features = ["std"] }
 ruststream-runtime-tokio.workspace = true
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }

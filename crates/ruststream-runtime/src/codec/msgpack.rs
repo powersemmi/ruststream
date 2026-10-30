@@ -1,5 +1,6 @@
 //! `MessagePack` codec backed by [`rmp_serde`].
 
+use alloc::boxed::Box;
 use bytes::BytesMut;
 use rmp_serde::encode;
 use serde::{Serialize, de::DeserializeOwned};
@@ -34,6 +35,7 @@ impl Codec for MsgpackCodec {
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::String;
     use serde::{Deserialize, Serialize};
 
     use super::*;

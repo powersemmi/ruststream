@@ -8,6 +8,7 @@
 //! [`publish_layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.publish_layer) chain.
 
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::any::type_name;
 use core::fmt;
 use core::num::NonZeroUsize;
@@ -543,6 +544,7 @@ mod tests {
     use super::*;
     use crate::Name;
     use crate::codec::JsonCodec;
+    use alloc::format;
     use ruststream::memory::MemoryPublish;
 
     /// The deferred routes hold no built handler to print, so their `Debug` has to identify the

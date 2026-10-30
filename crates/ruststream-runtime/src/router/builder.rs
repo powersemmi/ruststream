@@ -1,5 +1,7 @@
 //! The [`Router`] builder: chaining registrations, codecs and layers, and mounting the result.
 
+use alloc::borrow::ToOwned;
+use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 

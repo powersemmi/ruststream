@@ -280,6 +280,7 @@ impl<C, Host: Detach> Lent<C> for (&Delivery<C>, &Host) {
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
     use core::future::ready;
 
     use bytes::BytesMut;

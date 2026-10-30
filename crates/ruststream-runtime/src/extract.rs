@@ -8,6 +8,7 @@
 //! dependencies arrive as arguments instead of being reached for through `ctx.state()`. A failed
 //! extraction short-circuits the delivery with the rejection's [`HandlerOutcome`].
 
+use alloc::format;
 use core::any::type_name;
 use core::convert::Infallible;
 use core::fmt;

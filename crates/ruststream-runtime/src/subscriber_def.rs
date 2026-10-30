@@ -5,6 +5,7 @@ use super::dispatch::Workers;
 use super::failure::FailurePolicies;
 use super::input::InputKind;
 use super::metadata::HandlerMetadata;
+use alloc::string::String;
 
 /// A handler definition produced by the `#[subscriber]` macro (with or without `raw`).
 ///
@@ -103,6 +104,7 @@ pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> Ha
 
 #[cfg(test)]
 mod tests {
+    use alloc::borrow::ToOwned;
     use core::future::ready;
 
     use super::{SubscriberDef, subscriber_metadata};

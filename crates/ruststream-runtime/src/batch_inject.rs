@@ -7,6 +7,8 @@
 //! its own definition pair because the handler consumes a slice and returns a
 //! [`BatchResult`], not a per-message [`HandlerOutcome`](super::HandlerOutcome).
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 
 use crate::{BuildBatchContext, IncomingMessage};
@@ -178,6 +180,8 @@ where
 
 #[cfg(all(test, feature = "json"))]
 mod tests {
+    use alloc::borrow::ToOwned;
+    use alloc::format;
     use core::future::ready;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};

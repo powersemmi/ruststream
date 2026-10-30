@@ -7,6 +7,7 @@
 //! (content-type, schema id), or observe it (publish metrics). The chain is symmetric to the
 //! consume-side static [`Stack`](super::Stack).
 
+use alloc::boxed::Box;
 use core::pin::Pin;
 
 use crate::lifecycle::BoxError;

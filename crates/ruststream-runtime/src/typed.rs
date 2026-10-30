@@ -7,6 +7,7 @@
 //! passed in here. Both use the same [`Layer`](super::Layer) / [`HandlerExt`](super::HandlerExt)
 //! machinery, just at different inputs.
 
+use alloc::format;
 use core::{fmt, marker::PhantomData};
 
 use crate::IncomingMessage;
@@ -187,6 +188,9 @@ where
 
 #[cfg(all(test, feature = "json"))]
 mod tests {
+    use alloc::format;
+    use alloc::string::String;
+    use alloc::vec::Vec;
     use core::future::ready;
     use std::sync::{
         Arc,

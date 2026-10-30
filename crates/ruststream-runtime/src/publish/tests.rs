@@ -1,7 +1,12 @@
 // Every fixture below sits behind the feature whose surface it exercises, so the imports they
 // need follow them rather than the file.
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
 #[cfg(feature = "json")]
 use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
 #[cfg(feature = "json")]
 use core::fmt;
 
@@ -38,6 +43,7 @@ use crate::{BytesMut, Lend, PayloadForm};
 /// refuses to pair.
 #[cfg(feature = "json")]
 mod fixtures {
+    use alloc::boxed::Box;
     use core::future::ready;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::collections::HashMap;

@@ -7,6 +7,13 @@
 //! enough to settle, so the dispatch adapters behind them are exercised rather than only typed.
 
 use alloc::borrow::Cow;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::fmt;
 use core::future::ready;
 use core::iter::repeat_with;

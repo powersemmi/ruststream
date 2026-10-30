@@ -2,6 +2,10 @@
 //! through the publishing machinery, with the policy the chain attached (or the broker's
 //! default) committed right at `include`.
 
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::any::type_name;
 
 use crate::batch::BatchResult;

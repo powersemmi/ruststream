@@ -10,6 +10,7 @@
 //! raw deliveries (`DynStack<M>`, middleware bound `M: IncomingMessage`) or decoded values
 //! (`DynStack<T>`).
 
+use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::{fmt, pin::Pin};
 
@@ -157,6 +158,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::boxed::Box;
+    use alloc::format;
+    use alloc::vec;
+    use alloc::vec::Vec;
     use std::sync::{Arc, Mutex};
 
     use super::super::HandlerExt;

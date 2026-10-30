@@ -2,6 +2,9 @@
 //! through the ordinary subscriber and batch machinery, with the body adapted to the dispatch
 //! contracts here.
 
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 use core::{any, fmt};
 

@@ -10,8 +10,10 @@
 //! [`headers_mut`](Context::headers_mut), so a delivery whose handler and middleware never touch
 //! the headers pays neither the broker's accessor nor a clone.
 
+use alloc::boxed::Box;
 #[cfg(feature = "testing")]
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::cell::OnceCell;
 use core::fmt;
 #[cfg(feature = "testing")]

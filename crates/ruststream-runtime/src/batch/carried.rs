@@ -8,6 +8,7 @@
 
 #[cfg(feature = "testing")]
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::any::type_name;
 use core::fmt;
 use core::marker::PhantomData;

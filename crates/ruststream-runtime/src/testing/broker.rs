@@ -2,6 +2,9 @@
 //! inside the test process, and [`TestableBroker`], the view of its connected form the
 //! [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) harness and the [`conformance`](https://docs.rs/ruststream/latest/ruststream/conformance/index.html) suite drive.
 
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::vec::Vec;
 use core::any::{Any, TypeId, type_name};
 use core::fmt;
 use core::time::Duration;
