@@ -230,6 +230,12 @@ pub trait HostDetach {
     fn detach_after<Work>(&self, delay: Duration, work: Work)
     where
         Work: Future<Output = ()> + Send + 'static;
+
+    /// Takes room for one delayed copy; `false` when the host has none left.
+    fn reserve(&self) -> bool;
+
+    /// Gives back room taken by [`reserve`](Self::reserve) for a copy that was not handed over.
+    fn release(&self);
 }
 
 impl<Host: Detach> HostDetach for Host {
@@ -247,6 +253,16 @@ impl<Host: Detach> HostDetach for Host {
         Work: Future<Output = ()> + Send + 'static,
     {
         Detach::detach_after(self, delay, work);
+    }
+
+    #[inline]
+    fn reserve(&self) -> bool {
+        Detach::reserve(self)
+    }
+
+    #[inline]
+    fn release(&self) {
+        Detach::release(self);
     }
 }
 
@@ -271,6 +287,16 @@ impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
         Work: Future<Output = ()> + Send + 'static,
     {
         LocalDetach::detach_after(self.0, delay, work);
+    }
+
+    #[inline]
+    fn reserve(&self) -> bool {
+        LocalDetach::reserve(self.0)
+    }
+
+    #[inline]
+    fn release(&self) {
+        LocalDetach::release(self.0);
     }
 }
 
