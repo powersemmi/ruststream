@@ -399,7 +399,7 @@ impl<Def, Src, F, P, B, DC> WorkersStep for SubscriberBuilder<Def, Src, (Open, F
 /// # use std::convert::Infallible;
 /// # use std::future::ready;
 /// use ruststream::nonzero;
-/// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, SubscriberSettings, subscriber};
+/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, SubscriberSettings, local_subscriber};
 /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
 /// use ruststream_runtime::{Deserialized, Input, SoloDeserialized};
 /// # struct Reading<'a>(&'a [u8]);
@@ -410,12 +410,12 @@ impl<Def, Src, F, P, B, DC> WorkersStep for SubscriberBuilder<Def, Src, (Open, F
 /// # }
 /// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
 /// # struct Log;
-/// # impl Handle<Reading<'_>> for Log {
+/// # impl LocalHandle<Reading<'_>> for Log {
 /// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
-/// #         -> impl Future<Output = Result<(), HandlerOutcome>> + Send { let _ = r.0; ready(Ok(())) }
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> { let _ = r.0; ready(Ok(())) }
 /// # }
 /// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local().include(
-///     subscriber(LocalMemorySource::new("readings"), Log)
+///     local_subscriber(LocalMemorySource::new("readings"), Log)
 ///         .workers(nonzero!(4))
 ///         .build(),
 /// );

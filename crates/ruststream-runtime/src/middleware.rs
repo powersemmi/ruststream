@@ -182,7 +182,7 @@ impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 /// use core::sync::atomic::{AtomicU32, Ordering};
 /// use std::convert::Infallible;
 ///
-/// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, subscriber};
+/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, local_subscriber};
 /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
 /// use ruststream_runtime::{
 ///     Deserialized, Input, LocalBlanketLayer, LocalHandler, SoloDeserialized,
@@ -231,7 +231,7 @@ impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 ///
 /// struct Log;
 ///
-/// impl Handle<Reading<'_>> for Log {
+/// impl LocalHandle<Reading<'_>> for Log {
 ///     async fn handle(
 ///         &self,
 ///         reading: &Reading<'_>,
@@ -247,7 +247,7 @@ impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 ///
 /// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
 ///     .layer(CountDeliveries(&REACHED))
-///     .include(subscriber(LocalMemorySource::new("readings"), Log).build());
+///     .include(local_subscriber(LocalMemorySource::new("readings"), Log).build());
 /// # let _ = routes;
 /// ```
 ///
@@ -258,7 +258,7 @@ impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 /// # use std::convert::Infallible;
 /// # use std::future::ready;
 /// use ruststream::metrics::Metrics;
-/// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, subscriber};
+/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, local_subscriber};
 /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
 /// use ruststream_runtime::{Deserialized, Input, OpenRoutes, SoloDeserialized};
 /// # struct Reading<'a>(&'a [u8]);
@@ -269,14 +269,14 @@ impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 /// # }
 /// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
 /// # struct Log;
-/// # impl Handle<Reading<'_>> for Log {
+/// # impl LocalHandle<Reading<'_>> for Log {
 /// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
-/// #         -> impl Future<Output = Result<(), HandlerOutcome>> + Send { let _ = r.0; ready(Ok(())) }
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> { let _ = r.0; ready(Ok(())) }
 /// # }
 /// fn routes(metrics: &Metrics) -> impl OpenRoutes<LocalMemoryBroker<4>> {
 ///     Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
 ///         .layer(metrics.consume_layer())
-///         .include(subscriber(LocalMemorySource::new("readings"), Log).build())
+///         .include(local_subscriber(LocalMemorySource::new("readings"), Log).build())
 /// }
 /// ```
 ///
@@ -284,7 +284,7 @@ impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 /// # use std::convert::Infallible;
 /// # use std::future::ready;
 /// use ruststream::otel::OpenTelemetryLayer;
-/// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, subscriber};
+/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, local_subscriber};
 /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
 /// use ruststream_runtime::{Deserialized, Input, OpenRoutes, SoloDeserialized};
 /// # struct Reading<'a>(&'a [u8]);
@@ -295,14 +295,14 @@ impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 /// # }
 /// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
 /// # struct Log;
-/// # impl Handle<Reading<'_>> for Log {
+/// # impl LocalHandle<Reading<'_>> for Log {
 /// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
-/// #         -> impl Future<Output = Result<(), HandlerOutcome>> + Send { let _ = r.0; ready(Ok(())) }
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> { let _ = r.0; ready(Ok(())) }
 /// # }
 /// fn routes() -> impl OpenRoutes<LocalMemoryBroker<4>> {
 ///     Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
 ///         .layer(OpenTelemetryLayer)
-///         .include(subscriber(LocalMemorySource::new("readings"), Log).build())
+///         .include(local_subscriber(LocalMemorySource::new("readings"), Log).build())
 /// }
 /// ```
 #[diagnostic::on_unimplemented(
