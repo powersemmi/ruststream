@@ -72,15 +72,6 @@ impl OnThread {
     }
 }
 
-impl fmt::Debug for OnThread {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OnThread")
-            .field("pending_continuations", &self.tasks.len())
-            .field("pending_on_thread", &self.own.len())
-            .finish()
-    }
-}
-
 impl Detach for OnThread {
     fn detach<Work>(&self, work: Work)
     where
@@ -102,7 +93,6 @@ impl Detach for OnThread {
 
 /// What one subscription's loop dispatches under: the shared body's delivery context and the
 /// runner it hands leftovers to, kept in the one allocation a subscription makes for its context.
-#[derive(Debug)]
 pub(crate) struct Hosted<C> {
     pub(crate) delivery: Delivery<C>,
     pub(crate) host: Tracked,
