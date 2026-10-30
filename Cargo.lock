@@ -1212,34 +1212,98 @@ dependencies = [
  "axum",
  "bytes",
  "bytes-utils",
- "ciborium",
- "clap",
  "divan",
  "futures",
  "gungraun",
  "inventory",
  "opentelemetry",
- "opentelemetry-otlp",
  "opentelemetry_sdk",
- "pin-project-lite",
  "prometheus",
  "prost",
- "quanta",
  "rmp-serde",
- "rtrb",
+ "ruststream-asyncapi",
+ "ruststream-cli",
+ "ruststream-conformance",
+ "ruststream-core",
  "ruststream-example-suite",
  "ruststream-macros",
+ "ruststream-memory",
+ "ruststream-observability",
+ "ruststream-runtime",
+ "ruststream-testing",
  "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "trybuild",
+]
+
+[[package]]
+name = "ruststream-asyncapi"
+version = "0.7.6"
+dependencies = [
+ "ruststream",
+ "ruststream-core",
+ "ruststream-runtime",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "ruststream-cli"
+version = "0.7.6"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ruststream",
+ "ruststream-asyncapi",
+ "ruststream-observability",
+ "ruststream-runtime",
  "serde",
  "serde_json",
  "serde_norway",
  "thiserror",
  "tokio",
- "tokio-util",
+]
+
+[[package]]
+name = "ruststream-conformance"
+version = "0.7.6"
+dependencies = [
+ "bytes",
+ "futures",
+ "inventory",
+ "ruststream",
+ "ruststream-asyncapi",
+ "ruststream-core",
+ "ruststream-runtime",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "ruststream-core"
+version = "0.7.6"
+dependencies = [
+ "bytes",
+ "bytes-utils",
+ "futures",
+ "ruststream",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
  "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "trybuild",
 ]
 
 [[package]]
@@ -1256,6 +1320,87 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "ruststream-memory"
+version = "0.7.6"
+dependencies = [
+ "bytes",
+ "bytes-utils",
+ "futures",
+ "ruststream",
+ "ruststream-core",
+ "ruststream-runtime",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "ruststream-observability"
+version = "0.7.6"
+dependencies = [
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "prometheus",
+ "ruststream",
+ "ruststream-core",
+ "ruststream-runtime",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ruststream-runtime"
+version = "0.7.6"
+dependencies = [
+ "axum",
+ "bytes",
+ "bytes-utils",
+ "ciborium",
+ "futures",
+ "inventory",
+ "opentelemetry",
+ "pin-project-lite",
+ "prost",
+ "quanta",
+ "rmp-serde",
+ "rtrb",
+ "ruststream",
+ "ruststream-core",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ruststream-testing"
+version = "0.7.6"
+dependencies = [
+ "inventory",
+ "ruststream",
+ "ruststream-core",
+ "ruststream-runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

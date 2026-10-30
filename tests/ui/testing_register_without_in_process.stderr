@@ -11,12 +11,12 @@ help: the trait `InProcess` is not implemented for `Networked`
    | ^^^^^^^^^^^^^^^^
    = note: a broker crate implements `InProcess` under its `testing` feature: a service enables that feature in `[dev-dependencies]`, a broker author implements the trait there
 help: the trait `InProcess` is implemented for `MemoryBroker<Log>`
-  --> src/memory/mod.rs
+  --> crates/ruststream-memory/src/broker.rs
    |
    | impl<Log: LogMode> InProcess for MemoryBroker<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `TestableRegistration::of`
-  --> src/testing/broker.rs
+  --> crates/ruststream-runtime/src/testing/broker.rs
    |
    |     pub const fn of<B>() -> Self
    |                  -- required by a bound in this associated function
@@ -36,12 +36,12 @@ help: the trait `DefaultPublish` is not implemented for `ConnectedNetworked`
 10 | struct ConnectedNetworked;
    | ^^^^^^^^^^^^^^^^^^^^^^^^^
 help: the trait `DefaultPublish` is implemented for `ConnectedMemoryBroker<Log>`
-  --> src/memory/mod.rs
+  --> crates/ruststream-memory/src/broker.rs
    |
    | impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `TestableRegistration::of`
-  --> src/testing/broker.rs
+  --> crates/ruststream-runtime/src/testing/broker.rs
    |
    |     pub const fn of<B>() -> Self
    |                  -- required by a bound in this associated function

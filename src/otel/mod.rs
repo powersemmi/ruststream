@@ -15,11 +15,5 @@
 //! [propagation]: https://powersemmi.github.io/ruststream/latest/components/observability/otel-propagation/
 //! [export]: https://powersemmi.github.io/ruststream/latest/components/observability/otel-export/
 
-pub mod export;
-pub mod propagation;
-
-pub use export::{
-    Otel, OtelBuilder, OtelConsumeHandler, OtelConsumeLayer, OtelInitError, OtelPublishLayer,
-    PUBLISH_TIME_HEADER,
-};
-pub use propagation::{OpenTelemetry, OpenTelemetryHandler, OpenTelemetryLayer, TracePropagation};
+#[doc(inline)]
+pub use ruststream_observability::otel::*;

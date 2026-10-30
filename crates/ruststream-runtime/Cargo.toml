@@ -1,0 +1,66 @@
+[package]
+name = "ruststream-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The application runtime of the RustStream messaging framework: router, dispatch, publishing and codecs; services use it through `ruststream`."
+keywords = ["messaging", "async", "broker", "pubsub", "ruststream"]
+categories = ["asynchronous", "network-programming"]
+readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+json = ["dep:serde_json", "ruststream-core/json"]
+msgpack = ["dep:rmp-serde"]
+cbor = ["dep:ciborium"]
+# Payload and header schemas for the generated document, and the binding types of the contract.
+asyncapi = ["json", "dep:schemars", "ruststream-core/asyncapi"]
+# The handler result the Prometheus layer reads, and the poll-time diagnostics counters it exports.
+metrics = []
+# The decode-failure flag and the batch-size histogram the OpenTelemetry layers read.
+otel = ["dep:opentelemetry"]
+# The in-process dispatch the test harness drives, and the broker contract of that harness.
+testing = ["dep:inventory", "tokio/test-util", "ruststream-core/testing"]
+poll-diagnostics = ["dep:quanta", "dep:pin-project-lite"]
+
+[dependencies]
+ruststream-core.workspace = true
+bytes.workspace = true
+bytes-utils.workspace = true
+futures.workspace = true
+rtrb.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+quanta = { workspace = true, optional = true }
+pin-project-lite = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+rmp-serde = { workspace = true, optional = true }
+ciborium = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+inventory = { workspace = true, optional = true }
+opentelemetry = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
+# The doc examples serve health over HTTP and decode a Protobuf message on a byte lane.
+axum = "0.8"
+prost = "0.14"
+tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std", "registry"] }
+# The doc examples are a service's code, so they import the facade; the unit tests reach the
+# in-memory broker through it. A path dependency without a version is dropped on publish.
+ruststream = { path = "../..", features = ["macros", "memory", "json", "asyncapi", "testing", "conformance", "poll-diagnostics"] }
+
+[lints]
+workspace = true

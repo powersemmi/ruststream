@@ -8,17 +8,17 @@ error[E0277]: `Unnamed<Name>` does not open a subscription on `ConnectedMemoryBr
    = note: a subscriber left unnamed carries `Unnamed<..>` until the mount site names it: `b.include(handle.name("orders"))`
    = note: otherwise the source belongs to a different broker than the one being mounted on
 help: the following other types implement trait `SubscriptionSource<C>`
-  --> src/memory/mod.rs
-   |
-   | impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySource` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
-   |
-  ::: src/memory/pattern.rs
+  --> crates/ruststream-memory/src/pattern.rs
    |
    | impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemoryPattern {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPattern` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
    |
-  ::: src/subscription.rs
+  ::: crates/ruststream-memory/src/subscriber.rs
+   |
+   | impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySource` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
+   |
+  ::: crates/ruststream-core/src/subscription/sources.rs
    |
    | impl<C: Subscribe> SubscriptionSource<C> for Name {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Name` implements `SubscriptionSource<C>`

@@ -55,6 +55,7 @@ jobs:
               - 'rust-toolchain.toml'
               - 'rustfmt.toml'
               - 'clippy.toml'
+              - 'external-types.toml'
               - '.github/workflows/ci.yml'
             dist:
               - 'src/**'
@@ -82,6 +83,7 @@ jobs:
             templates:
               - 'templates/**'
               - 'src/**'
+              - 'crates/**'
               - 'Cargo.toml'
               - '.github/workflows/ci.yml'
 
@@ -169,21 +171,31 @@ jobs:
             -- -D warnings
           cargo check --locked --benches --no-default-features --features memory,macros,json
 
-      # Allow-list in Cargo.toml. Every entry makes a version bump of that dependency breaking
-      # for every broker crate downstream, so a new leak is added deliberately or not at all.
+      # Allow-list in external-types.toml, one for every published crate: the facade shows the
+      # crates behind it only as re-exports, so each is checked where its items are defined.
+      # Every entry makes a version bump of that dependency breaking for every broker crate
+      # downstream, so a new leak is added deliberately or not at all.
       - name: cargo check-external-types
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
-        run: cargo +nightly-2026-03-20 check-external-types --all-features
+        run: |
+          for manifest in Cargo.toml crates/ruststream-{core,runtime,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
+            cargo +nightly-2026-03-20 check-external-types --all-features \
+              --manifest-path "$manifest" --config external-types.toml
+          done
 
-      # Both packages in one invocation: packaging strips the path from the lockstep
-      # `ruststream-macros` dependency, and between a version bump and the release that version
-      # is not on crates.io yet, so packaging ruststream alone cannot resolve it.
+      # Every published package in one invocation: packaging strips the path from the lockstep
+      # dependencies between them, and between a version bump and the release those versions are
+      # not on crates.io yet, so packaging one alone cannot resolve the others.
       # CARGO_HTTP_MULTIPLEXING=false works around HTTP2 framing failures on the runners.
       - name: cargo publish dry-run (no upload)
         if: "!cancelled() && env.DIST_CHANGED == 'true'"
         env:
           CARGO_HTTP_MULTIPLEXING: "false"
-        run: cargo publish --locked --dry-run -p ruststream-macros -p ruststream --all-features
+        run: |
+          cargo publish --locked --dry-run --all-features -p ruststream-macros -p ruststream-core \
+            -p ruststream-runtime -p ruststream-memory -p ruststream-asyncapi \
+            -p ruststream-observability -p ruststream-testing -p ruststream-conformance \
+            -p ruststream-cli -p ruststream
 
       # The dry-run verifies each package by building it under `target/package/<crate>`, whose
       # inner trees the cache action cannot read as cargo profiles either (same annotation as
@@ -387,11 +399,11 @@ jobs:
         run: cargo llvm-cov --locked --no-report --workspace --all-features --no-fail-fast --tests
 
       # The summary is written before the gate's exit code propagates, so it shows up even on a
-      # failure.
+      # failure. Each report reads the packages the run covered, the whole workspace.
       - name: Coverage summary and gate
         run: |
           set +e
-          cargo llvm-cov report --summary-only --fail-under-lines "$COVERAGE_GATE" | tee coverage.txt
+          cargo llvm-cov report --workspace --summary-only --fail-under-lines "$COVERAGE_GATE" | tee coverage.txt
           rc=${PIPESTATUS[0]}
           {
             echo '## Coverage'
@@ -404,7 +416,7 @@ jobs:
 
       - name: Export lcov report
         if: "!cancelled()"
-        run: cargo llvm-cov report --lcov --output-path lcov.info
+        run: cargo llvm-cov report --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage report
         if: "!cancelled()"
@@ -452,20 +464,24 @@ jobs:
       # Plain `cargo test`, the first command a contributor runs. Every target that needs a
       # non-default feature gates itself (a crate-level `cfg` or `required-features`), and only
       # this run notices one that does not: the legs above all pick their features explicitly.
+      # It tests the facade alone: the crates behind it build their doc examples against the
+      # facade with the features those examples name, and a workspace run would turn those
+      # features on for the facade's own targets too.
       - name: cargo test (default features)
         env:
           CARGO_BUILD_WARNINGS: deny
-        run: cargo test --locked --workspace --no-fail-fast
+        run: cargo test --locked -p ruststream --no-fail-fast
 
       # All-features hides a doc example that names a feature-gated item without gating itself.
-      # Both ends of the range catch it.
+      # Both ends of the range catch it, on the facade alone for the reason the default-features
+      # run gives.
       - name: cargo test --doc (feature edges)
         env:
           CARGO_BUILD_WARNINGS: deny
         run: |
           cargo test --locked --workspace --doc --all-features
-          cargo test --locked --workspace --doc
-          cargo test --locked --workspace --doc --no-default-features
+          cargo test --locked -p ruststream --doc
+          cargo test --locked -p ruststream --doc --no-default-features
 
       # The crate-root missing_docs deny covers item docs; this gate catches what rustc
       # cannot: broken intra-doc links and redundant targets only rustdoc resolves.

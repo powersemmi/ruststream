@@ -1,0 +1,36 @@
+[package]
+name = "ruststream-asyncapi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The AsyncAPI document generator of the RustStream messaging framework; services use it through `ruststream`."
+keywords = ["messaging", "asyncapi", "broker", "pubsub", "ruststream"]
+categories = ["asynchronous", "network-programming"]
+readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+ruststream-core = { workspace = true, features = ["asyncapi"] }
+ruststream-runtime = { workspace = true, features = ["asyncapi"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
+# The doc examples are a service's code, so they import the facade; a path dependency without a
+# version is dropped on publish.
+ruststream = { path = "../..", features = ["macros", "memory", "json", "asyncapi", "testing"] }
+
+[lints]
+workspace = true

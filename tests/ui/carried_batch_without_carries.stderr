@@ -4,10 +4,10 @@ error[E0277]: the subscription `MemorySource` does not lend batches of `Row`
 26 |         b.include(handle.batch(nonzero!(8)));
    |           ^^^^^^^ a `&[Row]` handler reads the values this subscription's batches hold
    |
-   = help: the trait `runtime::batch::carried::SourceCarriesBatch<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
+   = help: the trait `ruststream_runtime::batch::carried::SourceCarriesBatch<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
    = note: mount it on a subscription whose batches implement `CarriesBatch<Row>`
 help: the trait `ruststream::runtime::IncludeMount<'_, B, Layers, C, State, Pipeline, Def>` is conditionally implemented for `CarriedBatch`
-  --> src/runtime/app/include/mod.rs
+  --> crates/ruststream-runtime/src/app/include/mod.rs
    |
    | /         impl<'s, B, Layers, C, State, Pipeline, Def>
    | |             IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form

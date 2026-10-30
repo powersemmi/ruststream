@@ -4,6 +4,6 @@ error[E0119]: conflicting implementations of trait `MessageDeclaration` for type
 12 | enum OrderEvent {
    |      ^^^^^^^^^^
    |
-   = note: conflicting implementation in crate `ruststream`:
+   = note: conflicting implementation in crate `ruststream_runtime`:
            - impl<T> MessageDeclaration for T
              where T: ruststream::MessageInfo;

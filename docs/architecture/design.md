@@ -45,7 +45,9 @@ The codec is a type: [the codec](../components/subscribers/codecs/index.md) a mo
 the default one the enabled feature selects. A service without a codec feature has no default, and
 a mounting that needs one does not compile.
 
-Everything beyond the traits and the runtime is a cargo feature of the one crate: the
-[memory broker](../components/memory/index.md), AsyncAPI, metrics, logging, OpenTelemetry,
-[testing](../components/application/testing/index.md) and the command line. Features only add,
-and none of them changes what another one does.
+The traits, the runtime and each optional layer are crates of their own, and `ruststream`
+re-exports them under one set of paths. The compiler holds the layering: the contract crate,
+`ruststream-core`, depends on no other crate of the framework. A cargo feature of `ruststream`
+turns an optional layer on: the [memory broker](../components/memory/index.md), AsyncAPI,
+metrics, logging, OpenTelemetry, [testing](../components/application/testing/index.md) and the
+command line. Features only add, and none of them changes what another one does.

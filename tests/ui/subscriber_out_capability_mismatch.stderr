@@ -6,18 +6,18 @@ error[E0277]: `MemoryPublisher` does not support request / reply messaging
    |
    = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
 help: the following other types implement trait `RequestReply`
-  --> src/runtime/slot.rs
+  --> crates/ruststream-runtime/src/slot.rs
    |
    |   impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: src/runtime/handle/outs/entry.rs
+  ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: src/memory/capability.rs
+  ::: crates/ruststream-memory/src/capability/request.rs
    |
    |   impl RequestReply for MemoryRequester {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
@@ -28,16 +28,16 @@ note: required for `forward` to implement `Handle<Order, (), Outs<(Slot<DefaultS
    | ^^^^^^^^^^^^^^^^^^^^^^^
 15 | async fn forward(order: &Order, Out(_out): Out<impl RequestReply>) -> HandlerOutcome {
    |          ^^^^^^^                                    ------------ unsatisfied trait bound introduced here
-   = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>` to implement `runtime::inject::InjectCall<()>`
+   = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>` to implement `ruststream_runtime::inject::InjectCall<()>`
    = note: 1 redundant requirement hidden
-   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `runtime::inject::InjectCall<()>`
-   = note: required for `runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>` to implement `runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
-   = note: required for `(runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>, ())` to implement `RouterDef<MemoryBroker>`
-   = note: required for `Router<MemoryBroker, (runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `ruststream_runtime::inject::InjectCall<()>`
+   = note: required for `ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
+   = note: required for `(ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryPublisher, JsonCodec>,)>, (), forward, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishIdentity),)>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
    = note: 1 redundant requirement hidden
-   = note: required for `RouterWith<runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<forward, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<DefaultSlot, MemoryPublish>>,)), ruststream::runtime::SlotPos<0>>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+   = note: required for `RouterWith<ruststream_runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<forward, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<DefaultSlot, MemoryPublish>>,)), ruststream::runtime::SlotPos<0>>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
 note: required by a bound in `MountingSlots::<'s, B, Layers, C, State, Pipeline, Chain>::build`
-  --> src/runtime/app/include/guard.rs
+  --> crates/ruststream-runtime/src/app/include/guard.rs
    |
    |     pub fn build(self)
    |            ----- required by a bound in this associated function

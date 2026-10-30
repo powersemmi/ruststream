@@ -16,7 +16,7 @@ help: the following other types implement trait `OutMessages<M>`
 10 | #[derive(Outgoing, Serialize)]
    |          ^^^^^^^^ `Progress` implements `OutMessages<__RsM>`
    |
-  ::: src/runtime/slot.rs
+  ::: crates/ruststream-runtime/src/slot.rs
    |
    | impl<M: OutSlot> OutMessages<M> for () {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `()` implements `OutMessages<M>`

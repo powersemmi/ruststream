@@ -4,8 +4,8 @@ description: "添加 ruststream crate，选择它的 cargo feature 和编解码�
 
 # 安装
 
-RustStream 以单个 crate `ruststream` 发布，它的接口全部由可加的 cargo feature 控制。把它加进你的
-`Cargo.toml`：
+服务只依赖一个 crate：`ruststream`，它的接口全部由可加的 cargo feature 控制。它重新导出构成
+RustStream 的各个 crate，所以服务从不直接引用它们。把它加进你的 `Cargo.toml`：
 
 ```toml
 [dependencies]

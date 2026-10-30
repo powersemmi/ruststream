@@ -1,0 +1,42 @@
+[package]
+name = "ruststream-testing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The TestApp harness of the RustStream messaging framework; services use it through `ruststream`."
+keywords = ["messaging", "testing", "broker", "pubsub", "ruststream"]
+categories = ["asynchronous", "development-tools::testing"]
+readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+# The value-encoding entry points, which encode with the default codec these features select.
+json = ["ruststream-runtime/json"]
+cbor = ["ruststream-runtime/cbor"]
+msgpack = ["ruststream-runtime/msgpack"]
+
+[dependencies]
+ruststream-core = { workspace = true, features = ["testing"] }
+ruststream-runtime = { workspace = true, features = ["testing"] }
+inventory.workspace = true
+serde.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tokio-util.workspace = true
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
+# The doc examples are a service's code, so they import the facade; a path dependency without a
+# version is dropped on publish.
+ruststream = { path = "../..", features = ["macros", "memory", "json", "testing"] }
+
+[lints]
+workspace = true

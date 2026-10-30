@@ -1,0 +1,43 @@
+[package]
+name = "ruststream-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The in-memory broker of the RustStream messaging framework, its reference broker; services use it through `ruststream`."
+keywords = ["messaging", "async", "broker", "pubsub", "ruststream"]
+categories = ["asynchronous", "network-programming"]
+readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+# The in-process transport the test harness drives the broker through.
+testing = ["ruststream-runtime/testing", "ruststream-core/testing"]
+
+[dependencies]
+ruststream-core.workspace = true
+ruststream-runtime.workspace = true
+bytes.workspace = true
+bytes-utils.workspace = true
+futures.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
+# The doc examples are a service's code, so they import the facade; a path dependency without a
+# version is dropped on publish.
+ruststream = { path = "../..", features = ["macros", "memory", "json", "testing"] }
+
+[lints]
+workspace = true

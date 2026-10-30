@@ -76,11 +76,5 @@
 //! - `Cargo.toml` metadata is complete (`description`, `license`, `repository`, `keywords`,
 //!   `categories`), and CI checks `--no-default-features` and `--all-features`.
 
-pub mod capabilities;
-pub mod harness;
-pub mod helpers;
-pub mod in_process;
-pub mod lifecycle;
-pub mod message_shape;
-pub mod retry;
-pub mod settlement;
+#[doc(inline)]
+pub use ruststream_conformance::*;

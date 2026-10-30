@@ -1,0 +1,316 @@
+//! The [`RustStream`] application object: binds brokers, handlers and lifecycle into one runnable
+//! service.
+
+mod app_trait;
+mod health;
+mod include;
+mod run;
+mod scope;
+mod service;
+mod teardown;
+
+pub use app_trait::App;
+pub(crate) use health::HealthReport;
+pub use health::{HealthProbe, HealthState, SubscriptionCount, SubscriptionEnd};
+#[doc(hidden)]
+pub use include::{IncludeMount, ScopeCommit};
+pub use include::{Mounting, MountingSlots};
+pub use run::RunningApp;
+pub use scope::BrokerScope;
+pub use service::RegisteredBroker;
+#[cfg(feature = "testing")]
+pub use service::TestParts;
+pub use service::{RustStream, Setup, Wired};
+pub use teardown::{ConnectedEntry, ShutdownHooks, Teardown};
+
+use std::sync::Arc;
+
+use thiserror::Error;
+use tokio::task::{JoinError, JoinHandle};
+
+use crate::lifecycle::{BoxError, BoxFuture};
+use crate::shutdown::Shutdown;
+use crate::{AppId, Contact, ExternalDocs, License, Tag};
+
+/// A registration deferred until [`RustStream::run`].
+///
+/// Given the app's shutdown signal, it opens the subscription (after the broker is connected) and
+/// spawns the dispatch task. The broker, source and handler are captured and type-erased.
+pub type Starter<St> = Box<
+    dyn FnOnce(Arc<St>, Shutdown) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>> + Send,
+>;
+
+/// The state initializer: produces the app state `St` once at startup (before brokers connect).
+/// The `on_startup` producer chain; a failing initializer aborts startup. The default is the unit
+/// state `()`.
+pub(crate) type StateInit<St> =
+    Box<dyn FnOnce() -> BoxFuture<'static, Result<St, BoxError>> + Send>;
+
+/// A read-only lifespan hook (`after_startup` / `on_shutdown` / `after_shutdown`): runs once at the
+/// corresponding lifecycle point with a shared `Arc<St>` handle to the app state.
+pub type LifecycleHook<St> =
+    Box<dyn FnOnce(Arc<St>) -> BoxFuture<'static, Result<(), BoxError>> + Send>;
+
+/// Which read-only lifecycle hook list a hook is appended to.
+#[derive(Clone, Copy)]
+enum LifecyclePhase {
+    AfterStartup,
+    OnShutdown,
+    AfterShutdown,
+}
+
+/// Service-level metadata, surfaced to the `AsyncAPI` generator as the spec `Info` object.
+///
+/// The title and the version are what a service must state; everything else is optional and
+/// reaches the document only when it is filled in.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::runtime::{App, AppInfo, RustStream};
+/// use ruststream::{Contact, License, Tag};
+///
+/// fn app() -> impl App {
+///     let info = AppInfo::new("payments", "1.4.0")
+///         .description("everything the payment domain publishes")
+///         .contact(Contact::new().email("payments@example.com"))
+///         .license(License::new("Apache-2.0"))
+///         .tag(Tag::new("payments"));
+///     RustStream::new(info)
+/// }
+/// ```
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct AppInfo {
+    /// Human-readable service title.
+    pub title: String,
+    /// Service version string.
+    pub version: String,
+    /// Optional longer description.
+    pub description: Option<String>,
+    /// The service's own identifier, a URI. Emitted as the document's root `id`.
+    pub id: Option<AppId>,
+    /// Where the terms of service are published.
+    pub terms_of_service: Option<String>,
+    /// Who to contact about the service.
+    pub contact: Contact,
+    /// The licence the service is published under.
+    pub license: Option<License>,
+    /// Labels grouping the service among its neighbours.
+    pub tags: Vec<Tag>,
+    /// Where the prose about this service lives.
+    pub external_docs: Option<ExternalDocs>,
+}
+
+impl AppInfo {
+    /// Creates info with a title and version and nothing else.
+    #[must_use]
+    pub fn new(title: impl Into<String>, version: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            version: version.into(),
+            description: None,
+            id: None,
+            terms_of_service: None,
+            contact: Contact::new(),
+            license: None,
+            tags: Vec::new(),
+            external_docs: None,
+        }
+    }
+
+    /// Sets the description.
+    #[must_use]
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Sets the service's own identifier.
+    ///
+    /// The identifier is a URI, which [`AppId`] checks on construction, so the document cannot
+    /// carry a title where a reader expects an identifier.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{AppId, AppIdError};
+    ///
+    /// /// The id comes from the deployment's configuration, so a malformed one fails the build of
+    /// /// the app.
+    /// fn app(id: &str) -> Result<impl App, AppIdError> {
+    ///     let info = AppInfo::new("payments", "1.4.0").id(id.parse::<AppId>()?);
+    ///     Ok(RustStream::new(info))
+    /// }
+    /// ```
+    #[must_use]
+    pub fn id(mut self, id: AppId) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    /// Sets where the terms of service are published.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    ///
+    /// fn app() -> impl App {
+    ///     let info =
+    ///         AppInfo::new("payments", "1.4.0").terms_of_service("https://example.com/terms");
+    ///     RustStream::new(info)
+    /// }
+    /// ```
+    #[must_use]
+    pub fn terms_of_service(mut self, url: impl Into<String>) -> Self {
+        self.terms_of_service = Some(url.into());
+        self
+    }
+
+    /// Sets who to contact about the service.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::Contact;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    ///
+    /// fn app() -> impl App {
+    ///     let info =
+    ///         AppInfo::new("payments", "1.4.0").contact(Contact::new().name("Payments team"));
+    ///     RustStream::new(info)
+    /// }
+    /// ```
+    #[must_use]
+    pub fn contact(mut self, contact: Contact) -> Self {
+        self.contact = contact;
+        self
+    }
+
+    /// Sets the licence the service is published under.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::License;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    ///
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0").license(License::new("MIT"));
+    ///     RustStream::new(info)
+    /// }
+    /// ```
+    #[must_use]
+    pub fn license(mut self, license: License) -> Self {
+        self.license = Some(license);
+        self
+    }
+
+    /// Adds one label to the service. Call repeatedly for several.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::Tag;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    ///
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0")
+    ///         .tag(Tag::new("payments"))
+    ///         .tag(Tag::new("public"));
+    ///     RustStream::new(info)
+    /// }
+    /// ```
+    #[must_use]
+    pub fn tag(mut self, tag: Tag) -> Self {
+        self.tags.push(tag);
+        self
+    }
+
+    /// Sets where the prose about this service lives.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::ExternalDocs;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    ///
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0")
+    ///         .external_docs(ExternalDocs::new("https://example.com/payments"));
+    ///     RustStream::new(info)
+    /// }
+    /// ```
+    #[must_use]
+    pub fn external_docs(mut self, docs: ExternalDocs) -> Self {
+        self.external_docs = Some(docs);
+        self
+    }
+}
+
+/// Errors surfaced while running a [`RustStream`] service.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum RustStreamError {
+    /// A broker failed to [`connect`](crate::Broker::connect) at startup.
+    #[error("broker connect failed: {0}")]
+    Connect(#[source] BoxError),
+    /// An `on_startup` or `after_startup` lifespan hook failed.
+    #[error("startup hook failed: {0}")]
+    Startup(#[source] BoxError),
+    /// A subscription failed to open after connect.
+    #[error("subscription failed: {0}")]
+    Subscribe(#[source] BoxError),
+    /// A broker failed to [`shutdown`](crate::ConnectedBroker::shutdown) during graceful
+    /// shutdown.
+    #[error("broker shutdown failed: {0}")]
+    Shutdown(#[source] BoxError),
+    /// A dispatch task panicked or was aborted.
+    #[error("dispatch task failed: {0}")]
+    Join(#[source] JoinError),
+    /// A subscriber hit a fail-fast failure (a handler panic, or a decode failure under
+    /// `on_failure(decode = fail_fast)`) and tore the service down. The string names the
+    /// subscription and the reason.
+    #[error("dispatch failed: {0}")]
+    Dispatch(String),
+}
+
+/// Boxing helpers for scope-registered lifecycle hooks.
+pub(super) mod lifecycle_hooks {
+    use std::{error::Error as StdError, sync::Arc};
+
+    use crate::bindable::ConnectedSlot;
+    use crate::bindable::pair_bound;
+    use crate::lifecycle::BoxError;
+    use crate::{Broker, Connected, PublishPolicy};
+
+    use super::LifecycleHook;
+
+    /// Erases a scope-level startup publish (pair `source`, run `hook` with the live publisher)
+    /// into an app lifecycle hook. The state handle is ignored: the hook's input is the
+    /// publisher, and app state stays reachable through the app-level `after_startup`.
+    pub(crate) fn box_startup_publish<B, State, Source, Hook, Fut, E>(
+        slot: ConnectedSlot<B>,
+        source: Source,
+        hook: Hook,
+    ) -> LifecycleHook<State>
+    where
+        B: Broker + 'static,
+        Source: PublishPolicy<Connected<B>> + Send + 'static,
+        Source::Live: Send,
+        Hook: FnOnce(Source::Live) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send + 'static,
+        E: StdError + Send + Sync + 'static,
+    {
+        Box::new(move |_state: Arc<State>| {
+            Box::pin(async move {
+                let live = pair_bound::<B, Source>(&slot, source)
+                    .await
+                    .map_err(BoxError::from)?;
+                hook(live).await.map_err(BoxError::from)
+            })
+        })
+    }
+}

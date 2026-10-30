@@ -11,7 +11,7 @@ help: the trait `ruststream::runtime::ReplyDestination` is not implemented for `
    | ^^^^^^^^^^^^^^
    = note: derive `Outgoing` on the reply type: `#[outgoing(name = "orders.done")]` fixes the destination, and a derive without a name is published where the mount site says (`reply("..")` on the attribute, `.to("..")` on the chain). A name template has no placeholders to bind on the reply path.
 note: required by a bound in `ruststream::runtime::reply_destination`
-  --> src/runtime/handle/reply.rs
+  --> crates/ruststream-runtime/src/handle/reply.rs
    |
    | pub fn reply_destination<R: ReplyDestination>(default: &'static str) -> ResolvedDest {
    |                             ^^^^^^^^^^^^^^^^ required by this bound in `reply_destination`

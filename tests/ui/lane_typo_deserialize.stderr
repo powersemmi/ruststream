@@ -22,7 +22,7 @@ error[E0477]: the type `Frame<'_>` does not fulfill the required lifetime
    |      ^^^^^^^^^^^^^^^^^
    |
 note: type must satisfy the static lifetime as required by this binding
-  --> src/runtime/handle/mod.rs
+  --> crates/ruststream-runtime/src/handle/mod.rs
    |
    | pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: Send + Sync {
    |                               ^^^^^

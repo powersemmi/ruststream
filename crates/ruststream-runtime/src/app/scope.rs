@@ -1,0 +1,168 @@
+//! The per-broker handler registration scope.
+
+use std::{error::Error as StdError, fmt, sync::Arc};
+
+use crate::{Broker, Connected, Subscriber};
+
+use crate::PublishPolicy;
+use crate::bindable::ConnectedSlot;
+use crate::failure::FailurePolicies;
+use crate::handler::Handler;
+use crate::metadata::HandlerMetadata;
+use crate::middleware::{BlanketLayer, Identity};
+use crate::publish::{PublishIdentity, PublishPipeline};
+use crate::router::{RouterDef, RouterSink};
+
+use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
+
+/// A handler-registration scope bound to one broker.
+///
+/// Handed to the [`RustStream::with_broker`](crate::RustStream::with_broker) closure. It
+/// drives the same registration chain a [`Router`](crate::Router) does - `include`
+/// returns a guard over one - plus the broker it is bound to and the app's global middleware
+/// stack `Layers`; registrations are collected and started later, in
+/// [`RustStream::run`](crate::RustStream::run).
+pub struct BrokerScope<B: Broker, Layers = Identity, C = (), State = (), Pipeline = PublishIdentity>
+{
+    pub(super) broker: B,
+    /// The slot the runtime fills with this broker's connected form at startup; shared with
+    /// every starter of this scope and with the [`Bound`] tokens minted here.
+    pub(super) slot: ConnectedSlot<B>,
+    /// Startup publishes registered on this scope: paired against the broker and run with the
+    /// app-level `after_startup` hooks, in registration order.
+    pub(super) startup_hooks: Vec<LifecycleHook<State>>,
+    pub(super) sink: RouterSink<B, State>,
+    pub(super) pipeline: Pipeline,
+    pub(super) global: Layers,
+    pub(super) codec: C,
+}
+
+impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, State, Pipeline> {
+    /// Returns the broker, for creating subscribers or publishers with its own API.
+    #[must_use]
+    pub fn broker(&self) -> &B {
+        &self.broker
+    }
+
+    /// Registers a startup publish: once every broker is connected and the subscriptions are
+    /// open, `source` is paired against this scope's broker and `hook` runs with the live
+    /// publisher. The scope-side home of the first message (seeding reference data, announcing
+    /// readiness): the pairing happens inside, so no token leaves the closure. A failing hook
+    /// aborts startup, exactly like the app-level
+    /// [`after_startup`](crate::RustStream::after_startup).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "services.started")]
+    /// struct Started {
+    ///     service: &'static str,
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         // The rest of the system learns the service is up once its subscriptions are open.
+    ///         b.after_startup(Publish, async move |publisher| {
+    ///             publisher
+    ///                 .message(&Started { service: "orders" })
+    ///                 .publish()
+    ///                 .await
+    ///         });
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    pub fn after_startup<Source, Hook, Fut, E>(&mut self, source: Source, hook: Hook)
+    where
+        Source: PublishPolicy<Connected<B>> + Send + 'static,
+        Source::Live: Send,
+        Hook: FnOnce(Source::Live) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send + 'static,
+        E: StdError + Send + Sync + 'static,
+        B: 'static,
+    {
+        self.startup_hooks
+            .push(box_startup_publish::<B, State, Source, Hook, Fut, E>(
+                Arc::clone(&self.slot),
+                source,
+                hook,
+            ));
+    }
+
+    /// Attaches `handler` (wrapped with the app's global stack) to an already-created
+    /// `subscriber`.
+    ///
+    /// Machinery, not the user path - see [`Router::handle`](crate::Router::handle);
+    /// a service mounts definitions with [`include`](Self::include) and the value constructors.
+    pub fn handle<S, H, Cx>(&mut self, subscriber: S, handler: H, meta: HandlerMetadata)
+    where
+        S: Subscriber + Send + 'static,
+        S::Message: Send + Sync + 'static,
+        State: Send + Sync + 'static,
+        Cx: crate::BuildContext<S::Message> + Send + Sync + 'static,
+        H: Handler<S::Message, Cx, State> + 'static,
+        Layers: BlanketLayer + Clone + Send + Sync + 'static,
+    {
+        let handler = self.global.apply::<S::Message, Cx, State, H>(handler);
+        // A directly mounted subscriber names no descriptor, so no retry position can be bound
+        // on it: nothing reports where a copy of one of its deliveries would be published.
+        self.sink
+            .push_handle(subscriber, handler, meta, FailurePolicies::default());
+    }
+
+    /// Mounts every registration from `router` onto this broker, wrapping each handler with the
+    /// app's global middleware stack.
+    ///
+    /// The app's global stack must be a [`BlanketLayer`] (it applies to handlers whose concrete
+    /// types the router hides), which every bundled layer and any
+    /// [`Stack`](crate::Stack) of them satisfies.
+    pub fn include_router<R>(&mut self, router: R)
+    where
+        R: RouterDef<B, State>,
+        State: Send + Sync + 'static,
+        Layers: BlanketLayer + Clone + Send + Sync + 'static,
+        Pipeline: PublishPipeline + Clone + Send + 'static,
+    {
+        // A router hands its own publish path down, so what this scope names here is the
+        // fallback for a bare registration list mounted directly.
+        router.mount(
+            &self.global,
+            &self.pipeline,
+            &PublishIdentity,
+            &mut self.sink,
+        );
+    }
+}
+
+impl<B: Broker, Layers, C, State, Pipeline> fmt::Debug
+    for BrokerScope<B, Layers, C, State, Pipeline>
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BrokerScope")
+            .field("sink", &self.sink)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{AppInfo, RustStream};
+    use ruststream::memory::MemoryBroker;
+
+    #[test]
+    fn scope_debug_reports_its_registrations() {
+        let _app =
+            RustStream::new(AppInfo::new("dbg", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+                let rendered = format!("{b:?}");
+                assert!(rendered.starts_with("BrokerScope"), "{rendered}");
+                assert!(rendered.contains("sink"), "{rendered}");
+            });
+    }
+}

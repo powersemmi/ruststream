@@ -4,10 +4,10 @@ error[E0277]: the subscription `MemorySource` does not carry `Row`
 25 |         b.include(handle);
    |           ^^^^^^^ a `&Row` handler reads the value this subscription's deliveries hold
    |
-   = help: the trait `runtime::input::SourceCarries<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
+   = help: the trait `ruststream_runtime::input::SourceCarries<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
    = note: mount it on a subscription whose deliveries implement `Carries<Row>`; a `Row` that arrives as bytes derives `Deserialize` instead and rides the codec
 help: the trait `ruststream::runtime::IncludeMount<'_, B, Layers, C, State, Pipeline, Def>` is conditionally implemented for `Subscribing`
-  --> src/runtime/app/include/mod.rs
+  --> crates/ruststream-runtime/src/app/include/mod.rs
    |
    | /         impl<'s, B, Layers, C, State, Pipeline, Def>
    | |             IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
@@ -29,33 +29,33 @@ help: the trait `ruststream::runtime::IncludeMount<'_, B, Layers, C, State, Pipe
    | |     forms::CarriedBatch,
    | | }
    | |_- in this macro invocation
-   = note: required for `runtime::input::Carried<Row>` to implement `runtime::input::Materialize<runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`
+   = note: required for `ruststream_runtime::input::Carried<Row>` to implement `ruststream_runtime::input::Materialize<ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`
    = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
    = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
    = note: this error originates in the macro `eager_mount` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: `Typed<MemoryMessage, runtime::input::Carried<Row>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>` cannot handle `MemoryMessage`
+error[E0277]: `Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>` cannot handle `MemoryMessage`
   --> tests/ui/carried_without_carries.rs:25:11
    |
 25 |         b.include(handle);
    |           ^^^^^^^ unsatisfied trait bound
    |
-   = help: the trait `Handler<MemoryMessage>` is not implemented for `Typed<MemoryMessage, runtime::input::Carried<Row>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>`
+   = help: the trait `Handler<MemoryMessage>` is not implemented for `Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>`
    = note: a handler is a named type with an `impl Handler<MemoryMessage>` whose `handle` method returns the settlement, or a closure `|msg: &MemoryMessage, ctx: &mut Context| async { .. }` whose future does not borrow its arguments
 help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, Input, DecodeCodec, Inner>`
-  --> src/runtime/typed.rs
+  --> crates/ruststream-runtime/src/typed.rs
    |
    | / impl<M, Input, DecodeCodec, Inner, Cx, St> Handler<M, Cx, St>
    | |     for Typed<M, Input, DecodeCodec, Inner>
    | | where
    | |     M: IncomingMessage,
    | |     Input: Materialize<DecodeCodec, M>,
-   | |            --------------------------- unsatisfied requirement introduced here: `runtime::input::Carried<Row>: runtime::input::Materialize<runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`
+   | |            --------------------------- unsatisfied requirement introduced here: `ruststream_runtime::input::Carried<Row>: ruststream_runtime::input::Materialize<ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`
 ...  |
    | |     St: Send + Sync,
    | |     Inner: Handler<Input::Target, Cx, St>,
    | |__________________________________________^
-   = note: required for `runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, runtime::input::Carried<Row>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>` to implement `runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
-   = note: required for `(runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, runtime::input::Carried<Row>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ())` to implement `RouterDef<MemoryBroker>`
-   = note: required for `Router<MemoryBroker, (runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, runtime::input::Carried<Row>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+   = note: required for `ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
+   = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
    = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`

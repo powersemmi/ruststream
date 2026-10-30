@@ -1,0 +1,472 @@
+//! Typed handler adapter: turns a handler over an input kind's borrowed target into a
+//! [`Handler<M>`](Handler) by materializing the input from each delivery via the input axis
+//! ([`Materialize`]).
+//!
+//! This is the decode boundary between the two middleware levels: raw (pre-decode) middleware
+//! wrap the produced `Handler<M>`; typed (post-decode) middleware wrap the `inner: Handler<T>`
+//! passed in here. Both use the same [`Layer`](super::Layer) / [`HandlerExt`](super::HandlerExt)
+//! machinery, just at different inputs.
+
+use std::{fmt, marker::PhantomData};
+
+use crate::IncomingMessage;
+use crate::codec::{Codec, CodecError};
+use serde::de::DeserializeOwned;
+use tracing::warn;
+
+use super::batch::rejection;
+use super::context::Context;
+use super::failure::FailurePolicy;
+use super::handler::{Handler, HandlerOutcome};
+use super::input::{Decoded, Materialize, REPORTED};
+
+/// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
+/// `inner`.
+///
+/// `inner` is any [`Handler<T>`](Handler) - a closure `Fn(&T) -> _` or a typed middleware stack
+/// built with [`HandlerExt::with`](super::HandlerExt::with). The general form over any input
+/// kind (a raw `&[u8]` handler included) is [`Typed::over`].
+pub fn typed<M, T, C, H>(codec: C, inner: H) -> Typed<M, Decoded<T>, C, H>
+where
+    M: IncomingMessage,
+    T: DeserializeOwned + Send + Sync + 'static,
+    C: Codec,
+{
+    Typed::over(codec, inner)
+}
+
+/// Handler produced by [`typed`] (or [`Typed::over`] for a non-decoding input kind). Override
+/// the decode-failure policy with [`Typed::on_decode_failure`].
+pub struct Typed<M, Input, DecodeCodec, Inner> {
+    codec: DecodeCodec,
+    inner: Inner,
+    decode: FailurePolicy,
+    _phantom: PhantomData<fn(M, Input)>,
+}
+
+impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
+    /// Builds the adapter for any input kind: `Decoded<T>` decodes with `codec`, the
+    /// self-deserializing `Provided<F>` ignores it (pass `()`) and lends the payload itself.
+    #[must_use]
+    pub fn over(codec: DecodeCodec, inner: Inner) -> Self
+    where
+        Input: Materialize<DecodeCodec, M>,
+    {
+        Self {
+            codec,
+            inner,
+            decode: FailurePolicy::Drop,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Sets the [`FailurePolicy`] applied when the codec fails to decode an incoming payload. The
+    /// default is [`FailurePolicy::Drop`].
+    #[must_use]
+    pub fn on_decode_failure(mut self, decode: FailurePolicy) -> Self {
+        self.decode = decode;
+        self
+    }
+}
+
+impl<M, Input, DecodeCodec, Inner> fmt::Debug for Typed<M, Input, DecodeCodec, Inner> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Typed")
+            .field("decode", &self.decode)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<M, Input, DecodeCodec, Inner, Cx, St> Handler<M, Cx, St>
+    for Typed<M, Input, DecodeCodec, Inner>
+where
+    M: IncomingMessage,
+    Input: Materialize<DecodeCodec, M>,
+    DecodeCodec: Send + Sync,
+    Cx: Send,
+    St: Send + Sync,
+    Inner: Handler<Input::Target, Cx, St>,
+{
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> HandlerOutcome {
+        if let Some(outcome) = refused::<Input, DecodeCodec, M, Cx, St>(msg, self.decode, ctx) {
+            return outcome;
+        }
+        // What the delivery materialized into lives on this stack frame and the handler borrows
+        // its view, so the input path allocates nothing of its own (a raw input borrows the
+        // payload, a carried one the delivery's own value).
+        match Input::materialize(&self.codec, msg) {
+            Ok(held) => {
+                #[cfg(feature = "testing")]
+                Input::record(&held, ctx);
+                self.inner.handle(Input::view(&held, msg), ctx).await
+            }
+            Err(err) => unmaterialized::<Input, DecodeCodec, M, Cx, St>(&err, self.decode, ctx),
+        }
+    }
+}
+
+/// The outcome that settles a delivery its broker reports as undecodable
+/// ([`IncomingMessage::decode_error`]) by the definition's decode policy, or `None` where the
+/// broker reports nothing and the adapter materializes the input.
+///
+/// Every single-delivery adapter asks here before it materializes its input, so the report is
+/// read on every input lane and every form alike, before the lane reads anything of the delivery.
+// Inlined, so that for a broker that keeps the default the report is a constant `None` in the
+// adapter's own code and the check folds away.
+#[inline]
+pub(crate) fn refused<Input, Decoder, M, Cx, St>(
+    msg: &M,
+    decode: FailurePolicy,
+    ctx: &mut Context<'_, Cx, St>,
+) -> Option<HandlerOutcome>
+where
+    Input: Materialize<Decoder, M>,
+    M: IncomingMessage,
+{
+    msg.decode_error()
+        .map(|err| refuse::<Input, Decoder, M, Cx, St>(err, decode, ctx))
+}
+
+/// Settles a delivery its broker could not read, with the diagnostic fields of
+/// [`unmaterialized`].
+// Out of line and cold, so the adapter's code for the deliveries it reads stays as it is.
+#[cold]
+#[inline(never)]
+fn refuse<Input, Decoder, M, Cx, St>(
+    err: &CodecError,
+    decode: FailurePolicy,
+    ctx: &mut Context<'_, Cx, St>,
+) -> HandlerOutcome
+where
+    Input: Materialize<Decoder, M>,
+{
+    warn!(
+        target: "ruststream::dispatch",
+        subscription = %ctx.name(),
+        message_type = Input::input_label(),
+        error = %err,
+        "{}",
+        REPORTED,
+    );
+    #[cfg(any(feature = "testing", feature = "otel"))]
+    ctx.mark_decode_failed();
+    rejection(err, "decode failed", decode, ctx).into()
+}
+
+/// Settles a delivery that did not materialize into the handler's input, by the definition's
+/// decode policy. The single-delivery adapters all end here, so the diagnostic names the
+/// subscription and the type the same way on every form.
+pub(crate) fn unmaterialized<Input, Decoder, M, Cx, St>(
+    err: &CodecError,
+    decode: FailurePolicy,
+    ctx: &mut Context<'_, Cx, St>,
+) -> HandlerOutcome
+where
+    Input: Materialize<Decoder, M>,
+{
+    warn!(
+        target: "ruststream::dispatch",
+        subscription = %ctx.name(),
+        message_type = Input::input_label(),
+        error = %err,
+        "{}",
+        Input::FAILURE,
+    );
+    #[cfg(any(feature = "testing", feature = "otel"))]
+    ctx.mark_decode_failed();
+    match decode {
+        FailurePolicy::FailFast => {
+            ctx.fail_fast(&format!("decode failed: {err}"));
+            HandlerOutcome::drop()
+        }
+        other => other
+            .settlement()
+            .map_or_else(HandlerOutcome::drop, Into::into),
+    }
+}
+
+#[cfg(all(test, feature = "json"))]
+mod tests {
+    use std::future::ready;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+    };
+
+    use serde::Deserialize;
+
+    use super::{Typed, typed};
+    use crate::codec::JsonCodec;
+    use crate::context::Context;
+    use crate::dispatch::Delivery;
+    use crate::failure::FailurePolicy;
+    use crate::handle::Message;
+    use crate::handler::{Handler, HandlerOutcome, HandlerResult};
+    use crate::input::DecodedPair;
+    use crate::testkit::delivery::one_delivery;
+    use crate::{AckError, HeaderMap, IncomingMessage};
+    use ruststream::memory::{MemoryBroker, MemoryMessage};
+
+    fn counting_inner(seen: &Arc<AtomicU32>) -> impl Handler<u32> {
+        let seen = Arc::clone(seen);
+        move |value: &u32, _ctx: &mut Context| {
+            let seen = Arc::clone(&seen);
+            let value = *value;
+            async move {
+                seen.store(value, Ordering::SeqCst);
+                HandlerOutcome::ack()
+            }
+        }
+    }
+
+    /// The adapter shows the decode-failure policy it applies and elides the codec and the inner
+    /// handler, a closure more often than not.
+    #[test]
+    fn the_adapter_renders_its_decode_policy() {
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed::<MemoryMessage, u32, _, _>(JsonCodec, counting_inner(&seen))
+            .on_decode_failure(FailurePolicy::Retry);
+        assert_eq!(format!("{handler:?}"), "Typed { decode: Retry, .. }");
+    }
+
+    // Plain #[tokio::test] throughout: nothing is spawned, the handler future is awaited inline.
+    #[tokio::test]
+    async fn raw_bytes_lend_the_payload_itself() {
+        use super::Typed;
+        use crate::input::Provided;
+
+        /// A marker family: the kind only labels the input, the view stays `&[u8]`.
+        struct Frame;
+
+        let seen = Arc::new(AtomicU32::new(0));
+        let inner = {
+            let seen = Arc::clone(&seen);
+            move |bytes: &[u8], _ctx: &mut Context| {
+                let seen = Arc::clone(&seen);
+                let len = u32::try_from(bytes.len()).unwrap();
+                async move {
+                    seen.store(len, Ordering::SeqCst);
+                    HandlerOutcome::ack()
+                }
+            }
+        };
+        // No codec anywhere: the self-deserializing kind decodes with `()`.
+        let handler = Typed::<MemoryMessage, Provided<Frame>, (), _>::over((), inner);
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = HeaderMap::new();
+        let mut ctx = Context::new("frames", &headers, &state, (), &delivery);
+
+        let msg = one_delivery(&MemoryBroker::new(), "frames", b"not json at all").await;
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::Ack
+        );
+        assert_eq!(seen.load(Ordering::SeqCst), 15);
+    }
+
+    #[tokio::test]
+    async fn decode_failure_drops_by_default() {
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed(JsonCodec, counting_inner(&seen));
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = HeaderMap::new();
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
+
+        let msg = one_delivery(&MemoryBroker::new(), "typed", b"not json").await;
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::drop()
+        );
+        assert_eq!(seen.load(Ordering::SeqCst), 0, "inner must not run");
+    }
+
+    #[tokio::test]
+    async fn decode_failure_requeues_when_overridden() {
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler =
+            typed(JsonCodec, counting_inner(&seen)).on_decode_failure(FailurePolicy::Retry);
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = HeaderMap::new();
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
+
+        let msg = one_delivery(&MemoryBroker::new(), "typed", b"not json").await;
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::retry()
+        );
+        assert_eq!(seen.load(Ordering::SeqCst), 0, "inner must not run");
+    }
+
+    // The decode diagnostic carries the subscription name and the target type (needs a tracing
+    // subscriber, hence the `logging` feature gate).
+    #[tokio::test]
+    async fn decode_failure_log_names_subscription_and_type() {
+        use crate::testkit::log_capture;
+
+        let (events, guard) = log_capture::start();
+
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed(JsonCodec, counting_inner(&seen));
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = HeaderMap::new();
+        let mut ctx = Context::new("orders.inbound", &headers, &state, (), &delivery);
+        let msg = one_delivery(&MemoryBroker::new(), "typed", b"not json").await;
+        // How it settles is `decode_failure_drops_by_default`'s subject; this one reads the log.
+        let _ = handler.handle(&msg, &mut ctx).await;
+        drop(guard);
+
+        let decode_event = log_capture::find(&events, "codec decode failed");
+        assert_eq!(
+            decode_event.get("subscription").map(String::as_str),
+            Some("orders.inbound")
+        );
+        assert_eq!(
+            decode_event.get("message_type").map(String::as_str),
+            Some("u32")
+        );
+    }
+
+    // A delivery its broker could not read is refused before the codec runs, and the warning
+    // names the subscription, the input type and the error the broker reported (needs a tracing
+    // subscriber, hence the `logging` feature gate).
+    #[tokio::test]
+    async fn a_reported_decode_error_is_logged_with_subscription_type_and_error() {
+        use crate::input::REPORTED;
+        use crate::testkit::log_capture;
+        use crate::testkit::unreadable::{REASON, Unreadable};
+
+        let (events, guard) = log_capture::start();
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed(JsonCodec, counting_inner(&seen));
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = HeaderMap::new();
+        let mut ctx = Context::new("orders.inbound", &headers, &state, (), &delivery);
+        // The payload decodes as a `u32`: only the broker's report refuses it.
+        let outcome = handler.handle(&Unreadable::new(b"7"), &mut ctx).await;
+        drop(guard);
+
+        assert_eq!(outcome.outcome(), HandlerResult::drop());
+        assert_eq!(seen.load(Ordering::SeqCst), 0, "inner must not run");
+        let reported = log_capture::find(&events, REPORTED);
+        assert_eq!(
+            reported.get("subscription").map(String::as_str),
+            Some("orders.inbound")
+        );
+        assert_eq!(
+            reported.get("message_type").map(String::as_str),
+            Some("u32")
+        );
+        assert_eq!(
+            reported.get("error").map(String::as_str),
+            Some(format!("decode failed: {REASON}").as_str())
+        );
+    }
+
+    /// A delivery that counts the calls to [`IncomingMessage::headers`]: on a broker where the
+    /// accessor materializes the map, that count is what the input kind costs.
+    struct CountingMsg {
+        payload: Vec<u8>,
+        headers: HeaderMap,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl IncomingMessage for CountingMsg {
+        fn payload(&self) -> &[u8] {
+            &self.payload
+        }
+
+        fn headers(&self) -> &HeaderMap {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            &self.headers
+        }
+
+        fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+            ready(Ok(()))
+        }
+
+        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+            ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_decoded_input_never_asks_the_delivery_for_its_headers() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed(JsonCodec, counting_inner(&seen));
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = HeaderMap::new();
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
+
+        let msg = CountingMsg {
+            payload: b"7".to_vec(),
+            headers: HeaderMap::new(),
+            reads: Arc::clone(&reads),
+        };
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::Ack
+        );
+        assert_eq!(seen.load(Ordering::SeqCst), 7);
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            0,
+            "a payload decode reads the payload and nothing else"
+        );
+    }
+
+    /// The header contract of the pair input below.
+    #[derive(Deserialize)]
+    struct Tenant {
+        tenant: String,
+    }
+
+    #[tokio::test]
+    async fn a_pair_input_asks_the_delivery_for_its_headers_once() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let paired = Arc::new(AtomicBool::new(false));
+        let inner = {
+            let paired = Arc::clone(&paired);
+            move |msg: &Message<Tenant, u32>, _ctx: &mut Context| {
+                let paired = Arc::clone(&paired);
+                let matched = msg.headers.tenant == "acme" && msg.body == 7;
+                async move {
+                    paired.store(matched, Ordering::SeqCst);
+                    HandlerOutcome::ack()
+                }
+            }
+        };
+        let handler = Typed::<CountingMsg, DecodedPair<Tenant, u32>, _, _>::over(JsonCodec, inner);
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = HeaderMap::new();
+        let mut ctx = Context::new("pair", &headers, &state, (), &delivery);
+
+        let mut delivered = HeaderMap::new();
+        delivered.insert("tenant", "acme");
+        let msg = CountingMsg {
+            payload: b"7".to_vec(),
+            headers: delivered,
+            reads: Arc::clone(&reads),
+        };
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::Ack
+        );
+        assert!(
+            paired.load(Ordering::SeqCst),
+            "the pair reached the handler"
+        );
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            1,
+            "the kind that needs the map asks for it, once"
+        );
+    }
+}
