@@ -1702,6 +1702,7 @@ dependencies = [
  "futures-core",
  "hash32",
  "heapless",
+ "pin-project-lite",
  "ruststream-cli",
  "ruststream-core",
  "ruststream-memory",
