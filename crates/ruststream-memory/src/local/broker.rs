@@ -40,6 +40,7 @@ use super::bus::Bus;
 /// # Examples
 ///
 /// ```
+/// use futures::StreamExt;
 /// use ruststream_memory::local::prelude::*;
 ///
 /// /// A sensor task and the part of the firmware that logs its readings, joined by one bus.
@@ -54,7 +55,9 @@ use super::bus::Bus;
 ///         .await?;
 ///
 ///     let mut deliveries = core::pin::pin!(readings.stream());
-///     let reading = deliveries.next().await.expect("the bus is open")?;
+///     let Some(Ok(reading)) = deliveries.next().await else {
+///         unreachable!("the bus is open and its stream yields no error");
+///     };
 ///     let celsius = reading.payload().to_vec();
 ///     reading.ack().await.expect("the bus settles");
 ///     connected.shutdown().await?;
@@ -63,6 +66,16 @@ use super::bus::Bus;
 ///
 /// let celsius = embassy_futures::block_on(firmware(LocalMemoryBroker::new()));
 /// assert_eq!(celsius, Ok(vec![21]));
+/// ```
+///
+/// The bus belongs to the task that holds it: it is not `Send`, so it does not move to another
+/// thread.
+///
+/// ```compile_fail,E0277
+/// use ruststream_memory::local::LocalMemoryBroker;
+///
+/// let broker = LocalMemoryBroker::<8>::new();
+/// std::thread::spawn(move || drop(broker));
 /// ```
 pub struct LocalMemoryBroker<const CAP: usize> {
     bus: Rc<Bus<CAP>>,
@@ -146,6 +159,7 @@ impl<const CAP: usize> LocalDescribeServer for LocalMemoryBroker<CAP> {
 /// # Examples
 ///
 /// ```
+/// use futures::StreamExt;
 /// use ruststream_memory::local::prelude::*;
 ///
 /// /// Commands reach the actuator task by name alone.
@@ -156,7 +170,9 @@ impl<const CAP: usize> LocalDescribeServer for LocalMemoryBroker<CAP> {
 ///         .publish(OutgoingMessage::produced("actuator/cmd", BytesMut::from("open")), None)
 ///         .await?;
 ///     let mut deliveries = core::pin::pin!(commands.stream());
-///     let command = deliveries.next().await.expect("the bus is open")?;
+///     let Some(Ok(command)) = deliveries.next().await else {
+///         unreachable!("the bus is open and its stream yields no error");
+///     };
 ///     assert_eq!(command.payload(), b"open");
 ///     command.ack().await.expect("the bus settles");
 ///     Ok(())
