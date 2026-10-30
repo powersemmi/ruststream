@@ -1,6 +1,7 @@
 use std::future;
 use std::future::ready;
 use std::mem;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -9,9 +10,15 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use ruststream::memory::{MemoryBroker, MemoryPublish};
+
 use super::fixtures::{PlainMessage, Settlement, Unscoped};
 use super::*;
 use crate::testkit::log_capture;
+use crate::{
+    CallerName, Connected, Handle, Name, OutgoingDestination, Router, SubscriberBuilder,
+    SubscriberSettings, nonzero, subscriber,
+};
 use crate::{Context, Detach, FailurePolicies, HandlerOutcome, HeaderMap, SubscriptionEnd};
 
 #[derive(Debug, thiserror::Error)]
@@ -694,4 +701,115 @@ async fn a_pool_whose_worker_died_stops_rather_than_shrinks() {
         .await
         .expect("the pool kept dispatching on one worker of two")
         .expect("dispatch task should not panic");
+}
+
+/// What a broker's own mount step read off the chain when it ran.
+#[derive(Debug, PartialEq, Eq)]
+struct StepRead {
+    workers: usize,
+    batch: Option<usize>,
+    name: String,
+}
+
+/// A broker crate's mount step, the way one ships: an extension trait over the definition's
+/// builder that reads what the chain has fixed so far.
+trait ReadsTheChain: Sized {
+    fn recorded(self, reads: &Mutex<Vec<StepRead>>) -> Self;
+}
+
+impl<Def, State, DefCodec> ReadsTheChain for SubscriberBuilder<Def, Name, State, DefCodec> {
+    fn recorded(self, reads: &Mutex<Vec<StepRead>>) -> Self {
+        let read = StepRead {
+            workers: self.dispatch().count().get(),
+            batch: self.batch_size().map(NonZeroUsize::get),
+            name: self
+                .subscription_name::<Connected<MemoryBroker>>()
+                .to_owned(),
+        };
+        reads
+            .lock()
+            .expect("the record is never poisoned")
+            .push(read);
+        self
+    }
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct Order {
+    id: u64,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+struct Confirmation {
+    id: u64,
+}
+
+impl OutgoingDestination for Confirmation {
+    type Form = CallerName;
+}
+
+/// Confirms an order: the registration with a reply position.
+struct Confirm;
+
+impl Handle<Order, Confirmation> for Confirm {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<Confirmation, HandlerOutcome>> + Send {
+        ready(Ok(Confirmation { id: order.id }))
+    }
+}
+
+/// Audits an order: the registration the chain goes on to.
+struct Audit;
+
+impl Handle<Order> for Audit {
+    fn handle(
+        &self,
+        _order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> + Send {
+        ready(Ok(()))
+    }
+}
+
+#[test]
+fn a_broker_step_on_a_definition_reads_the_chain_on_either_side_of_a_reply_position() {
+    let reads = Mutex::new(Vec::new());
+
+    let _routes = Router::<MemoryBroker>::new()
+        .include(
+            subscriber("orders", Confirm)
+                .workers(nonzero!(3))
+                .recorded(&reads)
+                .reply()
+                .to("confirmations")
+                .build(),
+        )
+        .out_reply(MemoryPublish)
+        .include(
+            subscriber("audits", Audit)
+                .workers(nonzero!(2))
+                .recorded(&reads)
+                .build(),
+        );
+
+    assert_eq!(
+        reads.into_inner().expect("the record is never poisoned"),
+        vec![
+            StepRead {
+                workers: 3,
+                batch: None,
+                name: "orders".to_owned(),
+            },
+            StepRead {
+                workers: 2,
+                batch: None,
+                name: "audits".to_owned(),
+            },
+        ],
+    );
 }
