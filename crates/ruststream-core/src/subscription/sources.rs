@@ -1,7 +1,8 @@
 //! The subscription sources the core ships: a bare name, a kind left unnamed until the mount
 //! site names it, and a start position wrapped around another source.
 
-use std::{borrow::Cow, fmt, future::ready, marker::PhantomData};
+use alloc::borrow::Cow;
+use core::{fmt, future::ready, marker::PhantomData};
 
 use crate::{ConnectedBroker, DeclareRetryError, Seekable, Seeker, Subscribe};
 

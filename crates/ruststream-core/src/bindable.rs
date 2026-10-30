@@ -7,9 +7,9 @@
 //! cannot provide, and the registration order stops mattering (a bidirectional bridge binds
 //! both directions up front).
 
-use std::sync::Arc;
-
-use std::fmt;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use core::fmt;
 use std::sync::Mutex;
 
 #[cfg(feature = "asyncapi")]

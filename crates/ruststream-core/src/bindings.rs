@@ -4,7 +4,9 @@
 //! of the four levels (server, channel, operation, message). A broker crate fills the levels it
 //! has something to say about; the core carries the values without ever naming a broker's field.
 
-use std::collections::BTreeMap;
+use alloc::borrow::ToOwned;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
 
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};

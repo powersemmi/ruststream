@@ -1,10 +1,11 @@
 //! The outgoing message the publish path carries: a destination, a payload and the headers.
 
-use std::borrow::Cow;
-use std::fmt::{self, Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::mem;
-use std::ops::Deref;
+use alloc::borrow::Cow;
+use alloc::string::String;
+use core::fmt::{self, Display, Formatter};
+use core::hash::{Hash, Hasher};
+use core::mem;
+use core::ops::Deref;
 
 use bytes::BytesMut;
 use bytes_utils::Str;
@@ -402,8 +403,10 @@ impl<'a> Outgoing<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
+    use std::borrow::{Cow, ToOwned};
     use std::collections::HashSet;
+    use std::format;
+    use std::string::ToString;
 
     use bytes::BytesMut;
     use bytes_utils::Str;

@@ -1,7 +1,8 @@
 //! The [`Broker`] / [`ConnectedBroker`] ladder: the entry point of any broker implementation.
 
-use std::error::Error as StdError;
+use core::error::Error as StdError;
 
+#[cfg(feature = "std")]
 use crate::bindable::Bindable;
 
 /// An unconnected broker: configuration captured, no I/O performed yet.
@@ -243,6 +244,7 @@ pub trait Broker: Send + Sync + Sized {
     /// # }
     /// # fn main() {}
     /// ```
+    #[cfg(feature = "std")]
     #[must_use]
     fn bindable(self) -> Bindable<Self>
     where

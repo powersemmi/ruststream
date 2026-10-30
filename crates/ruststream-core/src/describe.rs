@@ -7,8 +7,10 @@
 //! They live outside the `asyncapi` feature because [`AppInfo`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.AppInfo.html) and
 //! [`ServerSpec`](crate::ServerSpec) carry them whether or not a document is ever generated.
 
-use std::fmt;
-use std::str::FromStr;
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+use core::fmt;
+use core::str::FromStr;
 
 use serde::Serialize;
 use thiserror::Error;

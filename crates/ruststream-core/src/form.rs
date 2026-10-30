@@ -5,7 +5,7 @@
 //! leaves is built from. One implementation per form, chosen by the publisher's type, so no
 //! publish position ever asks which form it got.
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use bytes::BytesMut;
 

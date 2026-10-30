@@ -1,6 +1,7 @@
 //! Error types shared across the core contract.
 
-use std::error::Error as StdError;
+use alloc::boxed::Box;
+use core::error::Error as StdError;
 
 use thiserror::Error;
 

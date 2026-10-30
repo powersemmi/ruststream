@@ -31,18 +31,18 @@ poll-diagnostics = ["dep:quanta", "dep:pin-project-lite"]
 
 [dependencies]
 ruststream-core.workspace = true
-bytes.workspace = true
-bytes-utils.workspace = true
+bytes = { workspace = true, features = ["std"] }
+bytes-utils = { workspace = true, features = ["std"] }
 futures.workspace = true
 rtrb.workspace = true
-serde.workspace = true
-thiserror.workspace = true
+serde = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 quanta = { workspace = true, optional = true }
 pin-project-lite = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true, features = ["std"] }
 rmp-serde = { workspace = true, optional = true }
 ciborium = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }

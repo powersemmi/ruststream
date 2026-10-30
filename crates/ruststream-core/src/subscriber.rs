@@ -1,8 +1,8 @@
 //! The [`Subscriber`] trait: a stream of broker deliveries.
 
-use std::error::Error as StdError;
+use core::error::Error as StdError;
 
-use futures::Stream;
+use futures_core::Stream;
 
 use crate::IncomingMessage;
 

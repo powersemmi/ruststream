@@ -1,6 +1,7 @@
 //! What a codec reports when it fails: [`CodecError`].
 
-use std::error::Error as StdError;
+use alloc::boxed::Box;
+use core::error::Error as StdError;
 
 use thiserror::Error;
 

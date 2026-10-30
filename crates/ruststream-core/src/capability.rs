@@ -4,10 +4,10 @@
 //! depends on a capability adds it as a bound, leaving brokers that do not support it free of
 //! emulation cost.
 
-use std::any::type_name;
-use std::{error::Error as StdError, num::NonZeroUsize, time::Duration};
+use core::any::type_name;
+use core::{error::Error as StdError, num::NonZeroUsize, time::Duration};
 
-use futures::Stream;
+use futures_core::Stream;
 
 use crate::subscription::copy_path::Sealed as CopyPathDeclares;
 use crate::{

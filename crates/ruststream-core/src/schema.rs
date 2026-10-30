@@ -1,5 +1,7 @@
 //! Message-type metadata for `AsyncAPI` generation.
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 /// Metadata about a message type, used to name and describe it in an `AsyncAPI` document.

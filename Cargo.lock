@@ -1297,7 +1297,7 @@ version = "0.7.7"
 dependencies = [
  "bytes",
  "bytes-utils",
- "futures",
+ "futures-core",
  "ruststream",
  "serde",
  "serde_json",

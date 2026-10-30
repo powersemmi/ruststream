@@ -11,7 +11,9 @@
 mod de;
 mod ser;
 
-use std::fmt;
+use alloc::string::String;
+use alloc::string::ToString;
+use core::fmt;
 
 use serde::Serialize;
 use serde::de::{DeserializeOwned, Error as DeError};
@@ -253,6 +255,8 @@ impl HeaderMap {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::ToOwned;
+
     use bytes::Bytes;
     use serde::ser::Error;
     use serde::{Deserialize, Serialize};

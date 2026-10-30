@@ -2,8 +2,8 @@
 //! attribute what the paired publisher publishes. A [`Bound`](crate::bindable::Bound) token pairs
 //! against its own broker and says so here.
 
-use std::cell::Cell;
-use std::ptr;
+use core::cell::Cell;
+use core::ptr;
 
 tokio::task_local! {
     /// Set around one pairing the runtime makes: the connected broker the policy pairs against.

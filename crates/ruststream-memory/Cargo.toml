@@ -22,11 +22,11 @@ testing = ["ruststream-runtime/testing", "ruststream-core/testing"]
 [dependencies]
 ruststream-core.workspace = true
 ruststream-runtime.workspace = true
-bytes.workspace = true
-bytes-utils.workspace = true
+bytes = { workspace = true, features = ["std"] }
+bytes-utils = { workspace = true, features = ["std"] }
 futures.workspace = true
-serde.workspace = true
-thiserror.workspace = true
+serde = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
 tokio.workspace = true
 tracing.workspace = true
 

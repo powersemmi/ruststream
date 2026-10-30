@@ -1,7 +1,7 @@
 //! A value that carries its own bytes: [`Serialized`] writes or lends them, [`WireBytes`] says
 //! which.
 
-use std::error::Error as StdError;
+use core::error::Error as StdError;
 
 use bytes::BytesMut;
 
