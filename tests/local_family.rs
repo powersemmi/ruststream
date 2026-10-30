@@ -12,12 +12,19 @@ use std::rc::Rc;
 use std::task::Poll;
 
 use futures::{Stream, StreamExt, stream};
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{
+    ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemoryPublisher, MemoryRequester,
+    MemorySource, MemorySubscriber, MemoryTransaction, Retaining,
+};
+use ruststream::testing::LocalInProcess;
 use ruststream::{
-    AckError, Broker, BrokerMoves, BytesMut, DefaultPublish, HeaderMap, LocalBroker,
-    LocalConnectedBroker, LocalDefaultPublish, LocalIncomingMessage, LocalPublishPolicy,
-    LocalPublisher, LocalSubscribe, LocalSubscriber, OutgoingFor, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, Subscribe, Take,
+    AckError, Broker, BrokerMoves, BytesMut, DefaultPublish, HeaderMap, LocalBatchSubscriber,
+    LocalBroker, LocalConnectedBroker, LocalDefaultPublish, LocalDescribeServer,
+    LocalIncomingMessage, LocalOwnedTransactions, LocalPositioned, LocalPublishPolicy,
+    LocalPublisher, LocalRedeliveryAddressed, LocalRequestReply, LocalSeekable, LocalSeeker,
+    LocalSubscribe, LocalSubscriber, LocalSubscriptionSource, LocalTransaction,
+    LocalTransactionalPublisher, OutgoingFor, OutgoingMessage, PairError, PublishPolicy, Publisher,
+    Subscribe, Take,
 };
 use tokio::task::{self, LocalSet};
 
@@ -106,6 +113,36 @@ async fn the_local_body_of_a_send_broker_spawns_on_the_multi_thread_pool() -> Re
 
     assert_eq!(received, expected());
     Ok(())
+}
+
+/// The bounds a runtime over the local family states for every capability, met by the reference
+/// broker's types through the blanket impls alone.
+fn capability_twins<Conn, Src, Sub, Msg, Pub, Tx, Req>()
+where
+    Conn: LocalSubscribe + LocalDefaultPublish,
+    Src: LocalSubscriptionSource<Conn> + LocalRedeliveryAddressed<Conn>,
+    Sub: LocalBatchSubscriber + LocalSeekable<Seeker: LocalSeeker>,
+    Msg: LocalPositioned,
+    Pub: LocalTransactionalPublisher + LocalOwnedTransactions<Transaction = Tx>,
+    Tx: LocalTransaction,
+    Req: LocalRequestReply,
+{
+}
+
+#[test]
+fn memory_broker_meets_every_capability_twin_through_the_blanket_impls() {
+    fn broker<B: LocalBroker + LocalDescribeServer + LocalInProcess>() {}
+
+    broker::<MemoryBroker<Retaining>>();
+    capability_twins::<
+        ConnectedMemoryBroker<Retaining>,
+        MemorySource,
+        MemorySubscriber<Retaining>,
+        MemoryMessage<Retaining>,
+        MemoryPublisher,
+        MemoryTransaction,
+        MemoryRequester,
+    >();
 }
 
 // A broker over a client that keeps its state in `Rc` and `RefCell`: none of its types is `Send`,
