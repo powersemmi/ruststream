@@ -1,14 +1,14 @@
 error: `flavor` chooses a tokio runtime; on the embassy runtime the app runs as one embassy task, and #[ruststream::app] takes no arguments
- --> tests/ui/app_takes_tokio_arguments.rs:7:19
+ --> tests/ui/app_takes_tokio_arguments.rs:7:38
   |
-7 | #[ruststream::app(flavor = "current_thread")]
-  |                   ^^^^^^
+7 | #[ruststream::app(runtime = embassy, flavor = "current_thread")]
+  |                                      ^^^^^^
 
 error: `worker_threads` sizes a tokio runtime; on the embassy runtime the app runs as one embassy task, and #[ruststream::app] takes no arguments
-  --> tests/ui/app_takes_tokio_arguments.rs:12:19
+  --> tests/ui/app_takes_tokio_arguments.rs:12:38
    |
-12 | #[ruststream::app(worker_threads = 2)]
-   |                   ^^^^^^^^^^^^^^
+12 | #[ruststream::app(runtime = embassy, worker_threads = 2)]
+   |                                      ^^^^^^^^^^^^^^
 
 error: the app's embassy task is one concrete task, so its builder takes no generic parameters; name the board's broker types
   --> tests/ui/app_takes_tokio_arguments.rs:18:11
