@@ -366,6 +366,8 @@ impl Coordinator {
     /// settles.
     #[doc(hidden)]
     pub async fn drive(&self) -> Result<(), TestError> {
+        // Each step has the whole budget: the steps that settled before it spent none of it.
+        self.begin_step();
         loop {
             // Register interest before reading the counter so a concurrent `settled` cannot slip a
             // wakeup between the check and the await.
@@ -376,10 +378,11 @@ impl Coordinator {
             if self.inner.in_flight.load(Ordering::SeqCst) == 0 {
                 return Ok(());
             }
-            if self.inner.processed.load(Ordering::SeqCst) >= self.inner.max_steps {
-                return Err(TestError::NotQuiescent {
-                    processed: self.inner.processed.load(Ordering::SeqCst),
-                });
+            let processed = self.inner.processed.load(Ordering::SeqCst);
+            if processed.saturating_sub(self.inner.step_from.load(Ordering::SeqCst))
+                >= self.inner.max_steps
+            {
+                return Err(TestError::NotQuiescent { processed });
             }
             notified.await;
         }
