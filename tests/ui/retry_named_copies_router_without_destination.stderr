@@ -2,20 +2,20 @@ error[E0277]: this registration does not say where its retry copies go
   --> tests/ui/retry_named_copies_router_without_destination.rs:40:10
    |
 40 |         .build();
-   |          ^^^^^ the subscription descriptor of `ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream::runtime::DestinationUndeclared>` addresses none, and nothing here names a destination
+   |          ^^^^^ the subscription descriptor of `ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream_runtime::redelivery::RetryParts<MemoryPublish, PublishTransformIdentity, PublishIdentity>, ruststream::runtime::DestinationUndeclared>` addresses none, and nothing here names a destination
    |
-   = help: the trait `ruststream::runtime::RetryDestinationsDeclared` is not implemented for `ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream::runtime::DestinationUndeclared>`
+   = help: the trait `ruststream::runtime::RetryDestinationsDeclared` is not implemented for `ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream_runtime::redelivery::RetryParts<MemoryPublish, PublishTransformIdentity, PublishIdentity>, ruststream::runtime::DestinationUndeclared>`
    = note: one such subscription reads many destinations (a wildcard subject, an MQTT filter, a Pulsar pattern, a list of topics), so the descriptor names none of them
    = note: name one with `.out_retry(policy).to("orders")`, or compose a publish transform declaring `Destination = Names`, which reads the delivery being retried and names one per delivery
-help: the trait `ruststream::runtime::RetryDestinationsDeclared` is implemented for `ruststream_runtime::router::routes::RetriedRoute<Route, B, Cx>`
+help: the trait `ruststream::runtime::RetryDestinationsDeclared` is implemented for `ruststream_runtime::router::routes::RetriedRoute<Route, B, Cx, Parts>`
   --> crates/ruststream-runtime/src/router/routes.rs
    |
-   | / impl<Route, B: Broker, Cx> RetryDestinationsDeclared
-   | |     for RetriedRoute<Route, B, Cx, DestinationDeclared>
-   | |_______________________________________________________^
-   = note: required for `(ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream::runtime::DestinationUndeclared>, ())` to implement `ruststream::runtime::RetryDestinationsDeclared`
+   | / impl<Route, B: Broker, Cx, Parts> RetryDestinationsDeclared
+   | |     for RetriedRoute<Route, B, Cx, Parts, DestinationDeclared>
+   | |______________________________________________________________^
+   = note: required for `(ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream_runtime::redelivery::RetryParts<MemoryPublish, PublishTransformIdentity, PublishIdentity>, ruststream::runtime::DestinationUndeclared>, ())` to implement `ruststream::runtime::RetryDestinationsDeclared`
    = note: 1 redundant requirement hidden
-   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream::runtime::DestinationUndeclared>, ())>` to implement `ruststream::runtime::RetryDestinationsDeclared`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream_runtime::redelivery::RetryParts<MemoryPublish, PublishTransformIdentity, PublishIdentity>, ruststream::runtime::DestinationUndeclared>, ())>` to implement `ruststream::runtime::RetryDestinationsDeclared`
 note: required by a bound in `RouterWith::<Mount, R, Def, Attach, Last>::build`
   --> crates/ruststream-runtime/src/router/builders.rs
    |
