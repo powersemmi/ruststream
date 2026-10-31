@@ -69,6 +69,8 @@ pub(super) struct Subscription<const CAP: usize> {
     standing: Cell<Standing>,
     // The channel wakes a reader when a delivery arrives; this wakes it when the bus shuts down.
     closing: RefCell<WakerRegistration>,
+    // Wakes a publisher waiting for room when a place is released.
+    room: RefCell<WakerRegistration>,
     #[cfg(feature = "testing")]
     pub(super) harness: Rc<Harness>,
 }
@@ -128,6 +130,7 @@ impl<const CAP: usize> Subscription<CAP> {
     /// Releases the place of a delivery that left its handler's hands.
     pub(super) fn settle(&self) {
         self.in_hand.set(self.in_hand.get() - 1);
+        self.room.borrow_mut().wake();
         #[cfg(feature = "testing")]
         self.harness.consumed();
     }
@@ -194,6 +197,7 @@ impl<const CAP: usize> Bus<CAP> {
             in_hand: Cell::new(0),
             standing: Cell::new(Standing::Open),
             closing: RefCell::new(WakerRegistration::new()),
+            room: RefCell::new(WakerRegistration::new()),
             #[cfg(feature = "testing")]
             harness: Rc::clone(&self.harness),
         });
@@ -219,6 +223,18 @@ impl<const CAP: usize> Bus<CAP> {
             subscription.shut_down();
         }
         closed.len()
+    }
+
+    /// Ready once a publish to `name` would be accepted; otherwise registers `cx`'s waker with a
+    /// subscription that is full, woken when it releases a place.
+    pub(super) fn poll_room(&self, name: &str, cx: &mut Context<'_>) -> Poll<()> {
+        for subscription in self.subscriptions.borrow().iter() {
+            if subscription.name() == name && !subscription.has_room() {
+                subscription.room.borrow_mut().register(cx.waker());
+                return Poll::Pending;
+            }
+        }
+        Poll::Ready(())
     }
 
     /// Hands a publish to every subscription of `name`, or to none of them.

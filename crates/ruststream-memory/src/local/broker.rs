@@ -416,6 +416,14 @@ impl<const CAP: usize> fmt::Debug for LocalMemoryPublisher<CAP> {
     }
 }
 
+impl<const CAP: usize> LocalMemoryPublisher<CAP> {
+    /// Prototype of a room signal: ready once a publish to `name` would be accepted.
+    #[doc(hidden)]
+    pub fn poll_room(&self, name: &str, cx: &mut core::task::Context<'_>) -> core::task::Poll<()> {
+        self.bus.poll_room(name, cx)
+    }
+}
+
 impl<const CAP: usize> LocalPublisher for LocalMemoryPublisher<CAP> {
     // The bus keeps every message until its subscriptions have read it, so the publish takes the
     // buffer rather than borrowing it.
@@ -572,6 +580,47 @@ mod tests {
             assert!(
                 pin!(roomy.stream()).next().now_or_never().is_none(),
                 "a refused publish reached a subscription that had room"
+            );
+        });
+    }
+
+    #[test]
+    fn a_publisher_waiting_for_room_is_woken_when_a_place_is_released() {
+        use alloc::sync::Arc;
+        use alloc::task::Wake;
+        use core::sync::atomic::{AtomicU32, Ordering};
+        use core::task::{Context, Poll, Waker};
+
+        struct Woken(AtomicU32);
+        impl Wake for Woken {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        block_on(async {
+            let connected = LocalMemoryBroker::<1>::new().connect().await.unwrap();
+            let mut subscriber = connected.subscribe("temp").await.unwrap();
+            let publisher = connected.publisher();
+            publisher
+                .publish(reading("temp", b"21"), None)
+                .await
+                .unwrap();
+            let mut stream = pin!(subscriber.stream());
+            let in_hand = waiting(&mut stream).unwrap();
+
+            let woken = Arc::new(Woken(AtomicU32::new(0)));
+            let waker = Waker::from(Arc::clone(&woken));
+            let mut cx = Context::from_waker(&waker);
+            assert_eq!(publisher.poll_room("temp", &mut cx), Poll::Pending);
+            assert_eq!(woken.0.load(Ordering::Relaxed), 0);
+            in_hand.ack().await.unwrap();
+            assert_eq!(woken.0.load(Ordering::Relaxed), 1, "woken by the release");
+            assert_eq!(publisher.poll_room("temp", &mut cx), Poll::Ready(()));
+            assert_eq!(
+                publisher.poll_room("elsewhere", &mut cx),
+                Poll::Ready(()),
+                "a name nobody reads never waits"
             );
         });
     }
