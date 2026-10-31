@@ -9,7 +9,7 @@ use std::error::Error;
 use embassy_futures::block_on;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Message, Mounts};
-use ruststream::testing::TestApp;
+use ruststream::testing::embedded::TestApp;
 use ruststream::{InMessages, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -80,7 +80,7 @@ async fn on_valve(valve: &Valve) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_reading).include(on_origin).include(on_valve)

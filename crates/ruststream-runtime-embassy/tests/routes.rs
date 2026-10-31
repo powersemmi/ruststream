@@ -83,7 +83,7 @@ counters!(TWO_BROKERS:
     b31 31 "b/31",
 );
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn one_scope(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(a0)
@@ -121,7 +121,7 @@ fn one_scope(bus: Bus) -> EmbeddedApp<impl Mounts> {
     })
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn two_brokers(bus: Bus, radio: Radio) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new()
         .with_broker(bus, |b| {

@@ -14,8 +14,8 @@ use std::num::NonZeroUsize;
 use common::Order;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySource};
 use ruststream::runtime::{
-    Context, Declared, Handle, HandlerOutcome, Placement, SubscriberBuilder, SubscriberSettings,
-    subscriber,
+    AsDeclared, Context, Declared, Handle, HandlerOutcome, IntoDeclared, Placement,
+    SubscriberBuilder, SubscriberSettings, subscriber,
 };
 use ruststream::{SubscriptionSource, nonzero, subscriber};
 
@@ -29,25 +29,29 @@ struct PoolLimitError {
 
 /// The broker crate's mount steps, chainable on a definition and on the settings builder alike:
 /// the same shape as the core's own [`SubscriberSettings`].
-trait PoolSettings: Declared {
+trait PoolSettings<Mk = AsDeclared>: IntoDeclared<Mk> {
     /// Checks that `per_pool` connections for each pool the subscription opens fit in `limit`.
-    fn pools(self, per_pool: usize, limit: usize) -> Result<Self::Settings, PoolLimitError>
+    fn pools(
+        self,
+        per_pool: usize,
+        limit: usize,
+    ) -> Result<<Self::Decl as Declared>::Settings, PoolLimitError>
     where
-        Self::Settings: PoolStep,
+        <Self::Decl as Declared>::Settings: PoolStep,
     {
-        self.declare().apply_pools(per_pool, limit)
+        self.into_declared().declare().apply_pools(per_pool, limit)
     }
 
     /// Checks that one batch of rows fits in a page of `max_rows`.
-    fn page_of(self, max_rows: usize) -> Result<Self::Settings, PoolLimitError>
+    fn page_of(self, max_rows: usize) -> Result<<Self::Decl as Declared>::Settings, PoolLimitError>
     where
-        Self::Settings: PoolStep,
+        <Self::Decl as Declared>::Settings: PoolStep,
     {
-        self.declare().apply_page_of(max_rows)
+        self.into_declared().declare().apply_page_of(max_rows)
     }
 }
 
-impl<Def: Declared> PoolSettings for Def {}
+impl<Def: IntoDeclared<Mk>, Mk> PoolSettings<Mk> for Def {}
 
 /// The machinery behind [`PoolSettings`]: the step itself, on the settings builder.
 trait PoolStep: Sized {
@@ -110,7 +114,7 @@ async fn paginate(orders: &[Order]) -> HandlerOutcome {
 
 #[test]
 fn a_step_reads_the_threads_the_attribute_fixed() {
-    let refused = scan.pools(2, 7).map(drop);
+    let refused = scan::<()>.pools(2, 7).map(drop);
     assert_eq!(
         refused,
         Err(PoolLimitError {
@@ -118,12 +122,12 @@ fn a_step_reads_the_threads_the_attribute_fixed() {
             needed: 8,
         }),
     );
-    assert!(scan.pools(2, 8).is_ok());
+    assert!(scan::<()>.pools(2, 8).is_ok());
 }
 
 #[test]
 fn a_step_reads_the_threads_the_mount_site_fixed() {
-    let refused = audit
+    let refused = audit::<()>
         .name("audits")
         .threads(nonzero!(3))
         .pools(2, 5)
@@ -141,7 +145,7 @@ fn a_step_reads_the_threads_the_mount_site_fixed() {
 fn a_step_before_the_threads_sees_the_default() {
     // Sequential dispatch runs on the app's runtime: one shared pool, which fits. The threads
     // come after the step, so it never counted them.
-    let built = audit
+    let built = audit::<()>
         .name("audits")
         .pools(2, 2)
         .map(|built| built.threads(nonzero!(4)));
@@ -151,7 +155,7 @@ fn a_step_before_the_threads_sees_the_default() {
 
 #[test]
 fn keyed_workers_stay_on_the_runtime() {
-    let built = audit.name("audits").workers_by_key(nonzero!(6));
+    let built = audit::<()>.name("audits").workers_by_key(nonzero!(6));
     let dispatch = built.dispatch();
     assert!(dispatch.by_key());
     assert_eq!(dispatch.placement(), Placement::Runtime);
@@ -160,10 +164,10 @@ fn keyed_workers_stay_on_the_runtime() {
 
 #[test]
 fn a_step_reads_the_batch_size_once_named() {
-    let unsized_batch = paginate.name("pages");
+    let unsized_batch = paginate::<()>.name("pages");
     assert_eq!(unsized_batch.batch_size(), None);
 
-    let refused = paginate
+    let refused = paginate::<()>
         .name("pages")
         .batch(nonzero!(16))
         .page_of(10)

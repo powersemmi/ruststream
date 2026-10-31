@@ -156,7 +156,7 @@ async fn on_batch(readings: &[Reading<'_>]) -> HandlerOutcome {
 /// The size the batch handler's subscription reads its batches at.
 const BATCH: NonZeroUsize = NonZeroUsize::new(2).expect("two is not zero");
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_level)

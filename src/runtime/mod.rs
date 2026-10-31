@@ -42,6 +42,14 @@ pub use ruststream_runtime::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{
+    AnyOutPos, BindSlotsBody, LocalBindSlotsBody, SelectEntry, SlotEntry, SlotPublish,
+    SlotTransactions,
+};
+#[doc(hidden)]
+pub use ruststream_runtime::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
+pub use ruststream_runtime::{AsDeclared, IntoDeclared};
+#[doc(hidden)]
+pub use ruststream_runtime::{
     AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, ChainHead,
     DefaultReply, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount,
     ReplyAttachment, RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker,
@@ -146,6 +154,10 @@ pub use ruststream_runtime_tokio::{
 
 #[cfg(feature = "tokio")]
 pub mod cli;
+
+// The embedded runner's chain trait, beside the multi-thread runner's own.
+#[cfg(feature = "embassy")]
+pub use ruststream_runtime_embassy::MountChain as EmbeddedMountChain;
 
 // The runner the `embassy` feature selects: every item of the embedded runner a service names is
 // re-exported here, at the path its tokio counterpart takes under `tokio`.

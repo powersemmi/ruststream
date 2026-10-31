@@ -24,7 +24,7 @@ use crate::{
     OutgoingDestination, OutgoingMessage, PayloadForm, SerializeHeadersError, WithHeaders,
 };
 
-use super::sink::{CallCodec, LocalPublishSink, PublishCodec, PublishSink};
+use super::sink::{CallCodec, LocalPublishSink, PublishCodec};
 use crate::wire::Serialized;
 
 /// A publish under construction: the entry point's payload plus the positions still open.
@@ -699,10 +699,7 @@ pub trait PublishAt {
     ///
     /// Returns [`PublishError`] when the payload cannot be encoded, the typed headers cannot be
     /// serialized, or the sink rejects the message.
-    fn publish_at(
-        self,
-        name: &str,
-    ) -> impl Future<Output = Result<(), PublishError<Self::Error>>> + Send;
+    fn publish_at(self, name: &str) -> impl Future<Output = Result<(), PublishError<Self::Error>>>;
 }
 
 /// Sends one message, applying the headers position, the broker's settings and the sink.
@@ -798,14 +795,16 @@ where
     }
 }
 
+// The future is `Send` exactly where the sink, the codec and the headers are: the
+// multi-thread runner checks that at the mount of the body that calls it.
+#[allow(clippy::future_not_send)]
 impl<Sink, T, Enc, Hdrs> PublishAt
     for PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
 where
-    Sink: PublishSink,
+    Sink: LocalPublishSink,
     T: OutgoingDestination + MessageHeaders + MessageWire + Sync,
     T::Wire: WirePayload<T, Enc>,
-    Enc: Send,
-    Hdrs: PublishHeaders + SatisfiesContract<T::Contract> + Send,
+    Hdrs: PublishHeaders + SatisfiesContract<T::Contract>,
 {
     type Error = Sink::Error;
 

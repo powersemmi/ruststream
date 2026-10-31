@@ -36,6 +36,12 @@ impl Name {
     pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
         Self(name.into())
     }
+
+    /// The name the source subscribes to.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// A subscription kind identified by a name and nothing else.

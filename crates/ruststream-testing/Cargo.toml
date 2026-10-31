@@ -124,3 +124,9 @@ required-features = ["embassy", "json"]
 name = "embedded_quiescence"
 path = "tests/embedded_quiescence.rs"
 required-features = ["embassy", "json"]
+
+# One service whose handlers mount on a tokio app and on an embedded app, in one build.
+[[test]]
+name = "both_runtimes"
+path = "tests/both_runtimes.rs"
+required-features = ["tokio", "embassy", "json"]

@@ -3,7 +3,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::parse::{Parse, ParseStream};
+use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
 use syn::{ItemFn, LitInt, LitStr, Meta, Token};
 
@@ -13,11 +13,40 @@ use crate::runtime::Runtime;
 pub(crate) struct AppRuntimeArgs {
     flavor: Option<LitStr>,
     worker_threads: Option<LitInt>,
+    /// The runner the app runs on: tokio unless `runtime = embassy` names the embedded one.
+    target: Runtime,
 }
 
 impl Parse for AppRuntimeArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        Self::parse_for(input, Runtime::SELECTED)
+        // `runtime = embassy` picks the embedded runner; the rest of the arguments are that
+        // runner's. The expansion depends on the argument alone, never on which runtime
+        // features the build enabled.
+        let metas = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
+        let mut target = Runtime::Tokio;
+        let mut rest = Punctuated::<Meta, Token![,]>::new();
+        for meta in metas {
+            if let Meta::NameValue(pair) = &meta
+                && pair.path.is_ident("runtime")
+            {
+                target = match &pair.value {
+                    syn::Expr::Path(path) if path.path.is_ident("embassy") => Runtime::Embassy,
+                    syn::Expr::Path(path) if path.path.is_ident("tokio") => Runtime::Tokio,
+                    other => {
+                        return Err(syn::Error::new_spanned(
+                            other,
+                            "expected `runtime = tokio` or `runtime = embassy`",
+                        ));
+                    }
+                };
+                continue;
+            }
+            rest.push(meta);
+        }
+        let mut args =
+            (|input: ParseStream| Self::parse_for(input, target)).parse2(quote!(#rest))?;
+        args.target = target;
+        Ok(args)
     }
 }
 
@@ -27,6 +56,7 @@ impl AppRuntimeArgs {
         let mut args = Self {
             flavor: None,
             worker_threads: None,
+            target: runtime,
         };
         let metas = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
         if runtime == Runtime::Embassy {
@@ -130,7 +160,7 @@ impl AppRuntimeArgs {
 }
 
 pub(crate) fn expand_app(runtime: &AppRuntimeArgs, func: &ItemFn) -> syn::Result<TokenStream> {
-    expand_for(runtime, func, Runtime::SELECTED).map(Into::into)
+    expand_for(runtime, func, runtime.target).map(Into::into)
 }
 
 /// Why the embassy runtime refuses an argument: the attribute takes none there.
@@ -148,10 +178,7 @@ fn embassy_argument(meta: &Meta) -> syn::Error {
             "`worker_threads` sizes a tokio runtime; on the embassy runtime the app runs as one \
              embassy task, and #[ruststream::app] takes no arguments"
         }
-        None => {
-            "#[ruststream::app] takes no arguments on the embassy runtime: the `embassy` feature \
-             selects it"
-        }
+        None => "#[ruststream::app(runtime = embassy)] takes no other argument",
     };
     syn::Error::new_spanned(path, message)
 }
@@ -287,7 +314,6 @@ fn item_visibility(vis: &syn::Visibility) -> TokenStream2 {
 
 #[cfg(test)]
 mod tests {
-    use syn::parse::Parser;
 
     use super::*;
 
@@ -334,8 +360,7 @@ mod tests {
 
         assert_eq!(
             refused,
-            "#[ruststream::app] takes no arguments on the embassy runtime: the `embassy` \
-             feature selects it"
+            "#[ruststream::app(runtime = embassy)] takes no other argument"
         );
     }
 

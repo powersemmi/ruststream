@@ -168,6 +168,14 @@ pub use failure::DispatchFailure;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
+pub use handle::{AnyOutPos, SelectEntry, SlotAdmit, SlotEntry, SlotPublish, SlotTransactions};
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use handle::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
+#[cfg(feature = "alloc")]
+pub use handle::{AsDeclared, IntoDeclared};
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
 pub use handle::{
     Axis, AxisDocs, Batch, BatchCarried, BatchPair, Batched, BatchedAxis, DeclaredDest,
     DecodeOutcome, DocState, Docs, HandleValue, IsDocumented, NamedDest, OneByOne, Probed,
@@ -206,6 +214,9 @@ pub use host::{Detach, Halt, HostDetach, LocalDetach, OnOneThread};
 pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept};
 #[cfg(feature = "tokio")]
 pub use main_runtime::MainRuntime;
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use slot::{BindSlotsBody, LocalBindSlotsBody};
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 #[doc(hidden)]
@@ -313,12 +324,12 @@ pub use retry::{
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use router::{
-    AttachDeclaration, AttachRetry, Balance, BatchPublishInjectMount, BatchPublishMount, ChainHead,
-    DefaultReply, LayerFits, MountSink, OpenLayered, OpenRoutes, Opened, OpenedBatchRoute,
-    OpenedRoute, Plain, Poison, PoisonAt, PoisonMode, Poisoned, PoolFits, PublishInjectMount,
-    PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment, RetryDestinationsDeclared,
-    RouteMetadata, RouteSubscription, RouterBroker, RouterCommit, RouterMount, RouterPipe,
-    RunRoutes, RunsBatches, SplitHead, TakesWorkers,
+    AttachDeclaration, AttachRetry, Balance, BatchPublishInjectMount, BatchPublishMount, BodyFits,
+    ChainHead, DefaultReply, LayerFits, MountSink, OpenLayered, OpenRoutes, Opened,
+    OpenedBatchRoute, OpenedRoute, Plain, Poison, PoisonAt, PoisonMode, Poisoned, PoolFits,
+    PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
+    RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker, RouterCommit,
+    RouterMount, RouterPipe, RunRoutes, RunsBatches, SplitHead, TakesWorkers,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]

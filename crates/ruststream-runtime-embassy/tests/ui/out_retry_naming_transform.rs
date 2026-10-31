@@ -29,7 +29,7 @@ async fn on_job(job: &Job<'_>) -> HandlerOutcome {
     HandlerOutcome::retry_after(core::time::Duration::from_secs(5))
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_job)

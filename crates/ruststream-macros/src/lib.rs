@@ -5,12 +5,6 @@
 
 #![forbid(unsafe_code)]
 
-// The generated code targets one runtime, so the two runtime features cannot both hold.
-#[cfg(all(feature = "tokio", feature = "embassy"))]
-compile_error!(
-    "the `tokio` and `embassy` features select the runtime and exclude each other; enable one"
-);
-
 mod app;
 mod expand;
 mod from_ref;

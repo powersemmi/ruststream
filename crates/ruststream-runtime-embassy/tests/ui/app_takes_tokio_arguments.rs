@@ -4,17 +4,17 @@
 use ruststream::memory::local::LocalMemoryBroker;
 use ruststream::runtime::{EmbeddedApp, Mounts};
 
-#[ruststream::app(flavor = "current_thread")]
+#[ruststream::app(runtime = embassy, flavor = "current_thread")]
 fn single_threaded(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| b)
 }
 
-#[ruststream::app(worker_threads = 2)]
+#[ruststream::app(runtime = embassy, worker_threads = 2)]
 fn sized(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| b)
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn generic<Bus: ruststream::Broker>(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| b)
 }

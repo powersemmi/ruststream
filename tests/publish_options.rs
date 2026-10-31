@@ -24,7 +24,7 @@ use common::{Order, Receipt};
 use ruststream::codec::CborCodec;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
-use ruststream::runtime::{Outgoing, PublishBuilder, PublishSink, SlotContext, for_batch};
+use ruststream::runtime::{LocalPublishSink, Outgoing, PublishBuilder, SlotContext, for_batch};
 use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, PairError, Take};
 
@@ -133,7 +133,7 @@ trait PriorityPublishSteps {
 impl<Sink, Body, Enc, Hdrs, Dest> PriorityPublishSteps
     for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
 where
-    Sink: PublishSink<Options = PriorityOptions>,
+    Sink: LocalPublishSink<Options = PriorityOptions>,
 {
     fn priority(mut self, priority: u8) -> Self {
         self.options_mut()

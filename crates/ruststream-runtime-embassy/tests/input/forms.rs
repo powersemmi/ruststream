@@ -132,7 +132,7 @@ async fn receipt(order: &Order) -> Message<ReceiptMeta, Quote> {
     Message::new(ReceiptMeta { order: order.id }, Quote { id: order.id })
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_order)

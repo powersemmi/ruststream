@@ -77,7 +77,7 @@ static BATCHES: AtomicU32 = AtomicU32::new(0);
 /// The size the batch subscription reads its batches at.
 const BATCH: NonZeroUsize = NonZeroUsize::new(2).expect("two is not zero");
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(spin)

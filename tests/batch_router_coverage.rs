@@ -101,10 +101,10 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
                 .batch(nonzero!(64))
                 .build(),
         )
-        .include(brc_relay)
+        .include(brc_relay::<()>)
         .out(Reply, Publish)
         .build()
-        .include(brc_batch_relay.batch(nonzero!(64)))
+        .include(brc_batch_relay::<()>.batch(nonzero!(64)))
         .out(Reply, Publish)
         .build();
 
@@ -196,7 +196,7 @@ fn assert_subscribe_error(result: Result<impl Sized, RustStreamError>, expected:
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publishing_route_reports_a_refused_reply_publisher() {
     let router = Router::<MemoryBroker>::new()
-        .include(brc_relay)
+        .include(brc_relay::<()>)
         .out(Reply, RefusedPublish)
         .build();
 

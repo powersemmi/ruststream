@@ -291,7 +291,7 @@ async fn settle_raw(
     event: &Event,
     Out(ledger): Out<impl OwnedTransactions, Encoded>,
 ) -> HandlerOutcome {
-    let Ok(mut txn) = OwnedTransactions::transaction(ledger).await else {
+    let Ok(mut txn) = OwnedTransactions::transaction(&**ledger).await else {
         return HandlerOutcome::retry();
     };
     let payload = serde_json::to_vec(event).expect("serializable");
@@ -373,7 +373,9 @@ impl<M, W: ShardLanes, E, Pipe, Body> ShardLanes for Slot<M, W, E, Pipe, Body> {
 
 /// The bound the graft buys: a helper generic over the capability, not over the concrete live
 /// type, takes the entry a handler body holds.
-async fn sent<L: ShardLanes + Sync>(lanes: &L, event: &Event) -> bool {
+// `Send` exactly where the entry is: the multi-thread runner checks it where it mounts the body.
+#[allow(clippy::future_not_send)]
+async fn sent<L: ShardLanes>(lanes: &L, event: &Event) -> bool {
     let (publisher, dest) = lanes.lane(event.id);
     publisher.message(event).to(dest).publish().await.is_ok()
 }

@@ -1,8 +1,6 @@
 //! The runtime the generated code targets, chosen once per crate by the facade's runtime feature,
 //! and the spellings that differ between the two.
 
-use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
 use syn::punctuated::Punctuated;
 use syn::{Path, PathSegment, Token, TypeParamBound};
 
@@ -17,22 +15,6 @@ pub(crate) enum Runtime {
 }
 
 impl Runtime {
-    /// The runtime the facade's feature selected. A build that names neither (the macros on
-    /// their own) keeps the tokio forms.
-    pub(crate) const SELECTED: Self = if cfg!(feature = "embassy") {
-        Self::Embassy
-    } else {
-        Self::Tokio
-    };
-
-    /// The body contract the handler's impl names.
-    pub(crate) fn handle_trait(self) -> TokenStream2 {
-        match self {
-            Self::Tokio => quote!(::ruststream::runtime::Handle),
-            Self::Embassy => quote!(::ruststream::runtime::LocalHandle),
-        }
-    }
-
     /// The bounds a capability written on an `Out` parameter becomes: as written on tokio; on
     /// embassy each publisher capability of the core maps to its local twin, so
     /// `Out<impl Publisher>` asks for a `LocalPublisher`.
@@ -48,12 +30,11 @@ impl Runtime {
 }
 
 /// The publisher capabilities of the core that have a local twin, by the name a service writes.
-const LOCAL_TWINS: [(&str, &str); 4] = [
-    ("Publisher", "LocalPublisher"),
-    ("TransactionalPublisher", "LocalTransactionalPublisher"),
-    ("RequestReply", "LocalRequestReply"),
-    ("OwnedTransactions", "LocalOwnedTransactions"),
-];
+// Only the plain publish is mapped: its surface (the publish builder over the local sink) is the
+// same on both runners, and Send by leakage at the multi-thread mount. The transactional and
+// request capabilities keep the bounds as written, so they mount where their wire implements
+// them, which is the multi-thread runner.
+const LOCAL_TWINS: [(&str, &str); 1] = [("Publisher", "LocalPublisher")];
 
 /// One bound with a core publisher capability replaced by its local twin, named through the
 /// facade and keeping the arguments it was written with (`Publisher<Options = Qos>`). Any other
@@ -103,19 +84,6 @@ mod tests {
         assert_eq!(
             mapped(Runtime::Embassy, &bounds),
             ":: ruststream :: LocalPublisher < Options = Qos > + Audited + 'static"
-        );
-    }
-
-    #[test]
-    fn every_publisher_capability_has_its_twin() {
-        let bounds: Punctuated<TypeParamBound, Token![+]> = syn::parse_quote!(
-            TransactionalPublisher + RequestReply + OwnedTransactions + LocalPublisher
-        );
-
-        assert_eq!(
-            mapped(Runtime::Embassy, &bounds),
-            ":: ruststream :: LocalTransactionalPublisher + :: ruststream :: LocalRequestReply \
-             + :: ruststream :: LocalOwnedTransactions + LocalPublisher"
         );
     }
 
