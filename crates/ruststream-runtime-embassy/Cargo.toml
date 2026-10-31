@@ -111,5 +111,11 @@ name = "planned"
 path = "tests/planned.rs"
 harness = false
 
+# What the runner does with an outcome beyond an ack: continuations, retries and the cap.
+[[test]]
+name = "settle"
+path = "tests/settle.rs"
+harness = false
+
 [lints]
 workspace = true
