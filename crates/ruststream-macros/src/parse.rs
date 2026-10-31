@@ -638,6 +638,39 @@ mod tests {
     }
 
     #[test]
+    fn malformed_arguments_are_refused_where_the_parser_stops() {
+        let malformed = [
+            quote!(+),
+            quote!("orders" reply),
+            quote!("orders", 5),
+            quote!("orders", on_failure(+ = drop)),
+            quote!("orders", on_failure(1 = drop)),
+            quote!("orders", on_failure(decode drop)),
+            quote!("orders", start_at(+)),
+            quote!("orders", reply(+)),
+            quote!("orders", workers(+)),
+            quote!("orders", workers(2, 3)),
+        ];
+
+        for tokens in malformed {
+            assert!(syn::parse2::<SubscriberArgs>(tokens).is_err());
+        }
+    }
+
+    #[test]
+    fn every_policy_keyword_names_its_policy() {
+        let args: SubscriberArgs = syn::parse2(quote!(
+            "orders",
+            on_failure(panic = retry, decode = fail_fast)
+        ))
+        .expect("the keywords parse");
+        let failure = args.on_failure.expect("the clause is kept");
+
+        assert!(matches!(failure.panic, Some(FailurePolicyArg::Retry)));
+        assert!(matches!(failure.decode, Some(FailurePolicyArg::FailFast)));
+    }
+
+    #[test]
     fn a_trailing_comma_closes_the_arguments() {
         let args: SubscriberArgs =
             syn::parse2(quote!("orders", reply,)).expect("a trailing comma parses");
