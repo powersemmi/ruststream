@@ -509,7 +509,7 @@ async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
 fn every_new_route_kind_reports_its_metadata_in_registration_order() {
     let router = Router::<MemoryBroker>::new()
         .include(rewind::<()>)
-        .include(echo_frame)
+        .include(echo_frame::<()>)
         .build()
         .include(relay)
         .build()

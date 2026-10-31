@@ -104,7 +104,7 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
         .include(brc_relay::<()>)
         .out(Reply, Publish)
         .build()
-        .include(brc_batch_relay.batch(nonzero!(64)))
+        .include(brc_batch_relay::<()>.batch(nonzero!(64)))
         .out(Reply, Publish)
         .build();
 
