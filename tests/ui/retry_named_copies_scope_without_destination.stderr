@@ -13,15 +13,13 @@ help: the trait `ruststream::runtime::RetryDestinationsDeclared` is implemented 
    | / impl<Route, B: Broker, Cx, Parts> RetryDestinationsDeclared
    | |     for RetriedRoute<Route, B, Cx, Parts, DestinationDeclared>
    | |______________________________________________________________^
-   = note: required for `(ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream_runtime::redelivery::RetryParts<MemoryPublish, PublishTransformIdentity, PublishIdentity>, ruststream::runtime::DestinationUndeclared>, ruststream::runtime::ChainHead<()>)` to implement `ruststream::runtime::RetryDestinationsDeclared`
-   = note: 1 redundant requirement hidden
-   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream_runtime::redelivery::RetryParts<MemoryPublish, PublishTransformIdentity, PublishIdentity>, ruststream::runtime::DestinationUndeclared>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::RetryDestinationsDeclared`
-   = note: required for `RouterWith<ruststream::runtime::RetryMount, Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ruststream::runtime::ChainHead<()>)>, (), ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish>>, ruststream::runtime::RetryPos>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
+   = note: required for `(ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream_runtime::redelivery::RetryParts<MemoryPublish, PublishTransformIdentity, PublishIdentity>, ruststream::runtime::DestinationUndeclared>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::RetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream_runtime::redelivery::RetryParts<MemoryPublish, PublishTransformIdentity, PublishIdentity>, ruststream::runtime::DestinationUndeclared>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountRoutes<MemoryBroker>`
 note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
   --> crates/ruststream-runtime-tokio/src/app/service.rs
    |
-   |     pub fn with_broker<R, F, Chain>(
+   |     pub fn with_broker<R, F, Chain, Routes>(
    |            ----------- required by a bound in this associated function
 ...
-   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+   |         Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`

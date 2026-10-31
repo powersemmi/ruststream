@@ -1,0 +1,35 @@
+error[E0277]: the `with_broker` closure must return the mount chain
+ --> tests/ui/scope_returns_no_chain.rs:8:62
+  |
+8 |     let _app = RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |_b| ());
+  |                                                              ^^^^^^^^^^^ `()` is not a mount chain
+  |
+  = help: the trait `MountChain` is not implemented for `()`
+  = note: return the scope or the chain its `include` opens: `|b| b.include(a).include(b)`, every `Out` slot bound with `.out(marker, policy)`; a broker that mounts nothing is `|b| b`
+help: the following other types implement trait `MountChain`
+ --> crates/ruststream-runtime-tokio/src/app/include/mod.rs
+  |
+  | / impl<B, Layers, C, State, Pipeline, Pre> MountChain
+  | |     for BrokerScope<B, Layers, C, State, Pipeline, Pre>
+  | | where
+  | |     B: SendBroker,
+  | |__________________^ `BrokerScope<B, Layers, C, State, Pipeline, Pre>`
+  |
+ ::: crates/ruststream-runtime/src/router/chain.rs
+  |
+  | / impl<B, Routes, RouteCodec, Layers, Pipe> MountChain
+  | |     for Router<B, Routes, RouteCodec, Layers, Pipe>
+  | |___________________________________________________^ `Router<B, Routes, RouteCodec, Layers, Pipe>`
+...
+  | / impl<Mount, R, Def, Attach, Last> MountChain for RouterWith<Mount, R, Def, Attach, Last>
+  | | where
+  | |     Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
+  | |________________________________________________________________________^ `RouterWith<Mount, R, Def, Attach, Last>`
+note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+ --> crates/ruststream-runtime-tokio/src/app/service.rs
+  |
+  |     pub fn with_broker<R, F, Chain, Routes>(
+  |            ----------- required by a bound in this associated function
+...
+  |         Chain: MountChain<Routes = Routes>,
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`

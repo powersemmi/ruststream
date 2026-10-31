@@ -1,13 +1,13 @@
-error[E0277]: `()` is not a mount chain of the embedded app
+error[E0277]: the `with_broker` closure must return the mount chain
  --> tests/ui/scope_returns_no_chain.rs:5:24
   |
 5 |     EmbeddedApp::new().with_broker(bus, |_b| ())
-  |                        ^^^^^^^^^^^ the broker's scope returns this
+  |                        ^^^^^^^^^^^ `()` is not a mount chain
   |
   = help: the trait `MountChain` is not implemented for `()`
-  = note: the closure of `with_broker` returns the router chain it was handed: `|b| b.include(a).include(b)`
+  = note: return the scope or the chain its `include` opens: `|b| b.include(a).include(b)`, every `Out` slot bound with `.out(marker, policy)`; a broker that mounts nothing is `|b| b`
 help: the following other types implement trait `MountChain`
- --> src/mounts.rs
+ --> $WORKSPACE/crates/ruststream-runtime/src/router/chain.rs
   |
   | / impl<B, Routes, RouteCodec, Layers, Pipe> MountChain
   | |     for Router<B, Routes, RouteCodec, Layers, Pipe>
