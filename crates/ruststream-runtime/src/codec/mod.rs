@@ -16,6 +16,10 @@ pub(crate) const ENCODE_CAPACITY: usize = 128;
 #[cfg(feature = "json")]
 mod json;
 
+// The bare-metal JSON encoder is built on the host under test too, so its tests run there.
+#[cfg(all(feature = "json", any(target_os = "none", test)))]
+mod json_slice;
+
 #[cfg(feature = "msgpack")]
 mod msgpack;
 
@@ -46,13 +50,8 @@ pub type DefaultCodec = CborCodec;
 #[cfg(all(not(feature = "json"), not(feature = "cbor"), feature = "msgpack"))]
 pub type DefaultCodec = MsgpackCodec;
 
-// A bare-metal target has no standard library: `serde_json` offers no writer there and
-// `rmp-serde` does not build, so these two codecs are a build error that names the way out.
-#[cfg(all(feature = "json", target_os = "none"))]
-compile_error!(
-    "the `json` codec needs the standard library: `serde_json` encodes into a buffer only through \
-     `std::io::Write`. On a target without `std`, select the `cbor` codec instead"
-);
+// A bare-metal target has no standard library and `rmp-serde` does not build there, so the
+// `msgpack` codec is a build error that names the way out.
 #[cfg(all(feature = "msgpack", target_os = "none"))]
 compile_error!(
     "the `msgpack` codec needs the standard library: `rmp-serde` builds only with `std`. On a \
@@ -109,6 +108,17 @@ impl io::Write for BufWriter<'_> {
 
     #[inline]
     fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The JSON writer on a bare-metal target: the same append, through the trait `serde-json-slice`
+/// writes to. The buffer grows as a `BytesMut` does, so no write is refused.
+#[cfg(all(feature = "json", any(target_os = "none", test)))]
+impl serde_json_slice::Write for BufWriter<'_> {
+    #[inline]
+    fn write_all(&mut self, bytes: &[u8]) -> Result<(), serde_json_slice::EncodeError> {
+        self.0.extend_from_slice(bytes);
         Ok(())
     }
 }

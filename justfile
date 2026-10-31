@@ -78,8 +78,10 @@ check:
         --no-default-features --features alloc,bytes/extra-platforms --target thumbv6m-none-eabi
     # The shared delivery body builds without `std`: with a heap for a Cortex-M4F, and as the
     # runner traits alone for both targets. The embedded runner builds for the Cortex-M4F, and so
-    # does a device service's facade: the embassy set without the codecs that need `std`.
+    # does a device service's facade: the embassy set with the cbor or json codec.
     RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --features alloc \
+        --target thumbv7em-none-eabihf
+    RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --features alloc,json \
         --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --target thumbv6m-none-eabi
@@ -88,6 +90,8 @@ check:
         --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream --no-default-features \
         --features cbor,embassy,macros,memory --target thumbv7em-none-eabihf
+    RUSTFLAGS="" cargo build -p ruststream --no-default-features \
+        --features json,embassy,macros,memory --target thumbv7em-none-eabihf
     # The embassy runtime: the facade with the embassy set, where every target that needs tokio
     # names it and drops out, then the embedded runner and the local bus with their tests.
     cargo clippy -p ruststream --all-targets --no-default-features --features {{ embassy_set }} \
