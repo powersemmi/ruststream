@@ -4,7 +4,7 @@ error[E0277]: this subscriber's subscription is already named
 18 |     let _renamed = handle.name("other");
    |                           ^^^^ the name is fixed in the `#[subscriber(..)]` attribute
    |
-   = help: the trait `NameStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>`
+   = help: the trait `NameStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {handle::<_>}>, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>`
    = note: a setting is named once: keep the name in the attribute, or leave the attribute's source open (`#[subscriber]`, `#[subscriber(Kind)]`) and name it here
 help: the trait `NameStep` is implemented for `SubscriberBuilder<Def, Unnamed<S>, State, DC>`
   --> crates/ruststream-runtime/src/settings.rs
@@ -12,3 +12,11 @@ help: the trait `NameStep` is implemented for `SubscriberBuilder<Def, Unnamed<S>
    | / impl<Def, S: FromName + CloneSource, State, DC> NameStep
    | |     for SubscriberBuilder<Def, Unnamed<S>, State, DC>
    | |_____________________________________________________^
+note: required by a bound in `ruststream::prelude::SubscriberSettings::name`
+  --> crates/ruststream-runtime/src/settings.rs
+   |
+   |     fn name(
+   |        ---- required by a bound in this associated function
+...
+   |         <Self::Decl as Declared>::Settings: NameStep,
+   |                                             ^^^^^^^^ required by this bound in `SubscriberSettings::name`

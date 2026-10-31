@@ -22,4 +22,4 @@ help: the following other types implement trait `SubscriptionSource<C>`
    |
    | impl<C: Subscribe> SubscriptionSource<C> for Name {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Name` implements `SubscriptionSource<C>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {handle::<_>}>, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`

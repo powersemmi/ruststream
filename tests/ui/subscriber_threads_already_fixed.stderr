@@ -4,10 +4,18 @@ error[E0277]: this subscriber's worker policy is already fixed
 19 |     let _pooled = handle.workers(nonzero!(4));
    |                          ^^^^^^^ `workers(..)` or `threads(..)` is named in the `#[subscriber(..)]` attribute
    |
-   = help: the trait `WorkersStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Fixed, Open, Open, Open)>`
+   = help: the trait `WorkersStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {handle::<_>}>, ruststream::runtime::Probed>>, Name, (Fixed, Open, Open, Open)>`
    = note: a subscription has one concurrency policy, named once: keep the clause in the attribute, or drop it there and name the policy here
 help: the trait `WorkersStep` is implemented for `SubscriberBuilder<Def, Src, (Open, F, P, B), DC>`
   --> crates/ruststream-runtime/src/settings.rs
    |
    | impl<Def, Src, F, P, B, DC> WorkersStep for SubscriberBuilder<Def, Src, (Open, F, P, B), DC> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `workers`
+  --> crates/ruststream-runtime/src/settings.rs
+   |
+   |     fn workers(
+   |        ------- required by a bound in this associated function
+...
+   |         <Self::Decl as Declared>::Settings: WorkersStep,
+   |                                             ^^^^^^^^^^^ required by this bound in `SubscriberSettings::workers`

@@ -15,7 +15,7 @@ use crate::lifecycle::BoxError;
 use crate::middleware::Identity;
 use crate::middleware::LocalBlanketLayer;
 use crate::publish::{LocalOutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough};
-use crate::settings::{BatchSized, DefMountCodec, MountsWith, Sequential};
+use crate::settings::{BatchSized, Declared, DefMountCodec, MountsWith, Sequential};
 use crate::subscriber_def::SubscriberDef;
 use crate::{
     Broker, Connected, LocalBatchSubscriber, LocalPublisher, LocalSourceMessage, OutgoingFor,
@@ -137,9 +137,17 @@ impl<Settings: Sequential, Pipe> PoolFits<LocalPipeline<Pipe>> for Settings {}
             `Send` values across an `.await` in the handler (an `Arc` where it holds an `Rc`), \
             or mount it on an `EmbeddedApp`, which polls it on one thread"
 )]
-pub trait BodyFits<Pipe, Mk> {}
+pub trait BodyFits<Pipe, Mk> {
+    /// What a scope's chain reads the mount's output through: when the body does not fit, the
+    /// output has no type and the compiler reports the failure once, at the `include`.
+    type Fits;
+}
 
-impl<D, Pipe> BodyFits<Pipe, AsDeclared> for D {}
+// Bounded by `Declared` so a body function matches the other impl alone, and the marker is inferred
+// from the body even where the chain reads its output through `Fits`.
+impl<D: Declared, Pipe> BodyFits<Pipe, AsDeclared> for D {
+    type Fits = ();
+}
 
 impl<F, M, I, O, X, Fut, Pipe> BodyFits<Pipe, AsBodyFn<M, I, O, X>> for F
 where
@@ -147,9 +155,12 @@ where
     F: Fn(BodyTag<M>, I, O, X) -> Fut,
     Fut: Future + Send,
 {
+    type Fits = ();
 }
 
-impl<F, M, I, O, X, Pipe> BodyFits<LocalPipeline<Pipe>, AsBodyFn<M, I, O, X>> for F {}
+impl<F, M, I, O, X, Pipe> BodyFits<LocalPipeline<Pipe>, AsBodyFn<M, I, O, X>> for F {
+    type Fits = ();
+}
 
 /// The publish pipeline a router's chain carries, read off the router type. Machinery; never
 /// named directly.
