@@ -16,7 +16,7 @@ use ruststream::nonzero;
 use ruststream::runtime::{
     DeadLetter, EmbeddedApp, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER, SkipDelay,
 };
-use ruststream::testing::TestApp;
+use ruststream::testing::embedded::TestApp;
 use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
 
 /// The board's bus: each subscription holds four messages.
@@ -58,12 +58,12 @@ async fn on_dead(job: &Job<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn default_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| b.include(on_job).retry_capacity::<1>())
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn dead_letter_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_dead)
@@ -75,7 +75,7 @@ fn dead_letter_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     })
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn skip_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_job)
@@ -84,7 +84,7 @@ fn skip_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     })
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn capped_skip_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_dead)
@@ -201,7 +201,7 @@ async fn on_tight_job(job: &Job<'_>, ctx: &mut Context<'_, (), Seen>) -> Handler
     }
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn tight_skip_app(bus: TightBus) -> EmbeddedApp<impl Mounts<State = Seen>> {
     EmbeddedApp::new()
         .with_state(Seen::default())
@@ -220,7 +220,7 @@ async fn on_stuck(job: &Job<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn tight_dead_letter_app(bus: TightBus) -> EmbeddedApp<impl Mounts<State = Seen>> {
     EmbeddedApp::new()
         .with_state(Seen::default())

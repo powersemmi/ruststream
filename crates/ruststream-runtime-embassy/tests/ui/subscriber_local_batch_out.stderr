@@ -218,7 +218,7 @@ error[E0277]: `ruststream_runtime::router::routes_inject::BatchInjectRoute<Local
              (Head, Tail)
              Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
              ruststream_runtime::router::fold_plan::Dispatched<ruststream_runtime::router::fold_retry::LocalRetriedRoute<Route, Policy, Stack, Settled>, Plan>
-             ruststream_runtime::router::fold_plan::Dispatched<ruststream_runtime::router::routes::DeclaredRoute<Route>, Plan>
+             ruststream_runtime::router::fold_plan::Dispatched<ruststream_runtime::router::routes::DeclaredRoute<Route, Dead>, Plan>
              ruststream_runtime::router::fold_plan::Dispatched<ruststream_runtime::router::routes::SubscribeRoute<S, H, Cx>, Plan>
              ruststream_runtime::router::fold_plan::Dispatched<ruststream_runtime::router::routes_inject::InjectRoute<Source, Def, DecodeCodec, Extra>, Plan>
              ruststream_runtime::router::fold_plan::Dispatched<ruststream_runtime::router::routes_publish::PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>, Plan>

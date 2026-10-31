@@ -38,6 +38,11 @@ tokio 运行器提供 `workers(n)`、`threads(n)`、信号处理、指标、Open
 embassy 运行器提供固定数量的 worker（`.pool::<N>()` 和 `.keyed::<N>()`）、容量在挂载处声明的重试存储（`.retry_capacity::<CAP>()`），以及通过 `Control` 和 `Health` 进行的关闭与健康状态。
 某个运行器没有提供的条目，在另一个运行器上使用就是编译错误。
 
+延迟重试发现 embassy 的存储已满时，由挂载处决定怎么做。
+默认情况下运行会 panic：设备宁可重启，也不丢失重试，错误信息会写明订阅、消息类型和容量。
+`.when_retry_full(DeadLetter)` 把这条投递发往 `.dead_letter(..)` 声明的目的地，并确认原消息。
+`.when_retry_full(SkipDelay)` 立即发布副本，不再等待延迟，并且仍把这次尝试计入 `max_attempts`。
+
 ## 测试
 
 `TestApp` 运行 tokio 应用，`testing::embedded::TestApp` 在主机上用 embassy-time 的模拟时钟运行嵌入式应用。
