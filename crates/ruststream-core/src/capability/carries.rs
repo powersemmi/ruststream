@@ -31,7 +31,7 @@
 /// A queue table's delivery: the row the driver read, kept beside the claim that settles it.
 ///
 /// ```
-/// use ruststream::{AckError, Carries, HeaderMap, IncomingMessage};
+/// use ruststream::{AckError, Carries, HeaderMap, IncomingMessage, Settle};
 ///
 /// /// One row of the queue table.
 /// struct SendEmail {
@@ -59,6 +59,9 @@
 ///     fn headers(&self) -> &HeaderMap {
 ///         &self.headers
 ///     }
+/// }
+///
+/// impl Settle for Claimed {
 ///     async fn ack(self) -> Result<(), AckError> {
 ///         Ok(())
 ///     }
@@ -108,7 +111,7 @@ pub trait Carries<T> {
 /// A page of rows, the rows in one vector and the claims that settle them in another:
 ///
 /// ```
-/// use ruststream::{AckError, CarriesBatch, HeaderMap, IncomingMessage};
+/// use ruststream::{AckError, CarriesBatch, HeaderMap, IncomingMessage, Settle};
 ///
 /// /// One row of the queue table.
 /// struct SendEmail {
@@ -128,6 +131,9 @@ pub trait Carries<T> {
 ///     fn headers(&self) -> &HeaderMap {
 ///         &self.headers
 ///     }
+/// }
+///
+/// impl Settle for Claim {
 ///     async fn ack(self) -> Result<(), AckError> {
 ///         Ok(())
 ///     }

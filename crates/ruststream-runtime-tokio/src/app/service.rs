@@ -750,7 +750,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// ```no_run
     /// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
     /// use ruststream::runtime::{AppInfo, RustStream};
-    /// use ruststream::{DescribeServer, ServerSpec};
+    /// use ruststream::{Broker, DescribeServer, ServerSpec};
     ///
     /// # struct NatsBroker;
     /// # struct ConnectedNats;

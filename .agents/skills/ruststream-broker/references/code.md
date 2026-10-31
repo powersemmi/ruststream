@@ -122,11 +122,11 @@ destination, the payload and the header map in one move, nothing copied.
 
 ## Deliveries
 
-The subscriber is a stream of deliveries; one delivery is an `IncomingMessage`, settled once.
+The subscriber is a stream of deliveries; one delivery is an `IncomingMessage` that is `Settle`d once.
 
 ```rust
 use futures::{Stream, StreamExt};
-use ruststream::{AckError, HeaderMap, IncomingMessage, Subscriber};
+use ruststream::{AckError, HeaderMap, IncomingMessage, Settle, Subscriber};
 
 impl Subscriber for MySubscriber {
     type Message = MyDelivery;
@@ -150,7 +150,9 @@ impl IncomingMessage for MyDelivery {
     fn redelivery_count(&self) -> Option<u64> {
         Some(u64::from(self.inner.attempt()))
     }
+}
 
+impl Settle for MyDelivery {
     async fn ack(self) -> Result<(), AckError> {
         self.inner.ack().await.map_err(|e| AckError::Broker(Box::new(e)))
     }
