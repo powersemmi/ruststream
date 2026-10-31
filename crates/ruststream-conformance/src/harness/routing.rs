@@ -110,10 +110,7 @@ pub(super) async fn ack_consumes_delivery<C: LocalTestableBroker + LocalSubscrib
     let msg = expect_next(&mut stream, "ack_consumes_delivery").await;
     // A transport with no acknowledgement consumes the delivery by delivering it, so the
     // assertion below - one publish, one delivery - is the same contract either way.
-    match msg.ack().await {
-        Ok(()) | Err(AckError::Unsupported) => {}
-        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
-    }
+    settle_ack(msg).await;
 
     expect_no_more(&mut stream, "ack_consumes_delivery").await;
     broker.shutdown().await.expect("shutdown failed");
@@ -155,10 +152,7 @@ pub(super) async fn nack_with_requeue_redelivers<C: LocalTestableBroker + LocalS
             b"retry-me",
             "nack(requeue=true) must redeliver the same payload",
         );
-        match second.ack().await {
-            Ok(()) | Err(AckError::Unsupported) => {}
-            Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
-        }
+        settle_ack(second).await;
     }
     broker.shutdown().await.expect("shutdown failed");
 }
@@ -208,10 +202,7 @@ pub(super) async fn headers_propagate<C: LocalTestableBroker + LocalSubscribe>(b
         Some(b"acme".as_slice()),
         "a custom header must reach the subscriber"
     );
-    match msg.ack().await {
-        Ok(()) | Err(AckError::Unsupported) => {}
-        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
-    }
+    settle_ack(msg).await;
     broker.shutdown().await.expect("shutdown failed");
 }
 
