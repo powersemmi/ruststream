@@ -38,6 +38,12 @@ async fn a_requeue_that_fails_fails_the_local_ladder() {
     local_ladder_on(Fault::RequeueFails).await;
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[should_panic(expected = "local_lifecycle: nack(false) must succeed")]
+async fn a_drop_that_fails_fails_the_local_ladder() {
+    local_ladder_on(Fault::DropFails).await;
+}
+
 /// A transport with nothing to take back answers the requeue `Unsupported`, and owes no
 /// redelivery.
 #[tokio::test(flavor = "current_thread")]
