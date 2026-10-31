@@ -106,10 +106,7 @@ async fn publish(bus: &Bus, job: u8) {
         .expect("the bus takes the message");
 }
 
-async fn check_saturation(spawner: Spawner, stand: &'static Stand) {
-    spawner.spawn(app::task(stand.bus.clone()).expect("the app task is free"));
-    settle().await;
-
+async fn check_saturation(stand: &'static Stand) {
     // `a` fails and its copy fills the one record. `b` takes the broker's only place and fails
     // behind it, so when `a`'s copy falls due the broker refuses it.
     publish(&stand.bus, b'a').await;
@@ -133,7 +130,9 @@ async fn check_saturation(spawner: Spawner, stand: &'static Stand) {
     assert_eq!(after_first, (2, 2), "deliveries of `a` and `b` once freed");
     assert_eq!(after_second, (3, 2), "deliveries of `a` and `c` once freed");
     passed("a store saturated by refused copies gives the waiting delivery back to the broker");
+}
 
+async fn check_stop(stand: &'static Stand) {
     // `d` fails and its copy fills the record; `e` fails behind it and waits. A stop reaches the
     // waiting delivery at once, without any time passing, and the app ends once the copy of `d`
     // has left.
@@ -159,10 +158,12 @@ async fn check_saturation(spawner: Spawner, stand: &'static Stand) {
     assert_eq!(seen(b'e'), 1, "deliveries of `e`: none after the stop");
     passed("a stop ends the wait for a record");
 }
-
 #[embassy_executor::task]
 async fn drive(spawner: Spawner, stand: &'static Stand) {
-    check_saturation(spawner, stand).await;
+    spawner.spawn(app::task(stand.bus.clone()).expect("the app task is free"));
+    settle().await;
+    check_saturation(stand).await;
+    check_stop(stand).await;
     stand.done.set(true);
 }
 
