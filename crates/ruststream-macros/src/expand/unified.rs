@@ -174,7 +174,8 @@ pub(super) fn expand(
             // reachable under the names the service imported.
             #[allow(unused_imports)]
             use ::ruststream::{
-                LocalOwnedTransactions as _, LocalPublisher as _, LocalRequestReply as _,
+                LocalIncomingMessage as _, LocalOwnedTransactions as _, LocalPublisher as _,
+                LocalRequestReply as _,
                 LocalTransactionalPublisher as _,
             };
             #input_binding

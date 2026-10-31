@@ -24,7 +24,7 @@ use crate::{
     OutgoingDestination, OutgoingMessage, PayloadForm, SerializeHeadersError, WithHeaders,
 };
 
-use super::sink::{CallCodec, LocalPublishSink, PublishCodec, PublishSink};
+use super::sink::{CallCodec, LocalPublishSink, PublishCodec};
 use crate::wire::Serialized;
 
 /// A publish under construction: the entry point's payload plus the positions still open.
