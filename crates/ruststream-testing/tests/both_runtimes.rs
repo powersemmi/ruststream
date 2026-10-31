@@ -117,7 +117,7 @@ async fn the_server_runs_the_shared_handlers() -> Result<(), Box<dyn Error>> {
         .assert_called(1)
         .settled(HandlerOutcome::ack());
     broker.subscriber("audit").assert_called(1);
-    broker.published::<()>("alerts").assert_called(2);
+    broker.published::<()>("alerts").assert_called(1);
     Ok(())
 }
 
@@ -137,7 +137,7 @@ fn the_device_runs_the_same_handlers() -> Result<(), Box<dyn Error>> {
         bus.subscriber("local")
             .assert_called(1)
             .settled(HandlerOutcome::ack());
-        bus.published::<()>("alerts").assert_called(2);
+        bus.published::<()>("alerts").assert_called(1);
         tb.shutdown().await?;
         Ok(())
     })

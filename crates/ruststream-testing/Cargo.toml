@@ -82,6 +82,10 @@ embassy-futures.workspace = true
 [lints]
 workspace = true
 
+[lints.rust]
+# `--cfg proto_rejected` builds the case the multi-thread runner rejects.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(proto_rejected)"] }
+
 # A device service's app driven on the host through the embedded `TestApp`.
 [[test]]
 name = "embedded"
