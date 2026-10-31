@@ -565,8 +565,9 @@ impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept>
 /// body at once.
 ///
 /// The body fills a record before it settles the delivery the record copies, so a store with
-/// every record taken makes the delivery wait for a free one. A record reuses its buffer
-/// from one copy to the next. Machinery; never named directly.
+/// every record taken makes the delivery wait for a free one, unless the store is saturated by
+/// copies its broker refuses: those need the room the waiting delivery holds, so the delivery is
+/// requeued. A record reuses its buffer from one copy to the next. Machinery; never named directly.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub trait KeptCopies {
@@ -574,10 +575,10 @@ pub trait KeptCopies {
     fn take_record(&self) -> Option<usize>;
 
     /// Waits until a record is free and takes it: the answer to a full store, so the
-    /// subscription holds the delivery rather than requeuing it. A store whose due copy is
-    /// refused for want of the room this delivery holds may hand it a record of its own to
-    /// settle with; the delivery fills and settles it as any other.
-    fn wait_record(&self) -> impl Future<Output = usize>;
+    /// subscription holds the delivery rather than requeuing it. `None` once the store is
+    /// saturated: a copy of its own was refused while the delivery waited, which means the copy
+    /// needs the room the delivery holds, and the delivery goes back to the broker instead.
+    fn wait_record(&self) -> impl Future<Output = Option<usize>>;
 
     /// Writes the copy into `record`, taken by [`take_record`](Self::take_record).
     fn fill(&self, record: usize, payload: &[u8], headers: HeaderMap);
@@ -648,7 +649,7 @@ impl KeptCopies for NoKept {
         match *self {}
     }
 
-    async fn wait_record(&self) -> usize {
+    async fn wait_record(&self) -> Option<usize> {
         match *self {}
     }
 

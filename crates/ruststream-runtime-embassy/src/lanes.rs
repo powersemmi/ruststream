@@ -194,10 +194,18 @@ impl<L: Lanes, const CAPACITY: usize> LocalDispatch for EmbeddedPlan<L, Room<CAP
         // The registration's own store: its copies wait in its records, and its driver
         // publishes the last of them after the lanes have stopped.
         let store = CopyStore::<Path, CAPACITY>::new(path, Arc::clone(&route.name));
+        let stopped = signal.clone();
         let lanes = async {
-            self.lanes
-                .run(route, signal, state, &Keeping(host, &store))
-                .await;
+            let keeping = Keeping(host, &store);
+            let running = pin!(self.lanes.run(route, signal, state, &keeping));
+            // A stop ends the wait of a delivery holding for a record, so the lanes can finish.
+            let stop = pin!(async {
+                stopped.cancelled().await;
+                store.stop();
+            });
+            if let Either::Left(((), running)) = select(stop, running).await {
+                running.await;
+            }
             store.close();
         };
         join(lanes, store.drive()).await;
@@ -497,7 +505,11 @@ pub trait MountSteps: Sized {
     fn lanes<Next>(self, lanes: Next) -> Self::WithLanes<Next>;
 
     /// Keeps room for `CAP` copies of `retry_after`; a delivery that asks for one more waits
-    /// for a record to free, and the registration takes no further delivery meanwhile.
+    /// for a record to free, and the registration takes no further delivery meanwhile, unless
+    /// the store is saturated by refused copies: when the broker refuses a due copy while the
+    /// delivery waits, the copy needs the room the delivery holds, so the delivery goes back to
+    /// the broker. The store's size and the broker's capacity are the service's to size for its
+    /// load.
     ///
     /// Each copy waits in one of the registration's `CAP` records, its bytes and headers kept as
     /// data, and the registration's own loop publishes it on the clock once it is due, back to

@@ -35,8 +35,6 @@ enum Held<At> {
     Due(At),
     /// Being published.
     Sending,
-    /// The spare record, free, and offered to a delivery that waits for a record.
-    Offered,
 }
 
 /// How long a copy its broker refused waits before it is published again: nothing tells the store
@@ -63,25 +61,28 @@ struct Record<At, Options> {
 /// The retry copies of one registration, in `CAP` records.
 ///
 /// A failing delivery takes a record and fills it before the delivery settles; a full store
-/// holds the delivery until a record frees (back-pressure). [`drive`](Self::drive), joined with the
+/// holds the delivery until a record frees (back-pressure), unless the store is saturated. [`drive`](Self::drive), joined with the
 /// registration's lanes, publishes each copy once it is due: it waits for the earliest one on a
 /// single timer, so a wake costs one timer poll however many copies wait. A record reuses its
 /// buffer, so once a buffer has grown to the largest copy, keeping one allocates nothing.
 ///
 /// A copy the broker refuses when it is due (a subscription holding every message it has room
 /// for) stays in its record and is published again after a short wait, so it is never dropped
-/// while the store is open. That can wait on a delivery that holds the room and itself waits for a
-/// record: the store then keeps one record beyond `CAP`, the spare, and offers it to that delivery.
-/// The delivery's copy goes into the spare, its original is dropped, and the room the original
-/// held is what the refused copy needs. The spare costs one record's memory per store and
-/// nothing per delivery.
+/// while the store is open. A delivery waiting for a record holds a place of that subscription,
+/// so a refusal while it waits can mean the copy needs the very room the delivery holds. The
+/// store is then saturated: the wait ends without a record and the delivery goes back to the
+/// broker, which keeps it. The store's size and the broker's capacity are the service's to size
+/// for its load.
 pub(crate) struct CopyStore<Path: CopyPublisher, const CAP: usize, Timers: Clock = EmbassyClock> {
     path: Path,
     /// The subscription the copies are of, for diagnostics.
     subscription: Arc<str>,
     records: RefCell<[Record<Timers::Instant, Path::Options>; CAP]>,
-    /// The record at index `CAP`: taken only by a delivery the store offers it to.
-    spare: RefCell<Record<Timers::Instant, Path::Options>>,
+    /// How many times a due copy was refused: a delivery that sees it move while it waits for a
+    /// record is waiting on room it holds itself.
+    refusals: Cell<u32>,
+    /// Set once the registration stopped: no delivery waits for a record any more.
+    stopping: Cell<bool>,
     /// Set when a record was armed since the driver last looked.
     armed: Cell<bool>,
     /// Set once the registration's lanes stopped: the driver ends with the last copy sent.
@@ -107,7 +108,8 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             path,
             subscription,
             records: RefCell::new(array::from_fn(|_| Self::empty_record())),
-            spare: RefCell::new(Self::empty_record()),
+            refusals: Cell::new(0),
+            stopping: Cell::new(false),
             armed: Cell::new(false),
             closed: Cell::new(false),
             waker: RefCell::new(None),
@@ -128,17 +130,20 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
         }
     }
 
-    /// Runs `with` on the record at `index`; `CAP` is the spare.
+    /// Runs `with` on the record at `index`.
     fn record<Out>(
         &self,
         index: usize,
         with: impl FnOnce(&mut Record<Timers::Instant, Path::Options>) -> Out,
     ) -> Out {
-        if index == CAP {
-            with(&mut self.spare.borrow_mut())
-        } else {
-            with(&mut self.records.borrow_mut()[index])
-        }
+        with(&mut self.records.borrow_mut()[index])
+    }
+
+    /// Ends the wait of every delivery holding for a record: the registration is stopping, and
+    /// the broker keeps what they hold.
+    pub(crate) fn stop(&self) {
+        self.stopping.set(true);
+        self.waiting.borrow_mut().wake();
     }
 
     /// Stops the driver once every copy the store holds has been published.
@@ -190,12 +195,12 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             let now = self.clock.now();
             let mut earliest: Option<Timers::Instant> = None;
             let mut busy = false;
-            for index in 0..=CAP {
+            for index in 0..CAP {
                 match self.record(index, |record| record.held) {
                     Held::Due(at) if at <= now => return Poll::Ready(Some(index)),
                     Held::Due(at) => earliest = Some(earliest.map_or(at, |next| next.min(at))),
                     Held::Taken | Held::Sending => busy = true,
-                    Held::Free | Held::Offered => {}
+                    Held::Free => {}
                 }
             }
             if let Some(at) = earliest {
@@ -262,8 +267,8 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
         }
     }
 
-    /// Puts a refused copy back in `record`, due again shortly, and offers the spare to a
-    /// delivery waiting for a record: the room it holds is what the copy needs.
+    /// Puts a refused copy back in `record`, due again shortly, and tells the deliveries waiting
+    /// for a record: the room the copy needs may be the room they hold.
     fn keep_refused(
         &self,
         record: usize,
@@ -282,11 +287,8 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             held.held = Held::Due(retry_at);
         });
         self.armed.set(true);
-        let offered = self.spare.borrow().held == Held::Free && self.waiting.borrow().occupied();
-        if offered {
-            self.spare.borrow_mut().held = Held::Offered;
-            self.waiting.borrow_mut().wake();
-        }
+        self.refusals.set(self.refusals.get().wrapping_add(1));
+        self.waiting.borrow_mut().wake();
         self.wake();
     }
 
@@ -301,10 +303,6 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             held.to_destination = false;
             held.held = Held::Free;
         });
-        // A record is free again: the delivery waiting for one takes it, not the spare.
-        if record != CAP && self.spare.borrow().held == Held::Offered {
-            self.spare.borrow_mut().held = Held::Free;
-        }
         self.waiting.borrow_mut().wake();
         self.wake();
     }
@@ -328,14 +326,14 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
         Some(index)
     }
 
-    fn wait_record(&self) -> impl Future<Output = usize> {
-        poll_fn(|cx| {
+    fn wait_record(&self) -> impl Future<Output = Option<usize>> {
+        let refused_before = self.refusals.get();
+        poll_fn(move |cx| {
             if let Some(record) = self.take_record() {
-                return Poll::Ready(record);
+                return Poll::Ready(Some(record));
             }
-            if self.spare.borrow().held == Held::Offered {
-                self.spare.borrow_mut().held = Held::Taken;
-                return Poll::Ready(CAP);
+            if self.stopping.get() || self.refusals.get() != refused_before {
+                return Poll::Ready(None);
             }
             self.waiting.borrow_mut().register(cx.waker());
             Poll::Pending
@@ -639,7 +637,7 @@ mod tests {
             1,
             "woken once, however often polled"
         );
-        assert_eq!(waiting.as_mut().poll(&mut cx), Poll::Ready(taken));
+        assert_eq!(waiting.as_mut().poll(&mut cx), Poll::Ready(Some(taken)));
     }
 
     #[test]
@@ -658,7 +656,7 @@ mod tests {
         let got = first.as_mut().poll(&mut cx);
         assert_eq!(
             got,
-            Poll::Ready(taken[0]),
+            Poll::Ready(Some(taken[0])),
             "the first lane takes the freed record"
         );
         assert_eq!(
@@ -667,7 +665,7 @@ mod tests {
             "no record is left"
         );
         store.free(taken[1]);
-        assert_eq!(second.as_mut().poll(&mut cx), Poll::Ready(taken[1]));
+        assert_eq!(second.as_mut().poll(&mut cx), Poll::Ready(Some(taken[1])));
     }
 
     #[test]
@@ -811,7 +809,7 @@ mod tests {
     }
 
     #[test]
-    fn a_delivery_waiting_for_a_record_is_offered_the_spare_when_a_due_copy_is_refused() {
+    fn a_delivery_waiting_for_a_record_is_given_back_once_a_due_copy_is_refused() {
         let clock = Probe::default();
         let flaky = Flaky {
             refusals: Cell::new(1),
@@ -824,24 +822,63 @@ mod tests {
         assert_eq!(waiting.as_mut().poll(&mut cx), Poll::Pending);
         let mut driver = pin!(store.drive());
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+        assert_eq!(
+            waiting.as_mut().poll(&mut cx),
+            Poll::Pending,
+            "no copy was refused yet: the delivery waits"
+        );
         clock.advance_to(5);
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
 
-        let Poll::Ready(spare) = waiting.as_mut().poll(&mut cx) else {
-            panic!("the waiting delivery gets the spare record");
-        };
-        store.fill(spare, b"b", HeaderMap::new());
-        store.arm(spare, Duration::from_millis(5));
+        assert_eq!(
+            waiting.as_mut().poll(&mut cx),
+            Poll::Ready(None),
+            "the refused copy needs the room the delivery holds"
+        );
         clock.advance_to(100);
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
         assert_eq!(
             *flaky.sent.0.borrow(),
-            [
-                ("jobs".into(), b"a".to_vec()),
-                ("jobs".into(), b"b".to_vec())
-            ],
-            "both copies left, the refused one kept meanwhile"
+            [("jobs".into(), b"a".to_vec())],
+            "the refused copy was kept and left once the broker took it"
         );
+    }
+
+    #[test]
+    fn a_refusal_before_the_wait_began_does_not_end_it() {
+        let clock = Probe::default();
+        let flaky = Flaky {
+            refusals: Cell::new(1),
+            sent: Recorded::default(),
+        };
+        let store = CopyStore::<_, 1, _>::on_clock(&flaky, Arc::from("jobs"), clock.clone());
+        keep(&store, b"a", 5);
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut driver = pin!(store.drive());
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+        clock.advance_to(5);
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+
+        let mut waiting = pin!(store.wait_record());
+        assert_eq!(
+            waiting.as_mut().poll(&mut cx),
+            Poll::Pending,
+            "only a refusal during the wait counts"
+        );
+    }
+
+    #[test]
+    fn a_stopped_store_gives_the_waiting_delivery_back() {
+        let sent = Recorded::default();
+        let store = CopyStore::<_, 1, _>::on_clock(&sent, Arc::from("jobs"), Probe::default());
+        keep(&store, b"a", 5);
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut waiting = pin!(store.wait_record());
+        assert_eq!(waiting.as_mut().poll(&mut cx), Poll::Pending);
+
+        store.stop();
+
+        assert_eq!(waiting.as_mut().poll(&mut cx), Poll::Ready(None));
     }
 
     #[test]

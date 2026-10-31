@@ -18,7 +18,9 @@ use crate::{AckError, LocalSettle, Str};
 /// The record is taken and filled before the original is dropped. A store with every record
 /// taken makes the delivery wait for one, so the subscription takes no further delivery until a
 /// copy has left (back-pressure); the delivery stays with the broker meanwhile, and the wait
-/// yields to the store's driver and to the other tasks. The copy's bytes go into the
+/// yields to the store's driver and to the other tasks. A store saturated by copies its broker
+/// refuses ends the wait: those copies need the room the delivery holds, so the delivery is
+/// requeued and the broker keeps it. The copy's bytes go into the
 /// record's own buffer; its header map is the delivery's, carried on with the retry count in it.
 /// The store prepares the copy there too, while the delivery is at hand: the mount site's
 /// transforms read it, and the copy leaves as they left it.
@@ -42,10 +44,19 @@ where
     Kept: PrepareKept<C>,
 {
     // A full store holds the delivery here, unsettled, until a record is free: the subscription
-    // takes nothing more meanwhile, and the broker's redelivery count is not spent.
+    // takes nothing more meanwhile, and the broker's redelivery count is not spent. A saturated
+    // store has no record to give: its copies wait for the room this delivery holds.
     let record = match kept.take_record() {
-        Some(record) => record,
+        Some(record) => Some(record),
         None => kept.wait_record().await,
+    };
+    let Some(record) = record else {
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %name,
+            "the store of retry copies is saturated; requeuing the delivery now",
+        );
+        return slot.take().nack(true).await;
     };
     let msg = slot.get();
     let mut headers = msg.headers().clone();
@@ -135,6 +146,7 @@ mod tests {
     struct Store {
         room: usize,
         failing: bool,
+        saturated: bool,
         asked: RefCell<Vec<Asked>>,
     }
 
@@ -143,6 +155,7 @@ mod tests {
             Self {
                 room,
                 failing: false,
+                saturated: false,
                 asked: RefCell::new(Vec::new()),
             }
         }
@@ -158,9 +171,9 @@ mod tests {
         }
 
         // A record frees as soon as the delivery waits for one.
-        fn wait_record(&self) -> impl Future<Output = usize> {
+        fn wait_record(&self) -> impl Future<Output = Option<usize>> {
             self.asked.borrow_mut().push(Asked::Waited);
-            ready(0)
+            ready((!self.saturated).then_some(0))
         }
 
         fn fill(&self, _record: usize, payload: &[u8], headers: HeaderMap) {
@@ -290,6 +303,23 @@ mod tests {
             "the delivery is dropped for its copy, not requeued"
         );
         assert_eq!(store.asked(), [Asked::Waited, filled(), Asked::Arm(LATER)]);
+    }
+
+    #[tokio::test]
+    async fn a_saturated_store_gives_the_delivery_back_to_the_broker() {
+        let store = Store {
+            saturated: true,
+            ..Store::with_room(0)
+        };
+        let settled = settle_on(
+            &store,
+            HandlerResult::retry_after(LATER),
+            &Delivery::empty(),
+            Settlement::Accepted,
+        )
+        .await;
+        assert_eq!(settled, 2, "the delivery is requeued, not dropped");
+        assert_eq!(store.asked(), [Asked::Waited]);
     }
 
     #[tokio::test]
