@@ -50,8 +50,8 @@ pub use builder::{
 };
 pub use ext::PublishExt;
 pub use out::{
-    LowerOutTransforms, NamedDestinationSend, NarrowToUse, OutPipeline, PipelinePublishError,
-    SendOnlyPolicy, SlotStackUse, SlotTransforms,
+    LocalOutPipeline, LowerOutTransforms, NamedDestinationSend, NarrowToUse, OutPipeline,
+    PipelinePublishError, SendOnlyPolicy, SlotStackUse, SlotTransforms,
 };
 pub(crate) use pipeline::SendThrough;
 pub use pipeline::{

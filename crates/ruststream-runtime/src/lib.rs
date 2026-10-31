@@ -263,10 +263,11 @@ pub use poll_diagnostics::{PollDiagnostics, PollReport};
 pub use publish::{
     AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, CodecSlotOpen,
     DestinationSettled, DestinationUse, Direct, Either, EncodeOutcome, FitsOffer, FitsTaken,
-    InTransaction, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, NamedDestinationSend,
-    NamesDestination, NamingOffered, NamingUntaken, NarrowToUse, PayloadError, PublishingDirectly,
-    RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy, SlotStackUse, SlotTransforms,
-    Transactional, TransactionalReply, TypedPublisher, WireBytes, WirePayload,
+    InTransaction, LocalOutPipeline, LowerOutTransforms, MapReplyPolicy, NameReplyCodec,
+    NamedDestinationSend, NamesDestination, NamingOffered, NamingUntaken, NarrowToUse,
+    PayloadError, PublishingDirectly, RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy,
+    SlotStackUse, SlotTransforms, Transactional, TransactionalReply, TypedPublisher, WireBytes,
+    WirePayload,
 };
 #[cfg(feature = "alloc")]
 pub use publish::{

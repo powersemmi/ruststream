@@ -13,7 +13,9 @@ use core::ops::Deref;
 use crate::codec::Codec;
 use crate::inject::LocalFromStartup;
 use crate::metadata::OutgoingMessageMetadata;
-use crate::publish::{HeadersUnset, LocalPublishSink, MessageBody, PublishBuilder, message_of};
+use crate::publish::{
+    HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, PublishBuilder, message_of,
+};
 use crate::router::LocalPipeline;
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough};
 use crate::{
@@ -23,8 +25,8 @@ use crate::{
 
 use super::arena::SlotDictionary;
 
-/// The phantom carrying a local slot's marker, publish path and declared message set.
-type LocalSlotShape<M, Pipe, Body> = PhantomData<fn() -> (M, Pipe, Body)>;
+/// The phantom carrying a local slot's marker and declared message set.
+type LocalSlotShape<M, Body> = PhantomData<fn() -> (M, Body)>;
 
 /// One arena entry of the local family: the wired live value of the marker `M` and the publish
 /// path the include site gave it, as [`Slot`](super::Slot) holds them on the multi-thread runner.
@@ -39,9 +41,8 @@ type LocalSlotShape<M, Pipe, Body> = PhantomData<fn() -> (M, Pipe, Body)>;
 pub struct LocalSlot<M, W, E, Pipe = LocalPipeline, Body = ()> {
     wired: W,
     codec: E,
-    // The publish path is a type: a local chain composes no publish middleware, so the value
-    // carries nothing.
-    _declared: LocalSlotShape<M, Pipe, Body>,
+    pipeline: Pipe,
+    _declared: LocalSlotShape<M, Body>,
 }
 
 impl<M, W, E, Pipe, Body> fmt::Debug for LocalSlot<M, W, E, Pipe, Body> {
@@ -78,12 +79,12 @@ impl<M: OutSlot, W: LocalPublisher, E, Pipe, Body> LocalSlot<M, W, E, Pipe, Body
     }
 }
 
-// Nothing is composed onto a local chain's slot: the publish is the leaf call, lent the message as
-// the builder made it, with nothing rebuilt or copied. The path is not read, so a body generic over
-// its entry publishes through it.
+// The publish travels the slot's path: its transforms, then the leaf call. A slot with no transform
+// lends the leaf the message as the builder made it, with nothing rebuilt or copied.
 impl<M, W, E, Pipe, Body> LocalPublishSink for &LocalSlot<M, W, E, Pipe, Body>
 where
     W: LocalPublisher,
+    Pipe: LocalOutPipeline<W>,
 {
     type Payload = W::Payload;
     type Error = W::Error;
@@ -96,7 +97,7 @@ where
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        self.wired.publish(msg, options)
+        self.pipeline.send(&self.wired, msg, options)
     }
 
     fn base_headers(&self) -> Option<&HeaderMap> {
@@ -117,7 +118,7 @@ where
     M: OutSlot,
 {
     async fn resolve_local(
-        (policy, codec, _pipeline): (Policy, E, Pipe),
+        (policy, codec, pipeline): (Policy, E, Pipe),
         connected: &LocalConnected<B>,
         _subscriber: &Sub,
     ) -> Result<Self, PairError> {
@@ -130,6 +131,7 @@ where
         Ok(Self {
             wired: live,
             codec,
+            pipeline,
             _declared: PhantomData,
         })
     }
@@ -229,8 +231,9 @@ pub trait LocalOutEntry<M, Body = ()> {
     /// only the types that carry their own bytes.
     type Enc: SlotEncoding;
 
-    /// The publish path every message leaving the entry travels.
-    type Pipe;
+    /// The publish path every message leaving the entry travels: the slot's transforms above
+    /// the leaf call.
+    type Pipe: LocalOutPipeline<Self::Wire>;
 
     /// The entry behind the bound. Machinery: [`Outs::get`](super::Outs::get) resolves the
     /// concrete slot through it.
@@ -238,7 +241,11 @@ pub trait LocalOutEntry<M, Body = ()> {
     fn entry(&self) -> &LocalSlot<M, Self::Wire, Self::Enc, Self::Pipe, Body>;
 }
 
-impl<M, W, E: SlotEncoding, Pipe, Body> LocalOutEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body> {
+impl<M, W, E, Pipe, Body> LocalOutEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body>
+where
+    E: SlotEncoding,
+    Pipe: LocalOutPipeline<W>,
+{
     type Wire = W;
     type Enc = E;
     type Pipe = Pipe;

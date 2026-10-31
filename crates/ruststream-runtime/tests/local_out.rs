@@ -21,9 +21,9 @@ use ruststream_core::{
 };
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
-    Context, Deserialized, Halt, HandlerOutcome, Input, LocalDetach, LocalHandle, LocalOutEntry,
-    OpenRoutes, OutSlot, Outs, PublishedThrough, Reads, Router, RunRoutes, ScopeDelivery,
-    ShutdownWait, SoloDeserialized, local_subscriber,
+    Context, ContextKind, Deserialized, Halt, HandlerOutcome, Input, LocalDetach, LocalHandle,
+    LocalOutEntry, OpenRoutes, OutSlot, Outgoing, Outs, PublishTransform, PublishedThrough, Reads,
+    Router, RunRoutes, ScopeDelivery, ShutdownWait, SoloDeserialized, local_subscriber,
 };
 use serde::Serialize;
 use tokio::sync::Notify;
@@ -154,6 +154,17 @@ where
     }
 }
 
+/// A slot transform: stamps every message leaving the slot with the header `stamped`.
+struct Stamp;
+
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
+        out.headers_mut().insert("stamped", "yes");
+    }
+}
+
 #[tokio::test]
 async fn a_body_publishes_through_its_slot_to_a_local_broker() {
     let connected = LocalMemoryBroker::<4>::new()
@@ -201,5 +212,56 @@ async fn a_body_publishes_through_its_slot_to_a_local_broker() {
         host.0.load(Ordering::Relaxed),
         0,
         "work detached by the delivery"
+    );
+}
+
+#[tokio::test]
+async fn a_slot_transform_stamps_what_the_body_publishes_through_a_local_chain() {
+    let connected = LocalMemoryBroker::<4>::new()
+        .connect()
+        .await
+        .expect("the bus connects");
+    let mut audits = LocalMemorySource::new("audit")
+        .subscribe(&connected)
+        .await
+        .expect("the audit trail subscribes");
+    let opened = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
+        .include(local_subscriber(LocalMemorySource::new("orders"), Mirror).build())
+        .out(Audit, LocalMemoryPublish)
+        .transform(Stamp)
+        .build()
+        .open(&connected, &ScopeDelivery::new())
+        .await
+        .expect("the route opens");
+    let publisher = LocalMemoryPublish
+        .pair(&connected)
+        .await
+        .expect("the publisher pairs");
+    let stop = Stop::default();
+    let host = CountDetached::default();
+
+    let ((), audited) = join(opened.run(&stop, &Arc::new(()), &host), async {
+        let order = OutgoingMessage::with_payload("orders", BytesMut::from(&b"seven"[..]));
+        publisher
+            .publish(order, None)
+            .await
+            .expect("the bus takes it");
+        // A guard, not a wait: the audit is published within the same few polls, and the
+        // timeout only ends a run whose publish never left.
+        let audited = timeout(Duration::from_secs(5), audits.stream().next())
+            .await
+            .ok()
+            .flatten();
+        stop.stop();
+        audited
+    })
+    .await;
+
+    let audited = audited.expect("an audit").expect("a delivery");
+    assert_eq!(LocalIncomingMessage::payload(&audited), br#"{"id":5}"#);
+    assert_eq!(
+        LocalIncomingMessage::headers(&audited).get_str("stamped"),
+        Some("yes"),
+        "the slot transform's header"
     );
 }

@@ -13,12 +13,12 @@ use crate::input::{Materialize, Provided};
 use crate::lifecycle::BoxError;
 use crate::middleware::Identity;
 use crate::middleware::LocalBlanketLayer;
-use crate::publish::{Outgoing, PublishIdentity, PublishPipeline, SendThrough};
+use crate::publish::{LocalOutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough};
 use crate::settings::{BatchSized, DefMountCodec, MountsWith, Sequential};
 use crate::subscriber_def::SubscriberDef;
 use crate::{
     LocalBatchSubscriber, LocalBroker, LocalConnected, LocalPublisher, LocalSourceMessage,
-    LocalSourceSubscriber, LocalSubscriptionSource, PayloadForm,
+    LocalSourceSubscriber, LocalSubscriptionSource, OutgoingFor, PayloadForm,
 };
 
 use super::builder::Router;
@@ -231,6 +231,25 @@ impl<P: LocalPublisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
         // The broker is the last reader of this message, as in `PublishIdentity`.
         let msg = <P::Payload as PayloadForm>::leaving(out);
         send.publish(msg, options).await.map_err(BoxError::from)
+    }
+}
+
+// The bottom of a local slot's publish path: the leaf call, lent the message as it arrives, with
+// nothing rebuilt or copied and the leaf's own error.
+impl<W> LocalOutPipeline<W> for LocalPipeline<PublishIdentity> {
+    // The leaf's own future, which is `Send` exactly where the leaf's is.
+    #[allow(clippy::future_not_send)]
+    fn send<P>(
+        &self,
+        leaf: &P,
+        msg: OutgoingFor<'_, W::Payload>,
+        options: Option<&P::Options>,
+    ) -> impl Future<Output = Result<(), P::Error>>
+    where
+        W: LocalPublisher,
+        P: LocalPublisher<Options = W::Options, Payload = W::Payload>,
+    {
+        leaf.publish(msg, options)
     }
 }
 
