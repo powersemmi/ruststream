@@ -111,7 +111,7 @@ pub use crate::runtime::{
     RouterDef, Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized, SoloSet, State,
     SubscriberSettings, WireBytes, Workers, subscriber,
 };
-// The application object of the runtime the crate's feature selects.
+// The application object of the tokio runner.
 #[cfg(feature = "tokio")]
 pub use crate::runtime::{App, AppInfo, MainRuntime, RunningApp, RustStream};
 // The application object of the embedded runner, with the bound its builder returns.

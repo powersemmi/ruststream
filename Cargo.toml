@@ -1011,7 +1011,7 @@ poll-diagnostics = [
     "ruststream-runtime-tokio/poll-diagnostics",
     "ruststream-observability?/poll-diagnostics",
 ]
-# The harness of the runtime the build selects: `TestApp` over the tokio app or over the embedded
+# The harness: `TestApp` over the tokio app, and `testing::embedded::TestApp` over the embedded
 # app on the host.
 testing = [
     "dep:inventory",

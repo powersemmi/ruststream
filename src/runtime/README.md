@@ -217,9 +217,10 @@ shutdown, [`ShutdownWait`]. The tokio runner, [`Tokio`], runs it: the app's life
 [`crate::time::sleep`], which sleeps on the app's clock, so the test harness moves it with
 `advance` like every timer the framework arms.
 
-The runtime is a cargo feature of the crate, and the two exclude each other. `tokio`, the default,
-selects the tokio runner and everything above. `embassy` selects the embedded runner on embassy's
-executor and clock: its application object, `EmbeddedApp`, with the mount steps `MountSteps`, its
+Each runtime is a cargo feature of the crate, and they add up. `tokio`, the default, provides the
+tokio runner and everything above. `embassy` provides the embedded runner on embassy's executor
+and clock; an app picks it with `#[ruststream::app(runtime = embassy)]`, and the handlers are the
+same for both runners. The embedded runner's items: its application object, `EmbeddedApp`, with the mount steps `MountSteps`, its
 shutdown and health, `Control`, `Health` and `Stopping`, and its clock, `EmbassyClock`, are
 re-exported in this module, and their reference is the documentation of
 [`ruststream-runtime-embassy`](https://docs.rs/ruststream-runtime-embassy).
