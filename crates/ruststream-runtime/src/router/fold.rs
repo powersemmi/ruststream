@@ -28,6 +28,7 @@ use tracing::error;
 
 use crate::RetryDeclaration;
 use crate::batch::{DeserializedBatch, LocalBatch, LocalSliceHandler};
+use crate::coop::Cooperative;
 use crate::dispatch::{Delivery, HeadersAtOnce, Turn, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handle::Deserialized;
@@ -369,7 +370,7 @@ where
         let handler =
             LocalBlanketLayer::apply::<Sub::Message, Cx, State, _>(&self.layers, self.handler);
         run_sequential(
-            self.subscriber,
+            Cooperative(self.subscriber),
             handler,
             signal,
             self.name,

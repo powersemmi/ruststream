@@ -66,6 +66,8 @@ mod batch_publishing;
 #[cfg(feature = "alloc")]
 mod context;
 #[cfg(feature = "alloc")]
+mod coop;
+#[cfg(feature = "alloc")]
 mod dispatch;
 #[cfg(feature = "alloc")]
 mod dynstack;

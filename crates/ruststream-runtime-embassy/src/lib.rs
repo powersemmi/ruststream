@@ -2,7 +2,9 @@
 //! on `no_std` with a heap.
 //!
 //! The app is one future that one embassy task awaits. Its type carries every broker, mount,
-//! state and hook, so nothing is boxed or erased, and a delivery allocates nothing.
+//! state and hook, so nothing is boxed or erased, and a delivery allocates nothing. A subscription
+//! whose stream is always ready, a handler that retries at once, yields to the executor after
+//! every 128 deliveries, so the other tasks of the executor keep running.
 //!
 //! - [`EmbeddedApp`]: the app builder: `with_broker(broker, |b| chain)`, `with_state`, the
 //!   lifecycle hooks, and [`run`](EmbeddedApp::run). [`Mounts`] is the bound a function that
