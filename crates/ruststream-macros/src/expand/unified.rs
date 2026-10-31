@@ -170,6 +170,13 @@ pub(super) fn expand(
         ) -> #verdict_ty
         #body_where
         {
+            // A slot's capability is the local family's on the body's side; its methods are
+            // reachable under the names the service imported.
+            #[allow(unused_imports)]
+            use ::ruststream::{
+                LocalOwnedTransactions as _, LocalPublisher as _, LocalRequestReply as _,
+                LocalTransactionalPublisher as _,
+            };
             #input_binding
             #batch_len
             #prelude
