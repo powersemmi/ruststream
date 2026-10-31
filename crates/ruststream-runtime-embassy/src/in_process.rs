@@ -8,12 +8,11 @@ use alloc::rc::Rc;
 use core::any::type_name;
 use core::future::ready;
 
-use ruststream_core::ConnectedBroker;
 use ruststream_runtime::testing::{InProcess, InProcessRun};
 use ruststream_runtime::{OpenRoutes, RunRoutes};
 
 use crate::app::RunError;
-use crate::mounts::{BrokerMount, CloseAll, close};
+use crate::mounts::{BrokerMount, CloseAll, ConnectSlot, SharedConnection};
 
 /// The app's brokers, started in process: every broker connected through its in-process
 /// transition and noted in the harness's run, every route opened under its broker's scope.
@@ -37,21 +36,6 @@ pub trait StartInProcess<State> {
     ) -> impl Future<Output = Result<(Self::Connections, Self::Opened), RunError>>;
 }
 
-/// A broker connected in process: the app owns it, and the harness's run keeps it weakly.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct InProcessConnection<Connected>(Rc<Connected>);
-
-impl<Connected: ConnectedBroker> CloseAll for InProcessConnection<Connected> {
-    async fn close_all(self) {
-        // The harness keeps the connected form weakly and upgrades it only inside a synchronous
-        // call of its own, never across the app's poll, so here the app holds the one count.
-        if let Ok(connected) = Rc::try_unwrap(self.0) {
-            close(connected).await;
-        }
-    }
-}
-
 impl<State> StartInProcess<State> for () {
     type Connections = ();
     type Opened = ();
@@ -64,19 +48,24 @@ impl<State> StartInProcess<State> for () {
     }
 }
 
-impl<State, B, Routes> StartInProcess<State> for BrokerMount<B, Routes>
+impl<State, B, Routes, Slot> StartInProcess<State> for BrokerMount<B, Routes, Slot>
 where
     B: InProcess + 'static,
     Routes: OpenRoutes<B, State>,
+    Slot: ConnectSlot<B>,
 {
-    type Connections = InProcessConnection<B::Connected>;
+    type Connections = SharedConnection<B, Slot>;
     type Opened = Routes::Opened;
 
     async fn start_in_process(
         self,
         run: &InProcessRun,
     ) -> Result<(Self::Connections, Self::Opened), RunError> {
-        let Self { broker, routes } = self;
+        let Self {
+            broker,
+            routes,
+            slot,
+        } = self;
         let connected = broker
             .connect_in_process()
             .await
@@ -85,11 +74,12 @@ where
                 source: err.into(),
             })?;
         let connected = Rc::new(connected);
+        slot.fill(&connected);
         let scope = run.connected::<B>(&connected);
         match routes.open(&connected, &scope).await {
-            Ok(routes) => Ok((InProcessConnection(connected), routes)),
+            Ok(routes) => Ok((SharedConnection { connected, slot }, routes)),
             Err(source) => {
-                InProcessConnection(connected).close_all().await;
+                SharedConnection { connected, slot }.close_all().await;
                 Err(RunError::Subscribe {
                     broker: type_name::<B>(),
                     source,

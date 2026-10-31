@@ -5,7 +5,9 @@
 // are not `Send`, and the app's one task polls them where it was spawned.
 #![allow(clippy::future_not_send)]
 
+use alloc::rc::Rc;
 use core::any::type_name;
+use core::fmt::{self, Debug, Formatter};
 use core::future::ready;
 
 use ruststream_core::{Broker, ConnectedBroker};
@@ -60,13 +62,91 @@ where
     }
 }
 
+/// Where a broker's connected form is shared once the app has connected it: the slot a
+/// [`Bindable`](crate::Bindable) fills for the tokens it minted, or [`NoSlot`] for a broker that
+/// shares nothing.
+#[doc(hidden)]
+pub trait ConnectSlot<B: Broker> {
+    /// Hands the slot the connected form, once the broker is connected.
+    fn fill(&self, connected: &Rc<B::Connected>);
+
+    /// Takes the connected form back out, before the broker shuts down.
+    fn empty(&self);
+}
+
+/// The slot of a broker registered as it is: it shares its connected form with no one.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoSlot;
+
+impl<B: Broker> ConnectSlot<B> for NoSlot {
+    fn fill(&self, _connected: &Rc<B::Connected>) {}
+
+    fn empty(&self) {}
+}
+
+/// What `with_broker` takes: a broker as it is, or a [`Bindable`](crate::Bindable) whose tokens
+/// publish through the broker's connected form.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a broker the embedded app runs",
+    label = "not a `Broker`",
+    note = "register a type that implements `Broker`, or a `Bindable` around one"
+)]
+pub trait Registration {
+    /// The broker being registered.
+    type Broker: Broker + 'static;
+
+    /// The slot its connected form is shared through.
+    #[doc(hidden)]
+    type Slot: ConnectSlot<Self::Broker>;
+
+    #[doc(hidden)]
+    fn into_parts(self) -> (Self::Broker, Self::Slot);
+}
+
+impl<B: Broker + 'static> Registration for B {
+    type Broker = B;
+    type Slot = NoSlot;
+
+    fn into_parts(self) -> (B, NoSlot) {
+        (self, NoSlot)
+    }
+}
+
 /// One broker of the app and the routes its scope returned: an element of the app's broker
 /// list, which holds the latest registration at its head.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct BrokerMount<B, Routes> {
+pub struct BrokerMount<B, Routes, Slot = NoSlot> {
     pub(crate) broker: B,
     pub(crate) routes: Routes,
+    pub(crate) slot: Slot,
+}
+
+/// A broker connected: the app owns it, and the slot of a [`Bindable`](crate::Bindable) holds the
+/// other count until the broker shuts down.
+#[doc(hidden)]
+pub struct SharedConnection<B: Broker, Slot> {
+    pub(crate) connected: Rc<B::Connected>,
+    pub(crate) slot: Slot,
+}
+
+impl<B: Broker, Slot> Debug for SharedConnection<B, Slot> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SharedConnection").finish_non_exhaustive()
+    }
+}
+
+impl<B: Broker, Slot: ConnectSlot<B>> CloseAll for SharedConnection<B, Slot> {
+    async fn close_all(self) {
+        // The slot lets go first, so the app holds the one count. The harness keeps the connected
+        // form weakly and upgrades it only inside a synchronous call of its own, never across
+        // the app's poll.
+        self.slot.empty();
+        if let Ok(connected) = Rc::try_unwrap(self.connected) {
+            close(connected).await;
+        }
+    }
 }
 
 /// The app's brokers, started: every broker connected and every route opened.
@@ -107,24 +187,31 @@ impl<State> StartMounts<State> for () {
     }
 }
 
-impl<State, B, Routes> StartMounts<State> for BrokerMount<B, Routes>
+impl<State, B, Routes, Slot> StartMounts<State> for BrokerMount<B, Routes, Slot>
 where
     B: Broker,
     Routes: OpenRoutes<B, State>,
+    Slot: ConnectSlot<B>,
 {
-    type Connections = (B::Connected,);
+    type Connections = SharedConnection<B, Slot>;
     type Opened = Routes::Opened;
 
     async fn start(self) -> Result<(Self::Connections, Self::Opened), RunError> {
-        let Self { broker, routes } = self;
+        let Self {
+            broker,
+            routes,
+            slot,
+        } = self;
         let connected = broker.connect().await.map_err(|err| RunError::Connect {
             broker: type_name::<B>(),
             source: err.into(),
         })?;
+        let connected = Rc::new(connected);
+        slot.fill(&connected);
         match routes.open(&connected, &ScopeDelivery::new()).await {
-            Ok(routes) => Ok(((connected,), routes)),
+            Ok(routes) => Ok((SharedConnection { connected, slot }, routes)),
             Err(source) => {
-                close(connected).await;
+                SharedConnection { connected, slot }.close_all().await;
                 Err(RunError::Subscribe {
                     broker: type_name::<B>(),
                     source,
@@ -162,12 +249,6 @@ where
 impl CloseAll for () {
     fn close_all(self) -> impl Future<Output = ()> {
         ready(())
-    }
-}
-
-impl<Connected: ConnectedBroker> CloseAll for (Connected,) {
-    fn close_all(self) -> impl Future<Output = ()> {
-        close(self.0)
     }
 }
 
