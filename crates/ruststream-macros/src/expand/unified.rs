@@ -340,7 +340,7 @@ fn body_wiring(
 
             fn declare_body(__rs_body: __RsBody) -> Self::Settings {
                 #[allow(unused_imports)]
-                use ::ruststream::runtime::SubscriberSettings as _;
+                use ::ruststream::runtime::{FailureStep as _, StartAtStep as _, WorkersStep as _};
                 ::ruststream::runtime::SubscriberBuilder::new(#declared_expr, #source_expr)
                     #settings_chain
             }
@@ -675,6 +675,21 @@ impl NeutralArena {
             bounds.push(quote! {
                 #entry: ::ruststream::runtime::SlotEntry<#marker, #body, Wire: #capability>
             });
+            if out.bounds.iter().any(|bound| {
+                capability_named(
+                    bound,
+                    &[
+                        "Publisher",
+                        "TransactionalPublisher",
+                        "OwnedTransactions",
+                        "RequestReply",
+                    ],
+                )
+            }) {
+                bounds.push(quote! {
+                    #entry: ::ruststream::runtime::SlotPublish<#marker, #body>
+                });
+            }
             // Every other capability also sits on the entry itself, which forwards it through
             // the slot (a broker grafts its own capability traits onto the entry types), so the
             // entry passes into positions that demand it. The plain publish is the entry's own

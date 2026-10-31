@@ -185,7 +185,7 @@ fn failure_step(args: &SubscriberArgs) -> TokenStream2 {
         .map(failure_policy_tokens)
         .map(|policy| quote!(.with_decode(#policy)));
     quote! {
-        .on_failure(::ruststream::runtime::FailurePolicies::default() #panic #decode)
+        .apply_failures(::ruststream::runtime::FailurePolicies::default() #panic #decode)
     }
 }
 
@@ -321,14 +321,16 @@ fn workers_step(args: &SubscriberArgs, handler: &Ident, shape: Shape) -> syn::Re
             ));
         }
         if clause.dedicated() {
-            return Ok(quote!(.threads_by_key(#count)));
+            return Ok(
+                quote!(.apply_workers(::ruststream::runtime::Workers::threads_keyed(#count))),
+            );
         }
-        return Ok(quote!(.workers_by_key(#count)));
+        return Ok(quote!(.apply_workers(::ruststream::runtime::Workers::keyed(#count))));
     }
     if clause.dedicated() {
-        return Ok(quote!(.threads(#count)));
+        return Ok(quote!(.apply_workers(::ruststream::runtime::Workers::threads(#count))));
     }
-    Ok(quote!(.workers(#count)))
+    Ok(quote!(.apply_workers(::ruststream::runtime::Workers::pool(#count))))
 }
 
 /// Lowers the `workers(..)` count to a `NonZeroUsize`: an integer literal is checked at
@@ -378,7 +380,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
             let position_ty = position_type(position)?;
             (
                 quote!(::ruststream::StartAt<#source_ty, #position_ty>),
-                quote!(.start_at(#position)),
+                quote!(.apply_start_at(#position)),
                 quote!(::ruststream::runtime::Fixed),
             )
         }

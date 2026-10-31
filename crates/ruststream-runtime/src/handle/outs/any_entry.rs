@@ -23,10 +23,26 @@ use super::arena::Outs;
 use super::entry::Slot;
 use super::local_entry::{LocalSlot, SlotEncoding};
 
-/// An arena entry of either runner, as a runtime-neutral body publishes through it.
-pub trait SlotEntry<M, Body = ()>: Deref<Target = Self::Wire> + LocalPublisher {
-    /// The live publisher the slot's policy paired.
-    type Wire: LocalPublisher;
+/// An arena entry of either runner, as a runtime-neutral body holds it: a window onto the live
+/// value the slot's policy paired.
+pub trait SlotEntry<M, Body = ()>: Deref<Target = Self::Wire> {
+    /// The live value the slot's policy paired.
+    type Wire;
+}
+
+impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for Slot<M, W, E, Pipe, Body> {
+    type Wire = W;
+}
+
+impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body> {
+    type Wire = W;
+}
+
+/// An entry whose live value publishes: the slot itself publishes through its path, and
+/// [`message`](Self::message) starts a typed publish over the slot's codec and dictionary.
+pub trait SlotPublish<M, Body = ()>:
+    SlotEntry<M, Body, Wire: LocalPublisher> + LocalPublisher
+{
     /// The codec typed publishes through the slot encode with.
     type Enc: SlotEncoding;
     /// The sink a publish through the slot travels.
@@ -44,14 +60,13 @@ pub trait SlotEntry<M, Body = ()>: Deref<Target = Self::Wire> + LocalPublisher {
         T: OutgoingDestination + PublishedThrough<M>;
 }
 
-impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for Slot<M, W, E, Pipe, Body>
+impl<M, W, E, Pipe, Body> SlotPublish<M, Body> for Slot<M, W, E, Pipe, Body>
 where
     M: OutSlot,
     W: Publisher,
     E: Codec + Send + Sync,
     Pipe: OutPipeline<W>,
 {
-    type Wire = W;
     type Enc = E;
     type Sink<'a>
         = &'a Self
@@ -70,14 +85,13 @@ where
     }
 }
 
-impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body>
+impl<M, W, E, Pipe, Body> SlotPublish<M, Body> for LocalSlot<M, W, E, Pipe, Body>
 where
     M: OutSlot,
     W: LocalPublisher,
     E: SlotEncoding,
     Pipe: LocalOutPipeline<W>,
 {
-    type Wire = W;
     type Enc = E;
     type Sink<'a>
         = &'a Self
@@ -186,7 +200,7 @@ where
 /// The transaction openers of a slot whose wire is transactional: the multi-thread runner's.
 #[doc(hidden)]
 pub trait SlotTransactions<M: 'static, Body = ()>:
-    SlotEntry<M, Body, Wire: 'static, Enc: 'static>
+    SlotPublish<M, Body, Wire: 'static, Enc: 'static>
 {
     /// Opens a broker-side transaction scope over the slot's wire.
     fn begin(
