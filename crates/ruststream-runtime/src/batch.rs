@@ -8,12 +8,15 @@
 //! [`Handler`](super::Handler) counterpart, and [`TypedBatch`] the [`Typed`](super::Typed) decode
 //! adapter.
 
-use std::iter;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::iter;
+use core::{any, fmt, marker::PhantomData};
 #[cfg(feature = "otel")]
 use std::slice;
 #[cfg(feature = "otel")]
 use std::sync::LazyLock;
-use std::{any, fmt, marker::PhantomData};
 
 #[cfg(feature = "otel")]
 use opentelemetry::metrics::Histogram;
@@ -25,14 +28,14 @@ use opentelemetry::{KeyValue, global};
 use serde::de::DeserializeOwned;
 use tracing::warn;
 
-use crate::{BuildBatchContext, IncomingMessage};
+use crate::{BuildBatchContext, IncomingMessage, LocalIncomingMessage};
 
 use super::context::Context;
 use super::dispatch::{Slot, Workers, settle_outcome};
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handle::Deserialized;
-use super::handler::{HandlerOutcome, HandlerResult};
-use super::host::Detach;
+use super::handler::{HandlerOutcome, HandlerResult, LocalCall, SendCall};
+use super::host::{Detach, HostDetach};
 use super::input::{DecodeWith, InputKind, REPORTED};
 use super::metadata::HandlerMetadata;
 #[cfg(all(test, feature = "json"))]
@@ -193,6 +196,50 @@ where
     }
 }
 
+/// The local twin of [`SliceHandler`]: a handler of one whole decoded batch on a runner that
+/// polls it where it started, so its future need not be `Send`.
+pub(crate) trait LocalSliceHandler<T, C = (), S = ()> {
+    /// Handles one decoded batch. See [`SliceHandler::handle_slice`].
+    fn handle_slice(
+        &self,
+        batch: &[T],
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = BatchResult>;
+}
+
+/// The runner family a batch adapter calls its inner handler through, as
+/// [`CallHandler`](super::handler::CallHandler) is for one delivery at a time.
+pub(crate) trait CallSlice<Inner, T, C, S> {
+    /// Runs `inner` on one decoded batch.
+    fn handle_slice(
+        inner: &Inner,
+        batch: &[T],
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = BatchResult>;
+}
+
+impl<Inner: SliceHandler<T, C, S>, T, C, S> CallSlice<Inner, T, C, S> for SendCall {
+    #[inline]
+    fn handle_slice(
+        inner: &Inner,
+        batch: &[T],
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = BatchResult> {
+        SliceHandler::handle_slice(inner, batch, ctx)
+    }
+}
+
+impl<Inner: LocalSliceHandler<T, C, S>, T, C, S> CallSlice<Inner, T, C, S> for LocalCall {
+    #[inline]
+    fn handle_slice(
+        inner: &Inner,
+        batch: &[T],
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = BatchResult> {
+        LocalSliceHandler::handle_slice(inner, batch, ctx)
+    }
+}
+
 /// A batch handler definition produced by a `&[T]`-taking `#[subscriber]` handler.
 ///
 /// The batch counterpart of [`SubscriberDef`](super::SubscriberDef): same metadata surface, but
@@ -291,7 +338,7 @@ pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetad
 /// One batch as its handler takes it: what its context is built from, and what the harness
 /// records of it when the handler panics before settling anything.
 #[doc(hidden)]
-pub trait TakenBatch<C>: Send {
+pub trait TakenBatch<C> {
     /// The batch's context, or `None` for a batch with nothing in it: such a batch runs nothing.
     fn context(&self) -> Option<C>;
 
@@ -305,7 +352,7 @@ pub trait TakenBatch<C>: Send {
 // The decoding forms collect the deliveries, and a batch's context is built from its first.
 impl<M, C> TakenBatch<C> for Vec<M>
 where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
     C: BuildBatchContext<M>,
 {
     fn context(&self) -> Option<C> {
@@ -339,7 +386,7 @@ pub trait BatchHandler<Batch, C = (), S = ()>: Send + Sync {
 
     /// The batch as this handler takes it: its deliveries collected, or the broker's batch whole
     /// where the handler lends the values the batch holds.
-    type Taken: TakenBatch<C>;
+    type Taken: TakenBatch<C> + Send;
 
     /// Takes one batch off the subscription.
     fn take(batch: Batch) -> Self::Taken;
@@ -549,13 +596,36 @@ where
         batch.into_iter().collect()
     }
 
-    async fn handle_batch<Host: Detach>(
+    fn handle_batch<Host: Detach>(
+        &self,
+        batch: Vec<M>,
+        scratch: &mut (),
+        ctx: &mut Context<'_, C, S>,
+        host: &Host,
+    ) -> impl Future<Output = ()> + Send {
+        self.handle_local::<SendCall, C, S, Host>(batch, scratch, ctx, host)
+    }
+}
+
+impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
+    /// Constructs each element in place and runs the inner handler on those that construct: the
+    /// adapter's body, for a batch of either family. The [`BatchHandler`] impl is this future; a
+    /// runner whose deliveries are not `Sync` reaches it through
+    /// [`LocalBatch`](local::LocalBatch).
+    // `Send` exactly where the deliveries are: the `BatchHandler` impl's signature proves it there.
+    #[allow(clippy::future_not_send)]
+    pub(crate) async fn handle_local<Via, C, S, Host: HostDetach>(
         &self,
         batch: Vec<M>,
         _scratch: &mut (),
         ctx: &mut Context<'_, C, S>,
         host: &Host,
-    ) {
+    ) where
+        M: LocalIncomingMessage,
+        F: Deserialized,
+        Via: for<'p> CallSlice<Inner, F::Output<'p>, C, S>,
+        C: BuildBatchContext<M> + Send + Sync + 'static,
+    {
         let subscription = ctx.subscription();
         if batch.is_empty() {
             return;
@@ -595,7 +665,7 @@ where
         let result = if values.is_empty() {
             BatchResult::PerElement(Vec::new())
         } else {
-            self.inner.handle_slice(&values, ctx).await
+            Via::handle_slice(&self.inner, &values, ctx).await
         };
         drop(values);
         settle_split_batch(batch, rejected, result, subscription, delivery, host).await;
@@ -642,6 +712,8 @@ pub(crate) fn record_batch_size(destination: &KeyValue, len: usize) {
 /// across an `.await` would wrongly require `Context: Sync`.
 // The `&mut` is for Send-ness, not mutation (only `&self` methods are called), so the lint fires.
 #[allow(clippy::needless_pass_by_ref_mut)]
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S, Host>(
     batch: Vec<M>,
     values: &mut Vec<Input::Owned>,
@@ -656,7 +728,7 @@ where
     DecodeCodec: Sync,
     C: BuildBatchContext<M> + Send + Sync + 'static,
     S: Send + Sync,
-    Host: Detach,
+    Host: HostDetach,
 {
     let subscription = ctx.subscription();
     // Taken before the loop: the settle below awaits, and a borrow of `ctx` held across it would
@@ -750,7 +822,7 @@ pub(crate) fn reported<M, C, S>(
     ctx: &Context<'_, C, S>,
 ) -> Option<HandlerResult>
 where
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
 {
     let err = msg.decode_error()?;
     warn!(
@@ -784,11 +856,13 @@ pub(crate) fn rejection<C, S>(
 }
 
 mod carried;
+mod local;
 mod settle;
 
 pub(crate) use carried::{CarriedBatch, SourceCarriesBatch};
+pub use local::{LocalBatch, LocalBatchHandler};
 use settle::settle_split_batch;
-pub(crate) use settle::{LentValues, settle_batch, settle_lent_batch};
+pub(crate) use settle::{LentValues, lent_nothing, settle_batch, settle_lent_batch};
 
 #[cfg(all(test, feature = "json"))]
 mod tests;

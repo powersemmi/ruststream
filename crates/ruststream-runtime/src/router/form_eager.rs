@@ -9,6 +9,7 @@ use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
 use crate::batch::{BatchDef, SourceCarriesBatch};
 use crate::input::{Carried, DecodeWith, Materialize, Provided};
+use crate::publish::PublishPipeline;
 use crate::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::subscriber_def::SubscriberDef;
 use crate::{SourceMessage, SourceSubscriber};
@@ -33,6 +34,7 @@ where
     SourceSubscriber<B, Def::Source>: Send + 'static,
     Def::Input: Materialize<SoloDecoder<Def, B, RouteCodec>, SourceMessage<B, Def::Source>>,
     Def::Handler: 'static,
+    RoutePipe: PublishPipeline,
 {
     type Out = IncludedRouter<
         B,
@@ -64,6 +66,7 @@ where
     SourceSubscriber<B, Def::Source>: Send + 'static,
     Def::Handler: 'static,
     F: Send + Sync + 'static,
+    RoutePipe: PublishPipeline,
 {
     type Out = IncludedRouter<B, Def::Source, Def, (), RouteCodec, RouteLayers, RoutePipe, Routes>;
 
@@ -112,6 +115,7 @@ where
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
     Def::Handler: 'static,
     F: Send + Sync + 'static,
+    RoutePipe: PublishPipeline,
 {
     type Out =
         IncludedRawBatchRouter<B, Def::Source, Def, F, RouteCodec, RouteLayers, RoutePipe, Routes>;

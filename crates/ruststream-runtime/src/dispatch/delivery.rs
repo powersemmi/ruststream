@@ -1,8 +1,8 @@
 //! What one subscription dispatches under, and the slot one delivery waits in on its way to
 //! the settle.
 
-use std::fmt;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::fmt;
 #[cfg(feature = "otel")]
 use std::sync::OnceLock;
 
@@ -14,7 +14,7 @@ use crate::IncomingMessage;
 use crate::RetryDeclaration;
 #[cfg(doc)]
 use crate::context::Context;
-use crate::host::Detach;
+use crate::host::HostDetach;
 #[cfg(feature = "tokio")]
 use crate::main_runtime::MainRuntime;
 #[cfg(feature = "poll-diagnostics")]
@@ -267,7 +267,7 @@ impl<M> Slot<M> {
 #[doc(hidden)]
 pub trait Lent<C> {
     /// The runner's handle the loop hands its leftovers to.
-    type Host: Detach;
+    type Host: HostDetach;
 
     /// The publish context every delivery of the subscription runs under.
     fn delivery(&self) -> &Delivery<C>;
@@ -290,7 +290,7 @@ impl<C, Shared: Lent<C>> Lent<C> for Arc<Shared> {
     }
 }
 
-impl<C, Host: Detach> Lent<C> for (&Delivery<C>, &Host) {
+impl<C, Host: HostDetach> Lent<C> for (&Delivery<C>, &Host) {
     type Host = Host;
 
     #[inline]
@@ -306,12 +306,13 @@ impl<C, Host: Detach> Lent<C> for (&Delivery<C>, &Host) {
 
 #[cfg(test)]
 mod tests {
-    use std::future::ready;
+    use alloc::format;
+    use core::future::ready;
 
     use bytes::BytesMut;
 
-    use super::super::dispatch;
     use super::super::fixtures::{PlainMessage, RejectingPublisher, Settlement};
+    use super::super::{HeadersOnDemand, dispatch};
     use super::*;
     use crate::HeaderMap;
     use crate::context::Context;
@@ -326,8 +327,10 @@ mod tests {
         let empty = format!("{:?}", Delivery::<()>::empty());
         assert!(empty.contains("retry_destination: None"), "{empty}");
 
-        let wired: Delivery =
-            Delivery::deferring_to(bare_retry_publisher(RejectingPublisher), "orders");
+        let wired: Delivery = Delivery::deferring_to(
+            bare_retry_publisher(RejectingPublisher::default()),
+            "orders",
+        );
         assert!(format!("{wired:?}").contains("retry_destination: Some(Some(\"orders\"))"));
     }
 
@@ -353,6 +356,7 @@ mod tests {
         let host = Tracked(TaskTracker::new());
         let ack_anything =
             |_: &PlainMessage<[u8; BULK]>, _: &mut Context<'_>| ready(HandlerOutcome::ack());
+        let ack_anything = Arc::new(ack_anything);
         let dispatching = dispatch(
             &ack_anything,
             &mut slot,
@@ -362,6 +366,7 @@ mod tests {
             &delivery,
             &host,
             &failure,
+            HeadersOnDemand,
         );
         size_of_val(&dispatching)
     }

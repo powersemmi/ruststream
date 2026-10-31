@@ -88,3 +88,98 @@ fn field_skipped(field: &Field) -> syn::Result<bool> {
     }
     Ok(skip)
 }
+
+#[cfg(test)]
+mod tests {
+    use syn::parse_quote;
+
+    use super::*;
+
+    fn refusal(input: &DeriveInput) -> String {
+        expand(input)
+            .expect_err("this state is refused")
+            .to_string()
+    }
+
+    #[test]
+    fn a_state_is_a_plain_struct_with_named_fields() {
+        let generic: DeriveInput = parse_quote!(
+            struct AppState<Db> {
+                db: Db,
+            }
+        );
+        let enumeration: DeriveInput = parse_quote!(
+            enum AppState {
+                Up,
+            }
+        );
+        let tuple: DeriveInput = parse_quote!(
+            struct AppState(Db);
+        );
+
+        assert_eq!(
+            refusal(&generic),
+            "#[derive(FromRef)] does not support generic state types"
+        );
+        assert_eq!(
+            refusal(&enumeration),
+            "#[derive(FromRef)] supports only structs with named fields"
+        );
+        assert_eq!(
+            refusal(&tuple),
+            "#[derive(FromRef)] supports only structs with named fields"
+        );
+    }
+
+    #[test]
+    fn each_injected_type_comes_from_one_field() {
+        let shared: DeriveInput = parse_quote!(
+            struct AppState {
+                orders: Pool,
+                invoices: Pool,
+            }
+        );
+        let one_skipped: DeriveInput = parse_quote!(
+            struct AppState {
+                orders: Pool,
+                #[from_ref(skip)]
+                invoices: Pool,
+            }
+        );
+
+        assert_eq!(
+            refusal(&shared),
+            "two fields share a type, so injection by type is ambiguous; mark one \
+             `#[from_ref(skip)]`"
+        );
+        assert!(
+            expand(&one_skipped).is_ok(),
+            "a skipped field claims no type"
+        );
+    }
+
+    #[test]
+    fn a_state_injects_at_least_one_field_and_knows_only_skip() {
+        let all_skipped: DeriveInput = parse_quote!(
+            struct AppState {
+                #[from_ref(skip)]
+                orders: Pool,
+            }
+        );
+        let unknown: DeriveInput = parse_quote!(
+            struct AppState {
+                #[from_ref(rename)]
+                orders: Pool,
+            }
+        );
+
+        assert_eq!(
+            refusal(&all_skipped),
+            "#[derive(FromRef)] generated no impls: every field is `#[from_ref(skip)]`"
+        );
+        assert_eq!(
+            refusal(&unknown),
+            "unknown `#[from_ref]` option; expected `skip`"
+        );
+    }
+}

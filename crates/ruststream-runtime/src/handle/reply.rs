@@ -2,18 +2,21 @@
 //! through the publishing machinery, with the policy the chain attached (or the broker's
 //! default) committed right at `include`.
 
-use std::any::type_name;
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::any::type_name;
 
 use crate::batch::BatchResult;
 use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::context::Context;
 use crate::handler::HandlerOutcome;
 use crate::metadata::{OutgoingKind, OutgoingMessageMetadata};
-use crate::publishing::{PublishingCall, PublishingDef};
+use crate::publishing::{LocalPublishingCall, PublishingCall, PublishingDef};
 use crate::router::{IncludeDef, forms};
 use crate::{CallerName, FixedName, Name, OutgoingDestination, Unnamed};
 
-use super::Handle;
 use super::axis::{
     Axis, AxisDocs, Batch, BatchPair, BatchSet, BatchedAxis, Deserialized, Input, Message, Solo,
     SoloAxis, SoloCarried, SoloDeserialized, SoloPair, SoloSet,
@@ -25,6 +28,7 @@ use super::value::{
     SerializedReply,
 };
 use super::verdict::{Batched, OneByOne};
+use super::{Handle, LocalHandle};
 // The self-serialized vocabulary lives with the publish builder (the general wire seam serves
 // every typed surface); re-exported here so the reply seam keeps reading as one module.
 pub use crate::publish::Serialized;
@@ -578,6 +582,94 @@ where
         self.0.value.body.handle(input, &(), ctx).await
     }
 }
+/// The local twins of the solo reply cells above: the body is a [`LocalHandle`] and its future
+/// is awaited where the delivery is polled. The axes keep their bounds, as on the multi-thread
+/// runner.
+macro_rules! impl_local_reply {
+    ($($axis:ident $(+ $extra:ident)?),+ $(,)?) => {$(
+        // Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+        #[allow(clippy::future_not_send)]
+        impl<T, R, C, S, H, Doc, Dest> LocalPublishingCall<S>
+            for Sealed<ReplyValue<HandleValue<$axis<T>, R, (), C, H, Doc>, Dest>>
+        where
+            Self: PublishingDef<
+                    Input = <$axis<T> as Axis>::Kind,
+                    Injections = (),
+                    Reply = R,
+                    Context = C,
+                >,
+            T: Input<Axis = $axis<T>> $(+ $extra)? + Send + Sync + 'static,
+            R: ReplyShape,
+            H: LocalHandle<T, R, (), C, S>,
+        {
+            async fn call_local(
+                &self,
+                input: &T,
+                _injections: &(),
+                ctx: &mut Context<'_, C, S>,
+            ) -> Result<R, HandlerOutcome> {
+                self.0.value.body.handle(input, &(), ctx).await
+            }
+        }
+    )+};
+}
+
+impl_local_reply!(Solo, SoloSet, SoloCarried + Clone);
+
+// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+#[allow(clippy::future_not_send)]
+impl<F, R, C, S, H, Doc, Dest> LocalPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloDeserialized<F>, R, (), C, H, Doc>, Dest>>
+where
+    Self: PublishingDef<
+            Input = <SoloDeserialized<F> as Axis>::Kind,
+            Injections = (),
+            Reply = R,
+            Context = C,
+        >,
+    F: Deserialized + Send + Sync + 'static,
+    for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
+    R: ReplyShape,
+    H: for<'p> LocalHandle<F::Output<'p>, R, (), C, S>,
+{
+    async fn call_local(
+        &self,
+        input: &[u8],
+        _injections: &(),
+        ctx: &mut Context<'_, C, S>,
+    ) -> Result<R, HandlerOutcome> {
+        let input = construct::<F, C, S>(input, ctx)?;
+        self.0.value.body.handle(&input, &(), ctx).await
+    }
+}
+
+// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+#[allow(clippy::future_not_send)]
+impl<Hd, P, R, C, S, H, Doc, Dest> LocalPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, (), C, H, Doc>, Dest>>
+where
+    Self: PublishingDef<
+            Input = <SoloPair<Hd, P> as Axis>::Kind,
+            Injections = (),
+            Reply = R,
+            Context = C,
+        >,
+    Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
+    Hd: Send + Sync + 'static,
+    P: Send + Sync + 'static,
+    R: ReplyShape,
+    H: LocalHandle<Message<Hd, P>, R, (), C, S>,
+{
+    async fn call_local(
+        &self,
+        input: &Message<Hd, P>,
+        _injections: &(),
+        ctx: &mut Context<'_, C, S>,
+    ) -> Result<R, HandlerOutcome> {
+        self.0.value.body.handle(input, &(), ctx).await
+    }
+}
+
 impl<A, R, C, H, Doc, Dest> BatchPublishingDef
     for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), C, H, Doc>, Dest>>
 where

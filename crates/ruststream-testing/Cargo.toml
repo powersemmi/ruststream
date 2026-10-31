@@ -16,6 +16,30 @@ readme = "../../README.md"
 all-features = true
 
 [features]
+# The runtime whose apps the harness drives, as the facade selects it: the two exclude each other
+# there. Each also selects the facade the tests and doc examples build against, as a service of
+# that runtime depends on it.
+# `TestApp` over the tokio runner's app.
+tokio = [
+    "dep:ruststream-runtime-tokio",
+    "dep:inventory",
+    "dep:tokio",
+    "dep:tokio-util",
+    "tokio/test-util",
+    "ruststream/tokio",
+]
+# `TestApp` over the embedded runner's app, on the host: the harness is the test build's time
+# driver, over the generic timer queue that serves any waker, since the harness polls the app
+# inside its own future.
+embassy = [
+    "dep:ruststream-runtime-embassy",
+    "ruststream-runtime-embassy/testing",
+    "dep:embassy-time",
+    "dep:embassy-time-driver",
+    "dep:embassy-time-queue-utils",
+    "dep:critical-section",
+    "ruststream/embassy",
+]
 # The value-encoding entry points, which encode with the default codec these features select.
 json = ["ruststream-runtime/json"]
 cbor = ["ruststream-runtime/cbor"]
@@ -24,12 +48,21 @@ msgpack = ["ruststream-runtime/msgpack"]
 [dependencies]
 ruststream-core = { workspace = true, features = ["testing"] }
 ruststream-runtime = { workspace = true, features = ["testing"] }
-ruststream-runtime-tokio = { workspace = true, features = ["testing"] }
-inventory.workspace = true
+ruststream-runtime-tokio = { workspace = true, optional = true, features = ["testing"] }
+ruststream-runtime-embassy = { workspace = true, optional = true }
+inventory = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
-tracing.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
-tokio-util.workspace = true
+tracing = { workspace = true, features = ["std", "attributes"] }
+tokio = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+# The clock a host test moves: the harness is the test build's one time driver, at embassy-time's
+# microsecond tick, so it knows the deadline of every timer the app armed. Its timer queue holds
+# 64 entries and keeps a timer per waker (the app's timers share the harness's one waker).
+embassy-time = { workspace = true, optional = true, features = ["tick-hz-1_000_000"] }
+embassy-time-driver = { version = "0.2.2", optional = true }
+embassy-time-queue-utils = { version = "0.3.2", optional = true, features = ["generic-queue-64"] }
+# The driver locks through a critical section; on the host it is a process-wide mutex.
+critical-section = { version = "1.1", optional = true, features = ["std"] }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -37,7 +70,17 @@ serde_json = "1"
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
 # The doc examples are a service's code, so they import the facade; a path dependency without a
 # version is dropped on publish.
-ruststream = { path = "../..", features = ["macros", "memory", "json", "testing"] }
+# The runtime is the one this crate's `tokio` or `embassy` feature selects.
+ruststream = { path = "../..", default-features = false, features = ["macros", "memory", "json", "testing"] }
+# A device service's handlers and app, as the embedded tests write them.
+embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
+embassy-futures.workspace = true
 
 [lints]
 workspace = true
+
+# A device service's app driven on the host through the embedded `TestApp`.
+[[test]]
+name = "embedded"
+path = "tests/embedded.rs"
+required-features = ["embassy", "json"]

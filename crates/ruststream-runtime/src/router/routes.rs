@@ -1,10 +1,11 @@
 //! The registration list: route types, the per-route mount trait and [`RouterDef`].
 
-use std::borrow::Cow;
-use std::fmt;
-use std::marker::PhantomData;
-use std::num::NonZeroUsize;
-use std::sync::Arc;
+use alloc::borrow::Cow;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt;
+use core::marker::PhantomData;
+use core::num::NonZeroUsize;
 
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber, SubscriptionSource};
 

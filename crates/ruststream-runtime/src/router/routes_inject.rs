@@ -6,9 +6,10 @@
 //! handle is live by construction and a "not ready" state is never representable inside the
 //! handler.
 
-use std::fmt;
-use std::num::NonZeroUsize;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt;
+use core::num::NonZeroUsize;
 
 use crate::{
     BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, SubscriptionSource,
@@ -297,6 +298,7 @@ mod tests {
     use super::*;
     use crate::Name;
     use crate::codec::JsonCodec;
+    use alloc::format;
 
     /// The injection routes hold no built handler to print, so their `Debug` has to identify the
     /// registration by its metadata; without that a router's registration list is anonymous.

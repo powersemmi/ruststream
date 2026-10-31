@@ -82,6 +82,8 @@
 mod arena;
 mod cells;
 mod entry;
+mod local_entry;
 
-pub use arena::{EntryMarkers, OutPos, Outs, SelectSlot};
+pub use arena::{EntryMarkers, LocalOutPos, OutPos, Outs, SelectSlot, SlotDictionary};
 pub use entry::{OutEntry, Slot};
+pub use local_entry::{LocalEntryMarkers, LocalOutEntry, LocalSlot};

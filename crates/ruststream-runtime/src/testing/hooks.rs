@@ -3,11 +3,14 @@
 //! [`PublishedAssertions::on_publish`](super::PublishedAssertions::on_publish)), and how the
 //! harness runs them at the event.
 
-use std::any::Any;
-use std::marker::PhantomData;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::any::Any;
+use core::marker::PhantomData;
+use core::pin::Pin;
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::panic::{self, AssertUnwindSafe};
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 

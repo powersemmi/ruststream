@@ -11,9 +11,11 @@
 //! Associated types are named through the wrapped definition rather than through `Self`: the
 //! builder implements every definition form, so a bare `Self::Input` would be ambiguous.
 
-use std::marker::PhantomData;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::marker::PhantomData;
 
-use crate::ConnectedBroker;
+use crate::{ConnectedBroker, LocalConnectedBroker};
 
 use super::SubscriberBuilder;
 use crate::batch::{BatchDef, BatchResult};
@@ -24,12 +26,31 @@ use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
 use crate::handle::DeclaresReply;
 use crate::handler::HandlerOutcome;
-use crate::inject::{InjectCall, InjectDef};
+use crate::inject::{InjectCall, InjectDef, LocalInjectCall};
 use crate::input::InputKind;
 use crate::metadata::OutgoingMessageMetadata;
-use crate::publishing::{PublishingCall, PublishingDef};
-use crate::slot::{BindSlots, HasSlots};
+use crate::publishing::{LocalPublishingCall, PublishingCall, PublishingDef};
+use crate::slot::{BindSlots, HasSlots, LocalBindSlots, LocalHasSlots};
 use crate::subscriber_def::SubscriberDef;
+
+/// A source descriptor a settings builder hands to every mount: a value it can clone.
+///
+/// The builder keeps the descriptor and gives each mount its own, so the descriptor is
+/// `Clone`. The bound has a trait of its own so a descriptor without `Clone` is named where the
+/// builder is made (`subscriber(..)`, `local_subscriber(..)`, the attribute). Machinery; never
+/// named directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "the subscription descriptor `{Self}` is not `Clone`",
+    label = "this definition's descriptor `{Self}` does not implement `Clone`",
+    note = "a definition hands each mount its own descriptor, cloned from the one it keeps: \
+            derive or implement `Clone` on `{Self}`"
+)]
+pub trait CloneSource: Clone {}
+
+// The bound reads as the marker's own message, not as the `Clone` it stands for.
+#[diagnostic::do_not_recommend]
+impl<Src: Clone> CloneSource for Src {}
 
 /// The metadata methods every definition trait shares, forwarded to the wrapped definition, plus
 /// the two settings the builder owns.
@@ -81,7 +102,7 @@ macro_rules! forward_outgoing {
 impl<Def, Src, State, DC> SubscriberDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: SubscriberDef,
-    Src: Clone,
+    Src: CloneSource,
 {
     type Input = <Def as SubscriberDef>::Input;
     type Context = <Def as SubscriberDef>::Context;
@@ -98,7 +119,7 @@ where
 impl<Def, Src, State, DC> BatchDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchDef,
-    Src: Clone,
+    Src: CloneSource,
 {
     type Input = <Def as BatchDef>::Input;
     type Context = <Def as BatchDef>::Context;
@@ -115,7 +136,7 @@ where
 impl<Def, Src, State, DC> InjectDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: InjectDef,
-    Src: Clone + Send + Sync,
+    Src: CloneSource + Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -131,7 +152,7 @@ where
 impl<Def, Src, State, DC, S> InjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: InjectCall<S>,
-    Src: Clone + Send + Sync,
+    Src: CloneSource + Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -145,10 +166,27 @@ where
     }
 }
 
+impl<Def, Src, State, DC, S> LocalInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
+where
+    Def: LocalInjectCall<S>,
+    Src: CloneSource + Send + Sync,
+    State: Send + Sync,
+    DC: Send + Sync,
+{
+    fn call_local(
+        &self,
+        input: &<<Def as InjectDef>::Input as InputKind>::Target,
+        injections: &<Def as InjectDef>::Injections,
+        ctx: &mut Context<'_, <Def as InjectDef>::Context, S>,
+    ) -> impl Future<Output = HandlerOutcome> {
+        self.def.call_local(input, injections, ctx)
+    }
+}
+
 impl<Def, Src, State, DC> PublishingDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: PublishingDef,
-    Src: Clone + Send + Sync,
+    Src: CloneSource + Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -173,7 +211,7 @@ where
 impl<Def, Src, State, DC, S> PublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: PublishingCall<S>,
-    Src: Clone + Send + Sync,
+    Src: CloneSource + Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -187,10 +225,27 @@ where
     }
 }
 
+impl<Def, Src, State, DC, S> LocalPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
+where
+    Def: LocalPublishingCall<S>,
+    Src: CloneSource + Send + Sync,
+    State: Send + Sync,
+    DC: Send + Sync,
+{
+    fn call_local(
+        &self,
+        input: &<<Def as PublishingDef>::Input as InputKind>::Target,
+        injections: &<Def as PublishingDef>::Injections,
+        ctx: &mut Context<'_, <Def as PublishingDef>::Context, S>,
+    ) -> impl Future<Output = Result<<Def as PublishingDef>::Reply, HandlerOutcome>> {
+        self.def.call_local(input, injections, ctx)
+    }
+}
+
 impl<Def, Src, State, DC> BatchInjectDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectDef,
-    Src: Clone + Send + Sync,
+    Src: CloneSource + Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -206,7 +261,7 @@ where
 impl<Def, Src, State, DC, S> BatchInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectCall<S>,
-    Src: Clone + Send + Sync,
+    Src: CloneSource + Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -223,7 +278,7 @@ where
 impl<Def, Src, State, DC> BatchPublishingDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingDef,
-    Src: Clone + Send + Sync,
+    Src: CloneSource + Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -248,7 +303,7 @@ where
 impl<Def, Src, State, DC, S> BatchPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingCall<S>,
-    Src: Clone + Send + Sync,
+    Src: CloneSource + Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -267,11 +322,43 @@ impl<Def: HasSlots, Src, State, DC> HasSlots for SubscriberBuilder<Def, Src, Sta
     type Markers = Def::Markers;
 }
 
+impl<Def: LocalHasSlots, Src, State, DC> LocalHasSlots for SubscriberBuilder<Def, Src, State, DC> {
+    type Markers = Def::Markers;
+}
+
 // The reply type is the definition's, so a mount chain reads it through the builder the same way
 // it reads every other structural piece.
 impl<Def: DeclaresReply, Src, State, DC> DeclaresReply for SubscriberBuilder<Def, Src, State, DC> {
     type Reply = Def::Reply;
     type Context = Def::Context;
+}
+
+// The local family's binding, forwarded the same way.
+impl<Def, Src, State, DC, C, Sources> LocalBindSlots<C, Sources>
+    for SubscriberBuilder<Def, Src, State, DC>
+where
+    C: LocalConnectedBroker,
+    Def: LocalBindSlots<C, Sources>,
+{
+    type Bound = SubscriberBuilder<Def::Bound, Src, State, DC>;
+    type Extra = Def::Extra;
+
+    fn bind_local(self, sources: Sources) -> (Self::Bound, Self::Extra) {
+        let (def, source, (workers, failures, batch_size, codec)) = self.into_parts();
+        let (bound, extra) = def.bind_local(sources);
+        (
+            SubscriberBuilder {
+                def: bound,
+                source,
+                workers,
+                failures,
+                batch_size,
+                codec,
+                _state: PhantomData,
+            },
+            extra,
+        )
+    }
 }
 
 // Binding the slots instantiates the publisher-generic definition; the settings and the source

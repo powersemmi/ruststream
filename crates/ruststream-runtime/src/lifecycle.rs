@@ -9,11 +9,20 @@
 //! connected broker travels from the erased `connect` to the typed starters through a shared
 //! slot ([`ConnectedSlot`]), populated before any subscription opens.
 
+use alloc::boxed::Box;
+#[cfg(feature = "std")]
+use alloc::format;
+#[cfg(feature = "std")]
+use alloc::sync::Arc;
 #[cfg(feature = "testing")]
-use std::any::{Any, TypeId};
-use std::{any::type_name, error::Error as StdError, fmt, pin::Pin, sync::Arc};
+use core::any::{Any, TypeId};
+#[cfg(feature = "std")]
+use core::{any::type_name, fmt};
+use core::{error::Error as StdError, pin::Pin};
 
+#[cfg(feature = "std")]
 use crate::bindable::ConnectedSlot;
+#[cfg(feature = "std")]
 use crate::{Broker, ConnectedBroker};
 
 /// A broker's error, erased.
@@ -79,6 +88,7 @@ pub trait ConnectedLifecycle: Send + Sync {
     fn broker_type(&self) -> TypeId;
 }
 
+#[cfg(feature = "std")]
 /// The typed unconnected broker paired with the slot its connected form will be published into.
 #[doc(hidden)]
 pub struct BrokerCell<B: Broker> {
@@ -88,6 +98,7 @@ pub struct BrokerCell<B: Broker> {
     pub slot: ConnectedSlot<B>,
 }
 
+#[cfg(feature = "std")]
 impl<B: Broker> fmt::Debug for BrokerCell<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BrokerCell")
@@ -96,6 +107,7 @@ impl<B: Broker> fmt::Debug for BrokerCell<B> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<B: Broker + 'static> BrokerLifecycle for BrokerCell<B> {
     fn connect(
         self: Box<Self>,
@@ -135,6 +147,7 @@ impl<B: Broker + 'static> BrokerLifecycle for BrokerCell<B> {
     }
 }
 
+#[cfg(feature = "std")]
 /// Publishes a freshly connected broker into its slot, for the starters to open subscriptions
 /// against, and keeps it for teardown.
 fn publish_connected<B: Broker + 'static>(
@@ -146,12 +159,14 @@ fn publish_connected<B: Broker + 'static>(
     Box::new(ConnectedCell::<B> { connected, slot })
 }
 
+#[cfg(feature = "std")]
 /// The typed connected broker held for teardown, plus the slot still holding a reference to it.
 struct ConnectedCell<B: Broker> {
     connected: Arc<B::Connected>,
     slot: ConnectedSlot<B>,
 }
 
+#[cfg(feature = "std")]
 impl<B: Broker + 'static> ConnectedLifecycle for ConnectedCell<B> {
     fn name(&self) -> &'static str {
         type_name::<B>()

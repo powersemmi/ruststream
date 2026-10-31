@@ -1,13 +1,19 @@
 //! Handler metadata collected by the router and consumed by `ruststream-asyncapi`.
 
-use std::{any::type_name, borrow::Cow, marker::PhantomData};
+use alloc::borrow::Cow;
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::{any::type_name, marker::PhantomData};
 
 #[cfg(feature = "asyncapi")]
 use crate::bindings::{PublishBindings, SubscriptionBindings};
 use crate::input::{DecodeWith, Materialize};
 #[cfg(feature = "asyncapi")]
 use crate::join_headers;
-use crate::{ConnectedBroker, PublishPolicy, RetryDeclaration, SubscriptionSource};
+use crate::{
+    ConnectedBroker, LocalConnectedBroker, LocalSubscriptionSource, PublishPolicy, RetryDeclaration,
+};
 
 /// What a declared outgoing message is to the registration declaring it.
 ///
@@ -712,8 +718,8 @@ impl HandlerMetadata {
     #[must_use]
     pub(crate) fn describing<C, S>(self, source: &S) -> Self
     where
-        C: ConnectedBroker,
-        S: SubscriptionSource<C>,
+        C: LocalConnectedBroker,
+        S: LocalSubscriptionSource<C>,
     {
         let _ = source;
         #[cfg(not(feature = "asyncapi"))]
@@ -765,6 +771,7 @@ impl HandlerMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn builder_tail_attaches_every_optional_detail() {

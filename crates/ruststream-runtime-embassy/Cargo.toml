@@ -1,0 +1,121 @@
+[package]
+name = "ruststream-runtime-embassy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The embedded runner of the RustStream messaging framework: a service's app on embassy's executor and clock, with or without a heap."
+keywords = ["messaging", "embedded", "embassy", "no-std", "ruststream"]
+categories = ["asynchronous", "embedded", "no-std"]
+readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+# The in-process run the test harness drives the app through: every broker connected through its
+# in-process transition. A host test build turns it on through the facade's `testing` feature.
+testing = ["ruststream-runtime/testing"]
+
+[dependencies]
+ruststream-core = { workspace = true, features = ["alloc"] }
+ruststream-runtime = { workspace = true, features = ["alloc"] }
+futures-core.workspace = true
+# The clock a device reads. The driver is the binary's choice: a host test picks the mock driver.
+embassy-time.workspace = true
+# The channels and wakers the runner keeps, all without a heap.
+embassy-sync.workspace = true
+heapless.workspace = true
+futures = { workspace = true, features = ["alloc"] }
+thiserror.workspace = true
+tracing.workspace = true
+bytes.workspace = true
+embassy-futures.workspace = true
+# Projects a worker's future through the gate that keeps a parked worker from being polled.
+pin-project-lite.workspace = true
+# The keyed lanes' hasher: 32-bit FNV-1a, no state and no allocation; heapless already depends on it.
+hash32 = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+# The thread-mode executor of the `std` platform: the executor a device runs, hosted on a thread.
+# Its integrated timer queue keeps each timer in the task that awaits it, so every timer the body
+# arms must be polled with an embassy task's own waker.
+embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
+# The clock the test moves by hand. The executor's integrated timer queue serves it, so no
+# `generic-queue-N` feature is named.
+embassy-time = { workspace = true, features = ["mock-driver"] }
+embassy-futures.workspace = true
+# The mock driver and the shutdown's waker list lock through a critical section; on a host it is a
+# process-wide mutex.
+critical-section = { version = "1.1", features = ["std"] }
+static_cell = "2.1"
+ruststream-memory = { workspace = true, features = ["embassy"] }
+# Counts the process's allocations so the test reads what one delivery made: four atomic
+# counters per allocation, in the test binary only.
+stats_alloc = "0.1.10"
+# The compile-fail snapshots, and the tokio-only surface they hold this runner apart from.
+trybuild = "1"
+# The facade as a device service imports it: the embassy runtime, so the attributes emit the local
+# forms the host tests and the snapshots write.
+ruststream = { path = "../..", default-features = false, features = ["embassy", "macros", "memory", "json"] }
+ruststream-cli.workspace = true
+# The reply the codec encodes, as a device crate derives it.
+serde.workspace = true
+
+# The executor owns the thread it runs on, and the mock clock is one per process, so the test is a
+# binary of its own with no test harness: it passes when the executor returns.
+[[test]]
+name = "embassy"
+path = "tests/embassy.rs"
+harness = false
+
+# Whole apps on the executor and the mock clock: a binary of its own, as above.
+[[test]]
+name = "app"
+path = "tests/app.rs"
+harness = false
+
+# The constant worker pool and keyed lanes on the executor and the mock clock.
+[[test]]
+name = "lanes"
+path = "tests/lanes.rs"
+harness = false
+
+# A device service's handlers and app written with the attributes, on the executor and the mock
+# clock.
+[[test]]
+name = "attributes"
+path = "tests/attributes.rs"
+harness = false
+
+# Apps with many routes, on one broker and over two: a binary of its own, as above.
+[[test]]
+name = "routes"
+path = "tests/routes.rs"
+harness = false
+
+# `retry_after` with copies kept in a store of the mount site's capacity, on the mock clock: a
+# binary of its own, as above.
+[[test]]
+name = "retry"
+path = "tests/retry.rs"
+harness = false
+
+# The plan steps after the publishing forms (a codec reply, a raw reply, an `Out` slot), on the
+# mock clock: a binary of its own, as above.
+[[test]]
+name = "planned"
+path = "tests/planned.rs"
+harness = false
+
+# What the runner does with an outcome beyond an ack: continuations, retries and the cap.
+[[test]]
+name = "settle"
+path = "tests/settle.rs"
+harness = false
+
+[lints]
+workspace = true

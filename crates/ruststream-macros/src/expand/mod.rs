@@ -2,23 +2,30 @@
 //! [`HandlerParts`], then one `impl Handle` plus the value-definition wiring is generated
 //! around the original function body ([`unified`]).
 
+mod params;
 mod unified;
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{ToTokens, quote};
-use syn::punctuated::Punctuated;
-use syn::{Error, Expr, FnArg, Ident, ItemFn, Pat, PatType, ReturnType, Type, TypePath};
+use quote::quote;
+use syn::{Error, Expr, FnArg, Ident, ItemFn, Pat, PatType, ReturnType, Type};
 
 use crate::parse;
 use crate::parse::{
     FailurePolicyArg, SubscriberArgs, WorkersArg, doc_description, position_type, source_tokens,
     vec_element,
 };
+use crate::runtime::Runtime;
+
+use params::{
+    BodyDecl, OutParam, Shape, collect_extractors, ctx_extractor_key, from_headers_ty,
+    is_context_param, is_main_runtime_key, message_param, split_outs, state_type,
+    subst_elided_lifetime,
+};
 
 pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
     let parts = handler_parts(args, func)?;
-    Ok(unified::expand(args, &parts, func)?.into())
+    Ok(unified::expand(args, &parts, func, Runtime::SELECTED)?.into())
 }
 
 /// The pieces of the handler shared by every expansion form, extracted from the signature.
@@ -95,209 +102,6 @@ fn inferred_context_type(func: &ItemFn) -> TokenStream2 {
         }
     }
     quote!(())
-}
-
-/// One `Out<impl Bounds[, Marker[, Set]]>` handler parameter: the binding pattern, the written
-/// parameter type, the capability bounds the publisher generic carries, the slot marker type
-/// (the implicit `DefaultSlot` when the parameter names none), and the declared message set of
-/// the optional third position.
-struct OutParam<'a> {
-    pat: &'a Pat,
-    /// The parameter type exactly as written, for the signature witness the unified emission
-    /// keeps the user's imports used with.
-    ty: &'a Type,
-    bounds: &'a Punctuated<syn::TypeParamBound, syn::Token![+]>,
-    marker: TokenStream2,
-    /// The declared message set; `None` (also written `()`) leaves the slot unrestricted.
-    bodies: Option<BodyDecl<'a>>,
-}
-
-/// The declared message set of an `Out` parameter's third position.
-enum BodyDecl<'a> {
-    /// A tuple listing the types inline.
-    List(Vec<&'a Type>),
-    /// A set-defining type: a `#[derive(Outgoing)]` type (itself) or a `#[derive(OutMessages)]`
-    /// enum (its variants' models).
-    Set(&'a Type),
-}
-
-/// The type arguments of an `Out<..>`-shaped parameter type, when the type has that shape.
-/// Purely syntactic (the last path segment `Out` with one or two type arguments), like the
-/// `Ctx<K>` probe below.
-fn out_param_args(ty: &Type) -> Option<Vec<&Type>> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    let segment = path.path.segments.last()?;
-    if segment.ident != "Out" {
-        return None;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    let types: Vec<&Type> = args
-        .args
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::GenericArgument::Type(ty) => Some(ty),
-            _ => None,
-        })
-        .collect();
-    if types.is_empty() || types.len() > 3 {
-        return None;
-    }
-    Some(types)
-}
-
-/// The contract type `T` of a `Headers<T>`-shaped parameter type, when the type has that
-/// shape. Purely syntactic (the last path segment `Headers` with exactly one type argument),
-/// like the `Ctx<K>` probe below.
-fn from_headers_ty(ty: &Type) -> Option<&Type> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    let segment = path.path.segments.last()?;
-    if segment.ident != "Headers" {
-        return None;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    let mut types = args.args.iter().filter_map(|arg| match arg {
-        syn::GenericArgument::Type(ty) => Some(ty),
-        _ => None,
-    });
-    let contract = types.next()?;
-    if types.next().is_some() {
-        return None;
-    }
-    Some(contract)
-}
-
-/// The `(H, P)` arguments of a `Message<H, P>`-shaped type, when the type has that shape.
-/// Purely syntactic (the last path segment `Message` with exactly two type arguments), like the
-/// `Ctx<K>` probe below: an alias hiding the pair reads as a plain payload type and fails on
-/// its missing `Deserialize` impl instead.
-fn message_pair_args(ty: &Type) -> Option<(&Type, &Type)> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    let segment = path.path.segments.last()?;
-    if segment.ident != "Message" {
-        return None;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    let mut types = args.args.iter().filter_map(|arg| match arg {
-        syn::GenericArgument::Type(ty) => Some(ty),
-        _ => None,
-    });
-    let headers = types.next()?;
-    let payload = types.next()?;
-    if types.next().is_some() {
-        return None;
-    }
-    Some((headers, payload))
-}
-
-/// Whether a `Ctx` key is the app runtime's handle, by the last segment of its path.
-fn is_main_runtime_key(key: &Type) -> bool {
-    matches!(key, Type::Path(path) if path.path.segments.last().is_some_and(|segment| segment.ident == "MainRuntime"))
-}
-
-/// The key type `K` of a `Ctx<K>`-shaped parameter type, when the type has that shape.
-fn ctx_extractor_key(ty: &Type) -> Option<&Type> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    let segment = path.path.segments.last()?;
-    if segment.ident != "Ctx" {
-        return None;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    let mut types = args.args.iter().filter_map(|arg| match arg {
-        syn::GenericArgument::Type(ty) => Some(ty),
-        _ => None,
-    });
-    let key = types.next()?;
-    if types.next().is_some() {
-        return None;
-    }
-    Some(key)
-}
-
-/// The application-state type the handler named as the third generic of its
-/// `ctx: &mut Context<'_, C, St>` parameter, or `None` when it named none (only `Context` or
-/// `Context<'_, C>`). When present, the handler is bound to that state type; when absent, the
-/// generated `Handle` impl is generic over the state, so the handler mounts on an app with any
-/// state.
-fn state_type(func: &ItemFn) -> Option<TokenStream2> {
-    let FnArg::Typed(PatType { ty, .. }) = func.sig.inputs.get(1)? else {
-        return None;
-    };
-    // Only a `&mut Context<..>` second parameter names a state; a second extractor parameter does
-    // not.
-    if !is_context_param(ty) {
-        return None;
-    }
-    // Collect the type arguments of `&mut Context<'_, C, St>` (skipping the lifetime); the second is
-    // the state type.
-    if let Type::Reference(reference) = &**ty
-        && let Type::Path(path) = &*reference.elem
-        && let Some(segment) = path.path.segments.last()
-        && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
-    {
-        let mut types = args.args.iter().filter_map(|arg| match arg {
-            syn::GenericArgument::Type(ty) => Some(ty),
-            _ => None,
-        });
-        let _context_ty = types.next();
-        if let Some(state_ty) = types.next() {
-            return Some(quote!(#state_ty));
-        }
-    }
-    None
-}
-
-/// True when a handler parameter is the optional per-delivery `&mut Context<..>` (matched by the
-/// path's last segment being `Context`), as opposed to an extractor parameter.
-fn is_context_param(ty: &Type) -> bool {
-    if let Type::Reference(reference) = ty
-        && reference.mutability.is_some()
-        && let Type::Path(path) = &*reference.elem
-        && let Some(segment) = path.path.segments.last()
-    {
-        return segment.ident == "Context";
-    }
-    false
-}
-
-/// The handler's extractor parameters: every parameter after the message that is not the optional
-/// `&mut Context`. Each is resolved through `FromContext` before the body runs. `ctx_present`
-/// reports whether the second parameter is the context (and so is skipped here).
-fn collect_extractors(func: &ItemFn, ctx_present: bool) -> syn::Result<Vec<(&Pat, &Type)>> {
-    let start = if ctx_present { 2 } else { 1 };
-    let mut extractors = Vec::new();
-    for arg in func.sig.inputs.iter().skip(start) {
-        let FnArg::Typed(PatType { pat, ty, .. }) = arg else {
-            return Err(Error::new_spanned(
-                arg,
-                "a #[subscriber] handler cannot take `self`",
-            ));
-        };
-        if is_context_param(ty) {
-            return Err(Error::new_spanned(
-                ty,
-                "the `&mut Context` parameter must come immediately after the message, before any \
-                 extractor parameters",
-            ));
-        }
-        extractors.push((&**pat, &**ty));
-    }
-    Ok(extractors)
 }
 
 /// The predicates binding each extractor type to `FromContext` for the handler's context `C`
@@ -562,218 +366,6 @@ fn workers_count(keyword: &Ident, count: &Expr, handler: &Ident) -> syn::Result<
     })
 }
 
-/// Splits the `Out<..>` parameters out of the extractor list, in signature order.
-///
-/// Each must carry its capability as `impl Trait` (the concrete publisher type is inferred at
-/// the include site) and a distinct marker; a single parameter may omit the marker and binds
-/// the implicit `DefaultSlot`. The bound lands on the wired live value, so what a body writes is
-/// the broker capability vocabulary the include site's policy is checked against.
-fn split_outs<'a>(extractors: &mut Vec<(&'a Pat, &'a Type)>) -> syn::Result<Vec<OutParam<'a>>> {
-    let mut outs = Vec::new();
-    let mut kept = Vec::new();
-    for (pat, ty) in extractors.drain(..) {
-        let Some(args) = out_param_args(ty) else {
-            kept.push((pat, ty));
-            continue;
-        };
-        let Type::ImplTrait(capability) = args[0] else {
-            return Err(Error::new_spanned(
-                args[0],
-                "an Out parameter names the capability it needs, not a publisher type: write \
-                 `Out<impl Publisher>` (or a capability like `impl OwnedTransactions`); the \
-                 concrete publisher is inferred from the policy attached at the include site",
-            ));
-        };
-        let marker = args.get(1).map_or_else(
-            || quote!(::ruststream::runtime::DefaultSlot),
-            |marker| quote!(#marker),
-        );
-        let bodies = match args.get(2) {
-            Some(body) => body_decl(body)?,
-            None => None,
-        };
-        outs.push(OutParam {
-            pat,
-            ty,
-            bounds: &capability.bounds,
-            marker,
-            bodies,
-        });
-    }
-    *extractors = kept;
-    if outs.len() > 3 {
-        return Err(Error::new_spanned(
-            outs[3].pat,
-            "a #[subscriber] handler takes at most three Out parameters",
-        ));
-    }
-    for (index, out) in outs.iter().enumerate() {
-        let name = out.marker.to_string();
-        if outs
-            .iter()
-            .skip(index + 1)
-            .any(|other| other.marker.to_string() == name)
-        {
-            return Err(Error::new_spanned(
-                out.pat,
-                "every Out parameter needs its own slot marker: two parameters bind the same \
-                 slot (name each with `Out<impl Publisher, MyMarker>` and derive the markers \
-                 with #[derive(OutSlot)])",
-            ));
-        }
-    }
-    Ok(outs)
-}
-
-/// The declared message set of an `Out` parameter's third position: a tuple lists types
-/// inline (`()` = unrestricted, like an absent position), a bare type defines its own set.
-/// Rejects a duplicate list entry (its membership index inference would be ambiguous).
-fn body_decl(body: &Type) -> syn::Result<Option<BodyDecl<'_>>> {
-    let Type::Tuple(tuple) = body else {
-        // A bare type defines its own set: a #[derive(Outgoing)] type declares itself, a
-        // #[derive(OutMessages)] enum declares its variants' models.
-        return Ok(Some(BodyDecl::Set(body)));
-    };
-    let bodies: Vec<&Type> = tuple.elems.iter().collect();
-    // `()` spells the default out: the slot stays unrestricted.
-    if bodies.is_empty() {
-        return Ok(None);
-    }
-    if bodies.len() > 4 {
-        return Err(Error::new_spanned(
-            bodies[4],
-            "an Out parameter lists at most four message types inline; declare a \
-             #[derive(OutMessages)] set enum for a larger one",
-        ));
-    }
-    for (index, body) in bodies.iter().enumerate() {
-        let name = body.to_token_stream().to_string();
-        if bodies
-            .iter()
-            .skip(index + 1)
-            .any(|other| other.to_token_stream().to_string() == name)
-        {
-            return Err(Error::new_spanned(
-                body,
-                "this type is already in the Out parameter's message list",
-            ));
-        }
-    }
-    Ok(Some(BodyDecl::List(bodies)))
-}
-
-/// What the handler consumes per invocation, read off its message parameter - the attribute
-/// carries no form clause: `&T` is one message, `&[T]` a whole batch of them. Which lane the
-/// element rides (the codec, or its own `Deserialized` construction) is the type's own
-/// business, so the shape stops at the slice question.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Shape {
-    Single,
-    Batch,
-}
-
-/// Resolves the message parameter's referent into the handler's shape and the element type. The
-/// mapping is purely syntactic, over the type's own tokens: an alias hiding a slice reads as a
-/// single message. A bare byte slice is rejected with the derive that names the lane.
-fn resolve_shape(reference: &syn::TypeReference) -> syn::Result<(Shape, &Type)> {
-    let elem = &*reference.elem;
-    if is_u8_slice(elem) {
-        return Err(Error::new_spanned(
-            elem,
-            "a payload's bytes take a named type: #[derive(Deserialized)] on a newtype over \
-             the payload view (struct Frame<'a>(&'a [u8]);) and take `&Frame<'_>`",
-        ));
-    }
-    match elem {
-        Type::Slice(slice) => {
-            if is_u8_slice(&slice.elem)
-                || matches!(&*slice.elem, Type::Reference(r) if is_u8_slice(&r.elem))
-            {
-                return Err(Error::new_spanned(
-                    &slice.elem,
-                    "a batch of payloads takes a named element type: #[derive(Deserialized)] on \
-                     a newtype over the payload view (struct Frame<'a>(&'a [u8]);) and take \
-                     `&[Frame<'_>]`",
-                ));
-            }
-            Ok((Shape::Batch, &slice.elem))
-        }
-        other => Ok((Shape::Single, other)),
-    }
-}
-
-/// True when `ty` is syntactically `[u8]`, the byte-slice spelling the input rule rejects in
-/// favor of a named `Deserialized` type.
-fn is_u8_slice(ty: &Type) -> bool {
-    if let Type::Slice(slice) = ty
-        && let Type::Path(TypePath {
-            qself: None, path, ..
-        }) = &*slice.elem
-    {
-        return path.is_ident("u8");
-    }
-    false
-}
-
-/// Rewrites every elided lifetime (`'_`) in `ty` to `lifetime`, reporting whether any was
-/// found. How a lifetime-carrying input (a `Deserialized` view) is spelled at each position:
-/// the emitted impl introduces its own lifetime for the `In` axis, and the definition's
-/// lifetime-free projections take the `'static` representative.
-fn subst_elided_lifetime(ty: &Type, lifetime: &str) -> (Type, bool) {
-    use syn::visit_mut::VisitMut;
-
-    struct Subst {
-        lifetime: syn::Lifetime,
-        found: bool,
-    }
-
-    impl VisitMut for Subst {
-        fn visit_lifetime_mut(&mut self, node: &mut syn::Lifetime) {
-            if node.ident == "_" {
-                *node = self.lifetime.clone();
-                self.found = true;
-            }
-        }
-    }
-
-    let mut subst = Subst {
-        lifetime: syn::Lifetime::new(lifetime, proc_macro2::Span::call_site()),
-        found: false,
-    };
-    let mut rewritten = ty.clone();
-    subst.visit_type_mut(&mut rewritten);
-    (rewritten, subst.found)
-}
-
-/// Dissects the handler's first parameter into the message pattern, the shape, the input type,
-/// and the optional `Message<H, P>` pair arguments.
-fn message_param(func: &ItemFn) -> syn::Result<MessageParam<'_>> {
-    let first = func.sig.inputs.first().ok_or_else(|| {
-        Error::new_spanned(
-            &func.sig,
-            "a #[subscriber] handler must take exactly one message parameter",
-        )
-    })?;
-    let FnArg::Typed(PatType { pat, ty, .. }) = first else {
-        return Err(Error::new_spanned(
-            first,
-            "a #[subscriber] handler cannot take `self`",
-        ));
-    };
-    let Type::Reference(reference) = &**ty else {
-        return Err(Error::new_spanned(
-            ty,
-            "the message parameter must be a reference `&T`",
-        ));
-    };
-    let (shape, input_ty) = resolve_shape(reference)?;
-    Ok((pat, shape, input_ty, message_pair_args(input_ty)))
-}
-
-/// What [`message_param`] dissects: the pattern, the shape, the input type, and the pair
-/// arguments when the input is `Message<H, P>`-shaped.
-type MessageParam<'a> = (&'a Pat, Shape, &'a Type, Option<(&'a Type, &'a Type)>);
-
 fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<HandlerParts<'a>> {
     let (pat, shape, input_ty, pair) = message_param(func)?;
     let description = doc_description(&func.attrs);
@@ -928,4 +520,72 @@ fn publishing_reply<'a>(
         },
         |reply_ty| (reply_ty, quote!((async move #block).await)),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use proc_macro2::Span;
+    use syn::parse_quote;
+
+    use super::*;
+
+    fn refusal<T>(result: syn::Result<T>) -> String {
+        result.err().expect("this handler is refused").to_string()
+    }
+
+    #[test]
+    fn keyed_lanes_do_not_apply_to_a_batch() {
+        let args: SubscriberArgs =
+            syn::parse2(quote!("orders", workers(4, by_key))).expect("the arguments parse");
+        let handler = Ident::new("on_orders", Span::call_site());
+
+        assert_eq!(
+            refusal(workers_step(&args, &handler, Shape::Batch)),
+            "by_key lanes order single messages per key; they do not apply to a batch handler"
+        );
+    }
+
+    #[test]
+    fn a_publishing_handler_returns_its_reply() {
+        let silent: ItemFn = parse_quote!(
+            async fn on_order(order: &Order) {}
+        );
+
+        assert_eq!(
+            refusal(publishing_reply(&silent, &silent.block)),
+            "a publishing handler must return the reply value"
+        );
+    }
+
+    #[test]
+    fn a_batch_publishing_handler_returns_a_vec_of_replies() {
+        let silent: ItemFn = parse_quote!(
+            async fn on_orders(orders: &[Order]) {}
+        );
+        let one: ItemFn = parse_quote!(
+            async fn on_orders(orders: &[Order]) -> Result<Receipt, HandlerOutcome> {}
+        );
+
+        assert_eq!(
+            refusal(batch_reply_body(&silent, &silent.block)),
+            "a batch publishing handler must return the replies: Vec<Reply>, or \
+             Result<Vec<Reply>, HandlerOutcome>"
+        );
+        assert_eq!(
+            refusal(batch_reply_body(&one, &one.block)),
+            "a batch publishing handler replies with a Vec: Result<Vec<Reply>, HandlerOutcome>"
+        );
+    }
+
+    #[test]
+    fn the_drop_and_retry_policies_name_their_runtime_policy() {
+        assert_eq!(
+            failure_policy_tokens(&FailurePolicyArg::Drop).to_string(),
+            quote!(::ruststream::runtime::FailurePolicy::Drop).to_string()
+        );
+        assert_eq!(
+            failure_policy_tokens(&FailurePolicyArg::Retry).to_string(),
+            quote!(::ruststream::runtime::FailurePolicy::Retry).to_string()
+        );
+    }
 }

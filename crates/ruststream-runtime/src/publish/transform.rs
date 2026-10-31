@@ -1,7 +1,7 @@
 //! Per-delivery publish context and the transform stacks layered over a publisher.
 
-use std::fmt;
-use std::marker::PhantomData;
+use core::fmt;
+use core::marker::PhantomData;
 
 use super::Outgoing;
 use crate::HeaderMap;

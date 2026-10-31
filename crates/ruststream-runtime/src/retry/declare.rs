@@ -13,10 +13,10 @@
 //! and what keeps the declaration ahead of `out_retry(policy)`: a chain that bound the publisher
 //! carries [`Retried`](super::Retried), which takes no declaration.
 
-use std::borrow::Cow;
-use std::fmt;
-use std::marker::PhantomData;
-use std::num::NonZeroU32;
+use alloc::borrow::Cow;
+use core::fmt;
+use core::marker::PhantomData;
+use core::num::NonZeroU32;
 
 use crate::RetryDeclaration;
 use crate::router::{AttachDeclaration, RouterCommit};

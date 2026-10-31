@@ -1,12 +1,16 @@
 //! The [`Router`] builder: chaining registrations, codecs and layers, and mounting the result.
 
-use std::fmt;
-use std::marker::PhantomData;
+use alloc::borrow::ToOwned;
+use alloc::vec::Vec;
+use core::fmt;
+use core::marker::PhantomData;
 
-use std::borrow::Cow;
-use std::num::NonZeroU32;
+use alloc::borrow::Cow;
+use core::num::NonZeroU32;
 
-use crate::{Broker, Connected, PublishPolicy, Publisher, RetryDeclaration, Subscriber};
+use crate::{
+    Broker, Connected, LocalBroker, PublishPolicy, Publisher, RetryDeclaration, Subscriber,
+};
 
 use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
@@ -26,6 +30,7 @@ use crate::slot::{NoReply, OutAttachment, SlotCodec};
 
 use super::MergedRouter;
 use super::builders::RouterWith;
+use super::local::{LayerFits, TakesWorkers};
 use super::mount_sink::MountSink;
 use super::routes::{
     BatchRoute, DeclaredRoute, HandleRoute, MountRoute, RetriedRoute, RetryDestinationsDeclared,
@@ -125,7 +130,7 @@ impl<B: Broker + 'static> Router<B, ()> {
     }
 }
 
-impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
+impl<B: LocalBroker + 'static, RouteCodec, RouteLayers, RoutePipe>
     Router<B, (), RouteCodec, RouteLayers, RoutePipe>
 {
     /// Adds a router-scope middleware layer, wrapping every handler in this router when the
@@ -138,7 +143,10 @@ impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
     /// ([`Router::layer`](Router::layer) on a registration), exactly as the other steps of the
     /// chain ride the position named before them.
     #[must_use]
-    pub fn layer<N>(self, layer: N) -> Router<B, (), RouteCodec, Stack<N, RouteLayers>, RoutePipe> {
+    pub fn layer<N>(self, layer: N) -> Router<B, (), RouteCodec, Stack<N, RouteLayers>, RoutePipe>
+    where
+        N: LayerFits<RoutePipe>,
+    {
         Router {
             routes: self.routes,
             codec: self.codec,
@@ -149,7 +157,9 @@ impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
     }
 }
 
-impl<B: Broker + 'static, RouteCodec, RoutePipe> Router<B, (), RouteCodec, Identity, RoutePipe> {
+impl<B: LocalBroker + 'static, RouteCodec, RoutePipe>
+    Router<B, (), RouteCodec, Identity, RoutePipe>
+{
     /// The empty chain a [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) drives one registration
     /// through: the scope's codec and its publish pipeline, with no router-scope layers of its
     /// own (the app's stack wraps at the drain, as it does for any router).
@@ -165,7 +175,7 @@ impl<B: Broker + 'static, RouteCodec, RoutePipe> Router<B, (), RouteCodec, Ident
     }
 }
 
-impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
+impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Sets the codec that subsequent `include` calls decode with, replacing the default.
@@ -334,7 +344,11 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// # fn main() {}
     /// ```
     #[must_use]
-    pub fn workers(mut self, workers: Workers) -> Self {
+    pub fn workers(mut self, workers: Workers) -> Self
+    where
+        // A local chain's runner fixes its pools at its own mount site.
+        RoutePipe: TakesWorkers,
+    {
         self.routes.0.workers = workers;
         self
     }
@@ -437,7 +451,11 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// messages per key and do not apply to batches: a [`Workers::keyed`] policy here behaves
     /// like a plain pool of the same size.
     #[must_use]
-    pub fn workers(mut self, workers: Workers) -> Self {
+    pub fn workers(mut self, workers: Workers) -> Self
+    where
+        // A local chain's runner fixes its pools at its own mount site.
+        RoutePipe: TakesWorkers,
+    {
         self.routes.0.workers = workers;
         self
     }
@@ -569,11 +587,11 @@ impl<B: Broker + 'static, Routes: RouterHandlers, C, Layers, Pipe>
 /// the broker the policy pairs against. Machinery; never named directly.
 #[doc(hidden)]
 pub trait RouterBroker {
-    /// The broker every registration of this router mounts on.
-    type Broker: Broker + 'static;
+    /// The broker every registration of this router mounts on, of either family.
+    type Broker: LocalBroker + 'static;
 }
 
-impl<B: Broker + 'static, Routes, C, Layers, Pipe> RouterBroker
+impl<B: LocalBroker + 'static, Routes, C, Layers, Pipe> RouterBroker
     for Router<B, Routes, C, Layers, Pipe>
 {
     type Broker = B;
@@ -786,7 +804,7 @@ where
 }
 
 // A whole router answers when its registrations do.
-impl<B: Broker, Routes: RetryDestinationsDeclared, C, Layers, Pipe> RetryDestinationsDeclared
+impl<B: LocalBroker, Routes: RetryDestinationsDeclared, C, Layers, Pipe> RetryDestinationsDeclared
     for Router<B, Routes, C, Layers, Pipe>
 {
 }

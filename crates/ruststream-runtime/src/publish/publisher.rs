@@ -1,18 +1,18 @@
 //! The live reply sink: a byte publisher paired with a codec and its transform stacks.
 
-use std::fmt;
+use core::fmt;
 
 use serde::Serialize;
 
 use super::{
     BatchPublishTransform, BatchTransformIdentity, ForReply, Outgoing, PublishContext,
-    PublishPipeline, PublishTransform, PublishTransformIdentity,
+    PublishTransform, PublishTransformIdentity, SendThrough,
 };
 use crate::codec::{Codec, Encoding};
 use crate::lifecycle::BoxError;
-use crate::{HeaderMap, PayloadForm, Publisher};
+use crate::{HeaderMap, LocalPublisher, PayloadForm};
 
-/// A byte [`Publisher`] paired with a [`Codec`] and a static [`PublishTransform`] stack: what a
+/// A byte [`Publisher`](crate::Publisher) paired with a [`Codec`] and a static [`PublishTransform`] stack: what a
 /// reply wiring becomes once the broker connects.
 ///
 /// It carries *how* a reply is encoded and the per-publisher transforms, while *where* it goes
@@ -60,9 +60,13 @@ impl<P, C> TypedPublisher<P, C, PublishTransformIdentity, BatchTransformIdentity
     }
 }
 
-impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
+// Written over the local twin, so one body serves a publisher of either family: a runner that
+// knows its leaf is a `Publisher` and its pipeline a `PublishPipeline` proves these futures
+// `Send` through the forwarding impls.
+#[allow(clippy::future_not_send)]
+impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// The message a reply starts from: `name` and the encoded `payload` over the publisher's
-    /// own base ([`Publisher::base_headers`]).
+    /// own base ([`Publisher::base_headers`](crate::Publisher::base_headers)).
     ///
     /// A reply never passes the publish builder, so this is where the base reaches it, in the same
     /// order the builder uses: the handle's headers first, whatever the reply itself names written
@@ -95,7 +99,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         PL: PublishTransform<ForReply<Cx>, P::Options>,
         BL: Sync,
         Cx: Sync,
-        PP: PublishPipeline,
+        PP: SendThrough<P>,
     {
         let payload =
             <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
@@ -106,7 +110,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         let mut options = None;
         self.layers.apply(&mut out, &mut options, cx);
         pipeline
-            .run(&mut out, &self.publisher, options.as_ref())
+            .send_through(&mut out, &self.publisher, options.as_ref())
             .await
     }
 
@@ -126,7 +130,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         PL: PublishTransform<ForReply<Cx>, P::Options>,
         BL: Sync,
         Cx: Sync,
-        PP: PublishPipeline,
+        PP: SendThrough<P>,
     {
         let payload =
             <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
@@ -138,7 +142,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         let mut options = None;
         self.layers.apply(&mut out, &mut options, cx);
         pipeline
-            .run(&mut out, &self.publisher, options.as_ref())
+            .send_through(&mut out, &self.publisher, options.as_ref())
             .await
     }
 
@@ -158,7 +162,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         PL: Sync,
         BL: BatchPublishTransform<Cx, P::Options>,
         Cx: Sync,
-        PP: PublishPipeline,
+        PP: SendThrough<P>,
     {
         let payload =
             <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
@@ -167,7 +171,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         let mut options = None;
         self.batch_layers.apply(&mut out, &mut options, cx);
         pipeline
-            .run(&mut out, &self.publisher, options.as_ref())
+            .send_through(&mut out, &self.publisher, options.as_ref())
             .await
     }
 }

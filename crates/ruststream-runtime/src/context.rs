@@ -10,13 +10,15 @@
 //! [`headers_mut`](Context::headers_mut), so a delivery whose handler and middleware never touch
 //! the headers pays neither the broker's accessor nor a clone.
 
-use std::cell::OnceCell;
-use std::fmt;
+use alloc::boxed::Box;
 #[cfg(feature = "testing")]
-use std::mem;
-use std::pin::Pin;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::cell::OnceCell;
+use core::fmt;
 #[cfg(feature = "testing")]
-use std::sync::Arc;
+use core::mem;
+use core::pin::Pin;
 
 use bytes::BytesMut;
 
@@ -36,7 +38,8 @@ use crate::main_runtime::MainRuntime;
 /// The map is a broker accessor, and answering it is work on most transports: a shadow buffer
 /// over the record's header block, a parse, and the buffer's destruction. Most deliveries never
 /// read the answer, so the context holds the source rather than the map and asks it at most once.
-pub(crate) trait HeaderSource {
+#[doc(hidden)]
+pub trait HeaderSource {
     /// This delivery's headers as the broker reports them.
     fn headers(&self) -> &HeaderMap;
 }
@@ -78,8 +81,23 @@ impl<'a> From<&'a HeaderMap> for DeliveryHeaders<'a> {
     }
 }
 
+/// A map a delivery already answered: what the dispatch path hands the context of a delivery it
+/// cannot share across threads.
+impl HeaderSource for &HeaderMap {
+    fn headers(&self) -> &HeaderMap {
+        self
+    }
+}
+
 /// The delivery itself, which is what the dispatch path hands the context.
-pub(crate) struct FromDelivery<'m, M>(pub(crate) &'m M);
+#[doc(hidden)]
+pub struct FromDelivery<'m, M>(pub(crate) &'m M);
+
+impl<M> fmt::Debug for FromDelivery<'_, M> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FromDelivery").finish_non_exhaustive()
+    }
+}
 
 impl<M: LocalIncomingMessage> HeaderSource for FromDelivery<'_, M> {
     fn headers(&self) -> &HeaderMap {
@@ -847,6 +865,16 @@ impl<C, S> After<'_, '_, C, S> {
         });
     }
 }
+
+/// How a decode adapter holds the delivery's context: mutably in a build that reads the
+/// decode-failure mark (the harness's classification under `testing`, the consume layer's counter
+/// under `otel`), shared in one that has no reader and so writes no mark.
+#[cfg(any(feature = "testing", feature = "otel"))]
+pub(crate) type MarkingContext<'r, 'a, C, S> = &'r mut Context<'a, C, S>;
+
+/// See the marking counterpart: with no reader of the mark, the adapter only reads the context.
+#[cfg(not(any(feature = "testing", feature = "otel")))]
+pub(crate) type MarkingContext<'r, 'a, C, S> = &'r Context<'a, C, S>;
 
 #[cfg(test)]
 mod tests;

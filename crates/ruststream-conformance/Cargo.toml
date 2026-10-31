@@ -31,7 +31,7 @@ ruststream-runtime-tokio = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 bytes = { workspace = true, features = ["std"] }
 inventory.workspace = true
-futures.workspace = true
+futures = { workspace = true, features = ["std", "async-await", "executor"] }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["test-util"] }
 serde_json = { workspace = true, optional = true, features = ["std"] }

@@ -1,8 +1,12 @@
 //! The error the test harness returns: the dispatch reports it while driving a reaction, and
 //! `TestApp` returns it from every step.
 
-use std::error;
-use std::time::Duration;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use core::error;
+use core::time::Duration;
 
 use thiserror::Error;
 
@@ -85,6 +89,17 @@ pub enum TestError {
          `TestApp::start`"
     )]
     PausedClock,
+    /// The app stopped on an error of its own while the harness ran it: a subscription failed
+    /// under a fail-fast policy, say.
+    #[error("the app stopped on an error: {0}")]
+    Failed(#[source] Box<dyn error::Error + Send + Sync>),
+    /// The app did not finish its shutdown: work it holds waits on something that neither the
+    /// app nor the clock wakes.
+    #[error(
+        "the app did not finish its shutdown: work it holds waits on something that neither the \
+         app nor the clock wakes"
+    )]
+    Stalled,
     /// The message failed to encode for publishing.
     #[error("failed to encode the message: {0}")]
     Encode(String),

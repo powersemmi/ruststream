@@ -2,9 +2,12 @@
 //! the runtime records through, the records themselves, and the hooks slot that carries the
 //! coordinator into dispatch.
 
-use std::any::Any;
-use std::mem;
-use std::sync::Arc;
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::any::Any;
+use core::mem;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 

@@ -507,3 +507,82 @@ fn to_pascal_case(name: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use syn::parse_quote;
+
+    use super::*;
+
+    fn refusal(input: &DeriveInput) -> String {
+        expand(input)
+            .expect_err("this declaration is refused")
+            .to_string()
+    }
+
+    /// The refusal of a type declaring `name` as its destination.
+    fn name_refusal(name: &str) -> String {
+        refusal(&parse_quote!(
+            #[outgoing(name = #name)]
+            struct OrderPlaced;
+        ))
+    }
+
+    #[test]
+    fn a_message_declares_one_destination_and_one_header_contract() {
+        assert_eq!(
+            refusal(&parse_quote!(
+                #[outgoing(name = "orders", name = "invoices")]
+                struct OrderPlaced;
+            )),
+            "duplicate `name`: a message declares one destination"
+        );
+        assert_eq!(
+            refusal(&parse_quote!(
+                #[outgoing(headers = OrderMeta, headers = InvoiceMeta)]
+                struct OrderPlaced;
+            )),
+            "duplicate `headers`: a message declares one header contract"
+        );
+    }
+
+    #[test]
+    fn every_placeholder_of_a_template_is_one_closed_identifier() {
+        assert_eq!(
+            name_refusal("orders.{tenant"),
+            "unclosed `{` in the declared name: every placeholder reads `{segment}`"
+        );
+        assert_eq!(
+            name_refusal("orders.{}"),
+            "empty placeholder in the declared name: name the segment, as in `{tenant}`"
+        );
+        assert_eq!(
+            name_refusal("orders.{1st}"),
+            "`1st` is not a valid segment name: a placeholder becomes the setter that binds it, \
+             so it has to be an identifier"
+        );
+        assert_eq!(
+            name_refusal("orders.{tenant}.{tenant}"),
+            "`tenant` appears twice in the declared name: one setter cannot bind two segments"
+        );
+        assert_eq!(
+            name_refusal("orders.tenant}"),
+            "unmatched `}` in the declared name: every placeholder reads `{segment}`"
+        );
+    }
+
+    #[test]
+    fn a_placeholder_in_snake_case_names_its_segment_in_pascal_case() {
+        let expanded = expand(&parse_quote!(
+            #[outgoing(name = "orders.{tenant_id}")]
+            struct OrderPlaced;
+        ))
+        .expect("the template expands")
+        .to_string();
+
+        assert!(
+            expanded.contains("TenantId"),
+            "the segment marker of `tenant_id`"
+        );
+    }
+}

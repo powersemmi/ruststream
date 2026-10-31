@@ -20,9 +20,9 @@
 mod declare;
 mod destination;
 
-use std::borrow::Cow;
-use std::fmt;
-use std::marker::PhantomData;
+use alloc::borrow::Cow;
+use core::fmt;
+use core::marker::PhantomData;
 
 pub use declare::{
     Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount, Declaring,

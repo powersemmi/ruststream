@@ -15,11 +15,18 @@
 
 mod builder;
 mod builders;
+mod fold;
+mod fold_inject;
+mod fold_plan;
+mod fold_publish;
 mod form_eager;
 mod form_out;
 mod form_publish;
 pub mod forms;
 mod include;
+mod local;
+mod local_out;
+mod local_publish;
 mod mount;
 mod mount_sink;
 mod routes;
@@ -32,8 +39,19 @@ pub use builder::{AttachDeclaration, AttachRetry, RouterBroker};
 #[doc(hidden)]
 pub use builders::RouterCommit;
 pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOut, RouterWith};
+pub use local::LocalPipeline;
+#[doc(hidden)]
+pub use local::{LayerFits, PoolFits, RouterPipe, TakesWorkers};
 // The typed default-reply token is machinery, but the macro expansion names it in generated
 // types (the default attach of a sealed reply definition), so it is public and hidden.
+#[doc(hidden)]
+pub use fold::{
+    Balance, OpenLayered, OpenRoutes, OpenedBatchRoute, OpenedRoute, RunRoutes, RunsBatches,
+};
+#[doc(hidden)]
+pub use fold_plan::{
+    Dispatched, LocalDispatch, LocalPlanned, LocalRoute, OpenedDispatch, SequentialPlan,
+};
 #[doc(hidden)]
 pub use mount::DefaultReply;
 pub use mount::IncludeDef;
@@ -58,13 +76,13 @@ use routes::{BatchRoute, SubscribeRoute};
 use routes_inject::{BatchInjectRoute, InjectRoute};
 use routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 
-pub(crate) use crate::{SourceBatch, SourceMessage};
+pub(crate) use crate::{LocalConnected, LocalSourceMessage, SourceBatch, SourceMessage};
 
 /// The route a [`SubscriberDef`] `D` mounted on source `S` (decoded with `C`) becomes. Names the
 /// otherwise unwieldy registration type.
 pub(crate) type TypedRoute<B, S, D, C> = SubscribeRoute<
     S,
-    Typed<SourceMessage<B, S>, <D as SubscriberDef>::Input, C, <D as SubscriberDef>::Handler>,
+    Typed<LocalSourceMessage<B, S>, <D as SubscriberDef>::Input, C, <D as SubscriberDef>::Handler>,
     <D as SubscriberDef>::Context,
 >;
 
@@ -90,13 +108,13 @@ pub(crate) type IncludedBatchRouter<B, S, D, C, RC, RL, RP, R> =
 /// involved, so the adapter carries the message type, the element family `F` and the handler.
 type DeserializedBatchRoute<B, S, D, F> = BatchRoute<
     S,
-    DeserializedBatch<SourceMessage<B, S>, F, <D as BatchDef>::Handler>,
+    DeserializedBatch<LocalSourceMessage<B, S>, F, <D as BatchDef>::Handler>,
     <D as BatchDef>::Context,
 >;
 
 /// The router that mounting a self-deserializing [`BatchDef`] `D` on source `S` onto `R`
 /// produces.
-type IncludedRawBatchRouter<B, S, D, F, RC, RL, RP, R> =
+pub(crate) type IncludedRawBatchRouter<B, S, D, F, RC, RL, RP, R> =
     Router<B, (DeserializedBatchRoute<B, S, D, F>, R), RC, RL, RP>;
 
 /// The route a carried [`BatchDef`] `D` mounted on source `S` becomes: the subscription's batches
@@ -124,11 +142,11 @@ type BatchInjectedRouter<B, S, D, C, E, RC, RL, RP, R> =
 /// source `S` (decoded with `C`, replying through the policy `RP` and resolving its startup
 /// injections against the attachment `E`) onto `R` produces. See [`IncludedRouter`] for the
 /// carried parameters.
-type PublishingRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
+pub(crate) type PublishingRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
     Router<B, (PublishingRoute<S, D, C, Reply, E>, R), RC, RL, RP>;
 
 /// The byte-reply counterpart of [`PublishingRouter`].
-type RawReplyRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
+pub(crate) type RawReplyRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
     Router<B, (RawReplyRoute<S, D, C, Reply, E>, R), RC, RL, RP>;
 
 /// The router that mounting a batch publishing

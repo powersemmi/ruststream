@@ -7,7 +7,8 @@
 //! (content-type, schema id), or observe it (publish metrics). The chain is symmetric to the
 //! consume-side static [`Stack`](super::Stack).
 
-use std::pin::Pin;
+use alloc::boxed::Box;
+use core::pin::Pin;
 
 use crate::lifecycle::BoxError;
 pub use crate::outgoing::{Outgoing, OutgoingName};
@@ -49,16 +50,17 @@ pub use builder::{
 };
 pub use ext::PublishExt;
 pub use out::{
-    LowerOutTransforms, NamedDestinationSend, NarrowToUse, OutPipeline, PipelinePublishError,
-    SendOnlyPolicy, SlotStackUse, SlotTransforms,
+    LocalOutPipeline, LowerOutTransforms, NamedDestinationSend, NarrowToUse, OutPipeline,
+    PipelinePublishError, SendOnlyPolicy, SlotStackUse, SlotTransforms,
 };
+pub(crate) use pipeline::SendThrough;
 pub use pipeline::{
     PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity, PublishLayer, PublishNext,
     PublishPipeline, PublishStack,
 };
 pub use publisher::{Transactional, TypedPublisher};
 pub use reply::ReplyPublisher;
-pub use sink::{CallCodec, PublishCodec, PublishSink, UnnamedCodec};
+pub use sink::{CallCodec, LocalPublishSink, PublishCodec, PublishSink, UnnamedCodec};
 pub use transaction::{
     Admits, AnyDeclared, TransactionPublishError, TransactionScope, TypedTransaction,
 };

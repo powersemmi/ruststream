@@ -1528,6 +1528,7 @@ dependencies = [
  "ruststream-memory",
  "ruststream-observability",
  "ruststream-runtime",
+ "ruststream-runtime-embassy",
  "ruststream-runtime-tokio",
  "ruststream-testing",
  "schemars",
@@ -1610,23 +1611,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ruststream-embassy-probe"
-version = "0.0.0"
-dependencies = [
- "critical-section",
- "embassy-executor",
- "embassy-futures",
- "embassy-sync",
- "embassy-time",
- "futures-core",
- "heapless",
- "ruststream-core",
- "ruststream-runtime",
- "static_cell",
- "stats_alloc",
-]
-
-[[package]]
 name = "ruststream-example-suite"
 version = "0.0.0"
 dependencies = [
@@ -1648,8 +1632,12 @@ version = "0.7.7"
 dependencies = [
  "bytes",
  "bytes-utils",
+ "embassy-futures",
+ "embassy-sync",
  "futures",
+ "futures-core",
  "ruststream",
+ "ruststream-conformance",
  "ruststream-core",
  "ruststream-runtime",
  "schemars",
@@ -1699,6 +1687,7 @@ dependencies = [
  "bytes",
  "bytes-utils",
  "ciborium",
+ "ciborium-io",
  "futures",
  "inventory",
  "opentelemetry",
@@ -1708,6 +1697,7 @@ dependencies = [
  "rmp-serde",
  "ruststream",
  "ruststream-core",
+ "ruststream-memory",
  "schemars",
  "serde",
  "serde_json",
@@ -1716,6 +1706,34 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "ruststream-runtime-embassy"
+version = "0.7.7"
+dependencies = [
+ "bytes",
+ "critical-section",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync",
+ "embassy-time",
+ "futures",
+ "futures-core",
+ "hash32",
+ "heapless",
+ "pin-project-lite",
+ "ruststream",
+ "ruststream-cli",
+ "ruststream-core",
+ "ruststream-memory",
+ "ruststream-runtime",
+ "serde",
+ "static_cell",
+ "stats_alloc",
+ "thiserror",
+ "tracing",
+ "trybuild",
 ]
 
 [[package]]
@@ -1743,10 +1761,17 @@ dependencies = [
 name = "ruststream-testing"
 version = "0.7.7"
 dependencies = [
+ "critical-section",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-time",
+ "embassy-time-driver",
+ "embassy-time-queue-utils",
  "inventory",
  "ruststream",
  "ruststream-core",
  "ruststream-runtime",
+ "ruststream-runtime-embassy",
  "ruststream-runtime-tokio",
  "serde",
  "serde_json",

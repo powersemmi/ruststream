@@ -1,10 +1,12 @@
 //! One arena entry: the wired live value of a marker with its publish path, the typed
 //! operations each publisher capability offers on it, and the [`OutEntry`] bound a body states.
 
-use std::fmt;
-use std::marker::PhantomData;
-use std::ops::Deref;
-use std::time::Duration;
+use alloc::boxed::Box;
+use alloc::format;
+use core::fmt;
+use core::marker::PhantomData;
+use core::ops::Deref;
+use core::time::Duration;
 
 use crate::codec::Codec;
 use crate::inject::FromStartup;

@@ -13,6 +13,7 @@ use quote::quote;
 use syn::{Ident, ItemFn, Pat};
 
 use crate::parse::{ReplyArg, SubscriberArgs};
+use crate::runtime::Runtime;
 
 use super::{
     BodyDecl, HandlerParts, OutParam, Shape, batch_reply_body, extractor_preds, extractor_prelude,
@@ -91,6 +92,7 @@ pub(super) fn expand(
     args: &SubscriberArgs,
     parts: &HandlerParts<'_>,
     func: &ItemFn,
+    runtime: Runtime,
 ) -> syn::Result<TokenStream2> {
     let HandlerParts {
         vis,
@@ -117,23 +119,27 @@ pub(super) fn expand(
     } = input_axis(shape, input_ty, pat);
 
     let reply = reply_plan(args, func, block, batched)?;
+    local_forms(runtime, &reply, outs, batched, func)?;
     let r_tokens = reply.r_tokens(batched);
 
     // The handler's named or `Ctx`-projected context type, on the solo and batch forms alike: a
     // batch context is subscription-scoped data (see `BuildBatchContext` in the core crate).
     let ctx_ty = parts.ctx_ty.clone();
+    // The multi-thread runner shares the state across its workers; the embedded runner polls
+    // every delivery on the app's one task, so the state needs no bound there.
     let (state_param, state_in_ctx, state_bound) = state_ty.as_ref().map_or_else(
         || {
             (
                 quote!(__RsState,),
                 quote!(__RsState),
-                Some(quote!(__RsState: ::core::marker::Send + ::core::marker::Sync)),
+                (runtime == Runtime::Tokio)
+                    .then(|| quote!(__RsState: ::core::marker::Send + ::core::marker::Sync)),
             )
         },
         |state_ty| (quote!(), quote!(#state_ty), None),
     );
 
-    let arena = ArenaPieces::of(outs, name);
+    let arena = ArenaPieces::of(outs, name, runtime);
     let o_ty = &arena.o_ty;
     let outs_param = if outs.is_empty() {
         quote!(__rs_outs: &())
@@ -156,9 +162,10 @@ pub(super) fn expand(
     preds.extend(state_bound);
     let handle_where = where_clause(&preds);
     let we_params = &arena.we_params;
+    let handle_trait = runtime.handle_trait();
     let handle_impl = quote! {
         impl<#lifetime #(#we_params,)* #state_param>
-            ::ruststream::runtime::Handle<#in_ty, #r_tokens, #o_ty, #ctx_ty, #state_in_ctx>
+            #handle_trait<#in_ty, #r_tokens, #o_ty, #ctx_ty, #state_in_ctx>
             for #name
         #handle_where
         {
@@ -179,7 +186,9 @@ pub(super) fn expand(
 
     let docs_expr = probed_docs_expr(parts, &reply);
 
-    let wiring = definition_wiring(parts, &reply, &docs_expr, &axis, &r_tokens, &ctx_ty);
+    let wiring = definition_wiring(
+        parts, &reply, &docs_expr, &axis, &r_tokens, &ctx_ty, runtime,
+    );
 
     Ok(quote! {
         #[derive(Clone, Copy)]
@@ -289,6 +298,7 @@ fn definition_wiring(
     axis: &TokenStream2,
     r_tokens: &TokenStream2,
     ctx_ty: &TokenStream2,
+    runtime: Runtime,
 ) -> TokenStream2 {
     let HandlerParts {
         name,
@@ -370,6 +380,7 @@ fn definition_wiring(
         &sealed_ty,
         &def_expr,
         parts.shape == Shape::Batch,
+        runtime,
     );
     quote! {
         #declared
@@ -389,6 +400,7 @@ fn slot_binding_impls(
     sealed_ty: &dyn Fn(&TokenStream2) -> TokenStream2,
     def_expr: &TokenStream2,
     batched: bool,
+    runtime: Runtime,
 ) -> TokenStream2 {
     // The include-site value is the unit struct until the slots bind, so the batch-size step is
     // declared on it directly; the size itself rides the settings builder either way. Only a
@@ -406,14 +418,20 @@ fn slot_binding_impls(
     // and the app's own middleware. The definition stays generic over it, so one handler mounts
     // under any of them.
     let pipelines = numbered_idents("__RsPipeline", outs.len(), name);
-    let bound_entries = bound_slot_entries(outs, &policies, &codecs, &pipelines);
+    let bound_entries = bound_slot_entries(outs, &policies, &codecs, &pipelines, runtime);
     let bound_ty = sealed_ty(&quote!(::ruststream::runtime::Outs<(#(#bound_entries,)*)>));
-    let bind_slots = bind_slots_impl(name, &policies, &codecs, &pipelines, &bound_ty, def_expr);
+    let bind_slots = bind_slots_impl(
+        name, &policies, &codecs, &pipelines, &bound_ty, def_expr, runtime,
+    );
+    let has_slots = match runtime {
+        Runtime::Tokio => quote!(::ruststream::runtime::HasSlots),
+        Runtime::Embassy => quote!(::ruststream::runtime::LocalHasSlots),
+    };
     let witness_tys: Vec<&syn::Type> = outs.iter().map(|out| out.ty).collect();
     quote! {
         #caps_batches
 
-        impl ::ruststream::runtime::HasSlots for #name {
+        impl #has_slots for #name {
             type Markers = (#(#markers,)*);
         }
 
@@ -437,28 +455,50 @@ fn bind_slots_impl(
     pipelines: &[Ident],
     bound_ty: &TokenStream2,
     def_expr: &TokenStream2,
+    runtime: Runtime,
 ) -> TokenStream2 {
+    let (bind_slots, connected, policy, bind) = binding_vocabulary(runtime);
     quote! {
         impl<__RsConn, #(#policies,)* #(#codecs,)* #(#pipelines,)*>
-            ::ruststream::runtime::BindSlots<
+            #bind_slots<
                 __RsConn,
                 (#((#policies, #codecs, #pipelines),)*),
             >
             for #name
         where
-            __RsConn: ::ruststream::ConnectedBroker,
-            #(#policies: ::ruststream::PublishPolicy<__RsConn>,)*
+            __RsConn: #connected,
+            #(#policies: #policy<__RsConn>,)*
         {
             type Bound = #bound_ty;
             type Extra = (#((#policies, #codecs, #pipelines),)*);
 
-            fn bind(
+            fn #bind(
                 self,
                 sources: (#((#policies, #codecs, #pipelines),)*),
             ) -> (Self::Bound, Self::Extra) {
                 (#def_expr, sources)
             }
         }
+    }
+}
+
+/// The binding vocabulary of one runtime's family: the binding trait, the connected broker and
+/// the publish policy it pairs, and the binding method.
+fn binding_vocabulary(runtime: Runtime) -> (TokenStream2, TokenStream2, TokenStream2, Ident) {
+    let span = proc_macro2::Span::call_site();
+    match runtime {
+        Runtime::Tokio => (
+            quote!(::ruststream::runtime::BindSlots),
+            quote!(::ruststream::ConnectedBroker),
+            quote!(::ruststream::PublishPolicy),
+            Ident::new("bind", span),
+        ),
+        Runtime::Embassy => (
+            quote!(::ruststream::runtime::LocalBindSlots),
+            quote!(::ruststream::LocalConnectedBroker),
+            quote!(::ruststream::LocalPublishPolicy),
+            Ident::new("bind_local", span),
+        ),
     }
 }
 
@@ -476,16 +516,27 @@ fn bound_slot_entries(
     policies: &[Ident],
     codecs: &[Ident],
     pipelines: &[Ident],
+    runtime: Runtime,
 ) -> Vec<TokenStream2> {
+    let (slot, policy_trait) = match runtime {
+        Runtime::Tokio => (
+            quote!(::ruststream::runtime::Slot),
+            quote!(::ruststream::PublishPolicy),
+        ),
+        Runtime::Embassy => (
+            quote!(::ruststream::runtime::LocalSlot),
+            quote!(::ruststream::LocalPublishPolicy),
+        ),
+    };
     outs.iter()
         .zip(policies.iter().zip(codecs.iter().zip(pipelines)))
         .map(|(out, (policy, (codec, pipeline)))| {
             let marker = &out.marker;
             let body = body_ty(out.bodies.as_ref());
             quote! {
-                ::ruststream::runtime::Slot<
+                #slot<
                     #marker,
-                    <#policy as ::ruststream::PublishPolicy<__RsConn>>::Live,
+                    <#policy as #policy_trait<__RsConn>>::Live,
                     #codec,
                     #pipeline,
                     #body,
@@ -633,7 +684,7 @@ struct ArenaPieces {
 }
 
 impl ArenaPieces {
-    fn of(outs: &[OutParam<'_>], name: &Ident) -> Self {
+    fn of(outs: &[OutParam<'_>], name: &Ident, runtime: Runtime) -> Self {
         if outs.is_empty() {
             return Self {
                 o_ty: quote!(()),
@@ -646,6 +697,9 @@ impl ArenaPieces {
         let mut we_params = Vec::new();
         let mut bounds = Vec::new();
         let mut bindings = Vec::new();
+        if runtime == Runtime::Embassy {
+            return Self::local(outs, name);
+        }
         for (index, out) in outs.iter().enumerate() {
             let wired = Ident::new(&format!("__RsOutW{index}"), name.span());
             let codec = Ident::new(&format!("__RsOutE{index}"), name.span());
@@ -683,6 +737,68 @@ impl ArenaPieces {
             bindings,
         }
     }
+}
+
+impl ArenaPieces {
+    /// The arena of a [`LocalHandle`] body: one generic entry per slot, bound by the marker, the
+    /// declared set and the capability's local twin on its wire. The entry is whatever the local
+    /// chain pairs; nothing of it has to be `Send`.
+    ///
+    /// [`LocalHandle`]: https://docs.rs/ruststream/latest/ruststream/runtime/trait.LocalHandle.html
+    fn local(outs: &[OutParam<'_>], name: &Ident) -> Self {
+        let mut entries = Vec::new();
+        let mut bounds = Vec::new();
+        let mut bindings = Vec::new();
+        for (index, out) in outs.iter().enumerate() {
+            let entry = Ident::new(&format!("__RsOutEntry{index}"), name.span());
+            let marker = &out.marker;
+            let capability = Runtime::Embassy.capability(out.bounds);
+            let body = body_ty(out.bodies.as_ref());
+            bounds.push(quote! {
+                #entry: ::ruststream::runtime::LocalOutEntry<#marker, #body, Wire: #capability>
+            });
+            bindings.push(arena_binding(out.pat, marker));
+            entries.push(entry);
+        }
+        Self {
+            o_ty: quote!(::ruststream::runtime::Outs<(#(#entries,)*)>),
+            we_params: entries,
+            bounds,
+            bindings,
+        }
+    }
+}
+
+/// The forms the local family does not offer yet, refused with the reason instead of an
+/// expansion the compiler would reject deep inside the mount chain.
+fn local_forms(
+    runtime: Runtime,
+    reply: &ReplyPlan<'_>,
+    outs: &[OutParam<'_>],
+    batched: bool,
+    func: &ItemFn,
+) -> syn::Result<()> {
+    if runtime == Runtime::Tokio {
+        return Ok(());
+    }
+    let Some(first) = outs.first() else {
+        return Ok(());
+    };
+    if batched {
+        return Err(syn::Error::new_spanned(
+            first.ty,
+            "a batch handler takes no `Out` parameter on the embassy runtime; publish from a \
+             handler that takes one message at a time",
+        ));
+    }
+    if !reply.is_none() {
+        return Err(syn::Error::new_spanned(
+            &func.sig.output,
+            "a handler with an `Out` parameter does not reply on the embassy runtime; publish \
+             the reply through a slot of its own",
+        ));
+    }
+    Ok(())
 }
 
 /// One `Out` parameter's body binding: an `Out(x)`-shaped pattern binds its inner name to the

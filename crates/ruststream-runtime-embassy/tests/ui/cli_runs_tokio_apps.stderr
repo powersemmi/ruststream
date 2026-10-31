@@ -1,0 +1,20 @@
+error[E0277]: the trait bound `EmbeddedApp<impl Mounts>: ruststream_runtime_tokio::app::app_trait::App` is not satisfied
+ --> tests/ui/cli_runs_tokio_apps.rs:9:13
+  |
+9 |     let _ = ruststream_cli::run_main(app);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `ruststream_runtime_tokio::app::app_trait::App` is not implemented for `EmbeddedApp<impl Mounts>`
+  |
+help: the trait `ruststream_runtime_tokio::app::app_trait::App` is implemented for `ruststream_runtime_tokio::app::service::RustStream<Layers, State, Pipeline, Phase>`
+ --> $WORKSPACE/crates/ruststream-runtime-tokio/src/app/app_trait.rs
+  |
+  | / impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
+  | |     for RustStream<Layers, State, Pipeline, Phase>
+  | |__________________________________________________^
+note: required by a bound in `run_main`
+ --> $WORKSPACE/crates/ruststream-cli/src/lib.rs
+  |
+  | pub fn run_main<A, F>(build: F) -> ExitCode
+  |        -------- required by a bound in this function
+  | where
+  |     A: App,
+  |        ^^^ required by this bound in `run_main`

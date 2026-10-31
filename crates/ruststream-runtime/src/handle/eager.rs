@@ -2,31 +2,34 @@
 //! through the ordinary subscriber and batch machinery, with the body adapted to the dispatch
 //! contracts here.
 
-use std::marker::PhantomData;
-use std::{any, fmt};
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::marker::PhantomData;
+use core::{any, fmt};
 
 use tracing::warn;
 
-use crate::batch::{BatchDef, BatchResult, SliceHandler};
-use crate::context::Context;
+use crate::batch::{BatchDef, BatchResult, LocalSliceHandler, SliceHandler};
+use crate::context::{Context, MarkingContext};
 use crate::failure::FailurePolicy;
-use crate::handler::{Handler, HandlerOutcome};
+use crate::handler::{Handler, HandlerOutcome, LocalHandler};
 use crate::router::IncludeDef;
 use crate::subscriber_def::SubscriberDef;
 use crate::{Name, Unnamed};
 
-use super::Handle;
 use super::axis::{
     Axis, AxisDocs, Batch, BatchCarried, BatchDeserialized, BatchPair, BatchSet, BatchedAxis,
     Deserialized, Input, Message, Solo, SoloAxis, SoloCarried, SoloDeserialized, SoloPair, SoloSet,
 };
 use super::value::{HandleValue, Sealed};
+use super::{Handle, LocalHandle};
 
 /// Constructs one [`Deserialized`] input from a delivery's payload; a failed construction is
 /// settled by the subscriber's decode policy, exactly as a codec decode failure is.
 pub(crate) fn construct<'p, F, C, S>(
     payload: &'p [u8],
-    ctx: &mut Context<'_, C, S>,
+    ctx: MarkingContext<'_, '_, C, S>,
 ) -> Result<F::Output<'p>, HandlerOutcome>
 where
     F: Deserialized,
@@ -149,6 +152,58 @@ where
     C: Send + Sync,
     S: Send + Sync,
     H: Handle<Message<Hd, P>, (), (), C, S>,
+{
+    async fn handle(&self, msg: &Message<Hd, P>, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
+        settle_solo(self.body.handle(msg, &(), ctx).await)
+    }
+}
+
+/// The local twins of the solo cells above: the body is a [`LocalHandle`] and its future is
+/// awaited where the delivery is polled. The axes keep their bounds, as on the multi-thread
+/// runner; only the body's future and the context and state are free of `Send`.
+macro_rules! impl_local_solo {
+    ($($axis:ident $(+ $extra:ident)?),+ $(,)?) => {$(
+        // Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+        #[allow(clippy::future_not_send)]
+        impl<T, C, S, H> LocalHandler<T, C, S> for SoloBody<$axis<T>, C, H>
+        where
+            T: Input<Axis = $axis<T>> $(+ $extra)? + Send + Sync + 'static,
+            H: LocalHandle<T, (), (), C, S>,
+        {
+            async fn handle(&self, msg: &T, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
+                settle_solo(self.body.handle(msg, &(), ctx).await)
+            }
+        }
+    )+};
+}
+
+impl_local_solo!(Solo, SoloSet, SoloCarried + Clone);
+
+// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+#[allow(clippy::future_not_send)]
+impl<F, C, S, H> LocalHandler<[u8], C, S> for SoloBody<SoloDeserialized<F>, C, H>
+where
+    F: Deserialized + Send + Sync + 'static,
+    for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
+    H: for<'p> LocalHandle<F::Output<'p>, (), (), C, S>,
+{
+    async fn handle(&self, msg: &[u8], ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
+        let input = match construct::<F, C, S>(msg, ctx) {
+            Ok(input) => input,
+            Err(outcome) => return outcome,
+        };
+        settle_solo(self.body.handle(&input, &(), ctx).await)
+    }
+}
+
+// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+#[allow(clippy::future_not_send)]
+impl<Hd, P, C, S, H> LocalHandler<Message<Hd, P>, C, S> for SoloBody<SoloPair<Hd, P>, C, H>
+where
+    Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
+    Hd: Send + Sync + 'static,
+    P: Send + Sync + 'static,
+    H: LocalHandle<Message<Hd, P>, (), (), C, S>,
 {
     async fn handle(&self, msg: &Message<Hd, P>, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
         settle_solo(self.body.handle(msg, &(), ctx).await)
@@ -351,6 +406,82 @@ where
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
         run_batch(&self.body, &(), batch, ctx).await
+    }
+}
+
+/// Runs a local batch body over one delivered batch and settles by its verdict, as
+/// [`run_batch`] does for a [`Handle`] body.
+// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+#[allow(clippy::future_not_send)]
+async fn run_local_batch<T, C, S, H>(
+    body: &H,
+    batch: &[T],
+    ctx: &mut Context<'_, C, S>,
+) -> BatchResult
+where
+    [T]: Input<Axis: BatchedAxis>,
+    H: LocalHandle<[T], (), (), C, S>,
+{
+    let verdict = body.handle(batch, &(), ctx).await;
+    settle_batch(verdict, batch.len(), ctx.name())
+}
+
+/// The local twins of the batch cells above: the body is a [`LocalHandle`].
+macro_rules! impl_local_batch {
+    ($($axis:ident $(+ $extra:ident)?),+ $(,)?) => {$(
+        // Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+        #[allow(clippy::future_not_send)]
+        impl<T, C, S, H> LocalSliceHandler<T, C, S> for BatchBody<$axis<T>, H>
+        where
+            [T]: Input<Axis = $axis<T>>,
+            T: Send + Sync + 'static $(+ $extra)?,
+            H: LocalHandle<[T], (), (), C, S>,
+        {
+            fn handle_slice(
+                &self,
+                batch: &[T],
+                ctx: &mut Context<'_, C, S>,
+            ) -> impl Future<Output = BatchResult> {
+                run_local_batch(&self.body, batch, ctx)
+            }
+        }
+    )+};
+}
+
+impl_local_batch!(Batch, BatchSet, BatchCarried + Clone);
+
+// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+#[allow(clippy::future_not_send)]
+impl<Hd, P, C, S, H> LocalSliceHandler<Message<Hd, P>, C, S> for BatchBody<BatchPair<Hd, P>, H>
+where
+    [Message<Hd, P>]: Input<Axis = BatchPair<Hd, P>>,
+    Hd: Send + Sync + 'static,
+    P: Send + Sync + 'static,
+    H: LocalHandle<[Message<Hd, P>], (), (), C, S>,
+{
+    fn handle_slice(
+        &self,
+        batch: &[Message<Hd, P>],
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = BatchResult> {
+        run_local_batch(&self.body, batch, ctx)
+    }
+}
+
+// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
+#[allow(clippy::future_not_send)]
+impl<T, F, C, S, H> LocalSliceHandler<T, C, S> for BatchBody<BatchDeserialized<F>, H>
+where
+    F: Deserialized + Send + Sync + 'static,
+    [T]: Input<Axis = BatchDeserialized<F>>,
+    H: LocalHandle<[T], (), (), C, S>,
+{
+    fn handle_slice(
+        &self,
+        batch: &[T],
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = BatchResult> {
+        run_local_batch(&self.body, batch, ctx)
     }
 }
 

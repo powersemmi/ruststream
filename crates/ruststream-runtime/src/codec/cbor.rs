@@ -1,5 +1,6 @@
 //! CBOR codec backed by [`ciborium`].
 
+use alloc::boxed::Box;
 use bytes::BytesMut;
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -34,6 +35,7 @@ impl Codec for CborCodec {
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::String;
     use serde::{Deserialize, Serialize};
 
     use super::*;

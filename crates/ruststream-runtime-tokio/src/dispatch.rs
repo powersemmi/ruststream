@@ -15,8 +15,8 @@ use tracing::error;
 
 use ruststream_runtime::DeliverySlot as Slot;
 use ruststream_runtime::{
-    BatchHandler, DispatchFailure, Handler, Placement, Turn, Workers, dispatch, placed, run_batch,
-    run_sequential,
+    BatchHandler, DispatchFailure, Handler, HeadersOnDemand, Placement, Turn, Workers, dispatch,
+    placed, run_batch, run_sequential,
 };
 
 pub(crate) use crate::detach::Hosted;
@@ -44,7 +44,15 @@ where
 {
     let consuming = shutdown.consuming();
     tokio::spawn(run_sequential(
-        subscriber, handler, shutdown, name, state, hosted, failure, consuming,
+        subscriber,
+        handler,
+        shutdown,
+        name,
+        state,
+        hosted,
+        failure,
+        consuming,
+        HeadersOnDemand,
     ))
 }
 
@@ -158,7 +166,7 @@ where
             async move |msg: S::Message| {
                 let mut slot = Slot::new(msg);
                 dispatch(
-                    &*shared.handler,
+                    &shared.handler,
                     &mut slot,
                     &mut encode,
                     &shared.name,
@@ -166,6 +174,7 @@ where
                     &delivery,
                     &host,
                     &shared.failure,
+                    HeadersOnDemand,
                 )
                 .await;
             }
@@ -309,7 +318,7 @@ async fn batch_loop<S, H, C, St>(
                 // Turbofish: the adapter handlers are generic over the batch context, so the
                 // spawn's own parameter names it.
                 run_batch::<_, _, C, _, _, _>(
-                    &*shared.handler,
+                    &shared.handler,
                     batch,
                     &mut scratch,
                     &mut encode,
@@ -363,7 +372,7 @@ where
     let failure = shared.failure.clone();
     async move {
         run_batch::<_, _, C, _, _, _>(
-            &*handler,
+            &handler,
             batch,
             &mut scratch,
             &mut encode,
@@ -416,7 +425,7 @@ where
         let mut encode = BytesMut::new();
         async move |batch: S::Batch| {
             run_batch::<_, _, C, _, _, _>(
-                &*shared.handler,
+                &shared.handler,
                 batch,
                 &mut scratch,
                 &mut encode,

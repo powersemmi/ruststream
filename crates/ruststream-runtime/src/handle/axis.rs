@@ -24,8 +24,10 @@
 //! generated document) hangs off the lifetime-free [`Axis`] marker, so definitions can carry the
 //! axis without carrying a borrow.
 
+use alloc::boxed::Box;
+use alloc::string::String;
 use core::marker::PhantomData;
-use std::{error, fmt};
+use core::{error, fmt};
 
 use serde::de::DeserializeOwned;
 

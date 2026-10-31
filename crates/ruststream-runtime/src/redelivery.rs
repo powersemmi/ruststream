@@ -8,12 +8,15 @@
 //! ([`SubscriptionSource::Copies`](crate::SubscriptionSource::Copies)), so the mount site is told
 //! at compile time and nothing here refuses to start over an address.
 
-use std::any::type_name;
-use std::borrow::Cow;
-use std::fmt;
-use std::future::ready;
-use std::num::NonZeroU32;
-use std::sync::Arc;
+use alloc::borrow::Cow;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::sync::Arc;
+use core::any::type_name;
+use core::fmt;
+use core::future::ready;
+use core::num::NonZeroU32;
 
 use thiserror::Error;
 use tracing::info;
@@ -36,6 +39,12 @@ use crate::{
 
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Origin, TestHooks, paired, publishing_to};
+
+mod kept;
+
+pub use kept::{
+    AddressedCopy, CopyPublisher, KeepCopies, KeptAddress, NoCopies, NoCopyPath, PairCopies,
+};
 
 /// The plain publish policy of a broker's connected form, which is what a retry copy leaves
 /// through until a mount site names another.
@@ -783,6 +792,24 @@ fn announce<Cx>(
             "retry declaration; the broker moves a spent delivery itself and applies it",
         );
     }
+}
+
+/// The delivery context of a route the one-task fold opens under its broker's `scope`, with no
+/// retry path: under a harness it is noted as one more subscription of that broker, so its
+/// deliveries are recorded under the broker and the name it subscribed with.
+#[cfg_attr(not(feature = "testing"), allow(unused_variables))]
+pub(crate) fn open_local_route<Cx>(scope: &ScopeDelivery, name: &str) -> Delivery<Cx> {
+    #[cfg(feature = "testing")]
+    let routed = ScopeDelivery {
+        hooks: Arc::clone(&scope.hooks),
+        scope_id: scope.scope_id,
+        subscription: scope.hooks.subscribed(scope.scope_id, name),
+        #[cfg(feature = "poll-diagnostics")]
+        poll: scope.poll.clone(),
+    };
+    #[cfg(feature = "testing")]
+    let scope = &routed;
+    open_mounted_subscriber(scope, name)
 }
 
 /// The delivery context for a subscriber mounted without a source: nothing describes where a

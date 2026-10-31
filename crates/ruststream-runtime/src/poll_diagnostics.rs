@@ -1,13 +1,14 @@
 //! Poll-time diagnostics (`poll-diagnostics` feature): how long each subscription's handler
 //! computes between two `.await` points, sampled on every Nth poll.
 
-use std::num::NonZeroU32;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use alloc::vec::Vec;
+use core::num::NonZeroU32;
+use core::pin::Pin;
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::task::{Context as TaskContext, Poll};
+use core::time::Duration;
+use core::{array, fmt};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::task::{Context as TaskContext, Poll};
-use std::time::Duration;
-use std::{array, fmt};
 
 use pin_project_lite::pin_project;
 use quanta::Clock;
@@ -685,6 +686,7 @@ fn quantile_ns(buckets: &[u64; BUCKETS], q: f64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
 
     /// `new` and `Default` both give the documented defaults.
     #[test]

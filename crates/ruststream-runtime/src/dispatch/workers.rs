@@ -1,7 +1,7 @@
 //! The concurrency policy of one subscription's dispatch loop: how many deliveries run at
 //! once, and where.
 
-use std::num::NonZeroUsize;
+use core::num::NonZeroUsize;
 
 /// Concurrency policy for one subscriber's dispatch loop, declared with the `workers(..)` or
 /// `threads(..)` macro argument (or [`Workers::sequential`] by default).

@@ -1,0 +1,27 @@
+error[E0277]: `()` is not a mount chain of the embedded app
+ --> tests/ui/scope_returns_no_chain.rs:5:24
+  |
+5 |     EmbeddedApp::new().with_broker(bus, |_b| ())
+  |                        ^^^^^^^^^^^ the broker's scope returns this
+  |
+  = help: the trait `MountChain` is not implemented for `()`
+  = note: the closure of `with_broker` returns the router chain it was handed: `|b| b.include(a).include(b)`
+help: the following other types implement trait `MountChain`
+ --> src/mounts.rs
+  |
+  | / impl<B, Routes, RouteCodec, Layers, Pipe> MountChain
+  | |     for Router<B, Routes, RouteCodec, Layers, Pipe>
+  | |___________________________________________________^ `ruststream_runtime::router::builder::Router<B, Routes, RouteCodec, Layers, Pipe>`
+...
+  | / impl<Mount, R, Def, Attach, Last> MountChain for RouterWith<Mount, R, Def, Attach, Last>
+  | | where
+  | |     Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
+  | |________________________________________________________________________^ `ruststream_runtime::router::builders::RouterWith<Mount, R, Def, Attach, Last>`
+note: required by a bound in `EmbeddedApp::<ruststream_runtime_embassy::Parts<State, Brokers, ruststream_runtime_embassy::Hooks<AfterStartup, OnShutdown, AfterShutdown>>>::with_broker`
+ --> src/app.rs
+  |
+  |     pub fn with_broker<B, Mount, Chain>(
+  |            ----------- required by a bound in this associated function
+...
+  |         Chain: MountChain,
+  |                ^^^^^^^^^^ required by this bound in `EmbeddedApp::<Parts<State, Brokers, Hooks<AfterStartup, OnShutdown, AfterShutdown>>>::with_broker`

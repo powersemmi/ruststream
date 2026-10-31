@@ -11,9 +11,13 @@
 //! copying, or boxing appears on the delivery path: the provided and carried forms borrow
 //! straight out of the delivery on every broker.
 
-use std::any::type_name;
-use std::fmt;
-use std::marker::PhantomData;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use core::any::type_name;
+use core::fmt;
+use core::marker::PhantomData;
 
 use serde::de::DeserializeOwned;
 
@@ -22,7 +26,7 @@ use crate::codec::{Codec, CodecError};
 use crate::handle::{Input, Solo, SoloSet};
 use crate::in_messages::DecodeSet;
 use crate::metadata::IncomingMessageMetadata;
-use crate::{Carries, IncomingMessage, Subscriber, SubscriptionSource};
+use crate::{Carries, IncomingMessage, LocalIncomingMessage, Subscriber, SubscriptionSource};
 
 #[cfg(feature = "testing")]
 use super::context::Context;
@@ -295,7 +299,7 @@ impl<DecodeCodec, F: Send + Sync + 'static> DecodeWith<DecodeCodec> for Provided
 impl<DecodeCodec, F, M> Materialize<DecodeCodec, M> for Provided<F>
 where
     F: Send + Sync + 'static,
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
 {
     type Held<'m>
         = ()

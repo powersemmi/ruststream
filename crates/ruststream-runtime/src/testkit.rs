@@ -7,8 +7,10 @@
 //! This module is `#[cfg(test)]` and everything in it is `pub(crate)`: nothing here is part of the
 //! published surface. The user-facing test harness is [`crate::testing`].
 
+use alloc::format;
+use alloc::string::String;
+use core::time::Duration;
 use std::sync::Mutex;
-use std::time::Duration;
 
 use tokio::time;
 use tokio_util::task::TaskTracker;
@@ -80,8 +82,13 @@ impl Halt for Shutdown {
 /// It compiles where its callers do: with a tracing subscriber and the in-memory broker their
 /// modules need.
 pub(crate) mod log_capture {
+    use alloc::borrow::ToOwned;
+    use alloc::format;
+    use alloc::string::String;
+    use alloc::string::ToString;
+    use alloc::vec::Vec;
+    use core::fmt::Debug;
     use std::collections::HashMap;
-    use std::fmt::Debug;
     use std::sync::{Arc, Mutex, Once};
 
     use tracing::field::{Field, Visit};
@@ -170,7 +177,8 @@ pub(crate) mod log_capture {
 /// and the in-memory broker and codec their modules need.
 #[cfg(feature = "json")]
 pub(crate) mod unreadable {
-    use std::future::ready;
+    use alloc::vec::Vec;
+    use core::future::ready;
 
     use crate::codec::CodecError;
     use crate::{AckError, HeaderMap, IncomingMessage};
@@ -243,7 +251,7 @@ pub(crate) mod delivery {
             .publish(OutgoingMessage::new(name, payload), None)
             .await
             .expect("publish failed");
-        let mut stream = std::pin::pin!(subscriber.stream());
+        let mut stream = core::pin::pin!(subscriber.stream());
         stream
             .next()
             .await
@@ -256,7 +264,8 @@ pub(crate) mod delivery {
 /// them back as one batch.
 #[cfg(feature = "json")]
 pub(crate) mod batch {
-    use std::num::NonZeroUsize;
+    use alloc::vec::Vec;
+    use core::num::NonZeroUsize;
 
     use futures::StreamExt;
 
@@ -296,7 +305,8 @@ pub(crate) mod batch {
     pub(crate) async fn pull_batch<Log: LogMode>(
         sub: &mut MemorySubscriber<Log>,
     ) -> Vec<MemoryMessage<Log>> {
-        let mut stream = std::pin::pin!(sub.batches(NonZeroUsize::new(64).expect("64 is nonzero")));
+        let mut stream =
+            core::pin::pin!(sub.batches(NonZeroUsize::new(64).expect("64 is nonzero")));
         stream.next().await.unwrap().unwrap()
     }
 }

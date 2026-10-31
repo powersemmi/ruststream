@@ -1,12 +1,13 @@
 //! What the dispatch copies of a batch for the test harness: nothing while no harness watches,
 //! and one clone of each value a batch lends while one does.
 
-use std::convert::Infallible;
-use std::future::ready;
-use std::num::NonZeroUsize;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::vec;
+use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::convert::Infallible;
+use core::future::ready;
+use core::num::NonZeroUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bytes::BytesMut;
 use futures::{Stream, stream};
@@ -133,7 +134,7 @@ async fn clones_made_dispatching(delivery: &Delivery<()>) -> usize {
         |_values: &[Counted], _ctx: &mut Context| ready(HandlerOutcome::ack()),
     );
     run_batch(
-        &handler,
+        &Arc::new(handler),
         page,
         &mut (),
         &mut BytesMut::new(),

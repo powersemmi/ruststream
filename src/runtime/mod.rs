@@ -2,6 +2,9 @@
 
 // The surface of the runtime crate this module shows, item by item: a glob would also inline the
 // machinery the runtime exports for the other crates of the workspace.
+// The broker wrapper keeps its slot in a `std` mutex, so it stands where the target has the
+// standard library (the facade's manifest turns `std` on there).
+#[cfg(not(target_os = "none"))]
 #[doc(hidden)]
 pub use ruststream_runtime::ConnectedSlot;
 #[doc(hidden)]
@@ -73,8 +76,11 @@ pub use ruststream_runtime::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, ListOffer, OutMessages, OutSlot,
     PublishedThrough, Reply, SlotPublisher, Unrestricted,
 };
+#[cfg(not(target_os = "none"))]
 pub use ruststream_runtime::{Bindable, Bound, BrokerRegistration};
-pub use ruststream_runtime::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
+pub use ruststream_runtime::{
+    BlanketLayer, HandlerExt, Identity, Layer, LocalBlanketLayer, Stack, layers,
+};
 #[doc(hidden)]
 pub use ruststream_runtime::{CapsBatches, DefinitionInputCodec, MountsWith};
 pub use ruststream_runtime::{Clock, ShutdownWait};
@@ -95,14 +101,19 @@ pub use ruststream_runtime::{
 };
 pub use ruststream_runtime::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use ruststream_runtime::{FailurePolicies, FailurePolicy};
-pub use ruststream_runtime::{Handler, HandlerOutcome};
+pub use ruststream_runtime::{Handler, HandlerOutcome, LocalHandler};
 pub use ruststream_runtime::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
     OutgoingMessageMetadata,
 };
 pub use ruststream_runtime::{
-    IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
-    RouterPublishingOut, RouterWith, forms,
+    IncludeDef, LocalPipeline, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut,
+    RouterPublishing, RouterPublishingOut, RouterWith, forms,
+};
+#[doc(hidden)]
+pub use ruststream_runtime::{LocalBindSlots, LocalHasSlots};
+pub use ruststream_runtime::{
+    LocalHandle, LocalOutEntry, LocalPublishSink, LocalSlot, local_subscriber,
 };
 pub use ruststream_runtime::{Placement, RETRY_COUNT_HEADER, Workers};
 #[cfg(feature = "poll-diagnostics")]
@@ -116,13 +127,34 @@ pub use ruststream_runtime::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{batch_verdict, uniform_batch};
+
+// The runner the `tokio` feature selects: the app object, its lifecycle and the entry point.
+#[cfg(feature = "tokio")]
 pub use ruststream_runtime_tokio::Tokio;
+#[cfg(feature = "tokio")]
 pub use ruststream_runtime_tokio::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
     RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
 };
+#[cfg(feature = "tokio")]
 #[doc(hidden)]
 pub use ruststream_runtime_tokio::{IncludeMount, ScopeCommit};
+#[cfg(feature = "tokio")]
 pub use ruststream_runtime_tokio::{MainRuntime, RouterSink};
 
+#[cfg(feature = "tokio")]
 pub mod cli;
+
+// The runner the `embassy` feature selects: every item of the embedded runner a service names is
+// re-exported here, at the path its tokio counterpart takes under `tokio`.
+#[cfg(feature = "embassy")]
+#[doc(hidden)]
+pub use ruststream_runtime_embassy::{
+    BrokerMount, CloseAll, EmbeddedPlan, HookList, Hooks, Keyed, Lanes, NoHooks, OneLane, Pool,
+    Room, SoFar, StartMounts,
+};
+#[cfg(feature = "embassy")]
+pub use ruststream_runtime_embassy::{
+    Control, EmbassyClock, EmbeddedApp, Health, MountChain, MountSteps, Mounts, Parts, RunError,
+    Scope, Stopping,
+};

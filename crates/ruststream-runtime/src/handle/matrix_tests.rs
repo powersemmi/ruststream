@@ -6,10 +6,17 @@
 //! `parity_tests` proves every spelling mounts; this module drives the same definitions far
 //! enough to settle, so the dispatch adapters behind them are exercised rather than only typed.
 
-use std::borrow::Cow;
-use std::fmt;
-use std::future::ready;
-use std::iter::repeat_with;
+use alloc::borrow::Cow;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt;
+use core::future::ready;
+use core::iter::repeat_with;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};

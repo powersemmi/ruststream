@@ -1,27 +1,45 @@
 //! The per-subscriber dispatch loop: pulls messages off one subscriber and invokes its handler
 //! until shutdown is signalled or the stream ends. The runner spawns it, on the runtime it owns.
 
-use std::any::Any;
-use std::panic::AssertUnwindSafe;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context as TaskContext, Poll};
+#[cfg(feature = "testing")]
+use alloc::borrow::ToOwned;
+#[cfg(feature = "std")]
+use alloc::format;
+use alloc::sync::Arc;
+#[cfg(feature = "testing")]
+use alloc::vec;
+#[cfg(feature = "testing")]
+use alloc::vec::Vec;
+#[cfg(feature = "std")]
+use core::any::Any;
+#[cfg(not(feature = "std"))]
+use core::convert::Infallible;
+#[cfg(feature = "std")]
+use core::panic::AssertUnwindSafe;
+use core::pin::Pin;
+use core::task::{Context as TaskContext, Poll};
 
 #[cfg(feature = "testing")]
 use bytes::Bytes;
 use bytes::BytesMut;
-use futures::{FutureExt, Stream};
+#[cfg(feature = "std")]
+use futures::FutureExt;
+use futures::Stream;
 use tracing::error;
 
 use crate::{BuildContext, HeaderMap, LocalIncomingMessage, LocalSubscriber};
 
-use super::batch::{BatchHandler, TakenBatch};
-use super::context::{Context, FromDelivery};
-use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
+use super::batch::{LocalBatchHandler, TakenBatch};
+use super::context::Context;
+use super::failure::DispatchFailure;
+#[cfg(feature = "std")]
+use super::failure::{FailurePolicy, panic_reason};
+#[cfg(feature = "std")]
+use super::handler::HandlerOutcome;
 #[cfg(doc)]
 use super::handler::HandlerResult;
-use super::handler::{Handler, HandlerOutcome};
-use super::host::{Detach, Halt, ShutdownWait};
+use super::handler::LocalHandler;
+use super::host::{Halt, HostDetach, ShutdownWait};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
     Coordinator, Delivered, HarnessScope, Record, calls_in_harness_scope, in_harness_scope,
@@ -29,6 +47,7 @@ use crate::testing::coordinator::{
 #[cfg(feature = "testing")]
 use crate::testing::hooks::DueCall;
 pub use delivery::{Delivery, Lent, Slot};
+pub use headers::{HeadersAtOnce, HeadersOnDemand, LendHeaders};
 pub(crate) use settle::settle_outcome;
 pub use workers::{Placement, Workers};
 
@@ -94,7 +113,8 @@ macro_rules! observed {
 /// Drives `subscriber` through `handler` until `shutdown` is signalled or the stream ends: the
 /// sequential loop a runner spawns for a subscription. Each delivery is given a [`Context`] built
 /// from `name`, the message headers, shared `state`, and the publish context `lent` holds;
-/// `held` lives as long as the loop (a runner's guard on its shutdown count, say).
+/// `held` lives as long as the loop (a runner's guard on its shutdown count, say), and `headers`
+/// says how each delivery lends its headers to the context (see [`LendHeaders`]).
 // The parts are independent and each runner passes its own; bundling them into a struct would
 // hide that.
 // Written over the local twins of the contract, so the future is `Send` exactly where the types
@@ -102,19 +122,20 @@ macro_rules! observed {
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
-pub async fn run_sequential<S, H, C, St, Signal, Lending, Held>(
+pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     mut subscriber: S,
-    handler: Arc<H>,
+    handler: H,
     shutdown: Signal,
     name: Arc<str>,
     state: Arc<St>,
     lent: Lending,
     failure: DispatchFailure<Signal>,
     held: Held,
+    headers: Headers,
 ) where
     S: LocalSubscriber,
-    S::Message: Sync,
-    H: Handler<S::Message, C, St>,
+    H: LocalHandler<S::Message, C, St>,
+    Headers: LendHeaders<S::Message>,
     // See `dispatch`.
     C: BuildContext<S::Message> + Send + Sync + 'static,
     Signal: ShutdownWait + Halt,
@@ -125,8 +146,8 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held>(
     let _held = held;
     let delivery = lent.delivery();
     let host = lent.host();
-    let mut stream = std::pin::pin!(subscriber.stream());
-    let mut cancelled = std::pin::pin!(shutdown.cancelled());
+    let mut stream = core::pin::pin!(subscriber.stream());
+    let mut cancelled = core::pin::pin!(shutdown.cancelled());
     // One encode buffer for the whole loop: a reply that leaves through a publisher which
     // reads the payload is written into this one every time, so the subscription allocates
     // it once and never again.
@@ -142,15 +163,16 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held>(
                 // context, the handler's own state and the settle path, and awaiting the
                 // call expression makes the loop build it on the stack and copy it into
                 // its own state on every delivery.
-                let handling = std::pin::pin!(dispatch(
-                    &*handler,
+                let handling = core::pin::pin!(dispatch(
+                    &handler,
                     &mut slot,
                     &mut encode,
                     &name,
                     &state,
                     delivery,
                     host,
-                    &failure
+                    &failure,
+                    headers,
                 ));
                 handling.await;
             }
@@ -285,7 +307,7 @@ pub fn placed<C>(workers: Workers, delivery: &Delivery<C>) -> Workers {
 #[doc(hidden)]
 // Each part is the delivery's own or the runner's; bundling them would hide which is which.
 #[allow(clippy::too_many_arguments)]
-pub async fn dispatch<H, M, C, St, Signal, Host>(
+pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     handler: &H,
     slot: &mut Slot<M>,
     encode: &mut BytesMut,
@@ -294,15 +316,16 @@ pub async fn dispatch<H, M, C, St, Signal, Host>(
     delivery: &Delivery<C>,
     host: &Host,
     failure: &DispatchFailure<Signal>,
+    _headers: Headers,
 ) where
-    H: Handler<M, C, St>,
+    H: LocalHandler<M, C, St>,
     // A deferred retry copy carries the broker's context into the work the delivery leaves
     // behind, which may run on another thread.
     C: BuildContext<M> + Send + Sync + 'static,
-    // The context reads the headers through a `Sync` view of the delivery.
-    M: LocalIncomingMessage + Sync,
+    M: LocalIncomingMessage,
     Signal: Halt,
-    Host: Detach,
+    Host: HostDetach,
+    Headers: LendHeaders<M>,
 {
     // Settling the message is what releases the harness's quiescence wait, and the post-settle
     // continuations are spawned after it; one in-flight token spanning the whole dispatch keeps a
@@ -325,9 +348,10 @@ pub async fn dispatch<H, M, C, St, Signal, Host>(
     let (settle, continuations) = {
         let msg = slot.get();
         let cx = C::build(msg);
-        // The delivery itself, not its header map: a handler that reads no headers never reaches
-        // the broker's accessor, which is a parse and a buffer on most transports.
-        let source = FromDelivery(msg);
+        // The delivery itself where it can be shared, not its header map: a handler that reads no
+        // headers never reaches the broker's accessor, which is a parse and a buffer on most
+        // transports.
+        let source = Headers::source(msg);
         let mut ctx = Context::new(name, &source, state, cx, delivery)
             .with_failfast(&failure.shutdown)
             .with_encode_buffer(encode)
@@ -348,17 +372,21 @@ pub async fn dispatch<H, M, C, St, Signal, Host>(
             ),
         )
         .await;
-        #[cfg(not(feature = "testing"))]
+        #[cfg(all(feature = "std", not(feature = "testing")))]
         let result = observed!(
             delivery,
             AssertUnwindSafe(async { handler.handle(msg, &mut ctx).await }).catch_unwind()
         )
         .await;
+        // Without `std` a panic aborts, so the handler's future runs uncaught.
+        #[cfg(not(feature = "std"))]
+        let result = Ok::<_, Infallible>(observed!(delivery, handler.handle(msg, &mut ctx)).await);
         #[cfg(feature = "testing")]
         let panicked = result.is_err();
         // Resolve into a `HandlerOutcome` regardless of whether the handler panicked.
         let settle = match result {
             Ok(s) => Some(s),
+            #[cfg(feature = "std")]
             Err(payload) => outcome_after_panic(payload.as_ref(), name, failure),
         };
         // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
@@ -426,6 +454,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host>(
     }
 }
 
+#[cfg(feature = "std")]
 /// What a delivery whose handler panicked settles by: the panic policy's settlement, or `None`
 /// where a fail-fast panic tore the service down and left the delivery unsettled (a broker with
 /// redelivery hands it back after the restart).
@@ -501,9 +530,9 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     host: &Host,
     failure: &DispatchFailure<Signal>,
 ) where
-    H: BatchHandler<Batch, C, St>,
+    H: LocalBatchHandler<Batch, Host, C, St>,
     Signal: Halt,
-    Host: Detach,
+    Host: HostDetach,
 {
     let batch = H::take(batch);
     // A batch spans many deliveries, so its context carries only subscription-scoped data, built
@@ -547,13 +576,23 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
         ),
     )
     .await;
-    #[cfg(not(feature = "testing"))]
+    #[cfg(all(feature = "std", not(feature = "testing")))]
     let result = observed!(
         delivery,
         AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx, host).await })
             .catch_unwind()
     )
     .await;
+    // Without `std` a panic aborts, so the handler's future runs uncaught.
+    #[cfg(not(feature = "std"))]
+    let result: Result<(), Infallible> = {
+        observed!(
+            delivery,
+            handler.handle_batch(batch, scratch, &mut ctx, host)
+        )
+        .await;
+        Ok(())
+    };
     match result {
         Ok(()) => {
             // As on the single-message path: a batch that registered no hook pays the branch.
@@ -563,6 +602,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
                 }
             }
         }
+        #[cfg(feature = "std")]
         Err(payload) => {
             let reason = panic_reason(payload.as_ref());
             error!(
@@ -614,5 +654,143 @@ mod delivery;
 mod fixtures;
 #[cfg(all(test, feature = "testing"))]
 mod harness_tests;
+mod headers;
 mod settle;
 mod workers;
+
+#[cfg(test)]
+mod tests {
+    use alloc::rc::Rc;
+    use alloc::sync::Arc;
+    use core::cell::Cell;
+    use core::future::ready;
+    use core::sync::atomic::{AtomicU8, Ordering};
+
+    use bytes::{Bytes, BytesMut};
+
+    use super::fixtures::{PlainMessage, Settlement};
+    use super::{Delivery, HeadersAtOnce, HeadersOnDemand, Slot, dispatch};
+    use crate::context::Context;
+    use crate::failure::{DispatchFailure, FailurePolicies};
+    use crate::handler::{HandlerOutcome, LocalHandler};
+    use crate::testkit::{Shutdown, Tracked};
+    use crate::{AckError, HeaderMap, LocalIncomingMessage};
+    use tokio::task::yield_now;
+    use tokio_util::task::TaskTracker;
+
+    /// A handler a device writes: it keeps a count in an `Rc` and holds it across an await, so
+    /// its future is not `Send`.
+    struct CountsOnOneThread(Rc<Cell<u32>>);
+
+    // The future holds an `Rc` across an await on purpose: that is what the body is held to here.
+    #[allow(clippy::future_not_send)]
+    impl LocalHandler<PlainMessage> for CountsOnOneThread {
+        async fn handle(&self, _msg: &PlainMessage, _ctx: &mut Context<'_>) -> HandlerOutcome {
+            let count = Rc::clone(&self.0);
+            yield_now().await;
+            count.set(count.get() + 1);
+            HandlerOutcome::drop()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_local_handler_whose_future_is_not_send_handles_and_settles_a_delivery() {
+        let handled = Rc::new(Cell::new(0));
+        let settled = Arc::new(AtomicU8::new(0));
+        let mut slot = Slot::new(PlainMessage {
+            payload: Bytes::from_static(b"reading"),
+            headers: HeaderMap::new(),
+            settled: Arc::clone(&settled),
+            settlement: Settlement::Accepted,
+        });
+        let delivery: Delivery<()> = Delivery::empty();
+        let failure = DispatchFailure::new(FailurePolicies::default(), Shutdown::new());
+        let host = Tracked(TaskTracker::new());
+
+        dispatch(
+            &CountsOnOneThread(Rc::clone(&handled)),
+            &mut slot,
+            &mut BytesMut::new(),
+            "readings",
+            &(),
+            &delivery,
+            &host,
+            &failure,
+            HeadersOnDemand,
+        )
+        .await;
+
+        assert_eq!(handled.get(), 1, "the handler ran once");
+        assert_eq!(
+            settled.load(Ordering::Relaxed),
+            1,
+            "the delivery was dropped"
+        );
+    }
+
+    /// A delivery of a broker whose types stay on one thread: it records its settlement in an
+    /// `Rc`, so it is neither `Send` nor `Sync`, and it implements only the local contract twin.
+    struct OnOneThread {
+        headers: HeaderMap,
+        nacked: Rc<Cell<bool>>,
+    }
+
+    impl LocalIncomingMessage for OnOneThread {
+        fn payload(&self) -> &[u8] {
+            b"reading"
+        }
+
+        fn headers(&self) -> &HeaderMap {
+            &self.headers
+        }
+
+        fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+            ready(Ok(()))
+        }
+
+        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+            self.nacked.set(true);
+            ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_delivery_that_is_not_sync_is_lent_to_the_handler_with_its_headers() {
+        let nacked = Rc::new(Cell::new(false));
+        let mut headers = HeaderMap::new();
+        headers.insert("sensor", "north");
+        let mut slot = Slot::new(OnOneThread {
+            headers,
+            nacked: Rc::clone(&nacked),
+        });
+        let delivery: Delivery<()> = Delivery::empty();
+        let failure = DispatchFailure::new(FailurePolicies::default(), Shutdown::new());
+        let host = Tracked(TaskTracker::new());
+        let read_header = |_: &OnOneThread, ctx: &mut Context<'_>| {
+            let north = ctx.headers().get("sensor") == Some(b"north".as_slice());
+            ready(if north {
+                HandlerOutcome::drop()
+            } else {
+                HandlerOutcome::ack()
+            })
+        };
+
+        dispatch(
+            &Arc::new(read_header),
+            &mut slot,
+            &mut BytesMut::new(),
+            "readings",
+            &(),
+            &delivery,
+            &host,
+            &failure,
+            HeadersAtOnce,
+        )
+        .await;
+
+        assert!(
+            nacked.get(),
+            "the handler read the header and dropped the delivery"
+        );
+    }
+}

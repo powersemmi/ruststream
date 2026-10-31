@@ -6,11 +6,12 @@
 //! body returned. The value at index `i` belongs to the `i`-th delivery; a delivery past the end
 //! of the slice carries no value and settles by the decode-failure policy.
 
-use std::any::type_name;
-use std::fmt;
-use std::marker::PhantomData;
 #[cfg(feature = "testing")]
-use std::sync::Arc;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::any::type_name;
+use core::fmt;
+use core::marker::PhantomData;
 
 use tracing::{error, warn};
 
@@ -26,7 +27,8 @@ use super::super::host::Detach;
 #[cfg(feature = "otel")]
 use super::record_batch_size;
 use super::{
-    BatchHandler, LentValues, SliceHandler, TakenBatch, rejection, reported, settle_lent_batch,
+    BatchHandler, LentValues, SliceHandler, TakenBatch, lent_nothing, rejection, reported,
+    settle_lent_batch,
 };
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Delivered;
@@ -172,7 +174,7 @@ where
     fn take(batch: Batch) -> Self::Taken {
         Lent {
             batch,
-            recorded: LentValues::default(),
+            recorded: lent_nothing(),
             _lane: PhantomData,
         }
     }

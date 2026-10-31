@@ -132,7 +132,13 @@ archive_release() {
     exit 1
   fi
   echo "Building /ruststream/$line/ from $tag as an older version"
-  (cd "$worktree" && cargo doc --locked --all-features --no-deps -p ruststream)
+  # From the release with two runtimes on, `tokio` and `embassy` exclude each other, and the
+  # rustdoc is the tokio set's, as on docs.rs.
+  features=(--all-features)
+  if grep -q '^embassy = \[' "$worktree/Cargo.toml"; then
+    features=(--features asyncapi,cbor,cli,conformance,json,logging,macros,memory,metrics,msgpack,otel,poll-diagnostics,testing,tokio)
+  fi
+  (cd "$worktree" && cargo doc --locked "${features[@]}" --no-deps -p ruststream)
   (cd "$worktree/website" && npm ci &&
     DOCS_BASE_URL="/ruststream/$line/" DOCS_VERSION_KIND=archive DOCS_LINE="$line" \
       DOCS_SOURCE_REF="$tag" npm run build -- --out-dir "build/$line")

@@ -553,3 +553,183 @@ pub(crate) fn doc_description(attrs: &[Attribute]) -> TokenStream2 {
         quote!(::core::option::Option::Some(#joined))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use syn::parse_quote;
+
+    use super::*;
+
+    fn refusal(tokens: TokenStream2) -> String {
+        let parsed = syn::parse2::<SubscriberArgs>(tokens);
+        parsed
+            .err()
+            .expect("these arguments are refused")
+            .to_string()
+    }
+
+    fn source_refusal(expr: &Expr) -> String {
+        let source = source_tokens(&SourceArg::Fixed(expr.clone()));
+        source.expect_err("this source is refused").to_string()
+    }
+
+    #[test]
+    fn a_retry_after_policy_takes_one_duration() {
+        assert_eq!(
+            refusal(quote!("orders", on_failure(decode = retry_after(a, b)))),
+            "retry_after(..) takes exactly one duration argument"
+        );
+    }
+
+    #[test]
+    fn each_failure_kind_is_named_once() {
+        assert_eq!(
+            refusal(quote!("orders", on_failure(panic = drop, panic = skip))),
+            "duplicate `panic` in on_failure(..)"
+        );
+        assert_eq!(
+            refusal(quote!("orders", on_failure(decode = drop, decode = skip))),
+            "duplicate `decode` in on_failure(..)"
+        );
+    }
+
+    #[test]
+    fn a_failure_clause_names_panic_or_decode() {
+        assert_eq!(
+            refusal(quote!("orders", on_failure(timeout = drop))),
+            "expected `panic = ..` or `decode = ..`"
+        );
+        assert_eq!(
+            refusal(quote!("orders", on_failure())),
+            "on_failure(..) needs at least one of `panic = ..` or `decode = ..`"
+        );
+    }
+
+    #[test]
+    fn each_clause_is_written_once() {
+        assert_eq!(
+            refusal(quote!(
+                "orders",
+                on_failure(decode = drop),
+                on_failure(decode = skip)
+            )),
+            "duplicate on_failure(..)"
+        );
+        assert_eq!(
+            refusal(quote!(
+                "orders",
+                start_at(Position::start()),
+                start_at(Position::start())
+            )),
+            "duplicate start_at(..)"
+        );
+        assert_eq!(
+            refusal(quote!("orders", workers(2), workers(3))),
+            "duplicate workers(..)"
+        );
+    }
+
+    #[test]
+    fn an_empty_reply_clause_names_nothing() {
+        assert!(
+            refusal(quote!("orders", reply())).starts_with("reply() names nothing"),
+            "the refusal of `reply()`"
+        );
+    }
+
+    #[test]
+    fn malformed_arguments_are_refused_where_the_parser_stops() {
+        let malformed = [
+            quote!(+),
+            quote!("orders" reply),
+            quote!("orders", 5),
+            quote!("orders", on_failure(+ = drop)),
+            quote!("orders", on_failure(1 = drop)),
+            quote!("orders", on_failure(decode drop)),
+            quote!("orders", start_at(+)),
+            quote!("orders", reply(+)),
+            quote!("orders", workers(+)),
+            quote!("orders", workers(2, 3)),
+        ];
+
+        for tokens in malformed {
+            assert!(syn::parse2::<SubscriberArgs>(tokens).is_err());
+        }
+    }
+
+    #[test]
+    fn every_policy_keyword_names_its_policy() {
+        let args: SubscriberArgs = syn::parse2(quote!(
+            "orders",
+            on_failure(panic = retry, decode = fail_fast)
+        ))
+        .expect("the keywords parse");
+        let failure = args.on_failure.expect("the clause is kept");
+
+        assert!(matches!(failure.panic, Some(FailurePolicyArg::Retry)));
+        assert!(matches!(failure.decode, Some(FailurePolicyArg::FailFast)));
+    }
+
+    #[test]
+    fn a_trailing_comma_closes_the_arguments() {
+        let args: SubscriberArgs =
+            syn::parse2(quote!("orders", reply,)).expect("a trailing comma parses");
+
+        assert!(matches!(args.reply, Some(ReplyArg::Declared)));
+    }
+
+    #[test]
+    fn a_source_whose_type_the_tokens_do_not_show_is_refused() {
+        let expected = "expected a string literal name, `Type::new(..)`, `Type { .. }`, or a \
+                        builder chain on one of those - a free function does not expose its \
+                        type to the macro";
+
+        assert_eq!(source_refusal(&parse_quote!((make)("orders"))), expected);
+        assert_eq!(source_refusal(&parse_quote!(SOURCES[0])), expected);
+    }
+
+    #[test]
+    fn only_a_result_with_a_handler_outcome_error_carries_a_reply() {
+        let carried: Type = parse_quote!(Result<Receipt, HandlerOutcome>);
+        assert!(publish_result_reply(&carried).is_some());
+
+        let plain: [Type; 4] = [
+            parse_quote!(&'static Receipt),
+            parse_quote!(Result),
+            parse_quote!(Result<Receipt>),
+            parse_quote!(Result<Receipt, &'static HandlerOutcome>),
+        ];
+        for ty in plain {
+            assert!(publish_result_reply(&ty).is_none(), "a plain reply type");
+        }
+    }
+
+    #[test]
+    fn only_a_vec_of_one_type_is_a_batch_of_replies() {
+        let batch: Type = parse_quote!(Vec<Receipt>);
+        assert!(vec_element(&batch).is_some());
+
+        let plain: [Type; 3] = [
+            parse_quote!(&'static [Receipt]),
+            parse_quote!(Vec),
+            parse_quote!(Vec<Receipt, Global>),
+        ];
+        for ty in plain {
+            assert!(vec_element(&ty).is_none(), "no batch of replies");
+        }
+    }
+
+    #[test]
+    fn only_written_doc_lines_describe_the_item() {
+        let attrs: Vec<Attribute> = vec![
+            parse_quote!(#[doc = " Settles an order."]),
+            parse_quote!(#[doc = include_str!("order.md")]),
+            parse_quote!(#[doc(hidden)]),
+        ];
+
+        assert_eq!(
+            doc_description(&attrs).to_string(),
+            quote!(::core::option::Option::Some("Settles an order.")).to_string()
+        );
+    }
+}

@@ -9,7 +9,9 @@
 //! each reply independently, while a `.transactional()` one makes the whole batch's replies
 //! visible atomically - the consume-transform-produce pattern.
 
-use std::{any, fmt};
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::{any, fmt};
 
 use bytes::BytesMut;
 use serde::Serialize;

@@ -1,6 +1,10 @@
 //! The schemas a registration records for the generated `AsyncAPI` document: a type's JSON
 //! schema in the draft the document declares, and the header contract a message set joins.
 
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
 use schemars::{JsonSchema, generate::SchemaSettings};
 use serde_json::{Map, Value};
 

@@ -33,10 +33,12 @@
 mod forward;
 mod read;
 
-use std::borrow::Cow;
-use std::fmt;
-use std::marker::PhantomData;
-use std::num::NonZeroUsize;
+pub use forward::CloneSource;
+
+use alloc::borrow::Cow;
+use core::fmt;
+use core::marker::PhantomData;
+use core::num::NonZeroUsize;
 
 use crate::codec::Codec;
 use crate::{FromName, StartAt, Unnamed};
@@ -115,7 +117,9 @@ pub struct SubscriberBuilder<Def, Src, State, DefCodec = ()> {
     _state: PhantomData<fn() -> State>,
 }
 
-impl<Def, Src> SubscriberBuilder<Def, Src, AllOpen> {
+// The descriptor's `Clone` is asked where the builder is made, so a descriptor without it is
+// named at that call rather than behind the form's mount at `include`.
+impl<Def, Src: CloneSource> SubscriberBuilder<Def, Src, AllOpen> {
     /// The builder over `def` subscribing on `source`, with every setting still open.
     ///
     /// Called by the `#[subscriber]` expansion; a hand-written definition that wants the same
@@ -382,6 +386,53 @@ impl<Def, Src, F, P, B, DC> WorkersStep for SubscriberBuilder<Def, Src, (Open, F
         Self::from_parts(def, source, (workers, failures, batch_size, codec))
     }
 }
+
+/// A definition's settings that leave its dispatch concurrency open: one delivery at a time,
+/// where the runner fixes any pool at its own mount site.
+///
+/// A runner that hosts the app in one task (embassy's) takes its worker count as a constant of
+/// the mount site, so a definition that names a count of its own with
+/// [`workers`](SubscriberSettings::workers), [`threads`](SubscriberSettings::threads) or the
+/// attribute's `workers(..)` clause does not mount there. Machinery; never named directly.
+///
+/// # Examples
+///
+/// A count on the definition does not mount on a local router:
+///
+/// ```compile_fail
+/// # use std::convert::Infallible;
+/// # use std::future::ready;
+/// use ruststream::nonzero;
+/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, SubscriberSettings, local_subscriber};
+/// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
+/// use ruststream_runtime::{Deserialized, Input, SoloDeserialized};
+/// # struct Reading<'a>(&'a [u8]);
+/// # impl Deserialized for Reading<'_> {
+/// #     type Output<'a> = Reading<'a>;
+/// #     type Error = Infallible;
+/// #     fn from_payload(payload: &[u8]) -> Result<Reading<'_>, Infallible> { Ok(Reading(payload)) }
+/// # }
+/// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
+/// # struct Log;
+/// # impl LocalHandle<Reading<'_>> for Log {
+/// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> { let _ = r.0; ready(Ok(())) }
+/// # }
+/// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local().include(
+///     local_subscriber(LocalMemorySource::new("readings"), Log)
+///         .workers(nonzero!(4))
+///         .build(),
+/// );
+/// ```
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` sets a worker count, which the embedded runner fixes at the mount site",
+    note = "on EmbeddedApp write `.include(def).pool::<N>()` or `.keyed::<N>()`; `threads(n)` runs \
+            only on the tokio runtime"
+)]
+pub trait Sequential {}
+
+impl<Def, Src, F, P, B, DC> Sequential for SubscriberBuilder<Def, Src, (Open, F, P, B), DC> {}
 
 /// Setting the failure policies. See [`SubscriberSettings::on_failure`].
 #[diagnostic::on_unimplemented(
@@ -744,6 +795,7 @@ impl<D: Declared> SubscriberSettings for D {}
 #[cfg(test)]
 mod tests {
     use super::{AllOpen, BatchSized, Declared, SubscriberBuilder, SubscriberSettings};
+    use alloc::format;
     // Reading a source's name needs some connected broker to name the impl, and the in-process
     // one is the only broker the core ships. The settings themselves are broker-agnostic, so
     // that one assertion is gated rather than the whole module.

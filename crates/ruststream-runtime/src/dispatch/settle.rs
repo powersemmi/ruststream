@@ -1,8 +1,9 @@
 //! Settling a delivery by its handler's outcome: the ack, the nack, and the copies the runtime
 //! publishes for a retry or a dead letter.
 
-use std::sync::Arc;
-use std::time::Duration;
+use alloc::string::ToString;
+use alloc::sync::Arc;
+use core::time::Duration;
 
 use bytes::Bytes;
 use tracing::warn;
@@ -13,12 +14,16 @@ use super::{Delivery, RETRY_COUNT_HEADER, Slot};
 #[cfg(doc)]
 use crate::IncomingMessage;
 use crate::handler::HandlerResult;
-use crate::host::Detach;
+use crate::host::HostDetach;
 use crate::publish::PublishContext;
 use crate::redelivery::DeferredRetry;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Coordinator, in_harness_scope};
 use crate::{AckError, HeaderMap, LocalIncomingMessage, OutgoingMessage, RetryDeclaration, Str};
+
+mod keep;
+
+use keep::keep_copy;
 
 /// Parses the current [`RETRY_COUNT_HEADER`] value, defaulting to zero when absent or malformed.
 fn current_retry_count(headers: &HeaderMap) -> u64 {
@@ -33,6 +38,8 @@ fn current_retry_count(headers: &HeaderMap) -> u64 {
 /// The single place a settlement reaches the broker, single-message and batch paths alike: a
 /// second one would be free to answer a [`NackAfter`](HandlerResult::NackAfter) differently, and
 /// the retry path below is exactly the part that is easy to leave out.
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 pub(crate) async fn settle_outcome<M, C, Host>(
     slot: &mut Slot<M>,
     outcome: HandlerResult,
@@ -43,7 +50,7 @@ pub(crate) async fn settle_outcome<M, C, Host>(
 ) where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     let ack_result = match outcome {
         HandlerResult::Ack => slot.take().ack().await,
@@ -134,6 +141,8 @@ fn redelivery_of<'d, M: LocalIncomingMessage>(
 /// # Errors
 ///
 /// Returns the [`AckError`] from settling the original delivery.
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 async fn settle_retry<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
@@ -144,7 +153,7 @@ async fn settle_retry<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     if delivery.declaration.declares_nothing() {
         return slot.take().nack(true).await;
@@ -152,7 +161,7 @@ where
     // The broker moves this subscription's deliveries itself: its requeue is what an immediate
     // retry is, and the declaration is the broker's to apply, so no cap is read here, as on the
     // native delayed path.
-    let Some(retry) = delivery.retry.as_ref() else {
+    let Some(path) = copy_path(delivery, host) else {
         return slot.take().nack(true).await;
     };
     match redelivery_of(slot.get(), &delivery.declaration) {
@@ -162,13 +171,12 @@ where
             slot.take().nack(true).await
         }
         Redelivery::Subscription => {
-            let destination = retry.destination.clone();
-            publish_copy(
+            send_copy(
                 slot,
                 name,
-                destination,
+                Target::Subscription,
                 None,
-                retry,
+                path,
                 delivery,
                 host,
                 build_cx,
@@ -184,7 +192,7 @@ where
                 name,
                 destination,
                 at_cap,
-                retry,
+                path,
                 delivery,
                 host,
                 build_cx,
@@ -192,6 +200,83 @@ where
             .await
         }
         Redelivery::Reject => reject_spent(slot, name).await,
+    }
+}
+
+/// The way a copy of a failed delivery leaves: the subscription's erased retry publisher, or
+/// the store of copies the runner's host keeps in place.
+enum CopyPath<'a, C, Kept> {
+    /// A copy published through the registration's retry publisher, its timer the runner's
+    /// detached work.
+    Erased(&'a DeferredRetry<C>),
+    /// A copy written into a record of the host's store, published from there.
+    Kept(&'a Kept),
+}
+
+/// Where one copy goes.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Target<'a> {
+    /// Back to the subscription: the destination the mount site or the descriptor named.
+    Subscription,
+    /// To the declared dead-letter destination.
+    DeadLetter(&'a str),
+}
+
+/// The copy path of this delivery: the registration's retry publisher where it has one, the
+/// host's store of kept copies otherwise; `None` where the broker moves the delivery itself.
+fn copy_path<'a, C, Host: HostDetach>(
+    delivery: &'a Delivery<C>,
+    host: &'a Host,
+) -> Option<CopyPath<'a, C, Host::Kept>> {
+    if let Some(retry) = delivery.retry.as_ref() {
+        return Some(CopyPath::Erased(retry));
+    }
+    host.kept().map(CopyPath::Kept)
+}
+
+/// Sends a copy of the delivery to `target` along `path`, now or after `delay`.
+///
+/// # Errors
+///
+/// See [`publish_copy`] and [`keep_copy`].
+// Each part is the delivery's own or the runner's; bundling them would hide which is which.
+#[allow(clippy::too_many_arguments)]
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
+async fn send_copy<M, C, Host>(
+    slot: &mut Slot<M>,
+    name: &str,
+    target: Target<'_>,
+    delay: Option<Duration>,
+    path: CopyPath<'_, C, Host::Kept>,
+    delivery: &Delivery<C>,
+    host: &Host,
+    build_cx: fn(&M) -> C,
+) -> Result<(), AckError>
+where
+    M: LocalIncomingMessage,
+    C: Send + Sync + 'static,
+    Host: HostDetach,
+{
+    match path {
+        CopyPath::Erased(retry) => {
+            let destination = match target {
+                Target::Subscription => retry.destination.clone(),
+                Target::DeadLetter(destination) => Some(Arc::from(destination)),
+            };
+            publish_copy(
+                slot,
+                name,
+                destination,
+                delay,
+                retry,
+                delivery,
+                host,
+                build_cx,
+            )
+            .await
+        }
+        CopyPath::Kept(kept) => keep_copy(slot, name, target, delay, kept).await,
     }
 }
 
@@ -243,6 +328,8 @@ where
 /// without a graceful shutdown) before the timer fires, the copy is lost, since the original has
 /// already been dropped. Brokers that need at-least-once delayed redelivery across a crash must
 /// provide native support.
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 async fn settle_nack_after<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
@@ -254,7 +341,7 @@ async fn settle_nack_after<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     if slot.get().supports_nack_after() {
         // The cap is read before the delay reaches the broker: a native redelivery would otherwise
@@ -263,8 +350,8 @@ where
         // republishing the delivery increments the header the cap counts with where the transport
         // counts nothing; a broker that moves a spent delivery itself applies the declaration
         // itself.
-        if let Some(retry) = delivery.retry.as_ref()
-            && delivery.declaration.max_attempts().is_some()
+        if delivery.declaration.max_attempts().is_some()
+            && let Some(path) = copy_path(delivery, host)
         {
             match redelivery_of(slot.get(), &delivery.declaration) {
                 // Under a cap a destination takes only the spent deliveries.
@@ -274,7 +361,7 @@ where
                         name,
                         destination,
                         true,
-                        retry,
+                        path,
                         delivery,
                         host,
                         build_cx,
@@ -297,19 +384,18 @@ where
         return accepted;
     }
 
-    let Some(retry) = delivery.retry.as_ref() else {
+    let Some(path) = copy_path(delivery, host) else {
         return requeue_now(slot, name, &delivery.declaration).await;
     };
 
     match redelivery_of(slot.get(), &delivery.declaration) {
         Redelivery::Subscription => {
-            let destination = retry.destination.clone();
-            publish_copy(
+            send_copy(
                 slot,
                 name,
-                destination,
+                Target::Subscription,
                 Some(delay),
-                retry,
+                path,
                 delivery,
                 host,
                 build_cx,
@@ -327,7 +413,7 @@ where
                 name,
                 destination,
                 at_cap,
-                retry,
+                path,
                 delivery,
                 host,
                 build_cx,
@@ -373,12 +459,14 @@ async fn requeue_now<M: LocalIncomingMessage>(
 /// Returns the [`AckError`] from dropping the original, as [`publish_copy`] does.
 // Each part is the delivery's own or the runner's; bundling them would hide which is which.
 #[allow(clippy::too_many_arguments)]
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 async fn dead_letter<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
     destination: &str,
     at_cap: bool,
-    retry: &DeferredRetry<C>,
+    path: CopyPath<'_, C, Host::Kept>,
     delivery: &Delivery<C>,
     host: &Host,
     build_cx: fn(&M) -> C,
@@ -386,18 +474,17 @@ async fn dead_letter<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     if at_cap {
         warn_at_cap(name, attempt_of(slot.get()), Some(destination));
     }
-    let destination = Arc::from(destination);
-    publish_copy(
+    send_copy(
         slot,
         name,
-        Some(destination),
+        Target::DeadLetter(destination),
         None,
-        retry,
+        path,
         delivery,
         host,
         build_cx,
@@ -440,6 +527,16 @@ fn warn_at_cap(name: &str, attempt: u64, destination: Option<&str>) {
     }
 }
 
+/// Whether the harness, rather than the runner, keeps this delivery's delayed copy.
+#[cfg_attr(not(feature = "testing"), allow(unused_variables))]
+fn harness_schedules<C>(delivery: &Delivery<C>) -> bool {
+    #[cfg(feature = "testing")]
+    if delivery.hooks.coordinator().is_some() {
+        return true;
+    }
+    false
+}
+
 /// Drops the original delivery and sends a copy of it to `destination`, now or after `delay`; a
 /// zero delay is now.
 ///
@@ -456,6 +553,8 @@ fn warn_at_cap(name: &str, attempt: u64, destination: Option<&str>) {
 #[cfg_attr(not(feature = "testing"), allow(unused_variables))]
 // Each part is the delivery's own or the runner's; bundling them would hide which is which.
 #[allow(clippy::too_many_arguments)]
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
 async fn publish_copy<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
@@ -469,7 +568,7 @@ async fn publish_copy<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: Detach,
+    Host: HostDetach,
 {
     let publisher = Arc::clone(&retry.publisher);
     let subscription: Arc<str> = Arc::from(name);
@@ -499,9 +598,26 @@ where
     // returns, so `drive` cannot settle between the two.
     #[cfg(feature = "testing")]
     let _hold = delivery.hooks.coordinator().map(Coordinator::hold);
+    // A delayed copy waits in the runner, so room for it is reserved before the original is
+    // dropped: a runner whose store is full gets the delivery requeued, and the broker keeps it.
+    let delay = delay.filter(|delay| !delay.is_zero());
+    let reserved = delay.is_some() && !harness_schedules(delivery);
+    if reserved && !host.reserve() {
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %subscription,
+            "the store of delayed retries is full; requeuing the delivery now",
+        );
+        return slot.take().nack(true).await;
+    }
     match slot.take().nack(false).await {
         Ok(()) | Err(AckError::Unsupported) => {}
-        Err(err) => return Err(err),
+        Err(err) => {
+            if reserved {
+                host.release();
+            }
+            return Err(err);
+        }
     }
 
     let republish = async move {
@@ -525,7 +641,7 @@ where
 
     // A zero delay is an immediate copy: a timer task for it would cost a task allocation and
     // two scheduler turns to publish the same copy a little later.
-    let Some(delay) = delay.filter(|delay| !delay.is_zero()) else {
+    let Some(delay) = delay else {
         // An immediate copy is awaited on the dispatch path: there is no timer to wait for, and a
         // detached task would let the loop pull the next delivery before this one is back.
         republish.await;
@@ -548,10 +664,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::future::ready;
+    use alloc::borrow::ToOwned;
+    use core::future::ready;
+    use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
     use std::io;
-    use std::sync::LazyLock;
-    use std::sync::atomic::{AtomicU8, Ordering};
 
     use futures::{StreamExt, poll};
     use tokio::sync::mpsc;
@@ -567,6 +683,7 @@ mod tests {
         RETRY_COUNT_HEADER, RetryDeclaration, Slot, settle_nack_after, settle_outcome,
     };
     use crate::IncomingMessage;
+    use crate::host::Detach;
     use crate::redelivery::bare_retry_publisher;
     use crate::testkit::Tracked;
     use crate::{Lend, Publisher, Subscriber};
@@ -575,28 +692,6 @@ mod tests {
     /// The per-delivery context of a registration that reads none: what a test delivery's transforms
     /// would see.
     fn unit_cx<M>(_msg: &M) {}
-
-    /// A delivery whose settlement always fails, so the dispatcher's ack-failure path runs.
-    struct UnsettleableMessage;
-
-    impl IncomingMessage for UnsettleableMessage {
-        fn payload(&self) -> &[u8] {
-            b"body"
-        }
-
-        fn headers(&self) -> &HeaderMap {
-            static EMPTY: LazyLock<HeaderMap> = LazyLock::new(HeaderMap::new);
-            &EMPTY
-        }
-
-        fn ack(self) -> impl Future<Output = Result<(), AckError>> {
-            ready(Err(AckError::Timeout))
-        }
-
-        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
-            ready(Err(AckError::Unsupported))
-        }
-    }
 
     /// A reading publisher that reports the address the payload reached it at, for the assertion the
     /// benchmarks cannot make: the in-memory broker redelivers natively, so no measured scenario
@@ -642,8 +737,9 @@ mod tests {
     #[tokio::test]
     async fn a_failed_acknowledgement_is_logged_rather_than_propagated() {
         // Settlement is best-effort: a broker that rejects the ack must not take the loop down.
+        let settled = Arc::new(AtomicU8::new(0));
         settle_outcome(
-            &mut Slot::new(UnsettleableMessage),
+            &mut Slot::new(plain_on(&[], &settled, Settlement::Rejected)),
             HandlerResult::Ack,
             "orders",
             &Delivery::empty(),
@@ -652,7 +748,7 @@ mod tests {
         )
         .await;
         settle_outcome(
-            &mut Slot::new(UnsettleableMessage),
+            &mut Slot::new(plain_on(&[], &settled, Settlement::Rejected)),
             HandlerResult::drop(),
             "orders",
             &Delivery::empty(),
@@ -664,7 +760,9 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_failed_deferred_republish_is_logged_rather_than_propagated() {
-        let delivery = Delivery::deferring_to(bare_retry_publisher(RejectingPublisher), "orders");
+        let rejecting = RejectingPublisher::default();
+        let attempts = Arc::clone(&rejecting.attempts);
+        let delivery = Delivery::deferring_to(bare_retry_publisher(rejecting), "orders");
         let host = Tracked(TaskTracker::new());
         let settled = Arc::new(AtomicU8::new(0));
         settle_nack_after(
@@ -681,8 +779,14 @@ mod tests {
         // The original is already dropped, so the failed republish loses the message; the point
         // is that the deferred task reports it instead of panicking the runtime.
         assert_eq!(settled.load(Ordering::SeqCst), 1);
-        time::advance(Duration::from_secs(1)).await;
-        task::yield_now().await;
+        // The paused clock jumps to the copy's timer once nothing else can run.
+        host.0.close();
+        host.0.wait().await;
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "the deferred republish ran and was refused"
+        );
     }
 
     /// The bytes of a deferred copy are the dispatch's own - it read them off the delivery before
@@ -749,7 +853,7 @@ mod tests {
         assert_eq!(settled.load(Ordering::SeqCst), 1);
 
         // Nothing is republished before the delay elapses.
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         assert!(poll!(stream.next()).is_pending());
 
         time::advance(Duration::from_secs(30)).await;
@@ -789,7 +893,7 @@ mod tests {
         time::advance(Duration::from_secs(30)).await;
         task::yield_now().await;
 
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         let redelivered = stream
             .next()
             .await
@@ -826,7 +930,7 @@ mod tests {
         task::yield_now().await;
 
         // The original is still the broker's to redeliver, so a deferred copy would duplicate it.
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         assert!(poll!(stream.next()).is_pending());
     }
 
@@ -853,9 +957,136 @@ mod tests {
         time::advance(Duration::from_secs(1)).await;
         task::yield_now().await;
 
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         let redelivered = stream.next().await.unwrap().unwrap();
         assert_eq!(redelivered.headers().get_str(RETRY_COUNT_HEADER), Some("5"));
+    }
+
+    /// A runner whose store for deferred copies holds `room` of them: it counts what it was
+    /// handed and what was given back unused.
+    struct Store {
+        room: AtomicUsize,
+        released: AtomicUsize,
+        tasks: TaskTracker,
+    }
+
+    impl Store {
+        fn with_room(room: usize) -> Self {
+            Self {
+                room: AtomicUsize::new(room),
+                released: AtomicUsize::new(0),
+                tasks: TaskTracker::new(),
+            }
+        }
+    }
+
+    impl Detach for Store {
+        fn detach<Work>(&self, work: Work)
+        where
+            Work: Future<Output = ()> + Send + 'static,
+        {
+            drop(self.tasks.spawn(work));
+        }
+
+        fn detach_after<Work>(&self, delay: Duration, work: Work)
+        where
+            Work: Future<Output = ()> + Send + 'static,
+        {
+            drop(self.tasks.spawn(async move {
+                time::sleep(delay).await;
+                work.await;
+            }));
+        }
+
+        fn reserve(&self) -> bool {
+            let room = self.room.load(Ordering::SeqCst);
+            if room == 0 {
+                return false;
+            }
+            self.room.store(room - 1, Ordering::SeqCst);
+            true
+        }
+
+        fn release(&self) {
+            self.room.fetch_add(1, Ordering::SeqCst);
+            self.released.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_full_store_requeues_the_delivery_instead_of_copying_it() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("orders");
+        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+        let host = Store::with_room(0);
+        let settled = Arc::new(AtomicU8::new(0));
+        settle_nack_after(
+            &mut Slot::new(plain(&[], &settled)),
+            "orders",
+            Duration::from_secs(30),
+            &delivery,
+            &host,
+            unit_cx,
+        )
+        .await
+        .unwrap();
+        // Requeued, not dropped: the broker keeps the message while the runner has no room.
+        assert_eq!(settled.load(Ordering::SeqCst), 2);
+
+        time::advance(Duration::from_secs(30)).await;
+        task::yield_now().await;
+        let mut stream = core::pin::pin!(sub.stream());
+        assert!(poll!(stream.next()).is_pending(), "no copy was scheduled");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_store_with_room_takes_the_copy() {
+        let broker = MemoryBroker::new();
+        let mut sub = broker.subscribe("orders");
+        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+        let host = Store::with_room(1);
+        let settled = Arc::new(AtomicU8::new(0));
+        settle_nack_after(
+            &mut Slot::new(plain(&[], &settled)),
+            "orders",
+            Duration::from_secs(30),
+            &delivery,
+            &host,
+            unit_cx,
+        )
+        .await
+        .unwrap();
+        assert_eq!(settled.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            host.room.load(Ordering::SeqCst),
+            0,
+            "the copy holds its room"
+        );
+
+        time::advance(Duration::from_secs(30)).await;
+        task::yield_now().await;
+        let mut stream = core::pin::pin!(sub.stream());
+        assert_eq!(stream.next().await.unwrap().unwrap().payload(), b"body");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_rejected_settle_gives_the_room_back() {
+        let broker = MemoryBroker::new();
+        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
+        let host = Store::with_room(1);
+        let settled = Arc::new(AtomicU8::new(0));
+        settle_nack_after(
+            &mut Slot::new(plain_on(&[], &settled, Settlement::Rejected)),
+            "orders",
+            Duration::from_secs(30),
+            &delivery,
+            &host,
+            unit_cx,
+        )
+        .await
+        .expect_err("the rejected settle is reported");
+        assert_eq!(host.released.load(Ordering::SeqCst), 1);
+        assert_eq!(host.room.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -897,7 +1128,7 @@ mod tests {
         let host = Tracked(TaskTracker::new());
 
         let msg = {
-            let mut stream = std::pin::pin!(sub.stream());
+            let mut stream = core::pin::pin!(sub.stream());
             stream.next().await.unwrap().unwrap()
         };
         assert!(msg.supports_nack_after());
@@ -915,7 +1146,7 @@ mod tests {
         time::advance(Duration::from_secs(5)).await;
         task::yield_now().await;
 
-        let mut stream = std::pin::pin!(sub.stream());
+        let mut stream = core::pin::pin!(sub.stream());
         let redelivered = stream.next().await.unwrap().unwrap();
         // Native redelivery keeps the original payload and adds no retry-count header.
         assert_eq!(redelivered.payload(), b"native");

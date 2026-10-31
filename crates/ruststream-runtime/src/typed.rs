@@ -7,17 +7,18 @@
 //! passed in here. Both use the same [`Layer`](super::Layer) / [`HandlerExt`](super::HandlerExt)
 //! machinery, just at different inputs.
 
-use std::{fmt, marker::PhantomData};
+use alloc::format;
+use core::{fmt, marker::PhantomData};
 
-use crate::IncomingMessage;
 use crate::codec::{Codec, CodecError};
+use crate::{IncomingMessage, LocalIncomingMessage};
 use serde::de::DeserializeOwned;
 use tracing::warn;
 
 use super::batch::rejection;
-use super::context::Context;
+use super::context::{Context, MarkingContext};
 use super::failure::FailurePolicy;
-use super::handler::{Handler, HandlerOutcome};
+use super::handler::{CallHandler, Handler, HandlerOutcome, LocalCall, LocalHandler, SendCall};
 use super::input::{Decoded, Materialize, REPORTED};
 
 /// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
@@ -87,7 +88,31 @@ where
     St: Send + Sync,
     Inner: Handler<Input::Target, Cx, St>,
 {
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> HandlerOutcome {
+    fn handle(
+        &self,
+        msg: &M,
+        ctx: &mut Context<'_, Cx, St>,
+    ) -> impl Future<Output = HandlerOutcome> + Send {
+        self.handle_local::<SendCall, Cx, St>(msg, ctx)
+    }
+}
+
+impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
+    /// Decodes `msg` and runs the inner handler on what it materialized into: the adapter's
+    /// body, for a delivery of either family. The [`Handler`] impl is this future; a runner
+    /// whose deliveries are not `Sync` reaches it through [`LocalTyped`].
+    // `Send` exactly where the delivery is `Sync`: the `Handler` impl's signature proves it there.
+    #[allow(clippy::future_not_send)]
+    pub(crate) async fn handle_local<Via, Cx, St>(
+        &self,
+        msg: &M,
+        ctx: &mut Context<'_, Cx, St>,
+    ) -> HandlerOutcome
+    where
+        M: LocalIncomingMessage,
+        Input: Materialize<DecodeCodec, M>,
+        Via: CallHandler<Inner, Input::Target, Cx, St>,
+    {
         if let Some(outcome) = refused::<Input, DecodeCodec, M, Cx, St>(msg, self.decode, ctx) {
             return outcome;
         }
@@ -98,10 +123,34 @@ where
             Ok(held) => {
                 #[cfg(feature = "testing")]
                 Input::record(&held, ctx);
-                self.inner.handle(Input::view(&held, msg), ctx).await
+                Via::handle(&self.inner, Input::view(&held, msg), ctx).await
             }
             Err(err) => unmaterialized::<Input, DecodeCodec, M, Cx, St>(&err, self.decode, ctx),
         }
+    }
+}
+
+/// A [`Typed`] adapter for a runner whose deliveries stay on one thread: the same body, reached
+/// through [`LocalHandler`], so the delivery need not be `Sync`.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct LocalTyped<Adapter>(pub(crate) Adapter);
+
+impl<M, Input, DecodeCodec, Inner, Cx, St> LocalHandler<M, Cx, St>
+    for LocalTyped<Typed<M, Input, DecodeCodec, Inner>>
+where
+    M: LocalIncomingMessage,
+    Input: Materialize<DecodeCodec, M>,
+    Inner: LocalHandler<Input::Target, Cx, St>,
+{
+    // The delivery stays on the thread that polls it, which is what this twin is for.
+    #[allow(clippy::future_not_send)]
+    fn handle(
+        &self,
+        msg: &M,
+        ctx: &mut Context<'_, Cx, St>,
+    ) -> impl Future<Output = HandlerOutcome> {
+        self.0.handle_local::<LocalCall, Cx, St>(msg, ctx)
     }
 }
 
@@ -117,11 +166,11 @@ where
 pub(crate) fn refused<Input, Decoder, M, Cx, St>(
     msg: &M,
     decode: FailurePolicy,
-    ctx: &mut Context<'_, Cx, St>,
+    ctx: MarkingContext<'_, '_, Cx, St>,
 ) -> Option<HandlerOutcome>
 where
     Input: Materialize<Decoder, M>,
-    M: IncomingMessage,
+    M: LocalIncomingMessage,
 {
     msg.decode_error()
         .map(|err| refuse::<Input, Decoder, M, Cx, St>(err, decode, ctx))
@@ -135,7 +184,7 @@ where
 fn refuse<Input, Decoder, M, Cx, St>(
     err: &CodecError,
     decode: FailurePolicy,
-    ctx: &mut Context<'_, Cx, St>,
+    ctx: MarkingContext<'_, '_, Cx, St>,
 ) -> HandlerOutcome
 where
     Input: Materialize<Decoder, M>,
@@ -159,7 +208,7 @@ where
 pub(crate) fn unmaterialized<Input, Decoder, M, Cx, St>(
     err: &CodecError,
     decode: FailurePolicy,
-    ctx: &mut Context<'_, Cx, St>,
+    ctx: MarkingContext<'_, '_, Cx, St>,
 ) -> HandlerOutcome
 where
     Input: Materialize<Decoder, M>,
@@ -187,7 +236,10 @@ where
 
 #[cfg(all(test, feature = "json"))]
 mod tests {
-    use std::future::ready;
+    use alloc::format;
+    use alloc::string::String;
+    use alloc::vec::Vec;
+    use core::future::ready;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},

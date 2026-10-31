@@ -6,9 +6,14 @@
 //! a `serde` model, [`Deserialized`] for one that reads its own bytes), the set picks the variant
 //! by its rule, and the generated document lists one message per variant.
 
-use std::any::type_name;
-use std::fmt;
-use std::hash::Hash;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use core::any::type_name;
+use core::fmt;
+use core::hash::Hash;
 
 use serde::de::DeserializeOwned;
 use thiserror::Error;
@@ -581,6 +586,8 @@ pub fn header_unknown(
 mod tests {
     use super::{every_variant_failed, header_missing, header_unknown, no_variant_chosen};
     use crate::codec::CodecError;
+    use alloc::borrow::ToOwned;
+    use alloc::string::ToString;
 
     fn decode_error(reason: &str) -> CodecError {
         CodecError::Decode(reason.to_owned().into())

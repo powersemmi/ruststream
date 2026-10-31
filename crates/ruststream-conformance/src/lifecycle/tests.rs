@@ -35,6 +35,7 @@ use ruststream_core::{
 };
 use ruststream_runtime::testing::{Backlog, TestableBroker};
 
+mod local;
 mod queue;
 
 /// The one rule a [`Faulty`] broker breaks.
@@ -72,6 +73,8 @@ enum Fault {
     SettleHangs,
     /// `nack(requeue = true)` fails.
     RequeueFails,
+    /// `nack(requeue = false)` fails.
+    DropFails,
     /// `nack(requeue = true)` answers `Unsupported` and drops the delivery, the way a transport
     /// with nothing to take back does.
     RequeueUnsupported,
@@ -534,6 +537,7 @@ impl IncomingMessage for FaultyMessage {
             Fault::RequeueFails if requeue => {
                 Err(AckError::Broker(Box::new(MemoryError::ShutDown)))
             }
+            Fault::DropFails if !requeue => Err(AckError::Broker(Box::new(MemoryError::ShutDown))),
             Fault::RequeueUnsupported if requeue => {
                 drop(ConsumeOnDrop(Some(inner)));
                 Err(AckError::Unsupported)

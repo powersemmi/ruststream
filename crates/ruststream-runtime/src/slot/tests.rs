@@ -2,6 +2,8 @@
 // which the compiler checks whether or not a test constructs one.
 #![allow(dead_code)]
 
+use alloc::string::ToString;
+use alloc::vec;
 use std::collections::HashMap;
 
 use serde::Serialize;
@@ -135,7 +137,7 @@ async fn a_slot_publisher_delegates_the_transaction_protocol() {
         .expect("publish failed");
     slot.abort().await.expect("abort failed");
 
-    let mut stream = std::pin::pin!(subscriber.stream());
+    let mut stream = core::pin::pin!(subscriber.stream());
     assert!(
         futures::poll!(stream.next()).is_pending(),
         "an aborted transaction discards what it staged",
@@ -188,7 +190,7 @@ async fn the_builder_separates_the_encode_and_the_headers_failure() {
         "the message must point at the headers: {rejected}",
     );
 
-    let mut stream = std::pin::pin!(subscriber.stream());
+    let mut stream = core::pin::pin!(subscriber.stream());
     assert!(
         futures::poll!(stream.next()).is_pending(),
         "nothing may be published once a position fails",

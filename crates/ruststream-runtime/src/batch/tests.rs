@@ -1,7 +1,11 @@
-use std::future::ready;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::string::ToString;
+use alloc::vec;
+use core::future::ready;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use core::time::Duration;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
 
 use bytes::Bytes;
 use futures::StreamExt;
@@ -54,9 +58,9 @@ async fn per_element_outcomes_settle_individually() {
     let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
     assert_eq!(payloads, [b"1"]);
     for msg in redelivered {
-        msg.ack().await.unwrap();
+        IncomingMessage::ack(msg).await.unwrap();
     }
-    let mut stream = std::pin::pin!(sub.stream());
+    let mut stream = core::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
 }
 
@@ -106,7 +110,7 @@ async fn per_element_continuations_run_after_settle() {
     let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
     assert_eq!(payloads, [b"1"]);
     for msg in redelivered {
-        msg.ack().await.unwrap();
+        IncomingMessage::ack(msg).await.unwrap();
     }
 }
 
@@ -134,7 +138,7 @@ async fn unmatched_remainder_is_retried() {
     let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
     assert_eq!(payloads, [b"1", b"2"]);
     for msg in redelivered {
-        msg.ack().await.unwrap();
+        IncomingMessage::ack(msg).await.unwrap();
     }
 }
 
@@ -165,14 +169,14 @@ async fn per_element_outcomes_carry_delays() {
     let batch = pull_batch(&mut sub).await;
     handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
-    let mut stream = std::pin::pin!(sub.stream());
+    let mut stream = core::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
     time::advance(Duration::from_secs(5)).await;
     task::yield_now().await;
 
     let redelivered = stream.next().await.unwrap().unwrap();
-    assert_eq!(redelivered.payload(), b"1");
-    redelivered.ack().await.unwrap();
+    assert_eq!(IncomingMessage::payload(&redelivered), b"1");
+    IncomingMessage::ack(redelivered).await.unwrap();
 }
 
 #[tokio::test]
@@ -197,7 +201,7 @@ async fn uniform_outcome_settles_the_whole_batch() {
     let redelivered = pull_batch(&mut sub).await;
     assert_eq!(redelivered.len(), 2);
     for msg in redelivered {
-        msg.ack().await.unwrap();
+        IncomingMessage::ack(msg).await.unwrap();
     }
 }
 
@@ -339,7 +343,7 @@ async fn fail_fast_decode_tears_down_and_drops_the_element() {
     assert_eq!(*seen.lock().unwrap(), [1]);
 
     // The undecodable element was dropped, not requeued into the same failure.
-    let mut stream = std::pin::pin!(sub.stream());
+    let mut stream = core::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
 }
 
@@ -669,7 +673,7 @@ async fn deferred_copies(
     sub: &mut MemorySubscriber,
     expected: usize,
 ) -> Vec<(Vec<u8>, Option<String>)> {
-    let mut stream = std::pin::pin!(sub.stream());
+    let mut stream = core::pin::pin!(sub.stream());
     let mut copies = Vec::with_capacity(expected);
     for _ in 0..expected {
         let msg = time::timeout(DEFER * 100, stream.next())
@@ -678,11 +682,15 @@ async fn deferred_copies(
             .expect("the subscriber outlives the deferred publish")
             .expect("the memory broker delivers what it accepted");
         copies.push((
-            msg.payload().to_vec(),
-            msg.headers().get_str(RETRY_COUNT_HEADER).map(str::to_owned),
+            IncomingMessage::payload(&msg).to_vec(),
+            IncomingMessage::headers(&msg)
+                .get_str(RETRY_COUNT_HEADER)
+                .map(str::to_owned),
         ));
         // Settled, because a delivery dropped unsettled comes back.
-        msg.ack().await.expect("the memory broker acknowledges");
+        IncomingMessage::ack(msg)
+            .await
+            .expect("the memory broker acknowledges");
     }
     assert!(
         futures::poll!(stream.next()).is_pending(),

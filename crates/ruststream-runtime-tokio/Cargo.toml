@@ -24,15 +24,15 @@ testing = ["ruststream-runtime/testing", "ruststream-core/testing", "tokio/test-
 poll-diagnostics = ["ruststream-runtime/poll-diagnostics"]
 
 [dependencies]
-ruststream-core.workspace = true
+ruststream-core = { workspace = true, features = ["std"] }
 ruststream-runtime = { workspace = true, features = ["tokio"] }
 bytes = { workspace = true, features = ["std"] }
-futures.workspace = true
+futures = { workspace = true, features = ["std", "async-await", "executor"] }
 rtrb.workspace = true
 thiserror = { workspace = true, features = ["std"] }
 tokio.workspace = true
 tokio-util.workspace = true
-tracing.workspace = true
+tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
