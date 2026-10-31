@@ -144,7 +144,7 @@ pub(super) fn ctx_extractor_key(ty: &Type) -> Option<&Type> {
 /// generated `Handle` impl is generic over the state, so the handler mounts on an app with any
 /// state.
 pub(super) fn state_type(func: &ItemFn) -> Option<TokenStream2> {
-    let FnArg::Typed(PatType { ty, .. }) = func.sig.inputs.get(1)? else {
+    let Some(FnArg::Typed(PatType { ty, .. })) = func.sig.inputs.get(1) else {
         return None;
     };
     // Only a `&mut Context<..>` second parameter names a state; a second extractor parameter does
@@ -193,20 +193,19 @@ pub(super) fn collect_extractors(
 ) -> syn::Result<Vec<(&Pat, &Type)>> {
     let start = if ctx_present { 2 } else { 1 };
     let mut extractors = Vec::new();
+    // syn parses `self` only as the first parameter, the message's place, which `message_param`
+    // refuses it in: every parameter here is typed.
     for arg in func.sig.inputs.iter().skip(start) {
-        // syn parses `self` only as the first parameter, the message's place, which
-        // `message_param` refuses it in.
-        let FnArg::Typed(PatType { pat, ty, .. }) = arg else {
-            continue;
-        };
-        if is_context_param(ty) {
-            return Err(Error::new_spanned(
-                ty,
-                "the `&mut Context` parameter must come immediately after the message, before any \
-                 extractor parameters",
-            ));
+        if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
+            if is_context_param(ty) {
+                return Err(Error::new_spanned(
+                    ty,
+                    "the `&mut Context` parameter must come immediately after the message, before \
+                     any extractor parameters",
+                ));
+            }
+            extractors.push((&**pat, &**ty));
         }
-        extractors.push((&**pat, &**ty));
     }
     Ok(extractors)
 }
