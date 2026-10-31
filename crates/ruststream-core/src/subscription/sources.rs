@@ -228,13 +228,13 @@ impl<C: Subscribe<Copies = AddressedCopies>> RedeliveryAddressed<C> for Name {
 /// A source decorator opening the subscription at a chosen position instead of the broker's
 /// default.
 ///
-/// Wraps any [`SubscriptionSource`] whose subscriber is [`Seekable`] and seeks to `position`
+/// Wraps any [`SubscriptionSource`] whose subscriber is [`Seekable`](crate::Seekable) and seeks to `position`
 /// before the first delivery, so the handler never sees a message from before the chosen
 /// point. The position is the broker's own type (its latest / earliest constructors, a
 /// sequence number, a captured [`Positioned`](crate::Positioned) value), which makes "start
 /// from the latest on deploy" or "replay the whole log into a fresh subscription" a
 /// declaration at the mount site rather than an operational action afterwards. On a broker
-/// without the [`Seekable`] capability the wrapped source does not implement
+/// without the [`Seekable`](crate::Seekable) capability the wrapped source does not implement
 /// [`SubscriptionSource`], so the mount fails to compile.
 ///
 /// This is a forced position: it applies on every startup. A conditional default (only when
