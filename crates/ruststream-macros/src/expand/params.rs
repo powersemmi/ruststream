@@ -425,3 +425,203 @@ pub(super) fn message_param(func: &ItemFn) -> syn::Result<MessageParam<'_>> {
 /// What [`message_param`] dissects: the pattern, the shape, the input type, and the pair
 /// arguments when the input is `Message<H, P>`-shaped.
 pub(super) type MessageParam<'a> = (&'a Pat, Shape, &'a Type, Option<(&'a Type, &'a Type)>);
+
+#[cfg(test)]
+mod tests {
+    use syn::parse_quote;
+
+    use super::*;
+
+    fn refusal<T>(result: syn::Result<T>) -> String {
+        match result {
+            Ok(_) => panic!("this signature is refused"),
+            Err(err) => err.to_string(),
+        }
+    }
+
+    /// The extractors of `func` with the `Out` slots taken out, or why the slots are refused.
+    fn outs_of(func: &ItemFn) -> syn::Result<usize> {
+        let mut extractors = collect_extractors(func, false)?;
+        split_outs(&mut extractors).map(|outs| outs.len())
+    }
+
+    #[test]
+    fn the_message_parameter_is_one_reference() {
+        let none: ItemFn = parse_quote!(
+            async fn on_tick() {}
+        );
+        let receiver: ItemFn = parse_quote!(
+            async fn on_order(&self) {}
+        );
+        let owned: ItemFn = parse_quote!(
+            async fn on_order(order: Order) {}
+        );
+
+        assert_eq!(
+            refusal(message_param(&none)),
+            "a #[subscriber] handler must take exactly one message parameter"
+        );
+        assert_eq!(
+            refusal(message_param(&receiver)),
+            "a #[subscriber] handler cannot take `self`"
+        );
+        assert_eq!(
+            refusal(message_param(&owned)),
+            "the message parameter must be a reference `&T`"
+        );
+    }
+
+    #[test]
+    fn the_context_comes_right_after_the_message() {
+        let late: ItemFn = parse_quote!(
+            async fn on_order(order: &Order, State(db): State<Db>, ctx: &mut Context<'_>) {}
+        );
+
+        assert_eq!(
+            refusal(collect_extractors(&late, false)),
+            "the `&mut Context` parameter must come immediately after the message, before any \
+             extractor parameters"
+        );
+    }
+
+    #[test]
+    fn a_handler_takes_at_most_three_slots() {
+        let four: ItemFn = parse_quote!(
+            async fn on_order(
+                order: &Order,
+                Out(a): Out<impl Publisher, A>,
+                Out(b): Out<impl Publisher, B>,
+                Out(c): Out<impl Publisher, C>,
+                Out(d): Out<impl Publisher, D>,
+            ) {
+            }
+        );
+
+        assert_eq!(
+            refusal(outs_of(&four)),
+            "a #[subscriber] handler takes at most three Out parameters"
+        );
+    }
+
+    #[test]
+    fn a_slot_lists_at_most_four_distinct_types_inline() {
+        let five: ItemFn = parse_quote!(
+            async fn on_order(order: &Order, Out(out): Out<impl Publisher, Sent, (A, B, C, D, E)>) {
+            }
+        );
+        let twice: ItemFn = parse_quote!(
+            async fn on_order(order: &Order, Out(out): Out<impl Publisher, Sent, (A, B, A)>) {}
+        );
+
+        assert_eq!(
+            refusal(outs_of(&five)),
+            "an Out parameter lists at most four message types inline; declare a \
+             #[derive(OutMessages)] set enum for a larger one"
+        );
+        assert_eq!(
+            refusal(outs_of(&twice)),
+            "this type is already in the Out parameter's message list"
+        );
+    }
+
+    #[test]
+    fn a_parameter_that_only_looks_like_a_slot_is_an_extractor() {
+        let lookalikes: ItemFn = parse_quote!(
+            async fn on_order(
+                order: &Order,
+                outs: &Out,
+                bare: Out,
+                lifetime: Out<'static>,
+                four: Out<impl Publisher, A, (), D>,
+            ) {
+            }
+        );
+
+        let mut extractors =
+            collect_extractors(&lookalikes, false).expect("every parameter is an extractor");
+        let outs = split_outs(&mut extractors).expect("no slot is refused");
+
+        assert!(outs.is_empty(), "slots taken out of look-alike parameters");
+        assert_eq!(extractors.len(), 4, "the look-alikes stay extractors");
+    }
+
+    #[test]
+    fn only_a_headers_of_one_contract_reads_the_headers() {
+        let contract: Type = parse_quote!(Headers<Meta>);
+        assert!(from_headers_ty(&contract).is_some());
+
+        let plain: [Type; 4] = [
+            parse_quote!(&Headers<Meta>),
+            parse_quote!(Headers),
+            parse_quote!(Headers<'static>),
+            parse_quote!(Headers<Meta, Other>),
+        ];
+        for ty in plain {
+            assert!(
+                from_headers_ty(&ty).is_none(),
+                "`{}` reads no header contract",
+                quote!(#ty)
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_message_of_two_types_is_a_pair() {
+        let pair: Type = parse_quote!(Message<Meta, Order>);
+        assert!(message_pair_args(&pair).is_some());
+
+        let plain: [Type; 4] = [
+            parse_quote!([Message<Meta, Order>]),
+            parse_quote!(Message),
+            parse_quote!(Message<Order>),
+            parse_quote!(Message<Meta, Order, Extra>),
+        ];
+        for ty in plain {
+            assert!(
+                message_pair_args(&ty).is_none(),
+                "`{}` is a plain payload type",
+                quote!(#ty)
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_ctx_of_one_key_reads_a_field() {
+        let field: Type = parse_quote!(Ctx<Partition>);
+        assert!(ctx_extractor_key(&field).is_some());
+
+        let plain: [Type; 4] = [
+            parse_quote!(&Ctx<Partition>),
+            parse_quote!(Ctx),
+            parse_quote!(Ctx<'static>),
+            parse_quote!(Ctx<Partition, Offset>),
+        ];
+        for ty in plain {
+            assert!(
+                ctx_extractor_key(&ty).is_none(),
+                "`{}` reads no context field",
+                quote!(#ty)
+            );
+        }
+    }
+
+    #[test]
+    fn a_second_parameter_that_is_no_context_names_no_state() {
+        let extractor: ItemFn = parse_quote!(
+            async fn on_order(order: &Order, State(db): State<Db>) {}
+        );
+        let stateless: ItemFn = parse_quote!(
+            async fn on_order(order: &Order, ctx: &mut Context<'_>) {}
+        );
+        let stateful: ItemFn = parse_quote!(
+            async fn on_order(order: &Order, ctx: &mut Context<'_, (), Db>) {}
+        );
+
+        assert!(state_type(&extractor).is_none());
+        assert!(state_type(&stateless).is_none());
+        assert_eq!(
+            state_type(&stateful).map(|state| state.to_string()),
+            Some(quote!(Db).to_string())
+        );
+    }
+}
