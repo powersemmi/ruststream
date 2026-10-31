@@ -675,14 +675,16 @@ impl NeutralArena {
             bounds.push(quote! {
                 #entry: ::ruststream::runtime::SlotEntry<#marker, #body, Wire: #capability>
             });
-            // A transactional or request capability also sits on the entry itself, which
-            // forwards it through the slot, with the slot's typed openers; the multi-thread
-            // runner's entries are the ones that implement them.
+            // Every other capability also sits on the entry itself, which forwards it through
+            // the slot (a broker grafts its own capability traits onto the entry types), so the
+            // entry passes into positions that demand it. The plain publish is the entry's own
+            // supertrait, and owned transactions open through the typed opener below.
             let on_entry: Vec<&syn::TypeParamBound> = out
                 .bounds
                 .iter()
                 .filter(|bound| {
-                    capability_named(bound, &["TransactionalPublisher", "RequestReply"])
+                    matches!(bound, syn::TypeParamBound::Trait(_))
+                        && !capability_named(bound, &["Publisher", "OwnedTransactions"])
                 })
                 .collect();
             if !on_entry.is_empty() {
