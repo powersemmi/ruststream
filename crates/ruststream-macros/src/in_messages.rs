@@ -744,6 +744,12 @@ mod tests {
             }
         );
         assert!(rejection(&reference).contains("a variant owns its model"));
+        let array: DeriveInput = syn::parse_quote!(
+            enum OrderEvent {
+                Raw([u8; 4]),
+            }
+        );
+        assert!(expand(&array).is_ok(), "an array model owns its bytes");
     }
 
     #[test]
@@ -832,6 +838,14 @@ mod tests {
             }
         );
         assert!(rejection(&on_variant).contains("on a variant: expected `value`"));
+        let bare_on_variant: DeriveInput = syn::parse_quote!(
+            #[in_messages(header = "event")]
+            enum OrderEvent {
+                #[in_messages(value)]
+                Created(OrderCreated),
+            }
+        );
+        assert!(rejection(&bare_on_variant).contains("takes `value = \"..\"`"));
     }
 
     #[test]
