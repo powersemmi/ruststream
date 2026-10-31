@@ -521,3 +521,70 @@ fn publishing_reply<'a>(
         |reply_ty| (reply_ty, quote!((async move #block).await)),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use proc_macro2::Span;
+    use syn::parse_quote;
+
+    use super::*;
+
+    fn refusal<T>(result: syn::Result<T>) -> String {
+        match result {
+            Ok(_) => panic!("this handler is refused"),
+            Err(err) => err.to_string(),
+        }
+    }
+
+    #[test]
+    fn keyed_lanes_do_not_apply_to_a_batch() {
+        let args: SubscriberArgs =
+            syn::parse2(quote!("orders", workers(4, by_key))).expect("the arguments parse");
+        let handler = Ident::new("on_orders", Span::call_site());
+
+        assert_eq!(
+            refusal(workers_step(&args, &handler, Shape::Batch)),
+            "by_key lanes order single messages per key; they do not apply to a batch handler"
+        );
+    }
+
+    #[test]
+    fn a_publishing_handler_returns_its_reply() {
+        let silent: ItemFn = parse_quote!(
+            async fn on_order(order: &Order) {}
+        );
+
+        assert_eq!(
+            refusal(publishing_reply(&silent, &silent.block)),
+            "a publishing handler must return the reply value"
+        );
+    }
+
+    #[test]
+    fn a_batch_publishing_handler_returns_a_vec_of_replies() {
+        let silent: ItemFn = parse_quote!(
+            async fn on_orders(orders: &[Order]) {}
+        );
+        let one: ItemFn = parse_quote!(
+            async fn on_orders(orders: &[Order]) -> Result<Receipt, HandlerOutcome> {}
+        );
+
+        assert_eq!(
+            refusal(batch_reply_body(&silent, &silent.block)),
+            "a batch publishing handler must return the replies: Vec<Reply>, or \
+             Result<Vec<Reply>, HandlerOutcome>"
+        );
+        assert_eq!(
+            refusal(batch_reply_body(&one, &one.block)),
+            "a batch publishing handler replies with a Vec: Result<Vec<Reply>, HandlerOutcome>"
+        );
+    }
+
+    #[test]
+    fn the_drop_policy_drops_the_delivery() {
+        assert_eq!(
+            failure_policy_tokens(&FailurePolicyArg::Drop).to_string(),
+            quote!(::ruststream::runtime::FailurePolicy::Drop).to_string()
+        );
+    }
+}
