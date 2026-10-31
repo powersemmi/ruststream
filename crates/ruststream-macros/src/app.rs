@@ -422,4 +422,117 @@ mod tests {
 
         assert_eq!(refused, "#[ruststream::app] builder must take no arguments");
     }
+
+    #[test]
+    fn a_tokio_argument_that_is_not_a_literal_is_refused() {
+        let refused = rejection(args(Runtime::Tokio, quote!(flavor = current_thread)));
+
+        assert_eq!(refused, "expected a literal, as `#[tokio::main]` takes");
+    }
+
+    #[test]
+    fn a_flavor_that_is_not_a_string_is_refused() {
+        let refused = rejection(args(Runtime::Tokio, quote!(flavor = 1)));
+
+        assert_eq!(refused, "expected \"current_thread\" or \"multi_thread\"");
+    }
+
+    #[test]
+    fn a_worker_count_that_is_not_a_number_is_refused() {
+        let refused = rejection(args(Runtime::Tokio, quote!(worker_threads = "2")));
+
+        assert_eq!(refused, "expected a worker count");
+    }
+
+    #[test]
+    fn a_repeated_tokio_argument_is_refused() {
+        let flavor = rejection(args(
+            Runtime::Tokio,
+            quote!(flavor = "multi_thread", flavor = "multi_thread"),
+        ));
+        let workers = rejection(args(
+            Runtime::Tokio,
+            quote!(worker_threads = 2, worker_threads = 4),
+        ));
+
+        assert_eq!(flavor, "duplicate `flavor`");
+        assert_eq!(workers, "duplicate `worker_threads`");
+    }
+
+    #[test]
+    fn an_unknown_tokio_argument_is_refused() {
+        let refused = rejection(args(Runtime::Tokio, quote!(threads = 2)));
+
+        assert_eq!(
+            refused,
+            "unknown argument; #[ruststream::app] takes `flavor` and `worker_threads`"
+        );
+    }
+
+    #[test]
+    fn an_async_builder_is_refused_on_embassy() {
+        let func: ItemFn = syn::parse_quote! {
+            async fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+                EmbeddedApp::new().with_broker(bus, |b| b)
+            }
+        };
+
+        let refused = rejection(expand_for(
+            &no_args(Runtime::Embassy),
+            &func,
+            Runtime::Embassy,
+        ));
+
+        assert_eq!(
+            refused,
+            "#[ruststream::app] requires a synchronous builder returning \
+             `EmbeddedApp<impl Mounts>`"
+        );
+    }
+
+    #[test]
+    fn a_method_is_refused_on_embassy() {
+        let func: ItemFn = syn::parse_quote! {
+            fn app(self) -> EmbeddedApp<impl Mounts> {
+                EmbeddedApp::new()
+            }
+        };
+
+        let refused = rejection(expand_for(
+            &no_args(Runtime::Embassy),
+            &func,
+            Runtime::Embassy,
+        ));
+
+        assert_eq!(refused, "#[ruststream::app] goes on a free function");
+    }
+
+    #[test]
+    fn a_restricted_builder_gets_a_task_as_visible_as_itself() {
+        let expand = |func: ItemFn| {
+            expand_for(&no_args(Runtime::Embassy), &func, Runtime::Embassy)
+                .expect("a restricted builder expands")
+                .to_string()
+        };
+
+        let to_parent = expand(syn::parse_quote! {
+            pub(super) fn app() -> EmbeddedApp<impl Mounts> {
+                EmbeddedApp::new()
+            }
+        });
+        let to_crate = expand(syn::parse_quote! {
+            pub(crate) fn app() -> EmbeddedApp<impl Mounts> {
+                EmbeddedApp::new()
+            }
+        });
+
+        assert!(
+            to_parent.contains("pub (in super :: super) async fn task ()"),
+            "{to_parent}"
+        );
+        assert!(
+            to_crate.contains("pub (crate) async fn task ()"),
+            "{to_crate}"
+        );
+    }
 }
