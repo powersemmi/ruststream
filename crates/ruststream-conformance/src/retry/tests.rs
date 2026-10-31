@@ -138,7 +138,7 @@ async fn a_publisher_bound_to_its_first_callers_runtime_fails() {
 
 #[allow(clippy::redundant_closure_for_method_calls)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[should_panic(expected = "redelivery_count on the copy's first delivery must be 1")]
+#[should_panic(expected = "redelivery_count on the copy's first delivery must be 2")]
 async fn a_count_from_zero_fails() {
     redelivery_address(
         MemoryBroker::new,
@@ -150,11 +150,24 @@ async fn a_count_from_zero_fails() {
 
 #[allow(clippy::redundant_closure_for_method_calls)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[should_panic(expected = "redelivery_count on a redelivery after nack(true) must be 2")]
+#[should_panic(expected = "redelivery_count on a redelivery after nack(true) must be 3")]
 async fn a_count_that_does_not_grow_fails() {
     redelivery_address(
         MemoryBroker::new,
         |name| Probe::new(name, Reading::Own, Counting::Stuck),
+        |connected| connected.publisher(),
+    )
+    .await;
+}
+
+/// A count that restarts on the runtime's copy never reaches a registration's cap.
+#[allow(clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "redelivery_count on the copy's first delivery must be 2")]
+async fn a_count_that_restarts_on_the_copy_fails() {
+    redelivery_address(
+        MemoryBroker::new,
+        |name| Probe::new(name, Reading::Own, Counting::Restarting),
         |connected| connected.publisher(),
     )
     .await;
@@ -318,10 +331,14 @@ enum Reading {
 /// What a [`Probe`]'s deliveries report as their count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Counting {
+    /// The count continues the one the runtime's copy carries, as a broker that leaves the delay
+    /// to the runtime must.
     Honest,
+    /// The bus's own count, which starts at one on a copy: the mix of the two counts.
+    Restarting,
     /// One short on every delivery.
     FromZero,
-    /// `1` on every delivery.
+    /// The copy's first count on every delivery.
     Stuck,
     /// No count at all, the honest answer of a transport that counts nothing.
     Silent,
@@ -529,10 +546,17 @@ impl IncomingMessage for ProbeMessage {
 
     fn redelivery_count(&self) -> Option<u64> {
         let count = self.inner.redelivery_count();
+        let retried = self
+            .inner
+            .headers()
+            .get_str(RETRY_COUNT_HEADER)
+            .and_then(|retried| retried.parse::<u64>().ok())
+            .unwrap_or(0);
         match self.counting {
-            Counting::Honest => count,
-            Counting::FromZero => count.map(|count| count - 1),
-            Counting::Stuck => count.map(|_| 1),
+            Counting::Honest => count.map(|count| count + retried),
+            Counting::Restarting => count,
+            Counting::FromZero => count.map(|count| count + retried - 1),
+            Counting::Stuck => count.map(|_| 1 + retried),
             Counting::Silent => None,
         }
     }

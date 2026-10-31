@@ -17,6 +17,7 @@ use embassy_sync::waitqueue::WakerRegistration;
 use ruststream_core::HeaderMap;
 #[cfg(feature = "testing")]
 use ruststream_core::RawMessage;
+use ruststream_runtime::RETRY_COUNT_HEADER;
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::Coordinator;
 
@@ -30,6 +31,19 @@ pub(super) struct Delivery {
     pub(super) payload: Bytes,
     pub(super) headers: HeaderMap,
     pub(super) deliveries: NonZeroU64,
+}
+
+/// How many times the bus has delivered a message that is published now: the first time, unless
+/// the runtime published it as the copy of a delivery it retried later. The bus has no delay of
+/// its own, so the runtime's copies carry the retry, and the copy continues the count its header
+/// holds rather than starting over. A header that is not a count is a first delivery.
+fn delivery_count_of(headers: &HeaderMap) -> NonZeroU64 {
+    headers
+        .get_str(RETRY_COUNT_HEADER)
+        .and_then(|count| count.parse::<u64>().ok())
+        .map_or(NonZeroU64::MIN, |retried| {
+            NonZeroU64::MIN.saturating_add(retried)
+        })
 }
 
 /// Where a subscription stands.
@@ -225,10 +239,11 @@ impl<const CAP: usize> Bus<CAP> {
         }
         #[cfg(feature = "testing")]
         self.harness.record(name, &payload, &headers);
+        let deliveries = delivery_count_of(&headers);
         let mut delivery = Some(Delivery {
             payload,
             headers,
-            deliveries: NonZeroU64::MIN,
+            deliveries,
         });
         let mut reading = reading().peekable();
         while let Some(subscription) = reading.next() {
