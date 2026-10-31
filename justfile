@@ -19,21 +19,10 @@ export CARGO_BUILD_WARNINGS := env("CARGO_BUILD_WARNINGS", "deny")
 # benchmarks - it compiles a recording branch into every delivery.
 bench_features := "memory,macros,json,tokio"
 
-# The two runtimes, `tokio` and `embassy`, exclude each other, so no build enables every feature.
-# Each runtime has its set instead: the tokio set is every feature of the facade but `embassy`,
-# and the embassy set is every feature that builds beside it.
-tokio_set := "asyncapi,cbor,cli,conformance,json,logging,macros,memory,metrics,msgpack,otel,poll-diagnostics,testing,tokio"
+# The two runtimes, `tokio` and `embassy`, are additive features: every workspace leg builds with
+# all of them. The embassy set is the facade of a device service, the one build that leaves tokio
+# out of the dependency graph.
 embassy_set := "cbor,embassy,json,macros,memory,msgpack"
-
-# What a workspace leg enables. A name without a package turns that feature on in every member
-# that has it, so each member builds with every feature the tokio set reaches. The memory crate's
-# local bus builds beside its tokio bus, so it joins the tokio legs and their coverage.
-workspace_features := tokio_set + ",ruststream-memory/embassy"
-
-# The members a workspace leg leaves out: the embedded runner's tests and doc examples build the
-# facade with the embassy set, as a device service does, and the tokio set beside it is the
-# two-runtime compile error. Its own legs below build it.
-tokio_legs_exclude := "--exclude ruststream-runtime-embassy"
 
 # The scenarios that count instructions and allocations, one benchmark file each. A run against a
 # baseline holds the gated ones to an instruction limit; the ungated one is measured and reported,
@@ -49,14 +38,14 @@ check:
     # The benchmarks are left out of the workspace legs on purpose: they are built with the
     # production feature set, and the harness feature is a compile error in them. Their own leg
     # follows.
-    cargo clippy --workspace {{ tokio_legs_exclude }} --lib --bins --tests --examples \
-        --features {{ workspace_features }} \
+    cargo clippy --workspace --lib --bins --tests --examples \
+        --all-features \
         -- -D warnings
     # No clippy here: this feature combination has clippy lints of its own that no gate has ever
     # run, and cleaning them is not what a benchmark change is for.
     cargo check --benches --no-default-features --features {{ bench_features }}
-    cargo check --workspace {{ tokio_legs_exclude }} --lib --bins --tests --examples \
-        --features {{ workspace_features }}
+    cargo check --workspace --lib --bins --tests --examples \
+        --all-features
     # The probe always asks for `macros`, `json` and `tokio`, and a workspace build unifies a
     # dependency's features across members, so the reduced legs leave it out and check it on its
     # own.
@@ -92,8 +81,9 @@ check:
         --features cbor,embassy,macros,memory --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream --no-default-features \
         --features json,embassy,macros,memory --target thumbv7em-none-eabihf
-    # The embassy runtime: the facade with the embassy set, where every target that needs tokio
-    # names it and drops out, then the embedded runner and the local bus with their tests.
+    # The embassy runtime alone, as a device service builds it: the facade with the embassy set,
+    # where every target that needs tokio names it and drops out, then the embedded runner and
+    # the local bus with their tests.
     cargo clippy -p ruststream --all-targets --no-default-features --features {{ embassy_set }} \
         -- -D warnings
     cargo clippy -p ruststream-runtime-embassy --all-targets -- -D warnings
@@ -108,22 +98,16 @@ check:
     if [ -n "$tree" ]; then \
         echo "error: the embassy set pulls tokio into the facade:" >&2; echo "$tree" >&2; exit 1; \
     fi
-    # Both runtimes at once are a compile error that names them.
-    if out="$(cargo check -p ruststream --features embassy 2>&1)"; then \
-        echo "error: the facade built with both runtimes" >&2; exit 1; \
-    fi; \
-    grep -qF 'the `tokio` and `embassy` features select the runtime and exclude each other; enable one' \
-        <<< "$out" || { echo "$out" >&2; exit 1; }
     # Rustdoc sees what rustc cannot: broken intra-doc links and redundant targets. CI gates on
     # it, so a link to an item a refactor removed must fail here rather than three jobs later.
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --features {{ workspace_features }} --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
     # The shared delivery body also documents without the tokio runner's feature, the way a crate
     # on another runtime builds it: a link to an item that feature gates must not break there.
     RUSTDOCFLAGS="-D warnings" cargo doc -p ruststream-runtime --no-deps \
         --features json,msgpack,cbor,asyncapi,metrics,otel,testing,poll-diagnostics
     # The types the public API of each published crate names from its dependencies, as CI checks
-    # them: the facade with each runtime, and each crate behind it where its items are defined.
-    cargo +nightly-2026-03-20 check-external-types --features {{ tokio_set }} \
+    # them: the facade with both runtimes and with embassy alone, and each crate behind it where its items are defined.
+    cargo +nightly-2026-03-20 check-external-types --all-features \
         --manifest-path Cargo.toml --config external-types.toml
     cargo +nightly-2026-03-20 check-external-types --no-default-features \
         --features {{ embassy_set }} --manifest-path Cargo.toml --config external-types.toml
@@ -135,7 +119,7 @@ check:
     # selects, which is what CI records them with. REQUIRE_UI_TESTS turns a skip into a failure,
     # so a lost opt-in shows here. `ui_codec_free` holds the errors that exist only where no
     # codec resolves, so it builds without one.
-    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --features {{ tokio_set }} --test suite ui::
+    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --all-features --test suite ui::
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features macros,memory,testing,tokio --test suite ui_codec_free::
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-runtime-embassy --test ui
 
@@ -143,8 +127,8 @@ test:
     # The examples' tests are modules of one test binary, so `--tests` builds none per example;
     # `check` compiles every example on its own. `--tests` leaves the doc examples out, so they
     # run on their own line.
-    cargo test --workspace {{ tokio_legs_exclude }} --features {{ workspace_features }} --tests
-    cargo test --workspace {{ tokio_legs_exclude }} --features {{ workspace_features }} --doc
+    cargo test --workspace --all-features --tests
+    cargo test --workspace --all-features --doc
     # The embassy runtime's host tests: the embedded runner and the local bus.
     cargo test -p ruststream-runtime-embassy
     cargo test -p ruststream-memory --no-default-features --features embassy
@@ -262,22 +246,22 @@ cov: cov-run
 cov-html: cov-run
     cargo llvm-cov report --workspace --html
 
-# The suite under instrumentation, as CI runs it: the embassy runtime's legs build the facade
-# with the other runtime, so they are runs of their own, and a report merges every run.
+# The suite under instrumentation, as CI runs it: the embassy runtime alone is a run of its own,
+# and a report merges every run.
 cov-run:
     cargo llvm-cov clean --workspace
-    cargo llvm-cov --no-report --workspace {{ tokio_legs_exclude }} --features {{ workspace_features }} --tests
+    cargo llvm-cov --no-report --workspace --all-features --tests
     cargo llvm-cov --no-report -p ruststream-runtime-embassy --tests
     cargo llvm-cov --no-report -p ruststream-memory --no-default-features --features embassy --tests
     cargo llvm-cov --no-report -p ruststream-testing --features embassy,json --tests
 
 build:
-    cargo build --workspace --release --features {{ workspace_features }}
+    cargo build --workspace --release --all-features
 
-# The facade's rustdoc as docs.rs renders it, with the tokio set, at target/doc: what the site's
+# The facade's rustdoc as docs.rs renders it, with every feature, at target/doc: what the site's
 # API links resolve against.
 doc:
-    cargo doc --no-deps -p ruststream --features {{ tokio_set }}
+    cargo doc --no-deps -p ruststream --all-features
 
 clean:
     cargo clean
