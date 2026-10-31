@@ -113,10 +113,13 @@ async fn consume_metrics_are_recorded_through_a_router() {
 
 #[cfg(feature = "macros")]
 mod publish {
+    use allocation_counter::measure;
+
     use super::common::{Req, Resp};
     use ruststream::memory::prelude::*;
     use ruststream::metrics::Metrics;
     use ruststream::testing::TestApp;
+    use tokio::runtime::Builder;
 
     #[subscriber("requests", reply("responses"))]
     async fn reply(req: &Req) -> Resp {
@@ -151,6 +154,65 @@ mod publish {
         let text = metrics.export().unwrap();
         assert!(
             text.contains(r#"ruststream_messages_published_total{name="responses",status="ok"}"#)
+        );
+    }
+
+    /// Drives `rounds` request/reply rounds through the harness: each one a delivery to `reply`
+    /// and the answer it publishes.
+    async fn request_rounds(tb: &TestApp<()>, rounds: u32) {
+        for n in 0..rounds {
+            tb.message(&Req { n })
+                .to("requests")
+                .publish()
+                .await
+                .expect("publish failed");
+        }
+    }
+
+    /// The allocations this thread makes over 32 request/reply rounds of `app`, after a warm-up
+    /// that pays every first time: the registry's series per label set, the harness's buffers.
+    ///
+    /// Every task runs on this thread's own runtime, so the count holds the whole dispatch and
+    /// the tests the harness runs beside this one do not enter it.
+    fn steady_allocations<A: App<State = ()>>(app: A) -> u64 {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a current-thread runtime builds");
+        let tb = runtime
+            .block_on(TestApp::start(app))
+            .expect("harness start failed");
+        runtime.block_on(request_rounds(&tb, 8));
+        let counted = measure(|| runtime.block_on(request_rounds(&tb, 32)));
+        runtime
+            .block_on(tb.shutdown())
+            .expect("graceful shutdown failed");
+        counted.count_total
+    }
+
+    /// The metrics cost a delivery and its reply no allocation: the series of a name are resolved
+    /// once and reused, so a service with the layers allocates exactly what one without them does.
+    #[test]
+    fn the_metrics_allocate_nothing_per_message() {
+        let metrics = Metrics::with_registry(prometheus::Registry::new()).unwrap();
+
+        let bare = steady_allocations(RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(reply);
+            },
+        ));
+        let recorded = steady_allocations(
+            RustStream::new(AppInfo::new("svc", "0.1.0"))
+                .layer(metrics.consume_layer())
+                .publish_layer(metrics.publish_layer())
+                .with_broker(MemoryBroker::new(), |b| {
+                    b.include(reply);
+                }),
+        );
+        assert_eq!(
+            recorded, bare,
+            "32 recorded rounds allocate {recorded} times, the same rounds unrecorded {bare}",
         );
     }
 }

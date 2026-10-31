@@ -8,6 +8,8 @@
 //! [`ruststream::otel`](https://docs.rs/ruststream/latest/ruststream/otel/), whose overviews teach
 //! them.
 
+#[cfg(any(feature = "metrics", feature = "otel"))]
+mod by_name;
 #[cfg(feature = "logging")]
 pub mod logging;
 #[cfg(feature = "metrics")]

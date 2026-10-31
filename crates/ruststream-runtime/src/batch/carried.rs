@@ -197,7 +197,7 @@ where
             None
         } else {
             #[cfg(feature = "otel")]
-            record_batch_size(subscription, lent);
+            record_batch_size(delivery.destination(subscription), lent);
             Some(self.inner.handle_slice(values, ctx).await)
         };
         let mut deliveries: Vec<M> = batch.into_iter().collect();

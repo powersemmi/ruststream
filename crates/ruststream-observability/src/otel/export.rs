@@ -5,6 +5,7 @@
 //!
 //! [export]: https://powersemmi.github.io/ruststream/latest/components/observability/otel-export/
 
+use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
 use std::sync::Arc;
@@ -33,6 +34,8 @@ use ruststream_runtime::{
     PublishPipeline,
 };
 use ruststream_runtime_tokio::{HealthProbe, HealthState};
+
+use crate::by_name::{ByName, CAPACITY};
 
 /// Header carrying the publish wall-clock time (unix milliseconds, ASCII decimal).
 ///
@@ -492,6 +495,8 @@ impl Otel {
 /// The dispatch instruments, shared by both middleware.
 struct Instruments {
     system: Option<KeyValue>,
+    /// The attribute sets of every destination a delivery or a publish has named.
+    destinations: ByName<Attributes>,
     consumed: Counter<u64>,
     process_duration: Histogram<f64>,
     processed: Counter<u64>,
@@ -507,7 +512,8 @@ struct Instruments {
 impl Instruments {
     fn new(meter: &Meter, system: Option<String>) -> Self {
         Self {
-            system: system.map(|s| KeyValue::new("messaging.system", s)),
+            system: system.map(|s| KeyValue::new("messaging.system", Arc::<str>::from(s))),
+            destinations: ByName::new(CAPACITY),
             consumed: meter
                 .u64_counter("messaging.client.consumed.messages")
                 .with_unit("{message}")
@@ -567,30 +573,140 @@ impl Instruments {
         }
     }
 
-    /// The shared attribute set: destination plus, when configured, the messaging system.
-    fn attrs(&self, destination: &str, extra: Option<KeyValue>) -> Vec<KeyValue> {
-        let mut attrs = Vec::with_capacity(3);
-        attrs.push(KeyValue::new(
-            "messaging.destination.name",
-            destination.to_owned(),
-        ));
-        if let Some(system) = &self.system {
-            attrs.push(system.clone());
-        }
-        if let Some(extra) = extra {
-            attrs.push(extra);
-        }
-        attrs
+    /// The attribute sets of `destination`, built the first time it is named. Past the
+    /// destinations kept, only the shared set is built, and a message adds the one set it records.
+    fn attributes(&self, destination: &str) -> Sets<'_> {
+        let system = self.system.as_ref();
+        self.destinations
+            .get(destination, |name| Attributes::new(name, system))
+            .map_or_else(|| Sets::Once(base_set(destination, system)), Sets::Kept)
     }
 }
 
-/// Maps a settlement outcome onto the `outcome` attribute of `ruststream.messages.processed`.
-const fn outcome_attr(result: HandlerResult) -> &'static str {
+/// The `outcome` values of `ruststream.messages.processed`, in the order
+/// [`Attributes::processed`] indexes them.
+const OUTCOMES: [&str; 4] = ["ack", "nack_requeue", "nack_drop", "retry_after"];
+
+/// Every attribute set the dispatch metrics record one destination under.
+struct Attributes {
+    /// The destination plus, when configured, the messaging system.
+    base: Vec<KeyValue>,
+    /// `base` plus the settlement `outcome`, one per entry of [`OUTCOMES`].
+    processed: [Vec<KeyValue>; 4],
+    /// `base` plus `direction`, for the published payload size.
+    payload: Vec<KeyValue>,
+    /// `base` plus `error.type`, for a publish that failed.
+    failed: Vec<KeyValue>,
+}
+
+impl Attributes {
+    fn new(destination: &str, system: Option<&KeyValue>) -> Self {
+        let base = base_set(destination, system);
+        let processed = OUTCOMES.map(|outcome| extended(&base, outcome_attribute(outcome)));
+        let payload = extended(&base, payload_attribute());
+        let failed = extended(&base, failure_attribute());
+        Self {
+            base,
+            processed,
+            payload,
+            failed,
+        }
+    }
+
+    /// The set `ruststream.messages.processed` counts a delivery settled with `result` under.
+    const fn processed(&self, result: HandlerResult) -> &[KeyValue] {
+        self.processed[outcome_slot(result)].as_slice()
+    }
+}
+
+/// The index into [`OUTCOMES`] of a delivery settled with `result`.
+const fn outcome_slot(result: HandlerResult) -> usize {
     match result {
-        HandlerResult::Ack => "ack",
-        HandlerResult::Nack { requeue: true } => "nack_requeue",
-        HandlerResult::Nack { requeue: false } => "nack_drop",
-        HandlerResult::NackAfter { .. } => "retry_after",
+        HandlerResult::Ack => 0,
+        HandlerResult::Nack { requeue: true } => 1,
+        HandlerResult::Nack { requeue: false } => 2,
+        HandlerResult::NackAfter { .. } => 3,
+    }
+}
+
+/// The destination plus, when configured, the messaging system, with room for the one attribute
+/// a set adds to it.
+fn base_set(destination: &str, system: Option<&KeyValue>) -> Vec<KeyValue> {
+    let mut base = Vec::with_capacity(3);
+    base.push(KeyValue::new(
+        "messaging.destination.name",
+        Arc::<str>::from(destination),
+    ));
+    base.extend(system.cloned());
+    base
+}
+
+/// `base` with `extra` after it, in one allocation.
+fn extended(base: &[KeyValue], extra: KeyValue) -> Vec<KeyValue> {
+    let mut set = Vec::with_capacity(base.len() + 1);
+    set.extend_from_slice(base);
+    set.push(extra);
+    set
+}
+
+fn outcome_attribute(outcome: &'static str) -> KeyValue {
+    KeyValue::new("outcome", outcome)
+}
+
+fn payload_attribute() -> KeyValue {
+    KeyValue::new("direction", "publish")
+}
+
+/// The error's own message is unbounded, remote-derived text: putting it in an attribute mints a
+/// fresh time series per distinct failure until the SDK's cardinality cap collapses the
+/// instrument. Semconv's `_OTHER` marks the failure dimension; the message itself belongs to logs
+/// and the publish span.
+fn failure_attribute() -> KeyValue {
+    KeyValue::new("error.type", "_OTHER")
+}
+
+/// The attribute sets one message records under: its destination's kept sets, or, past the
+/// destinations kept, the shared set alone, which the message extends with the one attribute
+/// each record adds.
+enum Sets<'a> {
+    Kept(&'a Attributes),
+    Once(Vec<KeyValue>),
+}
+
+impl Sets<'_> {
+    /// The destination plus, when configured, the messaging system.
+    fn base(&self) -> &[KeyValue] {
+        match self {
+            Self::Kept(attrs) => &attrs.base,
+            Self::Once(base) => base,
+        }
+    }
+
+    /// The set `ruststream.messages.processed` counts a delivery settled with `result` under.
+    fn processed(&self, result: HandlerResult) -> Cow<'_, [KeyValue]> {
+        match self {
+            Self::Kept(attrs) => Cow::Borrowed(attrs.processed(result)),
+            Self::Once(base) => Cow::Owned(extended(
+                base,
+                outcome_attribute(OUTCOMES[outcome_slot(result)]),
+            )),
+        }
+    }
+
+    /// The set the published payload size is recorded under.
+    fn payload(&self) -> Cow<'_, [KeyValue]> {
+        match self {
+            Self::Kept(attrs) => Cow::Borrowed(&attrs.payload),
+            Self::Once(base) => Cow::Owned(extended(base, payload_attribute())),
+        }
+    }
+
+    /// The set a failed publish is counted under.
+    fn failed(&self) -> Cow<'_, [KeyValue]> {
+        match self {
+            Self::Kept(attrs) => Cow::Borrowed(&attrs.failed),
+            Self::Once(base) => Cow::Owned(extended(base, failure_attribute())),
+        }
     }
 }
 
@@ -666,41 +782,38 @@ where
         msg: &M,
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = HandlerOutcome> + Send {
-        let name = ctx.name().to_owned();
+        let instruments = &*self.instruments;
+        // Looked up before the body borrows the context, and kept by reference for the whole
+        // delivery: the sets of a destination are built once, the first time it is named.
+        let attrs = instruments.attributes(ctx.name());
         let queue_time = queue_time_seconds(ctx.headers());
         async move {
-            let instruments = &self.instruments;
-            let attrs = instruments.attrs(&name, None);
-            instruments.consumed.add(1, &attrs);
+            instruments.consumed.add(1, attrs.base());
             if let Some(seconds) = queue_time {
-                instruments.queue_time.record(seconds, &attrs);
+                instruments.queue_time.record(seconds, attrs.base());
             }
-            instruments.in_flight.add(1, &attrs);
+            instruments.in_flight.add(1, attrs.base());
             let started = Instant::now();
             let settle = {
                 // The decrement rides Drop so an unwinding handler (caught one level up by the
                 // dispatch failure policy) or a cancelled dispatch cannot leak the increment.
                 let _in_flight = InFlightGuard {
                     instruments,
-                    attrs: &attrs,
+                    attrs: attrs.base(),
                 };
                 self.inner.handle(msg, ctx).await
             };
             // The decode adapter (wrapped by this layer) marks the context when the payload did
             // not decode.
             if ctx.decode_failed() {
-                instruments.decode_failures.add(1, &attrs);
+                instruments.decode_failures.add(1, attrs.base());
             }
             instruments
                 .process_duration
-                .record(started.elapsed().as_secs_f64(), &attrs);
-            instruments.processed.add(
-                1,
-                &instruments.attrs(
-                    &name,
-                    Some(KeyValue::new("outcome", outcome_attr(settle.outcome()))),
-                ),
-            );
+                .record(started.elapsed().as_secs_f64(), attrs.base());
+            instruments
+                .processed
+                .add(1, &attrs.processed(settle.outcome()));
             settle
         }
     }
@@ -751,30 +864,26 @@ impl PublishLayer for OtelPublishLayer {
                 now.as_millis().to_string(),
             );
         }
-        let name = out.name().to_owned();
+        let instruments = &*self.instruments;
+        // The message moves into the rest of the pipeline, so the destination's sets are looked
+        // up while its name is still readable and kept by reference past the send.
+        let attrs = instruments.attributes(out.name());
         #[allow(clippy::cast_possible_truncation)] // Payloads beyond u64 bytes do not exist.
         let payload_bytes = out.payload().len() as u64;
         async move {
-            let instruments = &self.instruments;
-            let attrs = instruments.attrs(&name, None);
-            instruments.payload_size.record(
-                payload_bytes,
-                &instruments.attrs(&name, Some(KeyValue::new("direction", "publish"))),
-            );
+            instruments
+                .payload_size
+                .record(payload_bytes, &attrs.payload());
             let started = Instant::now();
             let result = next.run(out).await;
             instruments
                 .operation_duration
-                .record(started.elapsed().as_secs_f64(), &attrs);
-            let sent_attrs = match &result {
-                Ok(()) => attrs,
-                // The error's own message is unbounded, remote-derived text: putting it in an
-                // attribute mints a fresh time series per distinct failure until the SDK's
-                // cardinality cap collapses the instrument. Semconv's `_OTHER` marks the failure
-                // dimension; the message itself belongs to logs and the publish span.
-                Err(_) => instruments.attrs(&name, Some(KeyValue::new("error.type", "_OTHER"))),
-            };
-            instruments.sent.add(1, &sent_attrs);
+                .record(started.elapsed().as_secs_f64(), attrs.base());
+            if result.is_ok() {
+                instruments.sent.add(1, attrs.base());
+            } else {
+                instruments.sent.add(1, &attrs.failed());
+            }
             result
         }
     }
@@ -791,20 +900,49 @@ mod tests {
     use super::*;
 
     #[test]
-    fn outcome_attr_names_every_settlement() {
-        assert_eq!(outcome_attr(HandlerResult::Ack), "ack");
+    fn every_settlement_counts_under_its_outcome() {
+        let attrs = Attributes::new("orders", None);
+        let outcome = |result| {
+            let set = attrs.processed(result);
+            assert_eq!(
+                set[0].value.as_str(),
+                "orders",
+                "the destination leads every set"
+            );
+            set.last()
+                .expect("the outcome closes the set")
+                .value
+                .as_str()
+                .into_owned()
+        };
+        assert_eq!(outcome(HandlerResult::Ack), "ack");
         assert_eq!(
-            outcome_attr(HandlerResult::Nack { requeue: true }),
+            outcome(HandlerResult::Nack { requeue: true }),
             "nack_requeue"
         );
+        assert_eq!(outcome(HandlerResult::Nack { requeue: false }), "nack_drop");
         assert_eq!(
-            outcome_attr(HandlerResult::Nack { requeue: false }),
-            "nack_drop"
-        );
-        assert_eq!(
-            outcome_attr(HandlerResult::retry_after(Duration::from_secs(1))),
+            outcome(HandlerResult::retry_after(Duration::from_secs(1))),
             "retry_after"
         );
+    }
+
+    #[test]
+    fn a_destination_past_the_kept_ones_records_the_same_sets() {
+        let system = KeyValue::new("messaging.system", "memory");
+        let kept = Attributes::new("orders", Some(&system));
+        let once = Sets::Once(base_set("orders", Some(&system)));
+        assert_eq!(once.base(), kept.base.as_slice());
+        assert_eq!(&*once.payload(), kept.payload.as_slice());
+        assert_eq!(&*once.failed(), kept.failed.as_slice());
+        for result in [
+            HandlerResult::Ack,
+            HandlerResult::Nack { requeue: true },
+            HandlerResult::Nack { requeue: false },
+            HandlerResult::retry_after(Duration::from_secs(1)),
+        ] {
+            assert_eq!(&*once.processed(result), kept.processed(result));
+        }
     }
 
     #[test]

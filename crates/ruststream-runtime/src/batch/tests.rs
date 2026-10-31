@@ -852,3 +852,51 @@ async fn a_split_batch_defers_the_rejected_and_the_accepted_alike() {
         ],
     );
 }
+
+/// Recording the batch-size histogram costs a batch no allocation: the destination attribute
+/// belongs to the subscription, built when it opens, not to each batch it decodes.
+#[cfg(feature = "otel")]
+#[test]
+fn recording_the_batch_size_allocates_nothing_per_batch() {
+    use std::iter;
+
+    use allocation_counter::measure;
+    use futures::FutureExt;
+
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let batch = || -> Vec<UnsettleableMessage> {
+        iter::repeat_with(|| UnsettleableMessage(Arc::clone(&attempts)))
+            .take(4)
+            .collect()
+    };
+    let state = ();
+    let delivery = Delivery::<()>::empty();
+    let host = Tracked(TaskTracker::new());
+    let headers = HeaderMap::new();
+    let mut ctx = Context::new("sized", &headers, &state, (), &delivery);
+    let mut values = Vec::new();
+    let mut decode = |batch| {
+        decode_batch::<_, Decoded<u32>, _, _, _, _>(
+            batch,
+            &mut values,
+            &JsonCodec,
+            FailurePolicy::Drop,
+            &mut ctx,
+            &host,
+        )
+        .now_or_never()
+        .expect("a batch that decodes whole settles nothing and never waits")
+    };
+
+    // The first batch gives the scratch buffer its room; what follows is the steady state.
+    drop(decode(batch()));
+    let next = batch();
+    let mut accepted = Vec::new();
+    let counted = measure(|| accepted = decode(next));
+
+    assert_eq!(accepted.len(), 4, "every element decodes");
+    assert_eq!(
+        counted.count_total, 0,
+        "a decoded batch records its size without allocating"
+    );
+}
