@@ -15,38 +15,39 @@ use ruststream::memory::prelude::Publish;
 use ruststream::runtime::{AppInfo, EmbeddedApp, HandlerOutcome, Mounts, Out, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::testing::embedded::TestApp as EmbeddedTestApp;
-use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
-use serde::{Deserialize, Serialize};
+use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 
 /// The board's bus: each subscription holds four messages.
 type Bus = LocalMemoryBroker<4>;
 
-/// A level reading, as JSON.
-#[derive(Debug, Deserialize, Serialize, Outgoing)]
-struct Reading {
-    level: u32,
-}
+/// A level reading, as its bytes. The input is a `Deserialized` view: decoding a `serde` input on
+/// the embedded runner waits on the local message trait folding into the core one.
+#[derive(Deserialized)]
+struct Reading<'a>(&'a [u8]);
 
-/// The alert a high reading raises.
-#[derive(Debug, Serialize, Outgoing)]
+/// A reading the test publishes, to the destination it names.
+#[derive(Outgoing, Serialized)]
+struct Sent(&'static [u8]);
+
+/// The alert a high reading raises: the reading's bytes, as they came.
+#[derive(Outgoing, Serialized)]
 #[outgoing(name = "alerts")]
-struct Alert {
-    level: u32,
-}
+struct Alert(Vec<u8>);
 
 /// The slot alerts leave through.
 #[derive(OutSlot)]
 #[publishes(Alert)]
 struct Alerts;
 
-/// Raises an alert for a reading over ten.
+/// Raises an alert for a reading of two digits or more.
 #[subscriber("readings")]
-async fn on_reading(reading: &Reading, Out(alerts): Out<impl Publisher, Alerts>) -> HandlerOutcome {
-    if reading.level > 10
+async fn on_reading(
+    reading: &Reading<'_>,
+    Out(alerts): Out<impl Publisher, Alerts>,
+) -> HandlerOutcome {
+    if reading.0.len() > 1
         && alerts
-            .message(&Alert {
-                level: reading.level,
-            })
+            .message(&Alert(reading.0.to_vec()))
             .publish()
             .await
             .is_err()
@@ -58,15 +59,15 @@ async fn on_reading(reading: &Reading, Out(alerts): Out<impl Publisher, Alerts>)
 
 /// Acknowledges every reading it audits.
 #[subscriber("audit")]
-async fn on_audit(reading: &Reading) -> HandlerOutcome {
-    let _ = reading.level;
+async fn on_audit(reading: &Reading<'_>) -> HandlerOutcome {
+    let _ = reading.0;
     HandlerOutcome::ack()
 }
 
 /// Holds a value that is not `Send` across an await: it mounts on the embedded app only.
 #[subscriber("local")]
-async fn on_local(reading: &Reading) -> HandlerOutcome {
-    let held = Rc::new(reading.level);
+async fn on_local(reading: &Reading<'_>) -> HandlerOutcome {
+    let held = Rc::new(reading.0.len());
     yield_now().await;
     if *held == 0 {
         return HandlerOutcome::retry();
@@ -97,15 +98,11 @@ async fn the_server_runs_the_shared_handlers() -> Result<(), Box<dyn Error>> {
     let tb = TestApp::start(server()).await?;
     let broker = tb.broker::<MemoryBroker>();
     broker
-        .message(&Reading { level: 42 })
+        .message(&Sent(b"42"))
         .to("readings")
         .publish()
         .await?;
-    broker
-        .message(&Reading { level: 3 })
-        .to("audit")
-        .publish()
-        .await?;
+    broker.message(&Sent(b"3")).to("audit").publish().await?;
 
     broker
         .subscriber("readings")
@@ -121,18 +118,9 @@ fn the_device_runs_the_same_handlers() -> Result<(), Box<dyn Error>> {
     block_on(async {
         let tb = EmbeddedTestApp::start(device(Bus::new())).await?;
         let bus = tb.broker::<Bus>();
-        bus.message(&Reading { level: 42 })
-            .to("readings")
-            .publish()
-            .await?;
-        bus.message(&Reading { level: 3 })
-            .to("audit")
-            .publish()
-            .await?;
-        bus.message(&Reading { level: 7 })
-            .to("local")
-            .publish()
-            .await?;
+        bus.message(&Sent(b"42")).to("readings").publish().await?;
+        bus.message(&Sent(b"3")).to("audit").publish().await?;
+        bus.message(&Sent(b"7")).to("local").publish().await?;
 
         bus.subscriber("readings")
             .assert_called(1)
