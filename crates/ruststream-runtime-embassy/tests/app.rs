@@ -27,7 +27,7 @@ use ruststream_runtime::{
     SoloDeserialized, SubscriberSettings, local_subscriber,
 };
 use ruststream_runtime_embassy::frames::{Frame, FrameBroker, FrameSource, Frames, Settlements};
-use ruststream_runtime_embassy::{Control, EmbeddedApp, Health, Mounts, RunError};
+use ruststream_runtime_embassy::{Control, EmbeddedApp, Health, MountSteps, Mounts, RunError};
 use static_cell::StaticCell;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 
@@ -173,18 +173,16 @@ fn hooked(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
         })
 }
 
-/// An app with one subscription on a bus of its own, which the scenario shuts down under it.
+/// An app with two subscriptions on a bus of its own, which the scenario shuts down under it:
+/// one read in order, one by a pool of workers.
 fn ending(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
+    let count = || Count {
+        seen: &stand.seen_bus,
+    };
     EmbeddedApp::new().with_broker(stand.ending_bus.clone(), |b| {
-        b.include(
-            local_subscriber(
-                LocalMemorySource::new("bus/ending"),
-                Count {
-                    seen: &stand.seen_bus,
-                },
-            )
-            .build(),
-        )
+        b.include(local_subscriber(LocalMemorySource::new("bus/ending"), count()).build())
+            .include(local_subscriber(LocalMemorySource::new("bus/ending-pool"), count()).build())
+            .pool::<2>()
     })
 }
 
@@ -390,7 +388,7 @@ async fn check_stream_end(spawner: Spawner, stand: &'static Stand) {
         outcome(stand).is_ok(),
         "an app whose streams ended returns Ok"
     );
-    passed("an app whose every stream ended stops on its own and says so");
+    passed("an app whose every stream ended, in order or in a pool, stops on its own and says so");
 }
 
 #[embassy_executor::task]
