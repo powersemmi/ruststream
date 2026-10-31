@@ -19,6 +19,11 @@ export CARGO_BUILD_WARNINGS := env("CARGO_BUILD_WARNINGS", "deny")
 # benchmarks - it compiles a recording branch into every delivery.
 bench_features := "memory,macros,json,tokio"
 
+# The members a test or coverage leg leaves out: the embedded runner's own tests link embassy-time's
+# mock driver, and the embedded harness is a time driver of its own, so one binary cannot hold both.
+# Its legs below build it alone.
+embassy_tests_exclude := "--exclude ruststream-runtime-embassy"
+
 # The two runtimes, `tokio` and `embassy`, are additive features: every workspace leg builds with
 # all of them. The embassy set is the facade of a device service, the one build that leaves tokio
 # out of the dependency graph.
@@ -127,8 +132,8 @@ test:
     # The examples' tests are modules of one test binary, so `--tests` builds none per example;
     # `check` compiles every example on its own. `--tests` leaves the doc examples out, so they
     # run on their own line.
-    cargo test --workspace --all-features --tests
-    cargo test --workspace --all-features --doc
+    cargo test --workspace {{ embassy_tests_exclude }} --all-features --tests
+    cargo test --workspace {{ embassy_tests_exclude }} --all-features --doc
     # The embassy runtime's host tests: the embedded runner and the local bus.
     cargo test -p ruststream-runtime-embassy
     cargo test -p ruststream-memory --no-default-features --features embassy
@@ -250,7 +255,7 @@ cov-html: cov-run
 # and a report merges every run.
 cov-run:
     cargo llvm-cov clean --workspace
-    cargo llvm-cov --no-report --workspace --all-features --tests
+    cargo llvm-cov --no-report --workspace {{ embassy_tests_exclude }} --all-features --tests
     cargo llvm-cov --no-report -p ruststream-runtime-embassy --tests
     cargo llvm-cov --no-report -p ruststream-memory --no-default-features --features embassy --tests
     cargo llvm-cov --no-report -p ruststream-testing --features embassy,json --tests

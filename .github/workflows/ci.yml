@@ -22,6 +22,9 @@ env:
   # with all of them. The embassy set is the facade of a device service, the one build that
   # leaves tokio out of the dependency graph. The justfile keeps the same set.
   EMBASSY_FEATURES: cbor,embassy,json,macros,memory,msgpack
+  # The embedded runner's own tests link embassy-time's mock driver and the embedded harness is a
+  # time driver of its own, so one binary cannot hold both: its legs run alone.
+  EMBASSY_TESTS_EXCLUDE: --exclude ruststream-runtime-embassy
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -336,8 +339,8 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-minimal
         run: |
           cargo check --locked --workspace --examples --all-features
-          cargo test --locked --workspace --all-features --no-fail-fast --tests
-          cargo test --locked --workspace --all-features --no-fail-fast --doc
+          cargo test --locked --workspace $EMBASSY_TESTS_EXCLUDE --all-features --no-fail-fast --tests
+          cargo test --locked --workspace $EMBASSY_TESTS_EXCLUDE --all-features --no-fail-fast --doc
 
       # Everything above still sees dev-dependencies, which raise shared floors before the library
       # is built: the run proves the workspace resolves, not that the manifest is honest for a
@@ -472,7 +475,7 @@ jobs:
         # The embassy runtime's legs build the facade with the other runtime, so they are runs of
         # their own, and the report below merges every run's profile.
         run: |
-          cargo llvm-cov --locked --no-report --workspace --all-features \
+          cargo llvm-cov --locked --no-report --workspace $EMBASSY_TESTS_EXCLUDE --all-features \
             --no-fail-fast --tests
           cargo llvm-cov --locked --no-report -p ruststream-runtime-embassy --no-fail-fast --tests
           cargo llvm-cov --locked --no-report -p ruststream-memory --no-default-features --features embassy \
@@ -572,7 +575,7 @@ jobs:
         env:
           CARGO_BUILD_WARNINGS: deny
         run: |
-          cargo test --locked --workspace --doc --all-features
+          cargo test --locked --workspace $EMBASSY_TESTS_EXCLUDE --doc --all-features
           cargo test --locked -p ruststream --doc
           cargo test --locked -p ruststream --doc --no-default-features
 
@@ -622,8 +625,8 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-beta
         run: |
           cargo check --locked --workspace --examples --all-features
-          cargo test --locked --workspace --all-features --no-fail-fast --tests
-          cargo test --locked --workspace --all-features --no-fail-fast --doc
+          cargo test --locked --workspace $EMBASSY_TESTS_EXCLUDE --all-features --no-fail-fast --tests
+          cargo test --locked --workspace $EMBASSY_TESTS_EXCLUDE --all-features --no-fail-fast --doc
 
       - name: Delete the beta build
         if: always()
@@ -650,8 +653,8 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-floor
         run: |
           cargo check --locked --workspace --examples --all-features
-          cargo test --locked --workspace --all-features --no-fail-fast --tests
-          cargo test --locked --workspace --all-features --no-fail-fast --doc
+          cargo test --locked --workspace $EMBASSY_TESTS_EXCLUDE --all-features --no-fail-fast --tests
+          cargo test --locked --workspace $EMBASSY_TESTS_EXCLUDE --all-features --no-fail-fast --doc
 
       - name: Delete the floor build
         if: always()
