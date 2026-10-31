@@ -285,6 +285,10 @@ impl<const CAP: usize> Stream for Batches<'_, CAP> {
 /// delivery count raised, `nack(false)` drops it. A delivery dropped unsettled comes back as a
 /// `nack(true)` would bring it. A requeue after the bus shut down is refused with an error.
 ///
+/// The bus delays nothing itself, so a `retry_after` is a copy the runtime publishes. The copy
+/// continues the delivery count its retry header carries, and a `max_attempts` cap counts the
+/// copies and the requeues alike.
+///
 /// # Examples
 ///
 /// ```
@@ -431,6 +435,8 @@ mod tests {
     #[cfg(feature = "testing")]
     use ruststream_runtime::testing::{Coordinator, LocalTestableBroker};
 
+    use ruststream_runtime::RETRY_COUNT_HEADER;
+
     use super::*;
     use crate::local::LocalMemoryBroker;
     use crate::local::drive::{ended, waiting};
@@ -461,6 +467,41 @@ mod tests {
             assert_eq!(again.redelivery_count(), Some(2));
             again.ack().await.unwrap();
             assert!(stream.next().now_or_never().is_none());
+        });
+    }
+
+    /// What the runtime publishes for a delivery it retries: the payload under the retry header.
+    fn copied(count: &'static str) -> OutgoingMessage<'static, BytesMut> {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_COUNT_HEADER, count);
+        OutgoingMessage::produced("cmd", BytesMut::from(&b"open"[..])).with_headers(headers)
+    }
+
+    #[test]
+    fn a_runtime_copy_continues_the_count_its_header_carries() {
+        block_on(async {
+            let (connected, mut subscriber) = open("cmd").await;
+            let copy = copied("1");
+            connected.publisher().publish(copy, None).await.unwrap();
+            let mut stream = pin!(subscriber.stream());
+            let arrived = waiting(&mut stream).unwrap();
+            assert_eq!(arrived.redelivery_count(), Some(2));
+            arrived.nack(true).await.unwrap();
+
+            let requeued = waiting(&mut stream).unwrap();
+            assert_eq!(requeued.redelivery_count(), Some(3));
+            requeued.ack().await.unwrap();
+        });
+    }
+
+    #[test]
+    fn a_malformed_retry_header_counts_as_a_first_delivery() {
+        block_on(async {
+            let (connected, mut subscriber) = open("cmd").await;
+            let copy = copied("many");
+            connected.publisher().publish(copy, None).await.unwrap();
+            let arrived = waiting(&mut pin!(subscriber.stream())).unwrap();
+            assert_eq!(arrived.redelivery_count(), Some(1));
         });
     }
 

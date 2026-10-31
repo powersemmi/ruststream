@@ -74,6 +74,9 @@ const PUBLISHED_UP_FRONT: usize = 1024;
 struct Inner {
     in_flight: AtomicUsize,
     processed: AtomicUsize,
+    /// The `processed` count when the current step began: the budget counts from here, so steps
+    /// that settled do not spend the budget of the next.
+    step_from: AtomicUsize,
     max_steps: usize,
     notify: Notify,
     records: Mutex<Vec<Record>>,
@@ -172,6 +175,7 @@ impl Coordinator {
             inner: Arc::new(Inner {
                 in_flight: AtomicUsize::new(0),
                 processed: AtomicUsize::new(0),
+                step_from: AtomicUsize::new(0),
                 max_steps,
                 notify: Notify::new(),
                 records: Mutex::new(Vec::new()),
@@ -332,6 +336,27 @@ impl Coordinator {
         }
     }
 
+    /// Starts a step of the test: the step budget counts the deliveries dispatched from here.
+    #[doc(hidden)]
+    pub fn begin_step(&self) {
+        self.inner.step_from.store(
+            self.inner.processed.load(Ordering::SeqCst),
+            Ordering::SeqCst,
+        );
+    }
+
+    /// Whether `max_steps` deliveries were dispatched in this step and one is still in flight: the
+    /// reaction does not converge. A broker whose app runs inside the test's own future stops handing out
+    /// deliveries once this holds, so the step that polls the app returns and reports it.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn exhausted(&self) -> bool {
+        let processed = self.inner.processed.load(Ordering::SeqCst);
+        processed.saturating_sub(self.inner.step_from.load(Ordering::SeqCst))
+            >= self.inner.max_steps
+            && self.inner.in_flight.load(Ordering::SeqCst) > 0
+    }
+
     /// Waits until no message is in flight, or fails once `max_steps` deliveries have been
     /// dispatched without settling (a non-converging reaction).
     ///
@@ -341,6 +366,8 @@ impl Coordinator {
     /// settles.
     #[doc(hidden)]
     pub async fn drive(&self) -> Result<(), TestError> {
+        // Each step has the whole budget: the steps that settled before it spent none of it.
+        self.begin_step();
         loop {
             // Register interest before reading the counter so a concurrent `settled` cannot slip a
             // wakeup between the check and the await.
@@ -351,10 +378,11 @@ impl Coordinator {
             if self.inner.in_flight.load(Ordering::SeqCst) == 0 {
                 return Ok(());
             }
-            if self.inner.processed.load(Ordering::SeqCst) >= self.inner.max_steps {
-                return Err(TestError::NotQuiescent {
-                    processed: self.inner.processed.load(Ordering::SeqCst),
-                });
+            let processed = self.inner.processed.load(Ordering::SeqCst);
+            if processed.saturating_sub(self.inner.step_from.load(Ordering::SeqCst))
+                >= self.inner.max_steps
+            {
+                return Err(TestError::NotQuiescent { processed });
             }
             notified.await;
         }

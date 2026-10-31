@@ -79,6 +79,8 @@ const COPY_HEADER: &str = "x-conformance-copy";
 const COPY_HEADER_VALUE: &[u8] = b"retry";
 /// What the runtime writes on the first copy of a delivery.
 const FIRST_COPY_COUNT: &str = "1";
+/// [`FIRST_COPY_COUNT`] as a number: the retries the first copy stands for.
+const FIRST_COPY_RETRIES: u64 = 1;
 
 const CONTROL: &[u8] = b"control";
 const COPY: &[u8] = b"copy";
@@ -111,9 +113,13 @@ const POISON: &[u8] = b"poison";
 /// * arrive with both headers byte for byte.
 ///
 /// The copy is then requeued twice with `nack(true)`. Each redelivery keeps both headers, and
-/// where the delivery reports a [`redelivery_count`](IncomingMessage::redelivery_count), it is `1`
-/// on the copy's first delivery and one more on each redelivery; `None` is the honest answer of a transport that counts
-/// nothing, and a requeue the transport reports as [`AckError::Unsupported`] ends the cycle.
+/// where the delivery reports a [`redelivery_count`](IncomingMessage::redelivery_count), it
+/// continues the count the copy's header carries and grows by one on each redelivery: a broker
+/// that delays natively
+/// ([`supports_nack_after`](IncomingMessage::supports_nack_after)) counts the copy as a new
+/// message and answers `1`, and a broker that leaves the delay to the runtime answers one more
+/// than the header holds, so a cap never meets a count that restarts on a copy. `None` is the
+/// honest answer of a transport that counts nothing, and a requeue the transport reports as [`AckError::Unsupported`] ends the cycle.
 ///
 /// Run it with the broker's own descriptor, and again with the bare [`Name`](ruststream_core::Name) source
 /// where the connected form's `Subscribe::Copies` is [`AddressedCopies`](ruststream_core::AddressedCopies):
@@ -354,8 +360,17 @@ where
     M: IncomingMessage,
     E: fmt::Debug,
 {
-    assert_count(&msg, 1, "the copy's first delivery");
-    for delivery in 2..=REQUEUES + 1 {
+    // A broker that holds a delay back itself is never handed the runtime's copies, so a copy it
+    // is given is a new message to it. A broker that leaves the delay to the runtime is handed the
+    // copies, and its count continues the one the copy's header carries; a count that restarts at
+    // one would never reach a registration's `max_attempts`.
+    let first = if msg.supports_nack_after() {
+        1
+    } else {
+        1 + FIRST_COPY_RETRIES
+    };
+    assert_count(&msg, first, "the copy's first delivery");
+    for delivery in first + 1..=first + REQUEUES {
         match msg.nack(true).await {
             Ok(()) => {}
             // A transport with no requeue has no redelivery to count.
