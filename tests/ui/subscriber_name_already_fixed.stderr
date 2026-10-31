@@ -9,5 +9,6 @@ error[E0277]: this subscriber's subscription is already named
 help: the trait `NameStep` is implemented for `SubscriberBuilder<Def, Unnamed<S>, State, DC>`
   --> crates/ruststream-runtime/src/settings.rs
    |
-   | impl<Def, S: FromName, State, DC> NameStep for SubscriberBuilder<Def, Unnamed<S>, State, DC> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | / impl<Def, S: FromName + CloneSource, State, DC> NameStep
+   | |     for SubscriberBuilder<Def, Unnamed<S>, State, DC>
+   | |_____________________________________________________^
