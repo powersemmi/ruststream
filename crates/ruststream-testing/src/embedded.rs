@@ -20,7 +20,7 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
 
 use ruststream_runtime::testing::{Coordinator, InProcessRun, LocalInProcess, TestError};
-use ruststream_runtime_embassy::{Control, EmbeddedApp, Mounts, RunError};
+use ruststream_runtime_embassy::{Control, EmbeddedApp, Health, Mounts, RunError};
 
 mod clock;
 mod handle;
@@ -143,11 +143,18 @@ impl TestApp {
     /// [`LocalInProcess`] transition, every subscription opens, and the `after_startup` hooks
     /// run, in the production order.
     ///
+    /// A connection or a subscription that waits on the clock is waited for: the clock moves
+    /// from one armed deadline to the next until the app is running, as time would pass on the
+    /// board. An `after_startup` hook that waits on the clock stays queued like a handler does,
+    /// and finishes on [`advance`](Self::advance) or [`shutdown`](Self::shutdown).
+    ///
     /// # Errors
     ///
     /// Returns [`TestError::Connect`] if a broker fails to connect in process,
-    /// [`TestError::Subscribe`] if a subscription fails to open, or [`TestError::Startup`] if
-    /// an `after_startup` hook fails.
+    /// [`TestError::Subscribe`] if a subscription fails to open, [`TestError::Startup`] if an
+    /// `after_startup` hook fails, [`TestError::Stalled`] if the startup waits on something that
+    /// neither the app nor the clock wakes, or [`TestError::NotQuiescent`] if the app keeps
+    /// waking itself.
     ///
     /// # Panics
     ///
@@ -173,7 +180,7 @@ impl TestApp {
             waker: Arc::default(),
             clock,
         };
-        tb.drive().await?;
+        tb.await_running().await?;
         match tb.ended.borrow_mut().take() {
             None | Some(Ok(())) => {}
             Some(Err(err)) => return Err(startup_error(err)),
@@ -334,6 +341,23 @@ impl TestApp {
             type_name::<B>(),
         );
         BrokerHandle::new(self, first.clone())
+    }
+
+    /// Runs the startup to its end: until the app is running, or has stopped on a startup error.
+    /// What the startup waits on the clock for is waited out, deadline by deadline.
+    async fn await_running(&self) -> Result<(), TestError> {
+        for _ in 0..MAX_POLLS {
+            self.drive().await?;
+            if self.run.borrow().is_none() || self.control.health() != Health::Starting {
+                return Ok(());
+            }
+            if !self.clock.advance_to_next() {
+                return Err(TestError::Stalled);
+            }
+        }
+        Err(TestError::NotQuiescent {
+            processed: MAX_POLLS,
+        })
     }
 
     /// The coordinator the run records into.

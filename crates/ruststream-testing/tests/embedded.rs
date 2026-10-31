@@ -14,10 +14,12 @@ use std::time::Duration;
 use embassy_futures::{block_on, yield_now};
 use embassy_time::Timer;
 use ruststream::memory::local::prelude::{
-    BytesMut, LocalBroker, LocalMemoryError, LocalMemoryPublisher, LocalPublisher, OutgoingMessage,
+    BytesMut, ConnectedLocalMemoryBroker, LocalBroker, LocalMemoryError, LocalMemoryPublisher,
+    LocalPublisher, OutgoingMessage,
 };
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out, PublishError};
+use ruststream::testing::LocalInProcess;
 use ruststream::testing::{TestApp, TestError};
 use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 
@@ -364,4 +366,93 @@ fn a_second_harness_on_one_thread_is_refused() {
         let _first = TestApp::start(app(Bus::new())).await;
         let _second = TestApp::start(app(Bus::new())).await;
     });
+}
+
+/// How a [`SlowBus`] ends its connect.
+#[derive(Clone, Copy)]
+enum Link {
+    /// Connects after the board's radio has had a second.
+    Ready,
+    /// Refuses after a second.
+    Refused,
+    /// Never answers.
+    Silent,
+    /// Keeps retrying on a timer and never connects.
+    Retrying,
+}
+
+/// A bus whose connection takes time on the clock, as a radio link does.
+struct SlowBus(Link);
+
+impl LocalBroker for SlowBus {
+    type Error = LocalMemoryError;
+    type Connected = ConnectedLocalMemoryBroker<4>;
+
+    async fn connect(self) -> Result<Self::Connected, Self::Error> {
+        Bus::new().connect().await
+    }
+}
+
+impl LocalInProcess for SlowBus {
+    async fn connect_in_process(self) -> Result<Self::Connected, Self::Error> {
+        match self.0 {
+            Link::Silent => pending().await,
+            Link::Retrying => loop {
+                Timer::after_secs(1).await;
+            },
+            Link::Ready | Link::Refused => Timer::after_secs(1).await,
+        }
+        match self.0 {
+            Link::Refused => Err(LocalMemoryError::ShutDown),
+            Link::Ready | Link::Silent | Link::Retrying => Bus::new().connect().await,
+        }
+    }
+}
+
+#[test]
+fn a_start_waits_for_a_broker_that_connects_on_the_clock() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb =
+            TestApp::start(EmbeddedApp::new().with_broker(SlowBus(Link::Ready), |b| b)).await?;
+        // The broker is addressable only once the start has connected it.
+        let _ = tb.broker::<SlowBus>();
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_broker_that_refuses_after_waiting_on_the_clock_fails_the_start() {
+    let started = block_on(TestApp::start(
+        EmbeddedApp::new().with_broker(SlowBus(Link::Refused), |b| b),
+    ));
+    let err = started.expect_err("the connection was refused, so the start fails");
+    assert!(
+        matches!(err, TestError::Connect { .. }),
+        "a refused connection is a connect error: {err:?}"
+    );
+}
+
+#[test]
+fn a_start_that_waits_on_nothing_the_clock_wakes_fails() {
+    let started = block_on(TestApp::start(
+        EmbeddedApp::new().with_broker(SlowBus(Link::Silent), |b| b),
+    ));
+    let err = started.expect_err("the connection never answers, so the start fails");
+    assert!(
+        matches!(err, TestError::Stalled),
+        "a connection nothing wakes is a stalled start: {err:?}"
+    );
+}
+
+#[test]
+fn a_start_that_keeps_retrying_on_the_clock_fails() {
+    let started = block_on(TestApp::start(
+        EmbeddedApp::new().with_broker(SlowBus(Link::Retrying), |b| b),
+    ));
+    let err = started.expect_err("the connection never ends, so the start fails");
+    assert!(
+        matches!(err, TestError::NotQuiescent { .. }),
+        "a connection that re-arms its timer forever is not quiescent: {err:?}"
+    );
 }
