@@ -505,18 +505,31 @@ async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
 
 /// Every route kind contributes its registration metadata, in registration order: that list is
 /// what the `AsyncAPI` document is generated from.
-// PROTOTYPE: a router that is never mounted cannot infer which runner's slot entries its
-// bodies hold; this test names neither and is left out of the prototype build.
-#[cfg(any())]
 #[test]
 fn every_new_route_kind_reports_its_metadata_in_registration_order() {
-    let router = Router::<MemoryBroker>::new()
+    let plain = Router::<MemoryBroker>::new()
         .include(rewind::<()>)
         .include(echo_frame::<()>)
         .build()
         .include(relay::<()>)
         .build()
         .include(bulk_relay::<()>.batch(nonzero!(64)))
+        .build();
+    let names: Vec<_> = plain.handlers().into_iter().map(|m| m.name).collect();
+    assert_eq!(
+        names,
+        ["rp.seek.in", "rp.raw.in", "rp.reply.in", "rp.batch.in"]
+    );
+
+    // The slot forms take their slot entries from the runner they are mounted on, so their
+    // order is read from the mounted app.
+    let router = Router::<MemoryBroker<Retaining>>::new()
+        .include(rewind)
+        .include(echo_frame)
+        .build()
+        .include(relay)
+        .build()
+        .include(bulk_relay.batch(nonzero!(64)))
         .build()
         .include(forward)
         .out(DefaultSlot, Publish)
@@ -524,8 +537,11 @@ fn every_new_route_kind_reports_its_metadata_in_registration_order() {
         .include(forward_batch.batch(nonzero!(64)))
         .out(DefaultSlot, Publish)
         .build();
-
-    let names: Vec<_> = router.handlers().into_iter().map(|m| m.name).collect();
+    let app = RustStream::new(AppInfo::new("rp-order", "0.1.0")).with_broker(
+        MemoryBroker::retaining(Retention::Messages(nonzero!(32))),
+        |b| b.include_router(router),
+    );
+    let names: Vec<_> = app.handlers().iter().map(|m| m.name.clone()).collect();
     assert_eq!(
         names,
         [
