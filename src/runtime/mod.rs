@@ -107,8 +107,8 @@ pub use ruststream_runtime::{
     OutgoingMessageMetadata,
 };
 pub use ruststream_runtime::{
-    IncludeDef, LocalPipeline, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut,
-    RouterPublishing, RouterPublishingOut, RouterWith, forms,
+    IncludeDef, LocalPipeline, MapPublisher, MountChain, Router, RouterDef, RouterHandlers,
+    RouterOut, RouterPublishing, RouterPublishingOut, RouterWith, forms,
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{LocalBindSlots, LocalHasSlots};
@@ -141,7 +141,7 @@ pub use ruststream_runtime_tokio::{MainRuntime, RouterSink};
 #[cfg(feature = "tokio")]
 #[doc(hidden)]
 pub use ruststream_runtime_tokio::{
-    MountChain, ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup,
+    MountRoutes, ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup,
 };
 
 #[cfg(feature = "tokio")]
@@ -157,6 +157,6 @@ pub use ruststream_runtime_embassy::{
 };
 #[cfg(feature = "embassy")]
 pub use ruststream_runtime_embassy::{
-    Control, EmbassyClock, EmbeddedApp, Health, MountChain, MountSteps, Mounts, Parts, RunError,
-    Scope, Stopping,
+    Control, EmbassyClock, EmbeddedApp, Health, MountSteps, Mounts, Parts, RunError, Scope,
+    Stopping,
 };

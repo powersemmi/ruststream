@@ -3,8 +3,8 @@
 //!
 //! Both registration surfaces run the same builder. `b.include(def)` consumes the scope and hands
 //! back the chain a [`Router`] would: every step, every typestate slot and every diagnostic comes
-//! from [`RouterWith`], and a step is followed by the next `include` directly. The closure returns
-//! the chain, and the app mounts it once the closure is done ([`MountChain`]).
+//! from [`RouterWith`](crate::RouterWith), and a step is followed by the next `include` directly. The closure returns
+//! the chain, and the app mounts it once the closure is done ([`MountChain`], then [`MountRoutes`]).
 //!
 //! Because `include` consumes the scope, every registration of a broker is one expression: a
 //! second `b.include(..)` beside the first is a use of a moved value, not a mount that silently
@@ -17,8 +17,8 @@ mod parity_tests;
 
 use crate::SendBroker;
 use crate::{BlanketLayer, Broker, Declared, PublishIdentity, PublishPipeline};
-use crate::{ChainHead, Identity, PoolFits, RetryDestinationsDeclared, SplitHead};
-use crate::{Router, RouterCommit, RouterDef, RouterMount, RouterWith};
+use crate::{ChainHead, Identity, PoolFits, SplitHead};
+use crate::{MountChain, Router, RouterDef, RouterMount};
 
 use super::LifecycleHook;
 use super::scope::{BrokerScope, ScopeRegistrations};
@@ -29,25 +29,22 @@ use crate::sink::RouterSink;
 /// for any router).
 pub(crate) type ScopeRouter<B, C, Pipeline, Pre> = Router<B, ChainHead<Pre>, C, Identity, Pipeline>;
 
-/// What a `with_broker` closure returns: the mount chain the app registers once the closure is
-/// done.
+/// Mounts the finished routes of a `with_broker` closure into the app: registers the head the
+/// scope carries and every route after it into `sink`, and the startup publishes into `hooks`,
+/// each handler wrapped with `global`, in the order the chain was written.
 ///
-/// Implemented by the scope itself (the chain of what it registered, empty for `|b| b`) and by the
-/// chain its `include` opens (a [`Router`] over the scope's head, or a [`RouterWith`] waiting for
-/// its next step). `()` is not a chain, so a closure that dropped what `include` returned does not
-/// compile. Machinery; you never implement it.
+/// The closure returns a [`MountChain`]; the app finishes it and mounts its
+/// [`Routes`](MountChain::Routes) through this trait. Machinery; you never implement it.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
-    message = "the `with_broker` closure must return the mount chain",
-    label = "`{Self}` is not a mount chain",
-    note = "return the scope or the chain its `include` opens: `|b| b.include(a).include(b)`, \
-            every `Out` slot bound with `.out(marker, policy)`; a broker that mounts nothing is \
-            `|b| b`"
+    message = "these routes cannot be mounted on the tokio runner",
+    label = "`{Self}` is not mountable here",
+    note = "the chain's broker, layers and publish pipeline must be the ones the app registers; \
+            a handler whose bounds fail is reported at the `include` that wrote it"
 )]
-pub trait MountChain<B: Broker, Layers = Identity, State = (), Pipeline = PublishIdentity> {
-    /// Registers every mount of the chain into `sink` and its startup publishes into `hooks`,
-    /// each handler wrapped with `global`, in the order the chain was written.
-    fn mount_chain(
+pub trait MountRoutes<B: Broker, Layers = Identity, State = (), Pipeline = PublishIdentity> {
+    /// Registers every mount of the routes into `sink` and its startup publishes into `hooks`.
+    fn mount_routes(
         self,
         global: &Layers,
         pipeline: &Pipeline,
@@ -57,26 +54,21 @@ pub trait MountChain<B: Broker, Layers = Identity, State = (), Pipeline = Publis
 }
 
 // The scope is the chain of what it registered: `|b| b` mounts nothing.
-impl<B, Layers, C, State, Pipeline, Pre> MountChain<B, Layers, State, Pipeline>
+impl<B, Layers, C, State, Pipeline, Pre> MountChain
     for BrokerScope<B, Layers, C, State, Pipeline, Pre>
 where
     B: SendBroker,
-    Pre: ScopeRegistrations<B, Layers, State, Pipeline>,
 {
-    fn mount_chain(
-        self,
-        global: &Layers,
-        pipeline: &Pipeline,
-        sink: &mut RouterSink<B, State>,
-        hooks: &mut Vec<LifecycleHook<State>>,
-    ) {
-        self.pre.register(global, pipeline, sink, hooks);
+    type Routes = ScopeRouter<B, C, Pipeline, Pre>;
+
+    fn finish(self) -> Self::Routes {
+        Router::for_scope_with(self.pre, self.codec, self.pipeline)
     }
 }
 
 // A finished chain is the scope's head under a router: the head registers first, then the routes
 // mount the way `include_router` mounts any router.
-impl<B, Layers, State, Pipeline, Routes, RC, RL, RP> MountChain<B, Layers, State, Pipeline>
+impl<B, Layers, State, Pipeline, Routes, RC, RL, RP> MountRoutes<B, Layers, State, Pipeline>
     for Router<B, Routes, RC, RL, RP>
 where
     B: SendBroker,
@@ -88,7 +80,7 @@ where
     Pipeline: PublishPipeline + Clone + Send + 'static,
     State: Send + Sync + 'static,
 {
-    fn mount_chain(
+    fn mount_routes(
         self,
         global: &Layers,
         pipeline: &Pipeline,
@@ -100,26 +92,6 @@ where
         // The chain's router carries the scope's own publish path, so the fallback here is never
         // the one a registration takes.
         RouterDef::mount(routes, global, pipeline, &PublishIdentity, sink);
-    }
-}
-
-// A chain whose last registration still takes steps commits through the router's own terminal,
-// bounded exactly as `build` and the next `include` are.
-impl<B, Layers, State, Pipeline, Mount, R, Def, Attach, Last> MountChain<B, Layers, State, Pipeline>
-    for RouterWith<Mount, R, Def, Attach, Last>
-where
-    B: SendBroker,
-    Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
-    Attach::Out: MountChain<B, Layers, State, Pipeline>,
-{
-    fn mount_chain(
-        self,
-        global: &Layers,
-        pipeline: &Pipeline,
-        sink: &mut RouterSink<B, State>,
-        hooks: &mut Vec<LifecycleHook<State>>,
-    ) {
-        self.build().mount_chain(global, pipeline, sink, hooks);
     }
 }
 

@@ -29,7 +29,7 @@ use ruststream::memory::prelude::*;
 use ruststream::memory::{
     ConnectedMemoryBroker, LogMode, MemoryMessage, MemorySeeker, MemorySubscriber,
 };
-use ruststream::runtime::{BrokerScope, MountChain};
+use ruststream::runtime::{BrokerScope, MountChain, MountRoutes};
 use ruststream::testing::TestApp;
 use ruststream::{
     AckError, AddressedCopies, BatchSubscriber, RedeliveryAddress, RedeliveryAddressed, Seekable,
@@ -209,7 +209,7 @@ fn stopped_for_the_reported_error(tb: &TestApp<()>) {
 }
 
 /// An app with one broker, the in-memory bus of every test that publishes as it goes.
-fn app<Chain: MountChain<MemoryBroker>>(
+fn app<Chain: MountChain<Routes: MountRoutes<MemoryBroker>>>(
     mount: impl FnOnce(BrokerScope<MemoryBroker>) -> Chain,
 ) -> RustStream {
     RustStream::new(AppInfo::new("claims", "0.1.0")).with_broker(MemoryBroker::new(), mount)
@@ -232,7 +232,7 @@ async fn holding(name: &str, payloads: &[&str]) -> Result<MemoryBroker<Retaining
 }
 
 /// An app over a retaining bus, its batch subscription opened at the start of the log.
-fn replaying<Chain: MountChain<MemoryBroker<Retaining>>>(
+fn replaying<Chain: MountChain<Routes: MountRoutes<MemoryBroker<Retaining>>>>(
     broker: MemoryBroker<Retaining>,
     mount: impl FnOnce(BrokerScope<MemoryBroker<Retaining>>) -> Chain,
 ) -> RustStream {
