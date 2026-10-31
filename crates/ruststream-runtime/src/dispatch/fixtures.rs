@@ -2,7 +2,7 @@
 
 use alloc::sync::Arc;
 use core::future::ready;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::io;
 
 use bytes::Bytes;
@@ -69,8 +69,11 @@ where
 }
 
 /// A publisher that always rejects, standing in for a broker that died between the nack and
-/// the deferred republish.
-pub(super) struct RejectingPublisher;
+/// the deferred republish. It counts the publishes it refused.
+#[derive(Default)]
+pub(super) struct RejectingPublisher {
+    pub(super) attempts: Arc<AtomicUsize>,
+}
 
 impl Publisher for RejectingPublisher {
     type Payload = Lend;
@@ -82,6 +85,7 @@ impl Publisher for RejectingPublisher {
         _msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
+        self.attempts.fetch_add(1, Ordering::SeqCst);
         ready(Err(io::Error::other("connection closed")))
     }
 }

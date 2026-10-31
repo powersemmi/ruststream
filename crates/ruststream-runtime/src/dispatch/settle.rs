@@ -782,7 +782,9 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_failed_deferred_republish_is_logged_rather_than_propagated() {
-        let delivery = Delivery::deferring_to(bare_retry_publisher(RejectingPublisher), "orders");
+        let rejecting = RejectingPublisher::default();
+        let attempts = Arc::clone(&rejecting.attempts);
+        let delivery = Delivery::deferring_to(bare_retry_publisher(rejecting), "orders");
         let host = Tracked(TaskTracker::new());
         let settled = Arc::new(AtomicU8::new(0));
         settle_nack_after(
@@ -799,8 +801,14 @@ mod tests {
         // The original is already dropped, so the failed republish loses the message; the point
         // is that the deferred task reports it instead of panicking the runtime.
         assert_eq!(settled.load(Ordering::SeqCst), 1);
-        time::advance(Duration::from_secs(1)).await;
-        task::yield_now().await;
+        // The paused clock jumps to the copy's timer once nothing else can run.
+        host.0.close();
+        host.0.wait().await;
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "the deferred republish ran and was refused"
+        );
     }
 
     /// The bytes of a deferred copy are the dispatch's own - it read them off the delivery before

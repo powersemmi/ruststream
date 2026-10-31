@@ -327,8 +327,10 @@ mod tests {
         let empty = format!("{:?}", Delivery::<()>::empty());
         assert!(empty.contains("retry_destination: None"), "{empty}");
 
-        let wired: Delivery =
-            Delivery::deferring_to(bare_retry_publisher(RejectingPublisher), "orders");
+        let wired: Delivery = Delivery::deferring_to(
+            bare_retry_publisher(RejectingPublisher::default()),
+            "orders",
+        );
         assert!(format!("{wired:?}").contains("retry_destination: Some(Some(\"orders\"))"));
     }
 
