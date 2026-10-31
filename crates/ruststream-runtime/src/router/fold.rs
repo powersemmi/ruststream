@@ -28,6 +28,7 @@ use tracing::error;
 
 use crate::RetryDeclaration;
 use crate::batch::{DeserializedBatch, LocalBatch, LocalSliceHandler};
+use crate::coop::{Bounded, Cooperative, YIELD_AFTER};
 use crate::dispatch::{Delivery, HeadersAtOnce, Turn, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handle::Deserialized;
@@ -369,7 +370,7 @@ where
         let handler =
             LocalBlanketLayer::apply::<Sub::Message, Cx, State, _>(&self.layers, self.handler);
         run_sequential(
-            self.subscriber,
+            Cooperative(self.subscriber),
             handler,
             signal,
             self.name,
@@ -447,7 +448,10 @@ where
     {
         let host = OnOneThread(host);
         let failure = DispatchFailure::new(self.policies, signal.clone());
-        let mut stream = pin!(self.subscriber.batches(self.batch_size));
+        let mut stream = pin!(Bounded::new(
+            self.subscriber.batches(self.batch_size),
+            YIELD_AFTER
+        ));
         let mut cancelled = pin!(signal.cancelled());
         // One decode buffer and one encode buffer for the whole loop, as on the multi-thread
         // runner's sequential batch loop.

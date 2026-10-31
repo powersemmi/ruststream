@@ -135,3 +135,10 @@ harness = false
 
 [lints]
 workspace = true
+
+# A subscription that never waits, beside another task on the executor: a binary of its own, as
+# above.
+[[test]]
+name = "coop"
+path = "tests/lanes/coop.rs"
+harness = false
