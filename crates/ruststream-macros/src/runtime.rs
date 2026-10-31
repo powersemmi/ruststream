@@ -93,13 +93,13 @@ mod tests {
     }
 
     #[test]
-    fn a_publisher_capability_maps_to_its_local_twin_on_embassy() {
+    fn a_publisher_capability_maps_to_its_local_twin_on_embassy_and_other_bounds_stay() {
         let bounds: Punctuated<TypeParamBound, Token![+]> =
-            syn::parse_quote!(ruststream::Publisher<Options = Qos> + Audited);
+            syn::parse_quote!(ruststream::Publisher<Options = Qos> + Audited + 'static);
 
         assert_eq!(
             mapped(Runtime::Embassy, &bounds),
-            ":: ruststream :: LocalPublisher < Options = Qos > + Audited"
+            ":: ruststream :: LocalPublisher < Options = Qos > + Audited + 'static"
         );
     }
 
