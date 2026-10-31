@@ -92,7 +92,7 @@ impl CopyPathCheck for BrokerMoves {
 /// # use std::future::Future;
 /// # use futures::{Stream, StreamExt};
 /// # use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryMessage, MemorySubscriber};
-/// # use ruststream::{AckError, Carries, HeaderMap, IncomingMessage, NamedCopies, Subscribe};
+/// # use ruststream::{AckError, Carries, HeaderMap, IncomingMessage, NamedCopies, Settle, Subscribe};
 /// # use ruststream::{Subscriber, SubscriptionSource};
 /// # #[derive(Debug, Clone, PartialEq)]
 /// # pub struct Row(pub String);
@@ -124,6 +124,9 @@ impl CopyPathCheck for BrokerMoves {
 /// # impl IncomingMessage for RowDelivery {
 /// #     fn payload(&self) -> &[u8] { self.0.payload() }
 /// #     fn headers(&self) -> &HeaderMap { self.0.headers() }
+/// # }
+/// #
+/// # impl Settle for RowDelivery {
 /// #     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send { self.0.ack() }
 /// #     fn nack(self, r: bool) -> impl Future<Output = Result<(), AckError>> + Send {
 /// #         self.0.nack(r)
@@ -313,7 +316,7 @@ pub async fn carries<
 /// # use std::num::NonZeroUsize;
 /// # use futures::{Stream, StreamExt};
 /// # use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryMessage, MemorySubscriber};
-/// # use ruststream::{AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage};
+/// # use ruststream::{AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, Settle};
 /// # use ruststream::{NamedCopies, Subscribe, Subscriber, SubscriptionSource};
 /// # #[derive(Debug, Clone, PartialEq)]
 /// # pub struct Row(pub String);

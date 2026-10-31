@@ -29,12 +29,12 @@ use ruststream_asyncapi::build_spec;
 #[cfg(feature = "asyncapi")]
 use ruststream_core::DescribeServer;
 #[cfg(doc)]
-use ruststream_core::{AckError, IncomingMessage, SendSubscribe};
+use ruststream_core::{AckError, IncomingMessage};
 use ruststream_core::{
     Broker, Connected, LocalSettle, Publisher, SendBroker, SendSource, SendSubscribe, Subscriber,
 };
 #[cfg(doc)]
-use ruststream_runtime::testing::{Backlog, TestableBroker};
+use ruststream_runtime::testing::Backlog;
 use ruststream_runtime::testing::{InProcess, TestableBroker};
 #[cfg(feature = "asyncapi")]
 use ruststream_runtime_tokio::{AppInfo, RustStream};
