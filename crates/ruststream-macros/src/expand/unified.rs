@@ -159,7 +159,11 @@ pub(super) fn expand(
 
     let mut preds = extractor_preds(extractors, &ctx_ty, &state_in_ctx);
     preds.extend(arena.bounds.iter().cloned());
-    preds.extend(state_bound);
+    // The slot-less body is runtime-neutral: the runner that shares the state across threads
+    // asks `Send + Sync` of it where it mounts.
+    if !outs.is_empty() {
+        preds.extend(state_bound);
+    }
     let handle_where = where_clause(&preds);
     let we_params = &arena.we_params;
     let handle_trait = runtime.handle_trait();

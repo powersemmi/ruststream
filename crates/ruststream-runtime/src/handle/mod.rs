@@ -75,7 +75,7 @@ pub use axis::{
 pub use docs::{DocState, Docs, Probed, ProbedDocs};
 pub use docs::{Documentable, Documented, Undocumented};
 #[doc(hidden)]
-pub use fn_body::{AsBodyFn, BodyCall, DeclareBody, FnBody, FnDecl, BodyTag};
+pub use fn_body::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
 pub use fn_body::{AsDeclared, IntoDeclared};
 #[doc(hidden)]
 pub use outs::{EntryMarkers, LocalEntryMarkers, LocalOutPos, OutPos, SelectSlot, SlotDictionary};
