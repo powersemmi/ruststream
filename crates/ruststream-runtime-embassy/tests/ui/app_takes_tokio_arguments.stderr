@@ -14,4 +14,4 @@ error: the app's embassy task is one concrete task, so its builder takes no gene
   --> tests/ui/app_takes_tokio_arguments.rs:18:11
    |
 18 | fn generic<Bus: ruststream::Broker>(bus: Bus) -> EmbeddedApp<impl Mounts> {
-   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^

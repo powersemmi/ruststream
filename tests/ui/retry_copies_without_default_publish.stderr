@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `ConnectedBus: DefaultPublish` is not satisfied
-  --> tests/ui/retry_copies_without_default_publish.rs:89:51
+  --> tests/ui/retry_copies_without_default_publish.rs:91:51
    |
-89 |     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(Bus, |b| b.include(reconcile));
+91 |     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(Bus, |b| b.include(reconcile));
    |                                                   ^^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `DefaultPublish` is not implemented for `ConnectedBus`

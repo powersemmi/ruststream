@@ -4,8 +4,8 @@ use std::future::{Future, ready};
 use futures::{Stream, stream};
 use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::{
-    AckError, AddressedCopies, Broker, ConnectedBroker, HeaderMap, IncomingMessage, Subscribe,
-    Subscriber, subscriber,
+    AckError, AddressedCopies, Broker, ConnectedBroker, HeaderMap, IncomingMessage, Settle,
+    Subscribe, Subscriber, subscriber,
 };
 use serde::Deserialize;
 
@@ -70,7 +70,6 @@ impl IncomingMessage for BusMessage {
 }
 
 impl Settle for BusMessage {
-
     async fn ack(self) -> Result<(), AckError> {
         Ok(())
     }
