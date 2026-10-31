@@ -956,27 +956,9 @@ exclude = [".cargo"]
 
 # The whole surface is behind features, so a default build on docs.rs publishes a reference with
 # the codec, AsyncAPI, metrics, testing and conformance modules missing - the ones the guides send
-# readers to. The two runtimes exclude each other, so the page documents the tokio set: every
-# feature but `embassy`. The embedded runner's reference is the page of
-# `ruststream-runtime-embassy`, and the local bus's is `ruststream-memory`'s, both built with all
-# their features.
+# readers to. The page documents every feature, both runtimes included.
 [package.metadata.docs.rs]
-features = [
-    "asyncapi",
-    "cbor",
-    "cli",
-    "conformance",
-    "json",
-    "logging",
-    "macros",
-    "memory",
-    "metrics",
-    "msgpack",
-    "otel",
-    "poll-diagnostics",
-    "testing",
-    "tokio",
-]
+all-features = true
 
 [features]
 default = ["json", "tokio"]
