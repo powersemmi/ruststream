@@ -134,12 +134,6 @@
 
 extern crate alloc;
 
-// The runtime is one choice: the generated code, the app object and the re-exports all assume one.
-#[cfg(all(feature = "tokio", feature = "embassy"))]
-compile_error!(
-    "the `tokio` and `embassy` features select the runtime and exclude each other; enable one"
-);
-
 pub mod prelude;
 pub mod testing;
 

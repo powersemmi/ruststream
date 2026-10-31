@@ -9,7 +9,8 @@ use std::error::Error;
 use embassy_futures::block_on;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, PublishError};
-use ruststream::testing::{TestApp, TestError};
+use ruststream::testing::TestError;
+use ruststream::testing::embedded::TestApp;
 use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
 
 /// The board's bus: each subscription holds four messages.
@@ -43,7 +44,7 @@ async fn on_note(note: &Command<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| b.include(on_command).include(on_note))
 }

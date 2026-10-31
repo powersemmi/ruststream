@@ -11,7 +11,7 @@ async fn on_job(job: &Job<'_>) -> HandlerOutcome {
     HandlerOutcome::retry()
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_job)

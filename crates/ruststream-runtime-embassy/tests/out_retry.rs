@@ -78,7 +78,7 @@ async fn on_copy(job: &Job<'_>, ctx: &mut Context<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_copy)

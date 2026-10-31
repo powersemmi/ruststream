@@ -28,6 +28,10 @@ impl<E> fmt::Debug for Outs<E> {
 }
 
 impl<E> Outs<E> {
+    pub(super) const fn entries(&self) -> &E {
+        &self.entries
+    }
+
     /// Picks the entry of `marker`: the wired live value behind its transparent [`Slot`]
     /// window. The position is inferred, so the call reads the same wherever the marker sits in
     /// the declaration.

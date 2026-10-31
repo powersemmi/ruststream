@@ -51,6 +51,7 @@
 mod axis;
 mod docs;
 mod eager;
+mod fn_body;
 mod outs;
 mod reply;
 mod reply_slots;
@@ -73,6 +74,11 @@ pub use axis::{
 #[doc(hidden)]
 pub use docs::{DocState, Docs, Probed, ProbedDocs};
 pub use docs::{Documentable, Documented, Undocumented};
+#[doc(hidden)]
+pub use fn_body::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
+pub use fn_body::{AsDeclared, IntoDeclared};
+#[doc(hidden)]
+pub use outs::{AnyOutPos, SelectEntry, SlotAdmit, SlotEntry, SlotPublish, SlotTransactions};
 #[doc(hidden)]
 pub use outs::{EntryMarkers, LocalEntryMarkers, LocalOutPos, OutPos, SelectSlot, SlotDictionary};
 pub use outs::{LocalOutEntry, LocalSlot, OutEntry, Outs, Slot};

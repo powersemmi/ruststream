@@ -830,7 +830,7 @@ async fn a_router_chain_declares_and_names_the_destination_the_same_way() {
 #[test]
 fn a_router_lists_a_declared_registration_with_its_dead_letter_channel() {
     let router = Router::<MemoryBroker>::new()
-        .include(settle_later)
+        .include(settle_later::<()>)
         .max_attempts(nonzero!(2u32))
         .dead_letter("payments.dead")
         .out_retry(MemoryPublish)

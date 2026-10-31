@@ -11,7 +11,7 @@ use ruststream::memory::local::prelude::{
     LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource,
 };
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out};
-use ruststream::testing::TestApp;
+use ruststream::testing::embedded::TestApp;
 use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 use ruststream_runtime_embassy::Bindable;
 
@@ -51,7 +51,7 @@ async fn on_level(
     }
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mounts> {
     let actuators = Bindable::new(actuators);
     let to_actuators = actuators.bind(LocalMemoryPublish);
@@ -80,7 +80,7 @@ async fn on_command(command: &Frame<'_>, Out(acks): Out<impl Publisher, Acks>) -
 }
 
 /// The token's broker is registered after the broker that publishes through it.
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn target_last(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mounts> {
     let actuators = Bindable::new(actuators);
     let to_actuators = actuators.bind(LocalMemoryPublish);
@@ -90,7 +90,7 @@ fn target_last(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mount
 }
 
 /// Each broker publishes through a token bound to the other.
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn bridge(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mounts> {
     let sensors = Bindable::new(sensors);
     let actuators = Bindable::new(actuators);

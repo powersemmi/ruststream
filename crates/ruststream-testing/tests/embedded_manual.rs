@@ -20,7 +20,7 @@ use ruststream::runtime::{
     MessageWire, Mounts, OutSlot, Outs, PublishedThrough, Reads, Serialized, SerializedWire,
     SoloDeserialized, WireBytes, local_subscriber,
 };
-use ruststream::testing::TestApp;
+use ruststream::testing::embedded::TestApp;
 use ruststream::{
     CallerName, FixedName, LocalPublisher, MessageHeaders, NoHeaders, OutgoingDestination,
 };

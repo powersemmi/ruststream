@@ -9,6 +9,7 @@
 use core::marker::PhantomData;
 
 use crate::batch::BatchDef;
+use crate::handle::{AsBodyFn, AsDeclared, BodyTag};
 use crate::input::{Materialize, Provided};
 use crate::lifecycle::BoxError;
 use crate::middleware::Identity;
@@ -124,6 +125,31 @@ pub trait PoolFits<Pipe> {}
 impl<Settings, Pipe: PublishPipeline> PoolFits<Pipe> for Settings {}
 
 impl<Settings: Sequential, Pipe> PoolFits<LocalPipeline<Pipe>> for Settings {}
+
+/// Whether a definition's body runs where the chain mounts it: a body function on a multi-thread
+/// chain returns a `Send` future; a local chain asks nothing of it; a definition that is its own
+/// body (`subscriber(..)`, a `Handle` impl) carries its own bound. Machinery; never named
+/// directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this handler cannot run on the multi-thread runner: its future is not `Send`",
+    note = "the multi-thread runner moves a handler between threads at each `.await`; keep only \
+            `Send` values across an `.await` in the handler (an `Arc` where it holds an `Rc`), \
+            or mount it on an `EmbeddedApp`, which polls it on one thread"
+)]
+pub trait BodyFits<Pipe, Mk> {}
+
+impl<D, Pipe> BodyFits<Pipe, AsDeclared> for D {}
+
+impl<F, M, I, O, X, Fut, Pipe> BodyFits<Pipe, AsBodyFn<M, I, O, X>> for F
+where
+    Pipe: PublishPipeline,
+    F: Fn(BodyTag<M>, I, O, X) -> Fut,
+    Fut: Future + Send,
+{
+}
+
+impl<F, M, I, O, X, Pipe> BodyFits<LocalPipeline<Pipe>, AsBodyFn<M, I, O, X>> for F {}
 
 /// The publish pipeline a router's chain carries, read off the router type. Machinery; never
 /// named directly.

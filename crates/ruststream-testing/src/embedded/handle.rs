@@ -141,7 +141,7 @@ impl<'a> BrokerHandle<'a> {
     /// ```
     /// use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
     /// use ruststream::runtime::{EmbeddedApp, Mounts};
-    /// use ruststream::testing::TestApp;
+    /// use ruststream::testing::embedded::TestApp;
     /// use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
     ///
     /// type Bus = LocalMemoryBroker<4>;

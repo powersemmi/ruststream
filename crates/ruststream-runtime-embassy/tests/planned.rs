@@ -128,7 +128,7 @@ async fn on_level(level: &Reading<'_>, Out(alerts): Out<impl Publisher, Alerts>)
     }
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_measure)

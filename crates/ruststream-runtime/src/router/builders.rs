@@ -36,9 +36,10 @@ use crate::slot::{
 
 use super::builder::RouterBroker;
 use super::head::{PoisonAt, ScopeOut};
-use super::local::{PoolFits, RouterPipe};
+use super::local::{BodyFits, PoolFits, RouterPipe};
 use super::mount::RouterMount;
 use super::routes::RetryDestinationsDeclared;
+use crate::handle::IntoDeclared;
 use crate::settings::Declared;
 
 /// One commit strategy of a mount chain's attachment, keyed by its `Mount` token and the chain
@@ -544,18 +545,27 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// # }
     /// ```
     #[allow(clippy::type_complexity)] // the next mount's own output; an alias would hide it
-    pub fn include<Next>(
+    pub fn include<Next, Mk>(
         self,
         def: Next,
-    ) -> <Next::Form as RouterMount<<Attach as RouterCommit<Mount, R, Def>>::Out, Next::Settings>>::Out
+    ) -> <<Next::Decl as Declared>::Form as RouterMount<
+        <Attach as RouterCommit<Mount, R, Def>>::Out,
+        <Next::Decl as Declared>::Settings,
+    >>::Out
     where
         Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
-        Next: Declared,
+        Next: IntoDeclared<Mk> + BodyFits<R::Pipe, Mk>,
         R: RouterPipe,
-        Next::Settings: PoolFits<R::Pipe>,
-        Next::Form: RouterMount<<Attach as RouterCommit<Mount, R, Def>>::Out, Next::Settings>,
-{
-        <Next::Form as RouterMount<_, Next::Settings>>::begin(def.declare(), self.build())
+        <Next::Decl as Declared>::Settings: PoolFits<R::Pipe>,
+        <Next::Decl as Declared>::Form: RouterMount<
+                <Attach as RouterCommit<Mount, R, Def>>::Out,
+                <Next::Decl as Declared>::Settings,
+            >,
+    {
+        <<Next::Decl as Declared>::Form as RouterMount<_, <Next::Decl as Declared>::Settings>>::begin(
+            def.into_declared().declare(),
+            self.build(),
+        )
     }
 }
 
