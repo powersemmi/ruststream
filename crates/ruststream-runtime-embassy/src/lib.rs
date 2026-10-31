@@ -14,8 +14,7 @@
 //! - [`Control`] and [`Health`]: the stop device code asks for and the health it reads, both in
 //!   a `static`.
 //! - [`EmbassyClock`]: the runner's clock over embassy-time.
-//! - [`frames`] and [`CountDetached`]: a broker stand-in over an embassy-sync channel and a host
-//!   that counts detached work, for the runner's host tests.
+//! - [`frames`]: a broker stand-in over an embassy-sync channel, for the runner's host tests.
 //!
 //! How a device service is built is taught on the site's embedded runtime page.
 //!
@@ -27,7 +26,6 @@ mod app;
 mod clock;
 mod control;
 mod copies;
-mod detach;
 pub mod frames;
 mod hooks;
 mod host;
@@ -42,7 +40,6 @@ pub use app::AppBrokers;
 pub use app::{EmbeddedApp, Mounts, Parts, RunError, Scope};
 pub use clock::EmbassyClock;
 pub use control::{Control, Health, Stopping};
-pub use detach::CountDetached;
 #[doc(hidden)]
 pub use hooks::{HookList, Hooks, NoHooks};
 #[cfg(feature = "testing")]

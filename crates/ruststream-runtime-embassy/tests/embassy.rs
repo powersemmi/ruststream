@@ -12,7 +12,7 @@ use core::cell::Cell;
 use core::convert::Infallible;
 use core::future::ready;
 use core::num::NonZeroUsize;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use core::time::Duration;
 use std::alloc::System;
 use std::sync::Arc;
@@ -26,8 +26,8 @@ use ruststream_core::{
     BytesMut, CallerName, LocalPublisher, MessageHeaders, NoHeaders, OutgoingDestination,
 };
 use ruststream_runtime::{
-    Clock, Context, Delivery, DispatchFailure, FailurePolicies, HandlerOutcome, HeadersAtOnce,
-    INSTRUMENTED_BODY, LocalDetach, LocalHandler, ScopeDelivery, run_sequential,
+    Clock, Context, Delivery, Detach, DispatchFailure, FailurePolicies, HandlerOutcome,
+    HeadersAtOnce, INSTRUMENTED_BODY, LocalDetach, LocalHandler, ScopeDelivery, run_sequential,
 };
 use ruststream_runtime::{
     Deserialized, Input, LocalBlanketLayer, LocalHandle, LocalOutEntry, MessageWire, OpenRoutes,
@@ -39,13 +39,54 @@ use ruststream_runtime_embassy::frames::{
     Frame, FrameBroker, FrameDelivery, FramePublish, FrameSource, FrameSubscriber, Frames,
     Settlements,
 };
-use ruststream_runtime_embassy::{Control, CountDetached, EmbassyClock, Health};
+use ruststream_runtime_embassy::{Control, EmbassyClock, Health};
 use static_cell::StaticCell;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 
 // Counts every allocation of the process, so the driver reads how many one delivery made.
 #[global_allocator]
 static ALLOCATOR: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+
+/// A host that counts the work deliveries leave behind instead of running it.
+///
+/// The scenario's handler leaves no continuation and no delayed retry, so a count above zero means
+/// the body detached work the scenario did not ask for.
+#[derive(Debug, Default)]
+pub struct CountDetached {
+    detached: AtomicUsize,
+}
+
+impl CountDetached {
+    /// A host with nothing detached yet.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            detached: AtomicUsize::new(0),
+        }
+    }
+
+    /// How many pieces of work deliveries detached.
+    #[must_use]
+    pub fn detached(&self) -> usize {
+        self.detached.load(Ordering::Relaxed)
+    }
+}
+
+impl Detach for CountDetached {
+    fn detach<Work>(&self, _work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        self.detached.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn detach_after<Work>(&self, _delay: Duration, _work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        self.detached.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 /// How long the handler waits on the clock before it finishes.
 const HANDLER_WAIT: Duration = Duration::from_secs(10);
