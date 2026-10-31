@@ -109,7 +109,7 @@ fn a_full_store_holds_the_next_failure_until_a_record_is_free() -> Result<(), Bo
 /// A bus whose subscription holds one message, waiting or in hand.
 type TightBus = LocalMemoryBroker<1>;
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn tight_app(bus: TightBus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| b.include(on_job).retry_capacity::<1>())
 }
