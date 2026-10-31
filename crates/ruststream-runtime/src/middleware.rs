@@ -548,6 +548,7 @@ pub mod layers {
 
     #[cfg(test)]
     mod tests {
+        use core::future::ready;
         use core::time::Duration;
 
         use super::*;
@@ -573,7 +574,7 @@ pub mod layers {
                 _msg: &(),
                 _ctx: &mut Context<'_, (), ()>,
             ) -> impl Future<Output = HandlerOutcome> {
-                core::future::ready(HandlerOutcome::from(self.0))
+                ready(HandlerOutcome::from(self.0))
             }
         }
 
