@@ -6,9 +6,11 @@
 #![allow(clippy::future_not_send)]
 
 use std::error::Error;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use embassy_futures::block_on;
+use embassy_time::{Duration as EmbassyDuration, Timer};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::nonzero;
 use ruststream::runtime::{
@@ -173,4 +175,104 @@ fn a_skipped_delay_still_counts_toward_the_cap() -> Result<(), Box<dyn Error>> {
         tb.shutdown().await?;
         Ok(())
     })
+}
+
+/// A bus whose subscription holds one message, waiting or in hand.
+type TightBus = LocalMemoryBroker<1>;
+
+/// How often the handler saw each job of the tight board, by its first byte.
+#[derive(Default)]
+struct Seen(Mutex<[u32; 2]>);
+
+/// Fails the first delivery of a job and acks the next; job `a` fails its first two.
+#[subscriber(LocalMemorySource::new("jobs"))]
+async fn on_tight_job(job: &Job<'_>, ctx: &mut Context<'_, (), Seen>) -> HandlerOutcome {
+    let index = usize::from(job.0[0] - b'a');
+    let mut counts = ctx.state().0.lock().expect("the handler never panics");
+    counts[index] += 1;
+    let failures = if index == 0 { 2 } else { 1 };
+    if counts[index] <= failures {
+        HandlerOutcome::retry_after(LATER)
+    } else {
+        HandlerOutcome::ack()
+    }
+}
+
+#[ruststream::app]
+fn tight_skip_app(bus: TightBus) -> EmbeddedApp<impl Mounts<State = Seen>> {
+    EmbeddedApp::new()
+        .with_state(Seen::default())
+        .with_broker(bus, |b| {
+            b.include(on_tight_job)
+                .retry_capacity::<1>()
+                .when_retry_full(SkipDelay)
+        })
+}
+
+/// Holds its delivery for an hour of the mock clock, so the dead-letter bus stays full of it.
+#[subscriber(LocalMemorySource::new("jobs.dead"))]
+async fn on_stuck(job: &Job<'_>) -> HandlerOutcome {
+    let _ = job.0;
+    Timer::after(EmbassyDuration::from_secs(3600)).await;
+    HandlerOutcome::ack()
+}
+
+#[ruststream::app]
+fn tight_dead_letter_app(bus: TightBus) -> EmbeddedApp<impl Mounts<State = Seen>> {
+    EmbeddedApp::new()
+        .with_state(Seen::default())
+        .with_broker(bus, |b| {
+            b.include(on_stuck)
+                .include(on_tight_job)
+                .max_attempts(nonzero!(9u32))
+                .dead_letter("jobs.dead")
+                .retry_capacity::<1>()
+                .when_retry_full(DeadLetter)
+        })
+}
+
+/// `b` fails while `a` holds the one record, and the bus the spilled copy goes to has no room: the
+/// copy is refused, so `b` goes back to the broker and is handled again instead of being lost.
+/// `blocked` is a destination to fill first, or none when the copy goes to the full subscription.
+macro_rules! a_refused_spill_requeues_the_original {
+    ($app:expr, $blocked:expr) => {
+        block_on(async {
+            let tb = TestApp::with_state($app(TightBus::new()), |_| Seen::default()).await?;
+            if let Some(destination) = $blocked {
+                tb.broker::<TightBus>()
+                    .message(&Sent(b"x"))
+                    .to(destination)
+                    .publish()
+                    .await?;
+            }
+            for job in [b"a", b"b"] {
+                tb.broker::<TightBus>()
+                    .message(&Sent(job))
+                    .to("jobs")
+                    .publish()
+                    .await?;
+            }
+
+            tb.advance(Duration::from_secs(1)).await?;
+            tb.broker::<TightBus>().subscriber("jobs").assert_called(3);
+
+            // `a`'s copy falls due and fails again; the next one is handled to its end.
+            tb.advance(LATER).await?;
+            tb.broker::<TightBus>().subscriber("jobs").assert_called(4);
+            tb.advance(LATER).await?;
+            tb.broker::<TightBus>().subscriber("jobs").assert_called(5);
+            tb.shutdown().await?;
+            Ok(())
+        })
+    };
+}
+
+#[test]
+fn a_skipped_copy_the_bus_refuses_requeues_the_original() -> Result<(), Box<dyn Error>> {
+    a_refused_spill_requeues_the_original!(tight_skip_app, None::<&str>)
+}
+
+#[test]
+fn a_dead_letter_the_bus_refuses_requeues_the_original() -> Result<(), Box<dyn Error>> {
+    a_refused_spill_requeues_the_original!(tight_dead_letter_app, Some("jobs.dead"))
 }

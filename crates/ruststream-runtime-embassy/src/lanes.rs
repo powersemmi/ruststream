@@ -545,6 +545,8 @@ pub trait MountSteps: Sized {
     ///   original is settled.
     ///
     /// The last two take no record: the copy is prepared in buffers of its own, which allocates.
+    /// It leaves before the original is settled, and a copy the broker refuses requeues the
+    /// original.
     /// A copy that never waits (a dead letter, a zero delay) leaves the same way whatever the
     /// answer is. The step follows `.retry_capacity::<CAP>()`, and a mount without one does not
     /// compile.

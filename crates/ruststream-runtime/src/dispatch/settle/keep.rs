@@ -26,8 +26,9 @@ use crate::{AckError, HeaderMap, LocalSettle, Str};
 /// chose ([`WhenFull`]): `declared` is the destination `.dead_letter(..)` named, which the
 /// `DeadLetter` choice sends the delivery to, and the `SkipDelay` choice publishes the copy to
 /// the subscription at once. Either way the copy takes no record: it is prepared in a buffer of
-/// its own, which allocates, and the original is dropped before it leaves. A copy that never waits
-/// (a dead letter, a zero delay) takes the same way out, whatever the choice.
+/// its own, which allocates. The copy leaves first and the original is dropped once the broker
+/// took it; a copy the broker refuses requeues the original, so nothing is lost. A copy that never
+/// waits (a dead letter, a zero delay) takes the same way out, whatever the choice.
 ///
 /// # Errors
 ///
@@ -136,11 +137,20 @@ where
             build_cx,
         },
     );
-    drop_original(slot).await?;
+    // The copy leaves before the original is dropped, so a refusal loses nothing: the broker
+    // takes the original back. Dropping the original can still fail after the copy left, which
+    // leaves both with the broker.
     if let Err(err) = kept.send_spilled(spilled, destination).await {
-        warn_lost(name, destination, &err);
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %name,
+            destination = destination.unwrap_or(name),
+            error = %err,
+            "the retry copy was refused; requeuing the delivery",
+        );
+        return slot.take().nack(true).await;
     }
-    Ok(())
+    drop_original(slot).await
 }
 
 /// The delivery's headers with the retry count advanced: what the copy carries.
@@ -488,7 +498,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_failed_settle_publishes_no_spilled_copy() {
+    async fn a_spilled_copy_is_published_before_the_original_is_dropped() {
+        // A refused copy requeues the original, which a dropped original could not be.
+        for when_full in [WhenFull::DeadLetter, WhenFull::SkipDelay] {
+            let store = Store {
+                failing: true,
+                when_full,
+                ..Store::with_room(0)
+            };
+            let delivery = Delivery::empty().declaring(
+                RetryDeclaration::new()
+                    .with_max_attempts(crate::nonzero!(3u32))
+                    .with_dead_letter("orders.dead"),
+            );
+            let settled = settle_on(
+                &store,
+                HandlerResult::retry_after(LATER),
+                &delivery,
+                Settlement::Accepted,
+            )
+            .await;
+            assert_eq!(
+                settled, 2,
+                "{when_full:?}: the original is requeued, not lost"
+            );
+            assert_eq!(
+                store.asked().len(),
+                2,
+                "{when_full:?}: the copy was tried once"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_settle_after_the_spilled_copy_left_is_reported() {
         let store = Store {
             when_full: WhenFull::SkipDelay,
             ..Store::with_room(0)
@@ -500,25 +543,7 @@ mod tests {
             Settlement::Rejected,
         )
         .await;
-        assert_eq!(store.asked(), spilled(None)[..1]);
-    }
-
-    #[tokio::test]
-    async fn a_spilled_copy_the_broker_refuses_is_logged_rather_than_propagated() {
-        let store = Store {
-            failing: true,
-            when_full: WhenFull::SkipDelay,
-            ..Store::with_room(0)
-        };
-        let settled = settle_on(
-            &store,
-            HandlerResult::retry_after(LATER),
-            &Delivery::empty(),
-            Settlement::Accepted,
-        )
-        .await;
-        assert_eq!(settled, 1, "the original is dropped; the copy is lost");
-        assert_eq!(store.asked(), spilled(None));
+        assert_eq!(store.asked(), spilled(None), "the copy had left already");
     }
 
     #[tokio::test]
