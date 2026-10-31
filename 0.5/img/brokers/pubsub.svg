@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>Google Cloud Pub/Sub</title>
+  <circle cx="16" cy="17" r="3"/>
+  <circle cx="16" cy="5.5" r="2.5"/>
+  <circle cx="5.5" cy="24" r="2.5"/>
+  <circle cx="26.5" cy="24" r="2.5"/>
+  <path d="M16 8v6M7.6 22.6l5.8-4M24.4 22.6l-5.8-4"/>
+</svg>
