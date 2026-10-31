@@ -384,4 +384,5 @@ pub type Connected<B> = <B as Broker>::Connected;
 )]
 pub trait SendBroker: Broker<Connected: Send + Sync> + Send + Sync + 'static {}
 
+#[diagnostic::do_not_recommend]
 impl<B> SendBroker for B where B: Broker<Connected: Send + Sync> + Send + Sync + 'static {}

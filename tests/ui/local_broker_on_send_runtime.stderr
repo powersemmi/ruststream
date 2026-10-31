@@ -2,27 +2,20 @@ error[E0277]: `RcBroker` is not a broker this runtime runs
   --> tests/ui/local_broker_on_send_runtime.rs:40:80
    |
 40 |     let _app = RustStream::new(AppInfo::new("local", "0.1.0")).register_broker(broker);
-   |                                                                --------------- ^^^^^^ not a `Broker`
-   |                                                                |
-   |                                                                required by a bound introduced by this call
+   |                                                                                ^^^^^^ not a `Broker`
    |
-help: the trait `ruststream::Broker` is not implemented for `RcBroker`
+help: the trait `SendBroker` is not implemented for `RcBroker`
   --> tests/ui/local_broker_on_send_runtime.rs:9:1
    |
  9 | struct RcBroker {
    | ^^^^^^^^^^^^^^^
-   = note: this runtime moves a broker, its deliveries and their futures across threads, so it runs brokers whose types are `Send` and implement `Broker`
-   = note: a broker whose client holds `Rc` or `RefCell` implements `Broker` alone; to run here, keep the client's shared state in `Arc` and `Mutex` and implement `Broker`
-help: the following other types implement trait `ruststream::Broker`
-  --> crates/ruststream-conformance/src/harness.rs
+   = note: this runtime moves a broker and its connected form across threads, so it runs brokers whose types are `Send + Sync + 'static` and implement `Broker`
+   = note: a broker whose client holds `Rc` or `RefCell` runs on the embedded runner; to run here, keep the client's shared state in `Arc` and `Mutex`
+help: the trait `BrokerRegistration` is implemented for `Bindable<B>`
+  --> crates/ruststream-core/src/bindable.rs
    |
-   | impl<B: InProcess> Broker for InProcessBroker<B> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `InProcessBroker<B>`
-   |
-  ::: crates/ruststream-memory/src/broker.rs
-   |
-   | impl<Log: LogMode> Broker for MemoryBroker<Log> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryBroker<Log>`
+   | impl<B: SendBroker> BrokerRegistration for Bindable<B> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = note: required for `RcBroker` to implement `BrokerRegistration`
 note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::register_broker`
   --> crates/ruststream-runtime-tokio/src/app/service.rs

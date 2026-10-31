@@ -21,8 +21,34 @@ note: required by a bound in `TestableRegistration::of`
    |     pub const fn of<B>() -> Self
    |                  -- required by a bound in this associated function
    |     where
-   |         B: InProcess + 'static,
+   |         B: InProcess + SendBroker,
    |            ^^^^^^^^^ required by this bound in `TestableRegistration::of`
+
+error[E0277]: the connected form `ConnectedNetworked` cannot be driven by the test harness
+  --> tests/ui/testing_register_without_in_process.rs:30:39
+   |
+30 | ruststream::register_testable_broker!(Networked);
+   |                                       ^^^^^^^^^ no `TestableBroker` view
+   |
+help: the trait `TestableBroker` is not implemented for `ConnectedNetworked`
+  --> tests/ui/testing_register_without_in_process.rs:10:1
+   |
+10 | struct ConnectedNetworked;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: a broker's in-process mode implements `TestableBroker` on the connected form its `InProcess` transition produces
+help: the trait `TestableBroker` is implemented for `ConnectedMemoryBroker<Log>`
+  --> crates/ruststream-memory/src/broker.rs
+   |
+   | impl<Log: LogMode> TestableBroker for ConnectedMemoryBroker<Log> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `TestableRegistration::of`
+  --> crates/ruststream-runtime/src/testing/broker.rs
+   |
+   |     pub const fn of<B>() -> Self
+   |                  -- required by a bound in this associated function
+...
+   |         B::Connected: TestableBroker + DefaultPublish,
+   |                       ^^^^^^^^^^^^^^ required by this bound in `TestableRegistration::of`
 
 error[E0277]: the trait bound `ConnectedNetworked: DefaultPublish` is not satisfied
   --> tests/ui/testing_register_without_in_process.rs:30:39
@@ -46,5 +72,5 @@ note: required by a bound in `TestableRegistration::of`
    |     pub const fn of<B>() -> Self
    |                  -- required by a bound in this associated function
 ...
-   |         B::Connected: DefaultPublish,
-   |                       ^^^^^^^^^^^^^^ required by this bound in `TestableRegistration::of`
+   |         B::Connected: TestableBroker + DefaultPublish,
+   |                                        ^^^^^^^^^^^^^^ required by this bound in `TestableRegistration::of`

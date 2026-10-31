@@ -12,14 +12,14 @@ help: the following other types implement trait `ruststream::runtime::MountChain
    | / impl<B, Layers, C, State, Pipeline, Pre> MountChain<B, Layers, State, Pipeline>
    | |     for BrokerScope<B, Layers, C, State, Pipeline, Pre>
    | | where
-   | |     B: Broker + 'static,
+   | |     B: SendBroker,
    | |     Pre: ScopeRegistrations<B, Layers, State, Pipeline>,
    | |________________________________________________________^ `BrokerScope<B, Layers, C, State, Pipeline, Pre>`
 ...
    | / impl<B, Layers, State, Pipeline, Routes, RC, RL, RP> MountChain<B, Layers, State, Pipeline>
    | |     for Router<B, Routes, RC, RL, RP>
    | | where
-   | |     B: Broker + 'static,
+   | |     B: SendBroker,
 ...  |
    | |     Pipeline: PublishPipeline + Clone + Send + 'static,
    | |     State: Send + Sync + 'static,
@@ -28,7 +28,7 @@ help: the following other types implement trait `ruststream::runtime::MountChain
    | / impl<B, Layers, State, Pipeline, Mount, R, Def, Attach, Last> MountChain<B, Layers, State, Pipeline>
    | |     for RouterWith<Mount, R, Def, Attach, Last>
    | | where
-   | |     B: Broker + 'static,
+   | |     B: SendBroker,
    | |     Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
    | |     Attach::Out: MountChain<B, Layers, State, Pipeline>,
    | |________________________________________________________^ `RouterWith<Mount, R, Def, Attach, Last>`
