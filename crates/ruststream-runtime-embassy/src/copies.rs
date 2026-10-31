@@ -5,6 +5,7 @@
 #![allow(clippy::future_not_send)]
 
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::array;
 use core::cell::{Cell, RefCell};
 use core::future::poll_fn;
@@ -47,7 +48,7 @@ struct Record<At, Options> {
 /// The retry copies of one registration, in `CAP` records.
 ///
 /// A failing delivery takes a record and fills it before the delivery settles; a full store
-/// leaves the body to requeue the delivery. [`drive`](Self::drive), joined with the
+/// holds the delivery until a record frees (back-pressure). [`drive`](Self::drive), joined with the
 /// registration's lanes, publishes each copy once it is due: it waits for the earliest one on a
 /// single timer, so a wake costs one timer poll however many copies wait. A record reuses its
 /// buffer, so once a buffer has grown to the largest copy, keeping one allocates nothing.
@@ -61,6 +62,9 @@ pub(crate) struct CopyStore<Path: CopyPublisher, const CAP: usize, Timers: Clock
     /// Set once the registration's lanes stopped: the driver ends with the last copy sent.
     closed: Cell<bool>,
     waker: RefCell<Option<Waker>>,
+    /// Deliveries waiting for a free record; woken when one frees. Grows only when the store was
+    /// full, and keeps its room from then on.
+    waiting: RefCell<Vec<Waker>>,
     clock: Timers,
 }
 
@@ -86,6 +90,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             armed: Cell::new(false),
             closed: Cell::new(false),
             waker: RefCell::new(None),
+            waiting: RefCell::new(Vec::new()),
             clock,
         }
     }
@@ -195,6 +200,9 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
         records[record].payload = payload;
         records[record].held = Held::Free;
         drop(records);
+        for waiting in self.waiting.borrow_mut().drain(..) {
+            waiting.wake();
+        }
         self.wake();
     }
 
@@ -215,6 +223,19 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
             .position(|record| record.held == Held::Free)?;
         records[index].held = Held::Taken;
         Some(index)
+    }
+
+    fn wait_record(&self) -> impl Future<Output = usize> {
+        poll_fn(|cx| {
+            if let Some(record) = self.take_record() {
+                return Poll::Ready(record);
+            }
+            let mut waiting = self.waiting.borrow_mut();
+            if !waiting.iter().any(|known| known.will_wake(cx.waker())) {
+                waiting.push(cx.waker().clone());
+            }
+            Poll::Pending
+        })
     }
 
     fn fill(&self, record: usize, payload: &[u8], headers: HeaderMap) {
@@ -272,6 +293,7 @@ impl<Cx, Path: PrepareCopy<Cx>, const CAP: usize, Timers: Schedule> PrepareKept<
 mod tests {
     use alloc::string::String;
     use alloc::sync::Arc;
+    use alloc::task::Wake;
     use alloc::vec::Vec;
     use core::cell::RefCell;
     use core::future::ready;
@@ -472,6 +494,36 @@ mod tests {
             1,
             "the last copy left before the end"
         );
+    }
+
+    #[test]
+    fn a_full_store_wakes_the_waiting_delivery_once_a_record_frees() {
+        struct Woken(AtomicU32);
+
+        impl Wake for Woken {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let sent = Recorded::default();
+        let store = CopyStore::<_, 1, _>::on_clock(&sent, Arc::from("jobs"), Probe::default());
+        let taken = store.take_record().expect("a free record");
+        let woken = Arc::new(Woken(AtomicU32::new(0)));
+        let waker = Waker::from(Arc::clone(&woken));
+        let mut cx = Context::from_waker(&waker);
+        let mut waiting = pin!(store.wait_record());
+
+        assert_eq!(waiting.as_mut().poll(&mut cx), Poll::Pending);
+        assert_eq!(waiting.as_mut().poll(&mut cx), Poll::Pending);
+        assert_eq!(woken.0.load(Ordering::Relaxed), 0, "nothing freed yet");
+        store.free(taken);
+        assert_eq!(
+            woken.0.load(Ordering::Relaxed),
+            1,
+            "woken once, however often polled"
+        );
+        assert_eq!(waiting.as_mut().poll(&mut cx), Poll::Ready(taken));
     }
 
     #[test]

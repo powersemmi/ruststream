@@ -496,8 +496,8 @@ pub trait MountSteps: Sized {
     #[doc(hidden)]
     fn lanes<Next>(self, lanes: Next) -> Self::WithLanes<Next>;
 
-    /// Keeps room for `CAP` copies of `retry_after`; a delivery that asks for one more is
-    /// requeued at once.
+    /// Keeps room for `CAP` copies of `retry_after`; a delivery that asks for one more waits
+    /// for a record to free, and the registration takes no further delivery meanwhile.
     ///
     /// Each copy waits in one of the registration's `CAP` records, its bytes and headers kept as
     /// data, and the registration's own loop publishes it on the clock once it is due, back to
