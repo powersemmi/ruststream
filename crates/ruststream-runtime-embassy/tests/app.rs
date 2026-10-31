@@ -103,6 +103,7 @@ struct Stand {
     hooked: Control,
     ending_bus: Bus,
     ending: Control,
+    alone: Control,
     calls: RefCell<Vec<&'static str>>,
     health: RefCell<Vec<Health>>,
     outcome: RefCell<Option<Result<(), RunError>>>,
@@ -173,6 +174,24 @@ fn hooked(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
         })
 }
 
+/// An app of hooks alone: no broker to serve, and a shutdown hook that fails.
+fn hooks_alone(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
+    let calls = &stand.calls;
+    EmbeddedApp::new()
+        .after_startup(async move |_| {
+            calls.borrow_mut().push("after_startup");
+            Ok::<(), fmt::Error>(())
+        })
+        .on_shutdown(async move |_| {
+            calls.borrow_mut().push("on_shutdown");
+            Err::<(), fmt::Error>(fmt::Error)
+        })
+        .after_shutdown(async move |_| {
+            calls.borrow_mut().push("after_shutdown");
+            Ok::<(), fmt::Error>(())
+        })
+}
+
 /// An app with two subscriptions on a bus of its own, which the scenario shuts down under it:
 /// one read in order, one by a pool of workers.
 fn ending(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
@@ -204,6 +223,12 @@ async fn run_failing(stand: &'static Stand) {
 #[embassy_executor::task]
 async fn run_hooked(stand: &'static Stand) {
     let outcome = hooked(stand).run(&stand.hooked).await;
+    *stand.outcome.borrow_mut() = Some(outcome);
+}
+
+#[embassy_executor::task]
+async fn run_alone(stand: &'static Stand) {
+    let outcome = hooks_alone(stand).run(&stand.alone).await;
     *stand.outcome.borrow_mut() = Some(outcome);
 }
 
@@ -355,6 +380,29 @@ async fn check_hooks(spawner: Spawner, stand: &'static Stand) {
     passed("the hooks run in the order of the app's life, with its state");
 }
 
+async fn check_hooks_alone(spawner: Spawner, stand: &'static Stand) {
+    stand.calls.borrow_mut().clear();
+    spawner.spawn(run_alone(stand).expect("the app task is free"));
+    settle().await;
+    let calls = stand.calls.borrow().clone();
+
+    assert_eq!(
+        calls,
+        ["after_startup", "on_shutdown", "after_shutdown"],
+        "the hooks in the order they ran, past the one that failed"
+    );
+    assert_eq!(
+        stand.alone.health(),
+        Health::Stopped,
+        "an app with nothing to serve ends once it started"
+    );
+    assert!(
+        outcome(stand).is_ok(),
+        "a failing shutdown hook is logged, not returned"
+    );
+    passed("an app of hooks alone runs them through and ends, past a failing shutdown hook");
+}
+
 async fn check_stream_end(spawner: Spawner, stand: &'static Stand) {
     stand.health.borrow_mut().push(stand.ending.health());
     spawner.spawn(watch(&stand.ending, stand).expect("a watcher task is free"));
@@ -396,6 +444,7 @@ async fn drive(spawner: Spawner, stand: &'static Stand) {
     check_two_brokers(spawner, stand).await;
     check_fail_fast(spawner, stand).await;
     check_hooks(spawner, stand).await;
+    check_hooks_alone(spawner, stand).await;
     check_stream_end(spawner, stand).await;
     stand.done.set(true);
 }
@@ -416,6 +465,7 @@ fn main() {
         hooked: Control::new(),
         ending_bus: Bus::new(),
         ending: Control::new(),
+        alone: Control::new(),
         calls: RefCell::new(Vec::new()),
         health: RefCell::new(Vec::new()),
         outcome: RefCell::new(None),
