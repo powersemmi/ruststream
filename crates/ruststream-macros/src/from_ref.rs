@@ -96,10 +96,9 @@ mod tests {
     use super::*;
 
     fn refusal(input: &DeriveInput) -> String {
-        match expand(input) {
-            Ok(_) => panic!("this state is refused"),
-            Err(err) => err.to_string(),
-        }
+        expand(input)
+            .expect_err("this state is refused")
+            .to_string()
     }
 
     #[test]

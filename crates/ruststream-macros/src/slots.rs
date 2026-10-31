@@ -209,10 +209,9 @@ mod tests {
     use super::*;
 
     fn refusal(expanded: syn::Result<TokenStream2>) -> String {
-        match expanded {
-            Ok(_) => panic!("this declaration is refused"),
-            Err(err) => err.to_string(),
-        }
+        expanded
+            .expect_err("this declaration is refused")
+            .to_string()
     }
 
     #[test]

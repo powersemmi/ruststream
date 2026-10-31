@@ -65,10 +65,9 @@ mod tests {
     use super::*;
 
     fn refusal(input: &DeriveInput) -> String {
-        match expand(input) {
-            Ok(_) => panic!("this declaration is refused"),
-            Err(err) => err.to_string(),
-        }
+        expand(input)
+            .expect_err("this declaration is refused")
+            .to_string()
     }
 
     #[test]

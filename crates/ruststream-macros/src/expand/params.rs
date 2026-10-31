@@ -431,10 +431,7 @@ mod tests {
     use super::*;
 
     fn refusal<T>(result: syn::Result<T>) -> String {
-        match result {
-            Ok(_) => panic!("this signature is refused"),
-            Err(err) => err.to_string(),
-        }
+        result.err().expect("this signature is refused").to_string()
     }
 
     /// The extractors of `func` with the `Out` slots taken out, or why the slots are refused.
@@ -534,6 +531,9 @@ mod tests {
             ) {
             }
         );
+        let unrestricted: ItemFn = parse_quote!(
+            async fn on_order(order: &Order, Out(out): Out<impl Publisher, Sent, ()>) {}
+        );
 
         let mut extractors =
             collect_extractors(&lookalikes, false).expect("every parameter is an extractor");
@@ -541,6 +541,13 @@ mod tests {
 
         assert!(outs.is_empty(), "slots taken out of look-alike parameters");
         assert_eq!(extractors.len(), 4, "the look-alikes stay extractors");
+        let mut extractors =
+            collect_extractors(&unrestricted, false).expect("the slot is an extractor first");
+        let outs = split_outs(&mut extractors).expect("an empty list is no refusal");
+        assert!(
+            matches!(outs.as_slice(), [OutParam { bodies: None, .. }]),
+            "`()` leaves the slot unrestricted"
+        );
     }
 
     #[test]
@@ -555,11 +562,7 @@ mod tests {
             parse_quote!(Headers<Meta, Other>),
         ];
         for ty in plain {
-            assert!(
-                from_headers_ty(&ty).is_none(),
-                "`{}` reads no header contract",
-                quote!(#ty)
-            );
+            assert!(from_headers_ty(&ty).is_none(), "reads no header contract");
         }
     }
 
@@ -568,18 +571,15 @@ mod tests {
         let pair: Type = parse_quote!(Message<Meta, Order>);
         assert!(message_pair_args(&pair).is_some());
 
-        let plain: [Type; 4] = [
+        let plain: [Type; 5] = [
             parse_quote!([Message<Meta, Order>]),
             parse_quote!(Message),
+            parse_quote!(Message<'static, Order>),
             parse_quote!(Message<Order>),
             parse_quote!(Message<Meta, Order, Extra>),
         ];
         for ty in plain {
-            assert!(
-                message_pair_args(&ty).is_none(),
-                "`{}` is a plain payload type",
-                quote!(#ty)
-            );
+            assert!(message_pair_args(&ty).is_none(), "a plain payload type");
         }
     }
 
@@ -595,11 +595,7 @@ mod tests {
             parse_quote!(Ctx<Partition, Offset>),
         ];
         for ty in plain {
-            assert!(
-                ctx_extractor_key(&ty).is_none(),
-                "`{}` reads no context field",
-                quote!(#ty)
-            );
+            assert!(ctx_extractor_key(&ty).is_none(), "reads no context field");
         }
     }
 

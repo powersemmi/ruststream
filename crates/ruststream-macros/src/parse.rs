@@ -561,17 +561,16 @@ mod tests {
     use super::*;
 
     fn refusal(tokens: TokenStream2) -> String {
-        match syn::parse2::<SubscriberArgs>(tokens) {
-            Ok(_) => panic!("these arguments are refused"),
-            Err(err) => err.to_string(),
-        }
+        let parsed = syn::parse2::<SubscriberArgs>(tokens);
+        parsed
+            .err()
+            .expect("these arguments are refused")
+            .to_string()
     }
 
     fn source_refusal(expr: &Expr) -> String {
-        match source_tokens(&SourceArg::Fixed(expr.clone())) {
-            Ok(_) => panic!("this source is refused"),
-            Err(err) => err.to_string(),
-        }
+        let source = source_tokens(&SourceArg::Fixed(expr.clone()));
+        source.expect_err("this source is refused").to_string()
     }
 
     #[test]
@@ -668,11 +667,7 @@ mod tests {
             parse_quote!(Result<Receipt, &'static HandlerOutcome>),
         ];
         for ty in plain {
-            assert!(
-                publish_result_reply(&ty).is_none(),
-                "`{}` is a plain reply type",
-                quote!(#ty)
-            );
+            assert!(publish_result_reply(&ty).is_none(), "a plain reply type");
         }
     }
 
@@ -687,11 +682,7 @@ mod tests {
             parse_quote!(Vec<Receipt, Global>),
         ];
         for ty in plain {
-            assert!(
-                vec_element(&ty).is_none(),
-                "`{}` is no batch of replies",
-                quote!(#ty)
-            );
+            assert!(vec_element(&ty).is_none(), "no batch of replies");
         }
     }
 

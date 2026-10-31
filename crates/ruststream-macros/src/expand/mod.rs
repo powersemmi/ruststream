@@ -530,10 +530,7 @@ mod tests {
     use super::*;
 
     fn refusal<T>(result: syn::Result<T>) -> String {
-        match result {
-            Ok(_) => panic!("this handler is refused"),
-            Err(err) => err.to_string(),
-        }
+        result.err().expect("this handler is refused").to_string()
     }
 
     #[test]
@@ -581,10 +578,14 @@ mod tests {
     }
 
     #[test]
-    fn the_drop_policy_drops_the_delivery() {
+    fn the_drop_and_retry_policies_name_their_runtime_policy() {
         assert_eq!(
             failure_policy_tokens(&FailurePolicyArg::Drop).to_string(),
             quote!(::ruststream::runtime::FailurePolicy::Drop).to_string()
+        );
+        assert_eq!(
+            failure_policy_tokens(&FailurePolicyArg::Retry).to_string(),
+            quote!(::ruststream::runtime::FailurePolicy::Retry).to_string()
         );
     }
 }
