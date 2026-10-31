@@ -2,8 +2,6 @@
 //! takes the copy before the delivery settles, and the store publishes it.
 
 use alloc::string::ToString;
-use core::pin::Pin;
-use core::task::{Context, Poll};
 use core::time::Duration;
 
 use tracing::warn;
@@ -17,10 +15,10 @@ use crate::{AckError, LocalSettle, Str};
 /// host's store: published at once without a delay (or with a zero one), by the store's driver
 /// once `delay` has passed otherwise.
 ///
-/// The record is taken and filled before the original is dropped, so a store with every record
-/// taken has the delivery requeued, and the broker keeps it. The requeue then yields once: a broker
-/// that redelivers at once would otherwise keep the subscription busy within one poll of the task,
-/// and the store's driver, the other subscriptions and the other tasks would never run. The copy's bytes go into the
+/// The record is taken and filled before the original is dropped. A store with every record
+/// taken makes the delivery wait for one, so the subscription takes no further delivery until a
+/// copy has left (back-pressure); the delivery stays with the broker meanwhile, and the wait
+/// yields to the store's driver and to the other tasks. The copy's bytes go into the
 /// record's own buffer; its header map is the delivery's, carried on with the retry count in it.
 /// The store prepares the copy there too, while the delivery is at hand: the mount site's
 /// transforms read it, and the copy leaves as they left it.
@@ -43,15 +41,11 @@ where
     M: LocalSettle,
     Kept: PrepareKept<C>,
 {
-    let Some(record) = kept.take_record() else {
-        warn!(
-            target: "ruststream::dispatch",
-            subscription = %name,
-            "the store of retry copies is full; requeuing the delivery now",
-        );
-        let requeued = slot.take().nack(true).await;
-        YieldOnce(false).await;
-        return requeued;
+    // A full store holds the delivery here, unsettled, until a record is free: the subscription
+    // takes nothing more meanwhile, and the broker's redelivery count is not spent.
+    let record = match kept.take_record() {
+        Some(record) => record,
+        None => kept.wait_record().await,
     };
     let msg = slot.get();
     let mut headers = msg.headers().clone();
@@ -98,23 +92,6 @@ where
     Ok(())
 }
 
-/// Pending once, with the task woken, then ready: hands the executor back between two deliveries
-/// of a subscription whose broker never makes it wait.
-struct YieldOnce(bool);
-
-impl Future for YieldOnce {
-    type Output = ();
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        if self.0 {
-            return Poll::Ready(());
-        }
-        self.0 = true;
-        cx.waker().wake_by_ref();
-        Poll::Pending
-    }
-}
-
 #[cfg(test)]
 // The store double is a plain cell, as a one-thread runner's store is.
 #[allow(clippy::future_not_send)]
@@ -148,6 +125,7 @@ mod tests {
             count: Option<String>,
         },
         Arm(Duration),
+        Waited,
         SendNow(Option<String>),
         Free,
     }
@@ -177,6 +155,12 @@ mod tests {
     impl KeptCopies for Store {
         fn take_record(&self) -> Option<usize> {
             (self.room > 0).then_some(0)
+        }
+
+        // A record frees as soon as the delivery waits for one.
+        fn wait_record(&self) -> impl Future<Output = usize> {
+            self.asked.borrow_mut().push(Asked::Waited);
+            ready(0)
         }
 
         fn fill(&self, _record: usize, payload: &[u8], headers: HeaderMap) {
@@ -292,7 +276,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_full_store_requeues_the_delivery_and_keeps_nothing() {
+    async fn a_full_store_makes_the_delivery_wait_for_a_record_and_then_keeps_it() {
         let store = Store::with_room(0);
         let settled = settle_on(
             &store,
@@ -301,8 +285,11 @@ mod tests {
             Settlement::Accepted,
         )
         .await;
-        assert_eq!(settled, 2, "the delivery is requeued");
-        assert_eq!(store.asked(), []);
+        assert_eq!(
+            settled, 1,
+            "the delivery is dropped for its copy, not requeued"
+        );
+        assert_eq!(store.asked(), [Asked::Waited, filled(), Asked::Arm(LATER)]);
     }
 
     #[tokio::test]
