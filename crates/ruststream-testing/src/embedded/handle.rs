@@ -73,6 +73,9 @@ impl LocalPublishSink for InjectSink<'_> {
             .with_headers(msg.headers().clone());
         let started = coordinator.test_publish_started();
         testable.inject(msg);
+        // The app owns the connected form and shuts it down only while it holds the one count:
+        // a stop the message sets off must find this one gone.
+        drop(testable);
         coordinator
             .record_published(self.broker.scope_id(), recorded, started)
             .run()

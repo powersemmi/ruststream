@@ -98,6 +98,28 @@ async fn on_spin(open: &Frame<'_>) -> HandlerOutcome {
     }
 }
 
+/// A level the board is set to, one byte on the bus.
+#[derive(Deserialized)]
+#[wire(decode = read_setting)]
+struct Setting {
+    level: u8,
+}
+
+/// Reads a setting off its one byte.
+fn read_setting(payload: &[u8]) -> Result<Setting, io::Error> {
+    match payload {
+        [level] => Ok(Setting { level: *level }),
+        _ => Err(io::Error::other("a setting is one byte")),
+    }
+}
+
+/// Applies a setting; one that does not decode stops the app.
+#[subscriber(LocalMemorySource::new("settings"), on_failure(decode = fail_fast))]
+async fn on_setting(setting: &Setting) -> HandlerOutcome {
+    let _ = setting.level;
+    HandlerOutcome::ack()
+}
+
 /// The board's bus, and a publisher on it that another task of the firmware holds: whether it
 /// may still publish tells whether the bus was shut down.
 async fn bus_and_sensor() -> Result<(Bus, LocalMemoryPublisher<4>), LocalMemoryError> {
@@ -271,6 +293,31 @@ fn a_shutdown_of_a_handler_that_keeps_waking_itself_fails() -> Result<(), Box<dy
         assert!(
             matches!(stopped, Err(TestError::NotQuiescent { .. })),
             "the spinning handler keeps the app from stopping: {stopped:?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_fail_fast_stop_set_off_by_the_test_shuts_the_bus_down() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let (bus, sensor) = bus_and_sensor().await?;
+        let tb =
+            TestApp::start(EmbeddedApp::new().with_broker(bus, |b| b.include(on_setting))).await?;
+        tb.broker::<Bus>()
+            .message(&Sent(b"twelve"))
+            .to("settings")
+            .publish()
+            .await?;
+
+        assert!(
+            bus_is_shut_down(&sensor).await,
+            "the app stopped on the failure and left its bus open"
+        );
+        let stopped = tb.shutdown().await;
+        assert!(
+            matches!(stopped, Err(TestError::Failed(_))),
+            "the app stopped on its subscription's failure: {stopped:?}"
         );
         Ok(())
     })
