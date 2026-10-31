@@ -90,7 +90,9 @@ It chains off any outcome, `drop().and_after(..)` included. The continuation is 
 the message is already settled when it runs, so a panic or a crash never redelivers it. Work whose
 loss must redeliver the message does not go here - settle by outcome and let the broker retry.
 Graceful shutdown drains continuations still in flight. A continuation runs where the delivery ran:
-on a `threads(n)` subscription, on the delivery's thread.
+on a `threads(n)` subscription, on the delivery's thread. The continuation's future is `Send` with
+the tokio runtime on; with the embedded runtime alone it carries no `Send` and may hold the local
+bus's publisher or an `Rc`.
 
 ## Settings the mount site fills in
 

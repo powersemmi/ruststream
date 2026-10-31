@@ -609,6 +609,9 @@ impl<'a, C, S> Context<'a, C, S> {
     /// per-element outcomes, the outcome gate is ignored there and only [`after_settle`](Self::after_settle)
     /// hooks (which run regardless) fire (see that method).
     ///
+    /// The hook's future is `Send` with the Tokio runner on, and carries no `Send` on the embedded
+    /// runtime alone: see [`then`](After::then).
+    ///
     /// # Cancel safety
     ///
     /// Post-settle hooks are at-most-once: the message is already settled before any hook runs, so
@@ -823,6 +826,9 @@ impl<C, S> fmt::Debug for After<'_, '_, C, S> {
 impl<C, S> After<'_, '_, C, S> {
     /// Registers `fut` to run after the message settles, if the settlement matches the gate this
     /// builder was created with (see [`Context::after`]).
+    ///
+    /// The future is `Send` with the Tokio runner on. On the embedded runtime alone it carries no
+    /// `Send`, so it may hold the local bus's publisher or an `Rc`.
     ///
     /// # Examples
     ///

@@ -42,6 +42,33 @@ impl<Value: ?Sized> MaybeSend for Value {}
 
 /// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: `Send` where the
 /// runtime crate's `tokio` feature is on.
+///
+/// # Examples
+///
+/// A handler leaves a continuation that publishes a receipt once the ack is through:
+///
+/// ```
+/// # #[cfg(feature = "json")]
+/// # mod demo {
+/// use ruststream::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// async fn send_receipt(_id: u64) {}
+///
+/// #[subscriber("orders")]
+/// async fn accept(order: &Order) -> HandlerOutcome {
+///     let id = order.id;
+///     // `and_after` takes any `ContinuationFuture`: a plain `async` block is one.
+///     HandlerOutcome::ack().and_after(async move { send_receipt(id).await })
+/// }
+/// # }
+/// # fn main() {}
+/// ```
 #[cfg(feature = "tokio")]
 #[diagnostic::on_unimplemented(
     message = "the continuation `{Self}` must be `Send` to run on the Tokio runner",
@@ -55,6 +82,33 @@ impl<Work: Future<Output = ()> + Send + 'static> ContinuationFuture for Work {}
 
 /// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: any
 /// `'static` future where the runtime crate's `tokio` feature is off.
+///
+/// # Examples
+///
+/// A handler leaves a continuation that publishes a receipt once the ack is through:
+///
+/// ```
+/// # #[cfg(feature = "json")]
+/// # mod demo {
+/// use ruststream::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// async fn send_receipt(_id: u64) {}
+///
+/// #[subscriber("orders")]
+/// async fn accept(order: &Order) -> HandlerOutcome {
+///     let id = order.id;
+///     // `and_after` takes any `ContinuationFuture`: a plain `async` block is one.
+///     HandlerOutcome::ack().and_after(async move { send_receipt(id).await })
+/// }
+/// # }
+/// # fn main() {}
+/// ```
 #[cfg(not(feature = "tokio"))]
 pub trait ContinuationFuture: Future<Output = ()> + 'static {}
 
@@ -319,8 +373,9 @@ impl HandlerOutcome {
     /// must not gate the settlement decision or affect redelivery: a notification, slow
     /// follow-up work, a cache warm-up. The continuation runs after *any* settle, so
     /// `drop().and_after(..)` is valid. Attaching a second continuation replaces the first.
-    /// The future is `Send`. The multi-thread runner spawns it on a tracked task; the embedded
-    /// runner's one task polls it, in the one box this call made.
+    /// With the Tokio runner on, the future is `Send` and runs on a tracked task. On the embedded
+    /// runtime alone it carries no `Send`, so it may hold the local bus's publisher or an `Rc`;
+    /// the embedded runner's one task polls it, in the one box this call made.
     ///
     /// # Cancel safety
     ///
