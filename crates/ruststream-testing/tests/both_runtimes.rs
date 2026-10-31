@@ -4,6 +4,8 @@
 // The embedded app and the handler that holds an `Rc` are not `Send`: the embedded harness polls
 // them inside the test's future.
 #![allow(clippy::future_not_send)]
+// `--cfg proto_rejected` builds the case the multi-thread runner rejects.
+#![allow(unexpected_cfgs)]
 
 use std::error::Error;
 use std::rc::Rc;
