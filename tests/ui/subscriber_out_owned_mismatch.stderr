@@ -1,8 +1,8 @@
 error[E0277]: `MemoryRequester` does not open caller-owned transactions
-  --> tests/ui/subscriber_out_owned_mismatch.rs:21:51
+  --> tests/ui/subscriber_out_owned_mismatch.rs:22:19
    |
-21 |     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-   |                                                   ^^^^^^^^^^^ the trait `OwnedTransactions` is not implemented for `MemoryRequester`
+22 |         b.include(settle).out(DefaultSlot, MemoryRequest)
+   |                   ^^^^^^ the trait `OwnedTransactions` is not implemented for `MemoryRequester`
    |
    = note: for an `Out<impl OwnedTransactions, _>` slot, attach a policy whose live publisher buffers client-side transactions; Kafka-like brokers offer only the borrowed `TransactionalPublisher` kind
 help: the following other types implement trait `OwnedTransactions`
@@ -21,25 +21,155 @@ help: the following other types implement trait `OwnedTransactions`
    |
    |   impl OwnedTransactions for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
-note: required for `settle` to implement `Handle<Order, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>>`
-  --> tests/ui/subscriber_out_owned_mismatch.rs:14:1
+note: required by a bound in `settle`
+  --> tests/ui/subscriber_out_owned_mismatch.rs:15:51
    |
-14 | #[subscriber("orders")]
-   | ^^^^^^^^^^^^^^^^^^^^^^^
 15 | async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactions>) -> HandlerOutcome {
-   |          ^^^^^^                                   ----------------- unsatisfied trait bound introduced here
-   = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>` to implement `ruststream_runtime::inject::InjectCall<()>`
-   = note: 1 redundant requirement hidden
-   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `ruststream_runtime::inject::InjectCall<()>`
-   = note: required for `ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryRequest, JsonCodec, PublishIdentity),)>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
-   = note: required for `(ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryRequest, JsonCodec, PublishIdentity),)>, ())` to implement `RouterDef<MemoryBroker>`
-   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<DefaultSlot, MemoryRequester, JsonCodec>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryRequest, JsonCodec, PublishIdentity),)>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountRoutes<MemoryBroker>`
-note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
-  --> crates/ruststream-runtime-tokio/src/app/service.rs
+   |                                                   ^^^^^^^^^^^^^^^^^ required by this bound in `settle`
+
+error[E0277]: `MemoryRequester` does not open caller-owned transactions
+  --> tests/ui/subscriber_out_owned_mismatch.rs:22:9
    |
-   |     pub fn with_broker<R, F, Chain, Routes>(
-   |            ----------- required by a bound in this associated function
-...
-   |         Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
-   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
-   = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)
+22 |         b.include(settle).out(DefaultSlot, MemoryRequest)
+   |         ^^^^^^^^^^^^^^^^^ the trait `OwnedTransactions` is not implemented for `MemoryRequester`
+   |
+   = note: for an `Out<impl OwnedTransactions, _>` slot, attach a policy whose live publisher buffers client-side transactions; Kafka-like brokers offer only the borrowed `TransactionalPublisher` kind
+help: the following other types implement trait `OwnedTransactions`
+  --> crates/ruststream-runtime/src/slot.rs
+   |
+   |   impl<P: OwnedTransactions, M: OutSlot> OwnedTransactions for SlotPublisher<P, M> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+   |
+  ::: crates/ruststream-runtime/src/handle/outs/entry.rs
+   |
+   | / impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline<W>, Body> OwnedTransactions
+   | |     for Slot<M, W, E, Pipe, Body>
+   | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
+   |
+  ::: crates/ruststream-memory/src/capability/transaction.rs
+   |
+   |   impl OwnedTransactions for MemoryPublisher {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
+note: required by a bound in `settle`
+  --> tests/ui/subscriber_out_owned_mismatch.rs:15:51
+   |
+15 | async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactions>) -> HandlerOutcome {
+   |                                                   ^^^^^^^^^^^^^^^^^ required by this bound in `settle`
+
+error[E0277]: `MemoryRequester` does not open caller-owned transactions
+  --> tests/ui/subscriber_out_owned_mismatch.rs:22:11
+   |
+22 |         b.include(settle).out(DefaultSlot, MemoryRequest)
+   |           ^^^^^^^ the trait `OwnedTransactions` is not implemented for `MemoryRequester`
+   |
+   = note: for an `Out<impl OwnedTransactions, _>` slot, attach a policy whose live publisher buffers client-side transactions; Kafka-like brokers offer only the borrowed `TransactionalPublisher` kind
+help: the following other types implement trait `OwnedTransactions`
+  --> crates/ruststream-runtime/src/slot.rs
+   |
+   |   impl<P: OwnedTransactions, M: OutSlot> OwnedTransactions for SlotPublisher<P, M> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+   |
+  ::: crates/ruststream-runtime/src/handle/outs/entry.rs
+   |
+   | / impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline<W>, Body> OwnedTransactions
+   | |     for Slot<M, W, E, Pipe, Body>
+   | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
+   |
+  ::: crates/ruststream-memory/src/capability/transaction.rs
+   |
+   |   impl OwnedTransactions for MemoryPublisher {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
+note: required by a bound in `settle`
+  --> tests/ui/subscriber_out_owned_mismatch.rs:15:51
+   |
+15 | async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactions>) -> HandlerOutcome {
+   |                                                   ^^^^^^^^^^^^^^^^^ required by this bound in `settle`
+
+error[E0277]: `MemoryRequester` does not open caller-owned transactions
+  --> tests/ui/subscriber_out_owned_mismatch.rs:22:9
+   |
+22 |         b.include(settle).out(DefaultSlot, MemoryRequest)
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `OwnedTransactions` is not implemented for `MemoryRequester`
+   |
+   = note: for an `Out<impl OwnedTransactions, _>` slot, attach a policy whose live publisher buffers client-side transactions; Kafka-like brokers offer only the borrowed `TransactionalPublisher` kind
+help: the following other types implement trait `OwnedTransactions`
+  --> crates/ruststream-runtime/src/slot.rs
+   |
+   |   impl<P: OwnedTransactions, M: OutSlot> OwnedTransactions for SlotPublisher<P, M> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+   |
+  ::: crates/ruststream-runtime/src/handle/outs/entry.rs
+   |
+   | / impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline<W>, Body> OwnedTransactions
+   | |     for Slot<M, W, E, Pipe, Body>
+   | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
+   |
+  ::: crates/ruststream-memory/src/capability/transaction.rs
+   |
+   |   impl OwnedTransactions for MemoryPublisher {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
+note: required by a bound in `settle`
+  --> tests/ui/subscriber_out_owned_mismatch.rs:15:51
+   |
+15 | async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactions>) -> HandlerOutcome {
+   |                                                   ^^^^^^^^^^^^^^^^^ required by this bound in `settle`
+
+error[E0277]: `MemoryRequester` does not open caller-owned transactions
+  --> tests/ui/subscriber_out_owned_mismatch.rs:22:27
+   |
+22 |         b.include(settle).out(DefaultSlot, MemoryRequest)
+   |                           ^^^ the trait `OwnedTransactions` is not implemented for `MemoryRequester`
+   |
+   = note: for an `Out<impl OwnedTransactions, _>` slot, attach a policy whose live publisher buffers client-side transactions; Kafka-like brokers offer only the borrowed `TransactionalPublisher` kind
+help: the following other types implement trait `OwnedTransactions`
+  --> crates/ruststream-runtime/src/slot.rs
+   |
+   |   impl<P: OwnedTransactions, M: OutSlot> OwnedTransactions for SlotPublisher<P, M> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+   |
+  ::: crates/ruststream-runtime/src/handle/outs/entry.rs
+   |
+   | / impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline<W>, Body> OwnedTransactions
+   | |     for Slot<M, W, E, Pipe, Body>
+   | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
+   |
+  ::: crates/ruststream-memory/src/capability/transaction.rs
+   |
+   |   impl OwnedTransactions for MemoryPublisher {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
+note: required by a bound in `settle`
+  --> tests/ui/subscriber_out_owned_mismatch.rs:15:51
+   |
+15 | async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactions>) -> HandlerOutcome {
+   |                                                   ^^^^^^^^^^^^^^^^^ required by this bound in `settle`
+
+error[E0277]: `MemoryRequester` does not open caller-owned transactions
+  --> tests/ui/subscriber_out_owned_mismatch.rs:21:5
+   |
+21 | /     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+22 | |         b.include(settle).out(DefaultSlot, MemoryRequest)
+23 | |     });
+   | |______^ the trait `OwnedTransactions` is not implemented for `MemoryRequester`
+   |
+   = note: for an `Out<impl OwnedTransactions, _>` slot, attach a policy whose live publisher buffers client-side transactions; Kafka-like brokers offer only the borrowed `TransactionalPublisher` kind
+help: the following other types implement trait `OwnedTransactions`
+  --> crates/ruststream-runtime/src/slot.rs
+   |
+   |   impl<P: OwnedTransactions, M: OutSlot> OwnedTransactions for SlotPublisher<P, M> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+   |
+  ::: crates/ruststream-runtime/src/handle/outs/entry.rs
+   |
+   | / impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline<W>, Body> OwnedTransactions
+   | |     for Slot<M, W, E, Pipe, Body>
+   | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
+   |
+  ::: crates/ruststream-memory/src/capability/transaction.rs
+   |
+   |   impl OwnedTransactions for MemoryPublisher {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
+note: required by a bound in `settle`
+  --> tests/ui/subscriber_out_owned_mismatch.rs:15:51
+   |
+15 | async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactions>) -> HandlerOutcome {
+   |                                                   ^^^^^^^^^^^^^^^^^ required by this bound in `settle`

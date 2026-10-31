@@ -28,7 +28,8 @@ use crate::input::{DecodeWith, Materialize};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::publish::ReplyWiring;
 use crate::publish::{
-    LowerOutTransforms, NarrowToUse, PublishPipeline, RawReplyWiring, SlotStackUse,
+    LowerOutTransforms, NarrowToUse, PublishIdentity, PublishLayer, PublishPipeline, PublishStack,
+    RawReplyWiring, SlotStackUse,
 };
 use crate::publishing::PublishingDef;
 use crate::settings::{BatchSized, DefMountCodec, MountsWith};
@@ -49,17 +50,34 @@ use super::{
     forms,
 };
 
+/// A publish pipeline whose runner mounts the slot form `Form`: every pipeline of the
+/// multi-thread runner mounts all of them, while the embedded runner's pipeline mounts the plain
+/// single-message `Out` form alone, so the others are refused with a message naming the form.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "a handler of the form `{Form}` is not available on the embassy runtime",
+    label = "this handler takes `Out` slots in a form the embassy runtime does not mount",
+    note = "on the embassy runtime a batch handler takes no `Out` parameter (publish from a handler \
+            that takes one message at a time), and a handler with an `Out` parameter does not \
+            reply (publish the reply through a slot of its own)"
+)]
+pub trait SlotsOn<Form> {}
+
 // The five chain-producing entry points.
 
 /// Implements [`RouterMount`] for a slot form: the chain starts with every position unbound, and
 /// with the reply position present only where the handler declares a reply.
 macro_rules! slot_form {
     ($($form:ty => $mount:ty, $reply:expr, $alias:ident),+ $(,)?) => {$(
+        impl SlotsOn<$form> for PublishIdentity {}
+
+        impl<Head: PublishLayer, Tail: PublishPipeline> SlotsOn<$form> for PublishStack<Head, Tail> {}
+
         impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
             RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for $form
         where
             B: Broker + 'static,
-            RoutePipe: PublishPipeline,
+            RoutePipe: SlotsOn<$form>,
             Def: HasSlots,
             Def::Markers: InitSlots,
         {
