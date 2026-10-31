@@ -223,11 +223,13 @@ where
     E: Codec + Send + Sync,
     Pipe: OutPipeline<W>,
 {
-    fn begin(
-        &self,
-    ) -> impl Future<Output = Result<TransactionScope<'_, SlotPublisher<W, M>, &'_ E, Self>, W::Error>>
+    fn begin<'a>(
+        &'a self,
+    ) -> impl Future<Output = Result<TransactionScope<'a, SlotPublisher<W, M>, &'a E, Self>, W::Error>>
     where
-        W: TransactionalPublisher,
+        M: 'a,
+        E: 'a,
+        W: TransactionalPublisher + 'a,
     {
         Self::begin(self)
     }
