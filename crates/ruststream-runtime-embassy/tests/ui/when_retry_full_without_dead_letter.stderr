@@ -28,7 +28,7 @@ help: the following other types implement trait `ruststream_runtime::router::rou
    |   impl<Route: DeadLetterDeclared> DeadLetterDeclared for DeclaredRoute<Route, Absent> {}
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime::router::routes::DeclaredRoute<Route>`
    = note: required for `ruststream::runtime::DeadLetter` to implement `ruststream::runtime::PolicyFits<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>>`
-note: required by a bound in `ruststream::runtime::MountSteps::when_retry_full`
+note: required by a bound in `when_retry_full`
   --> src/lanes.rs
    |
    |     fn when_retry_full<Policy>(self, policy: Policy) -> Self::WithFull<Policy>
