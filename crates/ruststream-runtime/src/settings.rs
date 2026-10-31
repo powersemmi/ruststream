@@ -25,7 +25,7 @@
 //! }
 //!
 //! # fn wire(subject: String) {
-//! let _mountable = audit.name(subject);
+//! let _mountable = audit::<()>.name(subject);
 //! # }
 //! # }
 //! ```
