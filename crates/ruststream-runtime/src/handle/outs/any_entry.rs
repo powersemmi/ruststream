@@ -185,72 +185,67 @@ where
 
 /// The transaction openers of a slot whose wire is transactional: the multi-thread runner's.
 #[doc(hidden)]
-pub trait SlotTransactions<M, Body = ()>: SlotEntry<M, Body> {
+pub trait SlotTransactions<M: 'static, Body = ()>:
+    SlotEntry<M, Body, Wire: 'static, Enc: 'static>
+{
     /// Opens a broker-side transaction scope over the slot's wire.
-    fn begin<'a>(
-        &'a self,
+    fn begin(
+        &self,
     ) -> impl Future<
         Output = Result<
-            TransactionScope<'a, SlotPublisher<Self::Wire, M>, &'a Self::Enc, SlotAdmit<M, Body>>,
+            TransactionScope<'_, SlotPublisher<Self::Wire, M>, &'_ Self::Enc, SlotAdmit<M, Body>>,
             <Self::Wire as Publisher>::Error,
         >,
     >
     where
-        Self: Sized,
-        M: 'a,
-        Self::Enc: 'a,
-        Self::Wire: TransactionalPublisher + 'a;
+        Self::Wire: TransactionalPublisher;
 
     /// Opens an owned transaction over the slot's wire, typed by the slot's dictionary.
-    fn transaction<'a>(
-        &'a self,
+    #[allow(clippy::type_complexity)]
+    fn transaction(
+        &self,
     ) -> impl Future<
         Output = Result<
             TypedTransaction<
                 <Self::Wire as OwnedTransactions>::Transaction,
-                &'a Self::Enc,
+                &'_ Self::Enc,
                 SlotAdmit<M, Body>,
             >,
             <Self::Wire as Publisher>::Error,
         >,
     >
     where
-        Self: Sized,
-        Self::Enc: 'a,
         Self::Wire: OwnedTransactions;
 }
 
 impl<M, W, E, Pipe, Body> SlotTransactions<M, Body> for Slot<M, W, E, Pipe, Body>
 where
-    M: OutSlot,
-    W: Publisher,
-    E: Codec + Send + Sync,
+    M: OutSlot + 'static,
+    W: Publisher + 'static,
+    E: Codec + Send + Sync + 'static,
     Pipe: OutPipeline<W>,
 {
-    fn begin<'a>(
-        &'a self,
+    fn begin(
+        &self,
     ) -> impl Future<
         Output = Result<
-            TransactionScope<'a, SlotPublisher<W, M>, &'a E, SlotAdmit<M, Body>>,
+            TransactionScope<'_, SlotPublisher<W, M>, &'_ E, SlotAdmit<M, Body>>,
             W::Error,
         >,
     >
     where
-        M: 'a,
-        E: 'a,
-        W: TransactionalPublisher + 'a,
+        W: TransactionalPublisher,
     {
         let (wired, codec) = self.parts();
         TransactionScope::open(wired, codec)
     }
 
-    fn transaction<'a>(
-        &'a self,
+    fn transaction(
+        &self,
     ) -> impl Future<
-        Output = Result<TypedTransaction<W::Transaction, &'a E, SlotAdmit<M, Body>>, W::Error>,
+        Output = Result<TypedTransaction<W::Transaction, &'_ E, SlotAdmit<M, Body>>, W::Error>,
     >
     where
-        E: 'a,
         W: OwnedTransactions,
     {
         let (wired, codec) = self.parts();
