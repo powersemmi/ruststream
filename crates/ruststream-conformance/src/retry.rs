@@ -496,7 +496,7 @@ fn assert_count<M: Settle>(msg: &M, expected: u64, which: &str) {
 /// use std::num::NonZeroU32;
 ///
 /// use ruststream::conformance::retry;
-/// use ruststream::{Broker, BrokerMoves, Connected, Publisher, SubscriptionSource, nonzero};
+/// use ruststream::{Broker, BrokerMoves, Connected, Publisher, SendBroker, SendSource, SubscriptionSource, nonzero};
 ///
 /// // A broker crate passes its production broker, its queue descriptor and its publisher.
 /// async fn check<B, Src, Pub>(
