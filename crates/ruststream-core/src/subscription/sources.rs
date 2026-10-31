@@ -4,7 +4,7 @@
 use alloc::borrow::Cow;
 use core::{fmt, future::ready, marker::PhantomData};
 
-use crate::{ConnectedBroker, DeclareRetryError, Seekable, Seeker, Subscribe};
+use crate::{ConnectedBroker, DeclareRetryError, LocalSeekable, LocalSeeker, Subscribe};
 
 use super::{
     AddressedCopies, RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, SubscriptionSource,
@@ -220,7 +220,7 @@ impl<C: Subscribe<Copies = AddressedCopies>> RedeliveryAddressed<C> for Name {
     fn redelivery_address(
         &self,
         _connected: &C,
-    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
         ready(Ok(RedeliveryAddress::new(self.0.clone())))
     }
 }
@@ -384,14 +384,11 @@ impl<S, P> fmt::Debug for StartAt<S, P> {
 impl<C, S, P> SubscriptionSource<C> for StartAt<S, P>
 where
     C: ConnectedBroker,
-    // `Send` on the pieces keeps the returned future `Send`, as the trait's RPITIT promises;
-    // `Sync` on the wrapped source is what lets the redelivery address be asked for by reference.
-    S: SubscriptionSource<C> + Send + Sync,
-    S::Subscriber: Seekable,
+    S: SubscriptionSource<C>,
+    S::Subscriber: LocalSeekable,
     // A rejected reposition surfaces as this source's subscribe error, so the seeker must
     // report the connected broker's error type (broker crates use one error type for both).
-    <S::Subscriber as Seekable>::Seeker: Seeker<Position = P, Error = C::Error>,
-    P: Send,
+    <S::Subscriber as LocalSeekable>::Seeker: LocalSeeker<Position = P, Error = C::Error>,
 {
     type Subscriber = S::Subscriber;
     type Copies = S::Copies;
@@ -429,12 +426,12 @@ impl<C, S, P> RedeliveryAddressed<C> for StartAt<S, P>
 where
     Self: SubscriptionSource<C, Copies = AddressedCopies>,
     C: ConnectedBroker,
-    S: RedeliveryAddressed<C> + Send + Sync,
+    S: RedeliveryAddressed<C>,
 {
     fn redelivery_address(
         &self,
         connected: &C,
-    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
         self.inner.redelivery_address(connected)
     }
 }

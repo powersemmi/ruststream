@@ -100,7 +100,7 @@ impl RedeliveryAddressed<ConnectedMemoryBroker<Retaining>> for Trickle {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker<Retaining>,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
         ready(Ok(RedeliveryAddress::new(self.name)))
     }
 }

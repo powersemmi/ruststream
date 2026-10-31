@@ -37,8 +37,8 @@ use crate::lifecycle::BoxError;
 use crate::middleware::{LocalBlanketLayer, Stack};
 use crate::redelivery::{RetryCopies, ScopeDelivery, open_local_subscription};
 use crate::{
-    BuildBatchContext, BuildContext, LocalBatchSubscriber, LocalBroker, LocalConnected,
-    LocalIncomingMessage, LocalSubscriber, LocalSubscriptionSource,
+    Broker, BuildBatchContext, BuildContext, Connected, LocalBatchSubscriber, LocalSettle,
+    LocalSubscriber, SubscriptionSource,
 };
 
 use super::builder::Router;
@@ -54,7 +54,7 @@ use super::routes::BatchRoute;
     note = "a runner that hosts the app in one task opens plain single-message registrations \
             (`include(def)` of a definition without a reply, an `Out` slot or a batch)"
 )]
-pub trait OpenRoutes<B: LocalBroker, State = ()> {
+pub trait OpenRoutes<B: Broker, State = ()> {
     /// The opened list: every subscription with its handler, ready to run.
     type Opened: RunRoutes<State>;
 
@@ -65,7 +65,7 @@ pub trait OpenRoutes<B: LocalBroker, State = ()> {
     /// The first subscription the broker refuses.
     fn open(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<Self::Opened, BoxError>>;
 }
@@ -94,7 +94,7 @@ pub trait RunRoutes<State> {
     note = "a runner that hosts the app in one task opens plain single-message registrations \
             (`include(def)` of a definition without a reply, an `Out` slot or a batch)"
 )]
-pub trait OpenLayered<B: LocalBroker, State> {
+pub trait OpenLayered<B: Broker, State> {
     /// The opened registrations, each holding the layer stack it runs under.
     type Opened<Layers: LocalBlanketLayer + Clone>: RunRoutes<State>;
 
@@ -105,7 +105,7 @@ pub trait OpenLayered<B: LocalBroker, State> {
     /// See [`OpenRoutes::open`].
     fn open_layered<Layers: LocalBlanketLayer + Clone>(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         layers: &Layers,
         scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>>;
@@ -145,12 +145,12 @@ impl<Sub, Body, Cx, Layers> OpenedRoute<Sub, Body, Cx, Layers> {
     }
 }
 
-impl<B: LocalBroker, State> OpenLayered<B, State> for () {
+impl<B: Broker, State> OpenLayered<B, State> for () {
     type Opened<Layers: LocalBlanketLayer + Clone> = ();
 
     fn open_layered<Layers: LocalBlanketLayer + Clone>(
         self,
-        _connected: &LocalConnected<B>,
+        _connected: &Connected<B>,
         _layers: &Layers,
         _scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<(), BoxError>> {
@@ -175,7 +175,7 @@ impl<State> RunRoutes<State> for () {
 
 impl<B, State, Head, Tail> OpenLayered<B, State> for (Head, Tail)
 where
-    B: LocalBroker,
+    B: Broker,
     Head: OpenLayered<B, State>,
     Tail: OpenLayered<B, State>,
 {
@@ -183,7 +183,7 @@ where
 
     async fn open_layered<Layers: LocalBlanketLayer + Clone>(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         layers: &Layers,
         scope: &ScopeDelivery,
     ) -> Result<Self::Opened<Layers>, BoxError> {
@@ -309,7 +309,7 @@ where
 impl<B, State, Routes, RouteCodec, RouteLayers, RoutePipe> OpenRoutes<B, State>
     for Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 where
-    B: LocalBroker,
+    B: Broker,
     Routes: Balance<Tree: OpenLayered<B, State>>,
     RouteLayers: LocalBlanketLayer + Clone,
 {
@@ -317,7 +317,7 @@ where
 
     fn open(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<Self::Opened, BoxError>> {
         let layers = self.layers;
@@ -331,7 +331,7 @@ where
 impl<B, State, Routes, RouteCodec, RouteLayers, RoutePipe> OpenLayered<B, State>
     for Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 where
-    B: LocalBroker,
+    B: Broker,
     Routes: Balance<Tree: OpenLayered<B, State>>,
     RouteLayers: LocalBlanketLayer + Clone,
 {
@@ -340,7 +340,7 @@ where
 
     fn open_layered<Layers: LocalBlanketLayer + Clone>(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         layers: &Layers,
         scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
@@ -402,8 +402,8 @@ pub struct OpenedBatchRoute<Sub, Body, Cx> {
 impl<B, State, Source, M, F, Inner, Cx> OpenLayered<B, State>
     for BatchRoute<Source, DeserializedBatch<M, F, Inner>, Cx>
 where
-    B: LocalBroker,
-    Source: LocalSubscriptionSource<LocalConnected<B>>,
+    B: Broker,
+    Source: SubscriptionSource<Connected<B>>,
     Source::Subscriber: LocalBatchSubscriber<Message = M>,
     LocalBatch<DeserializedBatch<M, F, Inner>>:
         RunsBatches<<Source::Subscriber as LocalBatchSubscriber>::Batch, Cx, State>,
@@ -413,7 +413,7 @@ where
 
     async fn open_layered<Layers: LocalBlanketLayer + Clone>(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         _layers: &Layers,
         scope: &ScopeDelivery,
     ) -> Result<Self::Opened<Layers>, BoxError> {
@@ -526,7 +526,7 @@ impl<Batch, M, F, Inner, C, S> RunsBatches<Batch, C, S>
     for LocalBatch<DeserializedBatch<M, F, Inner>>
 where
     Batch: IntoIterator<Item = M>,
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     F: Deserialized,
     Inner: for<'p> LocalSliceHandler<F::Output<'p>, C, S>,
     C: BuildBatchContext<M> + Send + Sync + 'static,

@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use common::Order;
 use futures::{Stream, StreamExt};
+use ruststream::Settle;
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish,
     MemoryPublisher, MemorySubscriber,
@@ -66,7 +67,10 @@ struct Queue {
     name: &'static str,
 }
 
-impl<C: Subscribe> SubscriptionSource<C> for Queue {
+impl<C: Subscribe> SubscriptionSource<C> for Queue
+where
+    C::Subscriber: Subscriber,
+{
     type Subscriber = ShapedSubscriber<C::Subscriber>;
     type Copies = AddressedCopies;
 
@@ -79,13 +83,16 @@ impl<C: Subscribe> SubscriptionSource<C> for Queue {
     }
 }
 
-impl<C: Subscribe> RedeliveryAddressed<C> for Queue {
+impl<C: Subscribe> RedeliveryAddressed<C> for Queue
+where
+    C::Subscriber: Subscriber,
+{
     // One subject is both ends of the bus, so no lookup stands between the descriptor and the
     // answer.
     fn redelivery_address(
         &self,
         _connected: &C,
-    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
         ready(Ok(RedeliveryAddress::new(self.name)))
     }
 }
@@ -114,7 +121,9 @@ impl<M: IncomingMessage> IncomingMessage for ShapedMessage<M> {
     fn headers(&self) -> &HeaderMap {
         self.0.headers()
     }
+}
 
+impl<M: Settle> Settle for ShapedMessage<M> {
     async fn ack(self) -> Result<(), AckError> {
         self.0.ack().await
     }
@@ -142,7 +151,10 @@ struct CountedQueue {
     name: &'static str,
 }
 
-impl<C: Subscribe> SubscriptionSource<C> for CountedQueue {
+impl<C: Subscribe> SubscriptionSource<C> for CountedQueue
+where
+    C::Subscriber: Subscriber,
+{
     type Subscriber = CountedSubscriber<C::Subscriber>;
     type Copies = AddressedCopies;
 
@@ -155,13 +167,16 @@ impl<C: Subscribe> SubscriptionSource<C> for CountedQueue {
     }
 }
 
-impl<C: Subscribe> RedeliveryAddressed<C> for CountedQueue {
+impl<C: Subscribe> RedeliveryAddressed<C> for CountedQueue
+where
+    C::Subscriber: Subscriber,
+{
     // One subject is both ends of the bus, so no lookup stands between the descriptor and the
     // answer.
     fn redelivery_address(
         &self,
         _connected: &C,
-    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
         ready(Ok(RedeliveryAddress::new(self.name)))
     }
 }
@@ -197,7 +212,9 @@ impl<M: IncomingMessage> IncomingMessage for CountedMessage<M> {
             .get_str(DELIVERY_COUNT)
             .and_then(|value| value.parse().ok())
     }
+}
 
+impl<M: Settle> Settle for CountedMessage<M> {
     async fn ack(self) -> Result<(), AckError> {
         self.0.ack().await
     }
@@ -523,7 +540,10 @@ struct ManagedQueue {
     name: &'static str,
 }
 
-impl<C: Subscribe> SubscriptionSource<C> for ManagedQueue {
+impl<C: Subscribe> SubscriptionSource<C> for ManagedQueue
+where
+    C::Subscriber: Subscriber,
+{
     type Subscriber = C::Subscriber;
     type Copies = BrokerMoves;
 
@@ -639,7 +659,7 @@ impl RedeliveryAddressed<ConnectedMemoryBroker> for WaitQueue {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
         ready(Ok(RedeliveryAddress::new(self.name)))
     }
 }
@@ -689,7 +709,9 @@ impl IncomingMessage for WaitQueueMessage {
     fn redelivery_count(&self) -> Option<u64> {
         None
     }
+}
 
+impl Settle for WaitQueueMessage {
     fn supports_nack_after(&self) -> bool {
         true
     }
@@ -767,7 +789,10 @@ struct Filter {
     name: &'static str,
 }
 
-impl<C: Subscribe> SubscriptionSource<C> for Filter {
+impl<C: Subscribe> SubscriptionSource<C> for Filter
+where
+    C::Subscriber: Subscriber,
+{
     type Subscriber = ShapedSubscriber<C::Subscriber>;
     type Copies = NamedCopies;
 

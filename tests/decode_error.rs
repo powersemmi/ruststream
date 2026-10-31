@@ -33,7 +33,7 @@ use ruststream::runtime::{BrokerScope, MountChain};
 use ruststream::testing::TestApp;
 use ruststream::{
     AckError, AddressedCopies, BatchSubscriber, RedeliveryAddress, RedeliveryAddressed, Seekable,
-    SerializeHeadersError, Subscribe, Subscriber, SubscriptionSource,
+    SerializeHeadersError, Settle, Subscribe, Subscriber, SubscriptionSource,
 };
 use serde::{Deserialize, Serialize};
 
@@ -67,7 +67,7 @@ impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for Claims {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker<Log>,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
         ready(Ok(RedeliveryAddress::new(self.name)))
     }
 }
@@ -135,7 +135,9 @@ impl<Log: LogMode> IncomingMessage for Claim<Log> {
     fn redelivery_count(&self) -> Option<u64> {
         self.inner.redelivery_count()
     }
+}
 
+impl<Log: LogMode> Settle for Claim<Log> {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {
         self.inner.ack()
     }

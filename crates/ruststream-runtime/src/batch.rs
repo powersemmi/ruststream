@@ -29,7 +29,7 @@ use serde::de::DeserializeOwned;
 use tracing::warn;
 
 use crate::redelivery::RetryCopies;
-use crate::{BuildBatchContext, IncomingMessage, LocalIncomingMessage};
+use crate::{BuildBatchContext, LocalSettle, Settle};
 
 use super::context::Context;
 use super::dispatch::{Slot, Workers, settle_outcome};
@@ -353,7 +353,7 @@ pub trait TakenBatch<C> {
 // The decoding forms collect the deliveries, and a batch's context is built from its first.
 impl<M, C> TakenBatch<C> for Vec<M>
 where
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     C: BuildBatchContext<M>,
 {
     fn context(&self) -> Option<C> {
@@ -433,7 +433,7 @@ pub(crate) fn typed_batch<M, T, C, H>(
     inner: H,
 ) -> TypedBatch<M, super::input::Decoded<T>, C, H>
 where
-    M: IncomingMessage,
+    M: Settle,
     T: DeserializeOwned + Send + Sync + 'static,
     C: Codec,
 {
@@ -494,7 +494,7 @@ impl<Batch, M, Input, DecodeCodec, Inner, C, S> BatchHandler<Batch, C, S>
     for TypedBatch<M, Input, DecodeCodec, Inner>
 where
     Batch: IntoIterator<Item = M>,
-    M: IncomingMessage,
+    M: Settle,
     Input: DecodeWith<DecodeCodec>,
     DecodeCodec: Send + Sync,
     Inner: SliceHandler<Input::Owned, C, S>,
@@ -581,7 +581,7 @@ impl<M, F, Inner> fmt::Debug for DeserializedBatch<M, F, Inner> {
 impl<Batch, M, F, Inner, C, S> BatchHandler<Batch, C, S> for DeserializedBatch<M, F, Inner>
 where
     Batch: IntoIterator<Item = M>,
-    M: IncomingMessage,
+    M: Settle,
     F: Deserialized + Send + Sync + 'static,
     Inner: for<'p> SliceHandler<F::Output<'p>, C, S>,
     C: BuildBatchContext<M> + Send + Sync + 'static,
@@ -627,7 +627,7 @@ impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
         ctx: &mut Context<'_, C, S>,
         host: &Host,
     ) where
-        M: LocalIncomingMessage,
+        M: LocalSettle,
         F: Deserialized,
         Via: for<'p> CallSlice<Inner, F::Output<'p>, C, S>,
         C: BuildBatchContext<M> + Send + Sync + 'static,
@@ -729,7 +729,7 @@ pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S, Host>(
     host: &Host,
 ) -> Vec<M>
 where
-    M: IncomingMessage,
+    M: Settle,
     Input: DecodeWith<DecodeCodec>,
     DecodeCodec: Sync,
     C: BuildBatchContext<M> + Send + Sync + 'static,
@@ -784,7 +784,7 @@ fn decode_elements<M, Input, DecodeCodec, C, S>(
     ctx: &Context<'_, C, S>,
 ) -> Vec<(usize, HandlerResult)>
 where
-    M: IncomingMessage,
+    M: Settle,
     Input: DecodeWith<DecodeCodec>,
 {
     values.clear();
@@ -828,7 +828,7 @@ pub(crate) fn reported<M, C, S>(
     ctx: &Context<'_, C, S>,
 ) -> Option<HandlerResult>
 where
-    M: LocalIncomingMessage,
+    M: LocalSettle,
 {
     let err = msg.decode_error()?;
     warn!(

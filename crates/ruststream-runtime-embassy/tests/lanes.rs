@@ -28,8 +28,8 @@ use embassy_sync::channel::{Channel, Receiver};
 use embassy_time::{Duration as Ticks, MockDriver};
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, BrokerMoves, HeaderMap, LocalBroker, LocalConnectedBroker, LocalIncomingMessage,
-    LocalSubscriber, LocalSubscriptionSource,
+    AckError, Broker, BrokerMoves, ConnectedBroker, HeaderMap, LocalSettle, LocalSubscriber,
+    SubscriptionSource,
 };
 use ruststream_runtime::{
     Clock, Context, Deserialized, HandlerOutcome, Input, IntoSource, LocalHandle, SoloDeserialized,
@@ -88,7 +88,7 @@ struct KeyedDelivery {
     acked: &'static Cell<u32>,
 }
 
-impl LocalIncomingMessage for KeyedDelivery {
+impl IncomingMessage for KeyedDelivery {
     fn payload(&self) -> &[u8] {
         &self.frame.seq
     }
@@ -100,7 +100,9 @@ impl LocalIncomingMessage for KeyedDelivery {
     fn partition_key(&self) -> Option<&[u8]> {
         self.frame.key
     }
+}
 
+impl LocalSettle for KeyedDelivery {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         self.acked.set(self.acked.get() + 1);
         ready(Ok(()))
@@ -157,7 +159,7 @@ impl LocalSubscriber for KeyedSubscriber {
     }
 }
 
-impl LocalBroker for KeyedBroker {
+impl Broker for KeyedBroker {
     type Error = Infallible;
     type Connected = KeyedConnected;
 
@@ -169,7 +171,7 @@ impl LocalBroker for KeyedBroker {
     }
 }
 
-impl LocalConnectedBroker for KeyedConnected {
+impl ConnectedBroker for KeyedConnected {
     type Error = Infallible;
     type Closed = ();
 
@@ -181,7 +183,7 @@ impl LocalConnectedBroker for KeyedConnected {
 #[derive(Clone, Copy)]
 struct KeyedSource;
 
-impl LocalSubscriptionSource<KeyedConnected> for KeyedSource {
+impl SubscriptionSource<KeyedConnected> for KeyedSource {
     type Subscriber = KeyedSubscriber;
     type Copies = BrokerMoves;
 

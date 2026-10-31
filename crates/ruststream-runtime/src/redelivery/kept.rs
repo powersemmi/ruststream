@@ -22,9 +22,9 @@ use crate::publish::{
     ForReply, PublishContext, PublishTransform, PublishTransformIdentity, PublishTransformStack,
 };
 use crate::{
-    AddressedCopies, BrokerMoves, HeaderMap, LocalBroker, LocalConnected, LocalDefaultPublish,
-    LocalIncomingMessage, LocalPublishPolicy, LocalPublisher, LocalRedeliveryAddressed,
-    LocalSubscriptionSource, NamedCopies, Outgoing, OutgoingMessage, PayloadForm, Reads,
+    AddressedCopies, Broker, BrokerMoves, Connected, DefaultPublish, HeaderMap, LocalPublisher,
+    LocalSettle, NamedCopies, Outgoing, OutgoingMessage, PayloadForm, PublishPolicy, Reads,
+    RedeliveryAddressed, SubscriptionSource,
 };
 
 /// Where a kept copy leaves: the publisher and the address that reaches the subscription
@@ -59,7 +59,7 @@ pub trait PrepareCopy<Cx>: CopyPublisher {
     /// Puts the publisher's own constants under the delivery's headers and runs the mount site's
     /// transforms over the copy bound for `destination`, the way a publish through the
     /// multi-thread runner's retry slot does.
-    fn prepare<M: LocalIncomingMessage>(
+    fn prepare<M: LocalSettle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -110,7 +110,7 @@ where
     Live: LocalPublisher,
     Stack: KeptTransforms<Cx, Live::Options>,
 {
-    fn prepare<M: LocalIncomingMessage>(
+    fn prepare<M: LocalSettle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -147,7 +147,7 @@ where
 )]
 pub trait KeptTransforms<Cx, Options> {
     /// Runs the stack over the copy bound for `destination`.
-    fn apply_kept<M: LocalIncomingMessage>(
+    fn apply_kept<M: LocalSettle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -160,7 +160,7 @@ pub trait KeptTransforms<Cx, Options> {
 // Nothing to run: the copy is kept as it was filled, and the context is never built.
 impl<Cx, Options> KeptTransforms<Cx, Options> for PublishTransformIdentity {
     #[inline]
-    fn apply_kept<M: LocalIncomingMessage>(
+    fn apply_kept<M: LocalSettle>(
         &self,
         _payload: &mut BytesMut,
         _headers: &mut HeaderMap,
@@ -175,7 +175,7 @@ impl<Cx, Options, Inner, Outer> KeptTransforms<Cx, Options> for PublishTransform
 where
     Self: PublishTransform<ForReply<Cx>, Options, Destination = Reads>,
 {
-    fn apply_kept<M: LocalIncomingMessage>(
+    fn apply_kept<M: LocalSettle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -224,7 +224,7 @@ impl CopyPublisher for NoCopyPath {
 
 #[allow(clippy::uninhabited_references)]
 impl<Cx> PrepareCopy<Cx> for NoCopyPath {
-    fn prepare<M: LocalIncomingMessage>(
+    fn prepare<M: LocalSettle>(
         &self,
         _payload: &mut BytesMut,
         _headers: &mut HeaderMap,
@@ -290,7 +290,7 @@ impl<Copies> AppliesDeclaration<DeclaredOn<Copies>> for KeepCopies {}
 /// What a plan's copies need when its registration opens on broker `B` through `Source`.
 /// Machinery; never named directly.
 #[doc(hidden)]
-pub trait PairCopies<B: LocalBroker, Source> {
+pub trait PairCopies<B: Broker, Source> {
     /// The copy path the registration opens with.
     type Path: CopyPublisher;
 
@@ -301,16 +301,16 @@ pub trait PairCopies<B: LocalBroker, Source> {
     /// The broker's refusal to pair the publisher or to say the address.
     fn pair(
         source: &Source,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
     ) -> impl Future<Output = Result<Option<Self::Path>, BoxError>>;
 }
 
-impl<B: LocalBroker, Source> PairCopies<B, Source> for NoCopies {
+impl<B: Broker, Source> PairCopies<B, Source> for NoCopies {
     type Path = NoCopyPath;
 
     fn pair(
         _source: &Source,
-        _connected: &LocalConnected<B>,
+        _connected: &Connected<B>,
     ) -> impl Future<Output = Result<Option<NoCopyPath>, BoxError>> {
         ready(Ok(None))
     }
@@ -318,15 +318,15 @@ impl<B: LocalBroker, Source> PairCopies<B, Source> for NoCopies {
 
 impl<B, Source> PairCopies<B, Source> for KeepCopies
 where
-    B: LocalBroker,
-    Source: LocalSubscriptionSource<LocalConnected<B>>,
+    B: Broker,
+    Source: SubscriptionSource<Connected<B>>,
     Source::Copies: KeptAddress<B, Source>,
 {
     type Path = <Source::Copies as KeptAddress<B, Source>>::Path;
 
     async fn pair(
         source: &Source,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
     ) -> Result<Option<Self::Path>, BoxError> {
         <Source::Copies as KeptAddress<B, Source>>::pair(source, connected)
             .await
@@ -343,12 +343,12 @@ where
     label = "`{Source}` declares `Copies = {Self}`",
     note = "a copy kept in the mount's store goes back to the subscription through the address \
             its descriptor reports, so the descriptor declares `Copies = AddressedCopies` and \
-            implements `LocalRedeliveryAddressed`",
+            implements `RedeliveryAddressed`",
     note = "a descriptor whose deliveries the broker moves itself (`BrokerMoves`) or that reads \
             many destinations (`NamedCopies`) keeps no copy in place: leave out \
             `.retry_capacity`, and `retry_after` requeues"
 )]
-pub trait KeptAddress<B: LocalBroker, Source> {
+pub trait KeptAddress<B: Broker, Source> {
     /// The copy path paired for it.
     type Path: CopyPublisher;
 
@@ -359,29 +359,28 @@ pub trait KeptAddress<B: LocalBroker, Source> {
     /// The broker's refusal to pair the publisher or to say the address.
     fn pair(
         source: &Source,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
     ) -> impl Future<Output = Result<Self::Path, BoxError>>;
 }
 
-type DefaultLive<B> = <<LocalConnected<B> as LocalDefaultPublish>::Policy as LocalPublishPolicy<
-    LocalConnected<B>,
->>::Live;
+type DefaultLive<B> =
+    <<Connected<B> as DefaultPublish>::Policy as PublishPolicy<Connected<B>>>::Live;
 
 impl<B, Source> KeptAddress<B, Source> for AddressedCopies
 where
-    B: LocalBroker,
-    Source: LocalRedeliveryAddressed<LocalConnected<B>>,
-    LocalConnected<B>: LocalDefaultPublish,
+    B: Broker,
+    Source: RedeliveryAddressed<Connected<B>>,
+    Connected<B>: DefaultPublish,
     DefaultLive<B>: LocalPublisher,
 {
     type Path = AddressedCopy<DefaultLive<B>>;
 
-    async fn pair(source: &Source, connected: &LocalConnected<B>) -> Result<Self::Path, BoxError> {
+    async fn pair(source: &Source, connected: &Connected<B>) -> Result<Self::Path, BoxError> {
         let address = source
             .redelivery_address(connected)
             .await
             .map_err(|err| -> BoxError { Box::new(err) })?;
-        let live = <LocalConnected<B> as LocalDefaultPublish>::Policy::default()
+        let live = <Connected<B> as DefaultPublish>::Policy::default()
             .pair(connected)
             .await
             .map_err(BoxError::from)?;
@@ -416,7 +415,7 @@ pub struct LocalRetrySlot<Policy, Stack = PublishTransformIdentity> {
             `.retry_capacity::<CAP>()` after `.out_retry(..)`, with room for the copies that \
             wait at once"
 )]
-pub trait PairSlot<B: LocalBroker, Source, Policy, Stack, Cx> {
+pub trait PairSlot<B: Broker, Source, Policy, Stack, Cx> {
     /// The copy path the registration opens with, preparing copies of deliveries whose broker
     /// context is `Cx`.
     type Path: PrepareCopy<Cx>;
@@ -430,16 +429,16 @@ pub trait PairSlot<B: LocalBroker, Source, Policy, Stack, Cx> {
     fn pair_slot(
         slot: LocalRetrySlot<Policy, Stack>,
         source: &Source,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
     ) -> impl Future<Output = Result<Option<Self::Path>, BoxError>>;
 }
 
 impl<B, Source, Policy, Stack, Cx> PairSlot<B, Source, Policy, Stack, Cx> for KeepCopies
 where
-    B: LocalBroker,
-    Source: LocalSubscriptionSource<LocalConnected<B>>,
+    B: Broker,
+    Source: SubscriptionSource<Connected<B>>,
     Source::Copies: SlotAddress<B, Source>,
-    Policy: LocalPublishPolicy<LocalConnected<B>>,
+    Policy: PublishPolicy<Connected<B>>,
     Policy::Live: LocalPublisher,
     // The transforms run over each copy as it is kept, reading the delivery it copies.
     Stack: KeptTransforms<Cx, <Policy::Live as LocalPublisher>::Options>,
@@ -449,7 +448,7 @@ where
     async fn pair_slot(
         slot: LocalRetrySlot<Policy, Stack>,
         source: &Source,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
     ) -> Result<Option<Self::Path>, BoxError> {
         // A destination the mount site named is where the copies go; the descriptor is asked
         // only otherwise, as on the multi-thread runner.
@@ -469,7 +468,7 @@ where
 /// Where a copy goes back to the subscription when the mount site named no destination.
 /// Machinery; never named directly.
 #[doc(hidden)]
-pub trait SlotAddress<B: LocalBroker, Source> {
+pub trait SlotAddress<B: Broker, Source> {
     /// The descriptor's own address for its copies.
     ///
     /// # Errors
@@ -477,16 +476,16 @@ pub trait SlotAddress<B: LocalBroker, Source> {
     /// The broker's refusal to say the address, or a descriptor that addresses none.
     fn address(
         source: &Source,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
     ) -> impl Future<Output = Result<String, BoxError>>;
 }
 
 impl<B, Source> SlotAddress<B, Source> for AddressedCopies
 where
-    B: LocalBroker,
-    Source: LocalRedeliveryAddressed<LocalConnected<B>>,
+    B: Broker,
+    Source: RedeliveryAddressed<Connected<B>>,
 {
-    async fn address(source: &Source, connected: &LocalConnected<B>) -> Result<String, BoxError> {
+    async fn address(source: &Source, connected: &Connected<B>) -> Result<String, BoxError> {
         let address = source
             .redelivery_address(connected)
             .await
@@ -499,12 +498,12 @@ where
 // reached by none; it answers the way the multi-thread runner's startup refusal does.
 impl<B, Source> SlotAddress<B, Source> for NamedCopies
 where
-    B: LocalBroker,
-    Source: LocalSubscriptionSource<LocalConnected<B>>,
+    B: Broker,
+    Source: SubscriptionSource<Connected<B>>,
 {
     fn address(
         source: &Source,
-        _connected: &LocalConnected<B>,
+        _connected: &Connected<B>,
     ) -> impl Future<Output = Result<String, BoxError>> {
         ready(Err(BoxError::from(RetryDestinationError {
             subscription: source.name().to_owned(),
@@ -515,6 +514,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::Settle;
     use alloc::borrow::ToOwned;
     use alloc::string::String;
     use alloc::vec::Vec;
@@ -585,7 +585,9 @@ mod tests {
         fn headers(&self) -> &HeaderMap {
             &self.headers
         }
+    }
 
+    impl Settle for Job {
         fn ack(self) -> impl Future<Output = Result<(), AckError>> {
             ready(Ok(()))
         }

@@ -7,7 +7,10 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 
-use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, BuildContext, Connected, SendSource, Settle, Subscriber,
+    SubscriptionSource,
+};
 
 use crate::batch::BatchHandler;
 use crate::dispatch::Workers;
@@ -420,10 +423,10 @@ impl<B, S, H, Cx, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
     for SubscribeRoute<S, H, Cx>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<Connected<B>> + Send + 'static,
+    S: SendSource<Connected<B>> + Send + 'static,
     S::Subscriber: Send + 'static,
     S::Copies: CopyPathPairing<B, Cx, RetryPipeline> + CopyPathAddress<Connected<B>, S>,
-    SourceMessage<B, S>: Send + Sync + 'static,
+    SourceMessage<B, S>: Settle + 'static,
     Cx: BuildContext<SourceMessage<B, S>> + Send + Sync + 'static,
     State: Send + Sync + 'static,
     H: Handler<SourceMessage<B, S>, Cx, State> + 'static,
@@ -468,10 +471,10 @@ where
 impl<B, S, H, Cx, State, RetryPipeline> MountRoute<B, State, RetryPipeline> for BatchRoute<S, H, Cx>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<Connected<B>> + Send + 'static,
+    S: SendSource<Connected<B>> + Send + 'static,
     S::Subscriber: BatchSubscriber + Send + 'static,
     S::Copies: CopyPathPairing<B, Cx, RetryPipeline> + CopyPathAddress<Connected<B>, S>,
-    SourceMessage<B, S>: Send + 'static,
+    SourceMessage<B, S>: Settle + 'static,
     Cx: crate::BuildBatchContext<SourceMessage<B, S>> + Send + Sync + 'static,
     State: Send + Sync + 'static,
     H: BatchHandler<SourceBatch<B, S>, Cx, State> + 'static,

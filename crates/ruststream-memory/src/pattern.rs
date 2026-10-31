@@ -460,7 +460,7 @@ impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemoryPatt
     fn subscribe(
         self,
         connected: &ConnectedMemoryBroker<Log>,
-    ) -> impl Future<Output = Result<Self::Subscriber, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<Self::Subscriber, MemoryError>> {
         let subscribed = match Pattern::parse(&self.pattern) {
             Ok(pattern) => {
                 let (tx, rx) = mpsc::unbounded_channel();
@@ -493,7 +493,7 @@ impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for MemoryPat
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker<Log>,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
         ready(Ok(RedeliveryAddress::new(self.pattern.clone())))
     }
 }

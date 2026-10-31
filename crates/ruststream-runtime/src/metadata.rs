@@ -11,9 +11,7 @@ use crate::bindings::{PublishBindings, SubscriptionBindings};
 use crate::input::{DecodeWith, Materialize};
 #[cfg(feature = "asyncapi")]
 use crate::join_headers;
-use crate::{
-    ConnectedBroker, LocalConnectedBroker, LocalSubscriptionSource, PublishPolicy, RetryDeclaration,
-};
+use crate::{ConnectedBroker, PublishPolicy, RetryDeclaration, SubscriptionSource};
 
 /// What a declared outgoing message is to the registration declaring it.
 ///
@@ -718,8 +716,8 @@ impl HandlerMetadata {
     #[must_use]
     pub(crate) fn describing<C, S>(self, source: &S) -> Self
     where
-        C: LocalConnectedBroker,
-        S: LocalSubscriptionSource<C>,
+        C: ConnectedBroker,
+        S: SubscriptionSource<C>,
     {
         let _ = source;
         #[cfg(not(feature = "asyncapi"))]

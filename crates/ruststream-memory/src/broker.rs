@@ -567,9 +567,7 @@ impl<Log: LogMode> DescribeServer for MemoryBroker<Log> {
 // `connect`: the connected form a test drives is the one production gets.
 #[cfg(feature = "testing")]
 impl<Log: LogMode> InProcess for MemoryBroker<Log> {
-    fn connect_in_process(
-        self,
-    ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect_in_process(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.connect()
     }
 }

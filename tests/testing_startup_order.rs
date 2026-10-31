@@ -48,7 +48,7 @@ impl Broker for Counted {
     type Error = MemoryError;
     type Connected = ConnectedMemoryBroker;
 
-    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.connects.fetch_add(1, Ordering::SeqCst);
         self.bus.connect()
     }

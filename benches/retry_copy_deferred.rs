@@ -32,8 +32,8 @@ use gungraun::{library_benchmark, library_benchmark_group, main};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryMessage, MemorySubscriber};
 use ruststream::{
-    AckError, AddressedCopies, RedeliveryAddress, RedeliveryAddressed, Subscribe, Subscriber,
-    SubscriptionSource,
+    AckError, AddressedCopies, RedeliveryAddress, RedeliveryAddressed, Settle, Subscribe,
+    Subscriber, SubscriptionSource,
 };
 
 /// The delay every retry asks for: long enough to need a timer, short enough not to hold the run.
@@ -94,7 +94,9 @@ impl IncomingMessage for DelayedMessage {
     fn headers(&self) -> &HeaderMap {
         self.0.headers()
     }
+}
 
+impl Settle for DelayedMessage {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {
         self.0.ack()
     }

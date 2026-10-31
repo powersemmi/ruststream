@@ -13,9 +13,7 @@ use crate::publish::ReplyWiring;
 use crate::publishing::PublishingDef;
 use crate::settings::{DefMountCodec, MountsWith};
 use crate::slot::{IntoSlotSource, WithSource};
-use crate::{
-    LocalBroker, LocalConnected, LocalDefaultPublish, LocalSourceMessage, LocalSubscriptionSource,
-};
+use crate::{Broker, Connected, DefaultPublish, LocalSourceMessage, SubscriptionSource};
 
 use super::builder::Router;
 use super::builders::{RouterCommit, RouterPublishing, RouterWith};
@@ -26,10 +24,10 @@ use super::{PublishingRouter, RawReplyRouter, forms};
 /// What a reply definition's single-delivery input decodes with when it mounts on a local router
 /// of broker `B` with the surface codec `RouteCodec`.
 type ReplyDecoder<Def, B, RouteCodec> =
-    DefMountCodec<Def, <Def as PublishingDef>::Input, RouteCodec, LocalConnected<B>>;
+    DefMountCodec<Def, <Def as PublishingDef>::Input, RouteCodec, Connected<B>>;
 
 /// The connected form's default publish policy: what a reply with no `.out_reply(..)` pairs.
-type DefaultPolicy<B> = <LocalConnected<B> as LocalDefaultPublish>::Policy;
+type DefaultPolicy<B> = <Connected<B> as DefaultPublish>::Policy;
 
 /// Implements [`RouterMount`] for a reply-only form on a local router: the chain starts with the
 /// reply position on the broker's default and no slots beside it.
@@ -39,7 +37,7 @@ macro_rules! local_reply_form {
             RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
             for $form
         where
-            B: LocalBroker + 'static,
+            B: Broker + 'static,
         {
             type Out = RouterPublishing<
                 $mount,
@@ -73,11 +71,11 @@ macro_rules! local_reply_commit {
             RouterCommit<$mount, Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
             for (WithSource<Policy>, ())
         where
-            B: LocalBroker + 'static,
+            B: Broker + 'static,
             Def: PublishingDef
-                + MountsWith<<Def as PublishingDef>::Input, RouteCodec, LocalConnected<B>>
+                + MountsWith<<Def as PublishingDef>::Input, RouteCodec, Connected<B>>
                 + 'static,
-            Def::Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
+            Def::Source: SubscriptionSource<Connected<B>> + 'static,
             Def::Input:
                 Materialize<ReplyDecoder<Def, B, RouteCodec>, LocalSourceMessage<B, Def::Source>>,
             Policy: 'static,
@@ -122,8 +120,8 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
     RouterCommit<PublishMount, Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
     for (DefaultReply, ())
 where
-    B: LocalBroker + 'static,
-    LocalConnected<B>: LocalDefaultPublish,
+    B: Broker + 'static,
+    Connected<B>: DefaultPublish,
     (WithSource<ReplyWiring<DefaultPolicy<B>>>, ()): RouterCommit<
             PublishMount,
             Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>,
@@ -158,8 +156,8 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
         Def,
     > for (DefaultReply, ())
 where
-    B: LocalBroker + 'static,
-    LocalConnected<B>: LocalDefaultPublish,
+    B: Broker + 'static,
+    Connected<B>: DefaultPublish,
     (WithSource<RawReplyWiring<DefaultPolicy<B>>>, ()): RouterCommit<
             RawReplyMount,
             Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>,

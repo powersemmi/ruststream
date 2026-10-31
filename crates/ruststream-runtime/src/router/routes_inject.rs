@@ -12,7 +12,8 @@ use core::fmt;
 use core::num::NonZeroUsize;
 
 use crate::{
-    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, SubscriptionSource,
+    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, SendSource, Settle,
+    SubscriptionSource,
 };
 
 use crate::batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
@@ -145,13 +146,13 @@ impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, Sta
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 where
     B: Broker + 'static,
-    Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source: SendSource<Connected<B>> + Send + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     Def::Context: Send + Sync + 'static,
     RetryPipeline: Clone,
     Source::Subscriber: Sync + Send + 'static,
-    SourceMessage<B, Source>: Send + Sync + 'static,
+    SourceMessage<B, Source>: Settle + 'static,
     State: Send + Sync + 'static,
     Def: InjectCall<State> + 'static,
     Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
@@ -225,13 +226,13 @@ impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, Sta
     for BatchInjectRoute<Source, Def, DecodeCodec, Extra>
 where
     B: Broker + 'static,
-    Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source: SendSource<Connected<B>> + Send + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     Def::Context: Send + Sync + 'static,
     RetryPipeline: Clone,
     Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
-    SourceMessage<B, Source>: Send + 'static,
+    SourceMessage<B, Source>: Settle + 'static,
     State: Send + Sync + 'static,
     Def: BatchInjectCall<State> + 'static,
     Def::Input: DecodeWith<DecodeCodec>,

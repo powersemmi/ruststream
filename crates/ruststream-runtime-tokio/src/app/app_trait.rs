@@ -65,8 +65,6 @@ mod sealed {
 ///
 /// The inherent `RustStream::run` / `RustStream::info` methods stay, so naming the concrete type
 /// keeps working; this trait only adds the type-erased surface the CLI and spec generator consume.
-/// The run futures are `Send` because the service is driven across task boundaries (the CLI's
-/// `block_on`, `tokio::spawn` in tests), so the bound belongs in the signature.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a tokio app",
     note = "an EmbeddedApp runs on embassy: await `EmbeddedApp::run(&CONTROL)` in an embassy task; \
@@ -79,16 +77,16 @@ pub trait App: sealed::Sealed + Sized {
     ///
     /// Returns [`RustStreamError`] if a broker fails to connect, a subscription fails to open, a
     /// dispatch task panics, or a broker fails to shut down.
-    fn run(self) -> impl Future<Output = Result<(), RustStreamError>> + Send;
+    fn run(self) -> impl Future<Output = Result<(), RustStreamError>>;
 
     /// Runs the service until `shutdown` resolves, then shuts down gracefully.
     ///
     /// # Errors
     ///
     /// Returns [`RustStreamError`] under the same conditions as [`run`](Self::run).
-    fn run_until<F>(self, shutdown: F) -> impl Future<Output = Result<(), RustStreamError>> + Send
+    fn run_until<F>(self, shutdown: F) -> impl Future<Output = Result<(), RustStreamError>>
     where
-        F: Future<Output = ()> + Send;
+        F: Future<Output = ()>;
 
     /// Starts the service in the background and hands back a [`RunningApp`] handle: the
     /// side-by-side form for hosting the service next to another foreground server. See
@@ -98,7 +96,7 @@ pub trait App: sealed::Sealed + Sized {
     ///
     /// Returns [`RustStreamError`] if the state producer or an `after_startup` hook fails, a
     /// broker fails to connect, or a subscription fails to open.
-    fn start(self) -> impl Future<Output = Result<RunningApp, RustStreamError>> + Send;
+    fn start(self) -> impl Future<Output = Result<RunningApp, RustStreamError>>;
 
     /// The service metadata (title, version, description): the `AsyncAPI` `info` object.
     fn info(&self) -> &AppInfo;
@@ -122,18 +120,18 @@ pub trait App: sealed::Sealed + Sized {
 impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
     for RustStream<Layers, State, Pipeline, Phase>
 {
-    fn run(self) -> impl Future<Output = Result<(), RustStreamError>> + Send {
+    fn run(self) -> impl Future<Output = Result<(), RustStreamError>> {
         RustStream::run(self)
     }
 
-    fn run_until<F>(self, shutdown: F) -> impl Future<Output = Result<(), RustStreamError>> + Send
+    fn run_until<F>(self, shutdown: F) -> impl Future<Output = Result<(), RustStreamError>>
     where
-        F: Future<Output = ()> + Send,
+        F: Future<Output = ()>,
     {
         RustStream::run_until(self, shutdown)
     }
 
-    fn start(self) -> impl Future<Output = Result<RunningApp, RustStreamError>> + Send {
+    fn start(self) -> impl Future<Output = Result<RunningApp, RustStreamError>> {
         RustStream::start(self)
     }
 

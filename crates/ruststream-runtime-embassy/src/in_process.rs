@@ -8,8 +8,8 @@ use alloc::rc::Rc;
 use core::any::type_name;
 use core::future::ready;
 
-use ruststream_core::LocalConnectedBroker;
-use ruststream_runtime::testing::{InProcessRun, LocalInProcess};
+use ruststream_core::ConnectedBroker;
+use ruststream_runtime::testing::{InProcess, InProcessRun};
 use ruststream_runtime::{OpenRoutes, RunRoutes};
 
 use crate::app::RunError;
@@ -21,7 +21,7 @@ use crate::mounts::{BrokerMount, CloseAll, close};
 #[diagnostic::on_unimplemented(
     message = "a broker of the embedded app has no in-process mode",
     note = "the test harness connects every broker of the app in process: each implements \
-            `LocalInProcess` under its crate's `testing` feature"
+            `InProcess` under its crate's `testing` feature"
 )]
 pub trait StartInProcess<State> {
     /// The connected brokers, shut down at the end.
@@ -42,7 +42,7 @@ pub trait StartInProcess<State> {
 #[derive(Debug)]
 pub struct InProcessConnection<Connected>(Rc<Connected>);
 
-impl<Connected: LocalConnectedBroker> CloseAll for InProcessConnection<Connected> {
+impl<Connected: ConnectedBroker> CloseAll for InProcessConnection<Connected> {
     async fn close_all(self) {
         // The harness keeps the connected form weakly and upgrades it only inside a synchronous
         // call of its own, never across the app's poll, so here the app holds the one count.
@@ -66,7 +66,7 @@ impl<State> StartInProcess<State> for () {
 
 impl<State, B, Routes> StartInProcess<State> for BrokerMount<B, Routes>
 where
-    B: LocalInProcess + 'static,
+    B: InProcess + 'static,
     Routes: OpenRoutes<B, State>,
 {
     type Connections = InProcessConnection<B::Connected>;

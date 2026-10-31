@@ -11,7 +11,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::{BuildBatchContext, IncomingMessage};
+use crate::{BuildBatchContext, Settle};
 
 use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
 use super::context::Context;
@@ -136,7 +136,7 @@ impl<Batch, Msg, Def, DecodeCodec, State> BatchHandler<Batch, Def::Context, Stat
     for BatchInjectHandler<Def, DecodeCodec>
 where
     Batch: IntoIterator<Item = Msg>,
-    Msg: IncomingMessage,
+    Msg: Settle,
     Def: BatchInjectCall<State>,
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Injections: Send + Sync,

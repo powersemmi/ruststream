@@ -1312,7 +1312,7 @@ mod protocol_bindings {
         fn redelivery_address(
             &self,
             _connected: &C,
-        ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+        ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
             future::ready(Ok(RedeliveryAddress::new(self.name)))
         }
     }
@@ -1445,7 +1445,7 @@ mod protocol_bindings {
             fn redelivery_address(
                 &self,
                 _connected: &C,
-            ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+            ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
                 future::ready(Ok(RedeliveryAddress::new("orders")))
             }
         }

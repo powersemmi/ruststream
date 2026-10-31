@@ -16,8 +16,7 @@ use core::marker::PhantomData;
 use tracing::{error, warn};
 
 use crate::{
-    BatchSubscriber, BuildBatchContext, CarriesBatch, ConnectedBroker, IncomingMessage,
-    SubscriptionSource,
+    BatchSubscriber, BuildBatchContext, CarriesBatch, ConnectedBroker, Settle, SubscriptionSource,
 };
 
 use super::super::context::Context;
@@ -167,7 +166,7 @@ impl<Src, Conn, Batch, M, T, Inner, C, S> BatchHandler<Batch, C, S>
 where
     Src: SourceCarriesBatch<T, Conn, Batch = Batch>,
     Batch: IntoIterator<Item = M> + Send,
-    M: IncomingMessage,
+    M: Settle,
     T: Clone + Send + Sync + 'static,
     Inner: SliceHandler<T, C, S>,
     C: BuildBatchContext<Batch> + BuildBatchContext<M> + Send + Sync + 'static,

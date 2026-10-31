@@ -176,7 +176,7 @@ impl<C> fmt::Debug for Delivery<C> {
 ///
 /// Everything on the path borrows the delivery out of the slot and the settle takes it, so a
 /// delivery is copied twice whatever its size: once out of the stream, once into
-/// [`ack(self)`](IncomingMessage::ack). The futures in between hold a pointer to the slot rather
+/// [`ack(self)`](Settle::ack). The futures in between hold a pointer to the slot rather
 /// than the value, which is what keeps a pinned dispatch the same size for a 16-byte delivery and
 /// a 16-kilobyte one.
 ///

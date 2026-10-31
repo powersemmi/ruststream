@@ -8,8 +8,8 @@ use tokio::time::timeout;
 use super::{DELIVERY_TIMEOUT, QUIET, connect_in_process, settle_ack};
 use crate::helpers::unique_subject;
 use ruststream_core::{
-    Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher, Subscribe, Subscriber,
-    SubscriptionSource,
+    Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher, SendBroker,
+    SendSource, SendSubscribe, Settle, Subscribe, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::testing::{Backlog, InProcess, TestableBroker};
 
@@ -30,7 +30,7 @@ enum Transport {
 }
 
 impl Transport {
-    async fn connect<B: InProcess>(self, broker: B) -> B::Connected {
+    async fn connect<B: InProcess + SendBroker>(self, broker: B) -> B::Connected {
         match self {
             Self::Server => broker
                 .connect()
@@ -68,7 +68,7 @@ impl fmt::Display for Transport {
 async fn next_on<S, M, E>(stream: &mut S, transport: Transport, label: &str) -> M
 where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     timeout(transport.delivery_timeout(), stream.next())
@@ -111,8 +111,8 @@ pub async fn backlog_matches_server<B, MkBroker, Pub, MkPub>(
     make_broker: MkBroker,
     make_publisher: MkPub,
 ) where
-    B: InProcess,
-    B::Connected: Subscribe,
+    B: InProcess + SendBroker,
+    B::Connected: SendSubscribe + TestableBroker,
     MkBroker: Fn() -> B,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
@@ -210,7 +210,7 @@ async fn read_backlog<S, M, E>(
     refused_before: bool,
 ) where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let first = next_on(stream, transport, "backlog_matches_server").await;
@@ -346,10 +346,10 @@ pub async fn refuses_like_the_server<B, MkBroker, Src, Pub, MkPub>(
     make_publisher: MkPub,
     refusals: impl IntoIterator<Item = Refusal<Src>> + Send,
 ) where
-    B: InProcess,
-    B::Connected: Subscribe,
+    B: InProcess + SendBroker,
+    B::Connected: SendSubscribe + TestableBroker,
     MkBroker: Fn() -> B + Send,
-    Src: SubscriptionSource<Connected<B>> + Clone + Send + Sync,
+    Src: SendSource<Connected<B>> + Clone + Send + Sync,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub + Send + Sync,
 {
@@ -394,8 +394,8 @@ pub async fn refuses_like_the_server<B, MkBroker, Src, Pub, MkPub>(
 /// so what it admits must be what the server admits.
 async fn admits_like_the_server<B, MkBroker>(make_broker: MkBroker)
 where
-    B: InProcess,
-    B::Connected: Subscribe,
+    B: InProcess + SendBroker,
+    B::Connected: SendSubscribe + TestableBroker,
     MkBroker: Fn() -> B + Send,
 {
     let mut admitted = [[false; 3]; 2];
@@ -455,7 +455,7 @@ async fn probe<C, Src, Pub, MkPub>(
     make_publisher: &MkPub,
 ) -> bool
 where
-    C: Subscribe,
+    C: SendSubscribe,
     Src: SubscriptionSource<C> + Clone + Sync,
     Pub: Publisher,
     MkPub: Fn(&C) -> Pub + Sync,
@@ -497,7 +497,7 @@ async fn probe_payload_over<C, Pub, MkPub>(
     make_publisher: &MkPub,
 ) -> bool
 where
-    C: Subscribe,
+    C: SendSubscribe,
     Pub: Publisher,
     MkPub: Fn(&C) -> Pub + Sync,
 {

@@ -432,6 +432,7 @@ impl Drop for SeekToken {
 
 #[cfg(test)]
 mod tests {
+    use ruststream_core::Settle;
     use std::future;
     use std::time::Duration;
 

@@ -24,6 +24,7 @@ use std::time::Duration;
 
 use common::{Order, Receipt};
 use futures::{Stream, StreamExt};
+use ruststream::Settle;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemoryPublisher,
@@ -59,7 +60,10 @@ impl BoundSubscription {
     }
 }
 
-impl<C: Subscribe> SubscriptionSource<C> for BoundSubscription {
+impl<C: Subscribe> SubscriptionSource<C> for BoundSubscription
+where
+    C::Subscriber: Subscriber,
+{
     type Subscriber = UnsettledSubscriber<C::Subscriber>;
     type Copies = AddressedCopies;
 
@@ -72,11 +76,14 @@ impl<C: Subscribe> SubscriptionSource<C> for BoundSubscription {
     }
 }
 
-impl<C: Subscribe> RedeliveryAddressed<C> for BoundSubscription {
+impl<C: Subscribe> RedeliveryAddressed<C> for BoundSubscription
+where
+    C::Subscriber: Subscriber,
+{
     fn redelivery_address(
         &self,
         _connected: &C,
-    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
         // The descriptor already holds the topic, so no lookup stands between it and the answer.
         ready(Ok(RedeliveryAddress::new(self.topic)))
     }
@@ -95,7 +102,10 @@ impl FilteredSubscription {
     }
 }
 
-impl<C: Subscribe> SubscriptionSource<C> for FilteredSubscription {
+impl<C: Subscribe> SubscriptionSource<C> for FilteredSubscription
+where
+    C::Subscriber: Subscriber,
+{
     type Subscriber = UnsettledSubscriber<C::Subscriber>;
     type Copies = NamedCopies;
 
@@ -122,7 +132,7 @@ impl<S: Subscriber> Subscriber for UnsettledSubscriber<S> {
 }
 
 /// A delivery that acknowledges like the broker's own but keeps the trait default for
-/// [`IncomingMessage::supports_nack_after`], which is what nearly every real broker ships.
+/// [`Settle::supports_nack_after`], which is what nearly every real broker ships.
 struct UnsettledMessage<M>(M);
 
 impl<M: IncomingMessage> IncomingMessage for UnsettledMessage<M> {
@@ -133,7 +143,9 @@ impl<M: IncomingMessage> IncomingMessage for UnsettledMessage<M> {
     fn headers(&self) -> &HeaderMap {
         self.0.headers()
     }
+}
 
+impl<M: Settle> Settle for UnsettledMessage<M> {
     async fn ack(self) -> Result<(), AckError> {
         self.0.ack().await
     }
@@ -894,7 +906,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for UnpairablePublish {
     fn pair(
         self,
         _connected: &ConnectedMemoryBroker,
-    ) -> impl Future<Output = Result<Self::Live, PairError>> + Send {
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
         ready(Err(PairError::from_boxed(
             "the retry topic needs a credential".into(),
         )))
@@ -948,7 +960,7 @@ impl RedeliveryAddressed<ConnectedMemoryBroker> for UnresolvedSubscription {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
         ready(Err(MemoryError::ShutDown))
     }
 }

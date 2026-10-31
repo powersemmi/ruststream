@@ -28,7 +28,7 @@ use ruststream::runtime::{
 use ruststream::testing::TestApp;
 use ruststream::{
     AckError, AddressedCopies, Deserialized, HeaderMap, IncomingMessage, RedeliveryAddress,
-    RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
+    RedeliveryAddressed, Settle, Subscribe, Subscriber, SubscriptionSource,
 };
 
 /// A delivery that counts what the runtime asks of it. Everything else is the in-memory broker's
@@ -47,7 +47,9 @@ impl IncomingMessage for CountingMessage {
         self.reads.fetch_add(1, Ordering::Relaxed);
         self.inner.headers()
     }
+}
 
+impl Settle for CountingMessage {
     async fn ack(self) -> Result<(), AckError> {
         self.inner.ack().await
     }
@@ -255,7 +257,7 @@ where
     fn redelivery_address(
         &self,
         _connected: &Connected,
-    ) -> impl Future<Output = Result<RedeliveryAddress, Connected::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, Connected::Error>> {
         // One subject is both ends of the in-memory bus.
         ready(Ok(RedeliveryAddress::new(self.name)))
     }

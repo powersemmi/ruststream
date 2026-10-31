@@ -16,11 +16,11 @@ use std::time::Duration;
 use embassy_futures::{block_on, yield_now};
 use embassy_time::Timer;
 use ruststream::memory::local::prelude::{
-    BytesMut, ConnectedLocalMemoryBroker, LocalBroker, LocalMemoryBroker, LocalMemoryError,
+    Broker, BytesMut, ConnectedLocalMemoryBroker, LocalMemoryBroker, LocalMemoryError,
     LocalMemoryPublish, LocalMemoryPublisher, LocalMemorySource, LocalPublisher, OutgoingMessage,
 };
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out, PublishError};
-use ruststream::testing::LocalInProcess;
+use ruststream::testing::InProcess;
 use ruststream::testing::{TestApp, TestError};
 use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 
@@ -807,7 +807,7 @@ enum Link {
 /// A bus whose connection takes time on the clock, as a radio link does.
 struct SlowBus(Link);
 
-impl LocalBroker for SlowBus {
+impl Broker for SlowBus {
     type Error = LocalMemoryError;
     type Connected = ConnectedLocalMemoryBroker<4>;
 
@@ -816,7 +816,7 @@ impl LocalBroker for SlowBus {
     }
 }
 
-impl LocalInProcess for SlowBus {
+impl InProcess for SlowBus {
     async fn connect_in_process(self) -> Result<Self::Connected, Self::Error> {
         match self.0 {
             Link::Silent => pending().await,

@@ -67,6 +67,9 @@ impl IncomingMessage for BusMessage {
     fn headers(&self) -> &HeaderMap {
         unreachable!("the stream is empty")
     }
+}
+
+impl Settle for BusMessage {
 
     async fn ack(self) -> Result<(), AckError> {
         Ok(())

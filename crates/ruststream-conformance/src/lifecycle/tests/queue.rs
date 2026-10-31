@@ -21,7 +21,7 @@ use tokio::{sync::Notify, time::sleep};
 use crate::lifecycle::{ladder, shutdown_flushes};
 use ruststream_core::{
     AckError, Broker, ConnectedBroker, HeaderMap, IncomingMessage, Lend, NamedCopies,
-    OutgoingMessage, Publisher, Subscriber, SubscriptionSource,
+    OutgoingMessage, Publisher, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::testing::Backlog;
 
@@ -112,7 +112,7 @@ impl Broker for Queue {
     type Error = LinkClosed;
     type Connected = ConnectedQueue;
 
-    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         ready(Ok(ConnectedQueue {
             world: self.world,
             link: Arc::default(),
@@ -131,7 +131,7 @@ impl ConnectedBroker for ConnectedQueue {
     type Error = LinkClosed;
     type Closed = ();
 
-    fn shutdown(self) -> impl Future<Output = Result<Self::Closed, Self::Error>> + Send {
+    fn shutdown(self) -> impl Future<Output = Result<Self::Closed, Self::Error>> {
         self.link.closed.store(true, Ordering::SeqCst);
         let unacked = take(&mut *self.link.unacked.lock().expect("poisoned"));
         let world = Arc::clone(&self.world);
@@ -203,7 +203,7 @@ impl SubscriptionSource<ConnectedQueue> for QueueSource {
     fn subscribe(
         self,
         connected: &ConnectedQueue,
-    ) -> impl Future<Output = Result<QueueSubscriber, LinkClosed>> + Send {
+    ) -> impl Future<Output = Result<QueueSubscriber, LinkClosed>> {
         ready(if connected.link.closed.load(Ordering::SeqCst) {
             Err(LinkClosed)
         } else {
@@ -293,7 +293,9 @@ impl IncomingMessage for QueueMessage {
         static EMPTY: OnceLock<HeaderMap> = OnceLock::new();
         EMPTY.get_or_init(HeaderMap::new)
     }
+}
 
+impl Settle for QueueMessage {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {
         if self.link.closed.load(Ordering::SeqCst) {
             return ready(if self.fault == QueueFault::ClaimsAckAfterShutdown {

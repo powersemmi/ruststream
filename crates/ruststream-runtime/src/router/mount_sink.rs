@@ -56,7 +56,7 @@ pub trait MountSink<B: Broker, State> {
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>> + Send,
+        Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>>,
         Sub: Subscriber + Send + 'static,
         Sub::Message: Send + Sync + 'static,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
@@ -76,7 +76,7 @@ pub trait MountSink<B: Broker, State> {
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>> + Send,
+        Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>>,
         Sub: BatchSubscriber + Send + 'static,
         Sub::Message: Send + 'static,
         Sub::Batch: 'static,
@@ -95,7 +95,7 @@ pub trait MountSink<B: Broker, State> {
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>> + Send,
+        Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>>,
         Sub: Subscriber + Send + 'static,
         Sub::Message: Send + Sync + 'static,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
@@ -114,7 +114,7 @@ pub trait MountSink<B: Broker, State> {
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>> + Send,
+        Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>>,
         Sub: BatchSubscriber + Send + 'static,
         Sub::Message: Send + 'static,
         Sub::Batch: 'static,
