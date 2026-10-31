@@ -70,9 +70,14 @@ async fn on_origin(pair: &Message<Origin, Reading>) -> HandlerOutcome {
 
 #[subscriber(LocalMemorySource::new("valve/command"))]
 async fn on_valve(valve: &Valve) -> HandlerOutcome {
-    match valve {
-        Valve::Opened(_) | Valve::Closed(_) => HandlerOutcome::ack(),
+    let id = match valve {
+        Valve::Opened(opened) => opened.opened,
+        Valve::Closed(closed) => closed.closed,
+    };
+    if id == 0 {
+        return HandlerOutcome::retry();
     }
+    HandlerOutcome::ack()
 }
 
 #[ruststream::app]
