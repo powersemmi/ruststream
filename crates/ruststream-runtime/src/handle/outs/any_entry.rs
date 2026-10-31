@@ -261,6 +261,7 @@ where
 /// What a transaction opened through [`SlotTransactions`] admits: the marker's dictionary,
 /// narrowed by the parameter's declared set, as the slot's own typed publish.
 #[doc(hidden)]
+#[derive(Debug)]
 pub struct SlotAdmit<M, Body>(core::marker::PhantomData<fn() -> (M, Body)>);
 
 impl<M, Body, T, Index> Admits<T, Index> for SlotAdmit<M, Body>
