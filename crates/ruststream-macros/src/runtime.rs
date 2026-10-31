@@ -62,10 +62,13 @@ fn local_bound(bound: &TypeParamBound) -> TypeParamBound {
     let TypeParamBound::Trait(written) = bound else {
         return bound.clone();
     };
-    let Some(last) = written.path.segments.last() else {
-        return bound.clone();
-    };
-    let Some((_, twin)) = LOCAL_TWINS.iter().find(|(core, _)| last.ident == core) else {
+    // A parsed path has a last segment; one naming no capability stays as written.
+    let Some((last, twin)) = written.path.segments.last().and_then(|last| {
+        LOCAL_TWINS
+            .iter()
+            .find(|(core, _)| last.ident == core)
+            .map(|(_, twin)| (last, twin))
+    }) else {
         return bound.clone();
     };
     let mut local = written.clone();
