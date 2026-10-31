@@ -36,7 +36,7 @@ use crate::slot::{
 
 use super::builder::RouterBroker;
 use super::head::{PoisonAt, ScopeOut};
-use super::local::{PoolFits, RouterPipe};
+use super::local::{BodyFits, PoolFits, RouterPipe};
 use super::mount::RouterMount;
 use super::routes::RetryDestinationsDeclared;
 use crate::handle::IntoDeclared;
@@ -554,7 +554,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     >>::Out
     where
         Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
-        Next: IntoDeclared<Mk>,
+        Next: IntoDeclared<Mk> + BodyFits<R::Pipe, Mk>,
         R: RouterPipe,
         <Next::Decl as Declared>::Settings: PoolFits<R::Pipe>,
         <Next::Decl as Declared>::Form: RouterMount<

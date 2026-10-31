@@ -16,7 +16,7 @@
 mod parity_tests;
 
 use crate::{BlanketLayer, Broker, Declared, IntoDeclared, PublishIdentity, PublishPipeline};
-use crate::{ChainHead, Identity, PoolFits, RetryDestinationsDeclared, SplitHead};
+use crate::{BodyFits, ChainHead, Identity, PoolFits, RetryDestinationsDeclared, SplitHead};
 use crate::{Router, RouterCommit, RouterDef, RouterMount, RouterWith};
 
 use super::LifecycleHook;
@@ -182,7 +182,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline, Pre>
         <D::Decl as Declared>::Settings,
     >>::Out
     where
-        D: IntoDeclared<Mk>,
+        D: IntoDeclared<Mk> + BodyFits<Pipeline, Mk>,
         <D::Decl as Declared>::Settings: PoolFits<Pipeline>,
         <D::Decl as Declared>::Form:
             RouterMount<ScopeRouter<B, C, Pipeline, Pre>, <D::Decl as Declared>::Settings>,

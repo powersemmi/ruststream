@@ -45,7 +45,7 @@ pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOu
 pub use head::{ChainHead, Plain, Poison, PoisonAt, PoisonMode, Poisoned, SplitHead};
 pub use local::LocalPipeline;
 #[doc(hidden)]
-pub use local::{LayerFits, PoolFits, RouterPipe, TakesWorkers};
+pub use local::{BodyFits, LayerFits, PoolFits, RouterPipe, TakesWorkers};
 // The typed default-reply token is machinery, but the macro expansion names it in generated
 // types (the default attach of a sealed reply definition), so it is public and hidden.
 #[doc(hidden)]

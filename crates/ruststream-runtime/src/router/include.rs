@@ -15,7 +15,7 @@
 use crate::LocalBroker;
 
 use super::builder::Router;
-use super::local::PoolFits;
+use super::local::{BodyFits, PoolFits};
 use super::mount::RouterMount;
 use crate::handle::IntoDeclared;
 use crate::settings::Declared;
@@ -67,7 +67,7 @@ impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         def: D,
     ) -> <<D::Decl as Declared>::Form as RouterMount<Self, <D::Decl as Declared>::Settings>>::Out
     where
-        D: IntoDeclared<Mk>,
+        D: IntoDeclared<Mk> + BodyFits<RoutePipe, Mk>,
         <D::Decl as Declared>::Settings: PoolFits<RoutePipe>,
         <D::Decl as Declared>::Form: RouterMount<Self, <D::Decl as Declared>::Settings>,
     {
