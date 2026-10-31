@@ -27,6 +27,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, Receiver};
 use embassy_time::{Duration as Ticks, MockDriver};
 use futures_core::Stream;
+use ruststream_core::IncomingMessage;
 use ruststream_core::{
     AckError, Broker, BrokerMoves, ConnectedBroker, HeaderMap, LocalSettle, LocalSubscriber,
     SubscriptionSource,

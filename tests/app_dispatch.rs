@@ -18,6 +18,7 @@ use ruststream::prelude::*;
 use ruststream::runtime::{BlanketLayer, Handler, HandlerMetadata, Layer};
 use ruststream::testing::TestApp;
 use tokio::sync::Notify;
+use tokio::task::{LocalSet, spawn_local};
 
 /// The payload view the byte-level bodies below take. The bodies never look at the bytes - the
 /// subject here is the wiring - but the view is what puts them on the codec-free lane.
@@ -132,7 +133,7 @@ impl BlanketLayer for CountLayer {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn graceful_shutdown_drains_post_settle_continuations() {
     // The run is not `Send`, so it is driven on a local set of the test.
-    tokio::task::LocalSet::new()
+    LocalSet::new()
         .run_until(async move {
             let broker = MemoryBroker::new();
             let publisher = broker.publisher();
@@ -168,9 +169,7 @@ async fn graceful_shutdown_drains_post_settle_continuations() {
 
             let shutdown = Arc::new(Notify::new());
             let shutdown_signal = Arc::clone(&shutdown);
-            let run = tokio::task::spawn_local(
-                app.run_until(async move { shutdown_signal.notified().await }),
-            );
+            let run = spawn_local(app.run_until(async move { shutdown_signal.notified().await }));
 
             publisher
                 .message(&Wire(b"go"))
@@ -191,7 +190,7 @@ async fn graceful_shutdown_drains_post_settle_continuations() {
             // run() returned only after the in-flight continuation finished.
             assert_eq!(drained.load(Ordering::SeqCst), 1);
         })
-        .await
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

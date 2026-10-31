@@ -201,8 +201,6 @@ impl IncomingMessage for FrameDelivery {
     }
 }
 
-impl IncomingMessage for FrameDelivery {}
-
 impl LocalSettle for FrameDelivery {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         count(&self.settled.acked);

@@ -19,6 +19,7 @@ use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
 use futures::{FutureExt, StreamExt};
+use ruststream::IncomingMessage;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream::runtime::{
     Clock, EmbassyClock, EmbeddedApp, HandlerOutcome, MountSteps, Mounts, Out,

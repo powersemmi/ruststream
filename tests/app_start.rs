@@ -22,6 +22,7 @@ use ruststream::runtime::{
 };
 use ruststream::{Broker, ConnectedBroker, subscriber};
 use tokio::sync::Notify;
+use tokio::task::{LocalSet, spawn_local};
 use tokio::time::timeout;
 
 use common::{Order, Wire};
@@ -173,7 +174,7 @@ async fn parks_a_continuation(_order: &Order) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failed_after_startup_drains_continuations_then_unwinds_the_brokers() {
     // The run is not `Send`, so it is driven on a local set of the test.
-    tokio::task::LocalSet::new()
+    LocalSet::new()
         .run_until(async move {
             let broker = MemoryBroker::new();
             let publisher = broker.publisher();
@@ -187,7 +188,7 @@ async fn failed_after_startup_drains_continuations_then_unwinds_the_brokers() {
                 })
                 .with_broker(broker, |b| b.include(parks_a_continuation));
 
-            let mut start_task = tokio::task::spawn_local(app.start());
+            let mut start_task = spawn_local(app.start());
             HOOK_READY.notified().await;
             publisher
                 .message(&Order { id: 1 })
@@ -222,7 +223,7 @@ async fn failed_after_startup_drains_continuations_then_unwinds_the_brokers() {
                 .expect_err("the unwound broker must reject the publish");
             assert!(matches!(err, PublishError::Publish(MemoryError::ShutDown)));
         })
-        .await
+        .await;
 }
 
 /// A broker whose connect always fails, for the partial-startup unwind tests. It counts the
