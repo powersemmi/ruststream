@@ -27,3 +27,21 @@ async fn a_transport_that_counts_nothing_fails_the_local_suite() {
 async fn a_transport_that_counts_an_unread_publish_fails_the_local_suite() {
     run_local_suite(faulty(Fault::CountsUnread)).await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+#[should_panic(expected = "through the broker's own default publisher failed")]
+async fn an_own_publisher_that_refuses_its_second_publish_fails_the_local_suite() {
+    run_local_suite(faulty(Fault::RefusesSecond)).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[should_panic(expected = "ack must succeed or be unsupported, got: Broker")]
+async fn a_failing_ack_fails_the_local_suite() {
+    run_local_suite(faulty(Fault::AckFailsWhenCounted)).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[should_panic(expected = "nack must succeed or be unsupported, got: Broker")]
+async fn a_failing_requeue_fails_the_local_suite() {
+    run_local_suite(faulty(Fault::RequeueFailsWhenCounted)).await;
+}

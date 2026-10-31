@@ -38,6 +38,13 @@ async fn a_requeue_that_fails_fails_the_local_ladder() {
     local_ladder_on(Fault::RequeueFails).await;
 }
 
+/// A transport with nothing to take back answers the requeue `Unsupported`, and owes no
+/// redelivery.
+#[tokio::test(flavor = "current_thread")]
+async fn a_requeue_answering_unsupported_passes_the_local_ladder() {
+    local_ladder_on(Fault::RequeueUnsupported).await;
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[should_panic(expected = "a publisher never used published successfully after the shutdown")]
 async fn a_publisher_that_attaches_after_shutdown_fails_the_local_ladder() {
