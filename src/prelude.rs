@@ -114,6 +114,9 @@ pub use crate::runtime::{
 // The application object of the runtime the crate's feature selects.
 #[cfg(feature = "tokio")]
 pub use crate::runtime::{App, AppInfo, MainRuntime, RunningApp, RustStream};
+// The application object of the embedded runner, with the bound its builder returns.
+#[cfg(feature = "embassy")]
+pub use crate::runtime::{EmbeddedApp, Mounts};
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which
 // assembles the message itself. What still needs one - a publish transform, a middleware, or a
 // broker crate used on its own without this one - names it explicitly.

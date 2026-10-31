@@ -10,10 +10,9 @@ use embassy_futures::block_on;
 use ruststream::memory::local::prelude::{
     LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource,
 };
-use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out};
+use ruststream::prelude::*;
+use ruststream::runtime::EmbeddedBindable;
 use ruststream::testing::embedded::TestApp;
-use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
-use ruststream_runtime_embassy::Bindable;
 
 /// The sensors' bus.
 type Sensors = LocalMemoryBroker<4>;
@@ -53,7 +52,7 @@ async fn on_level(
 
 #[ruststream::app(runtime = embassy)]
 fn app(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mounts> {
-    let actuators = Bindable::new(actuators);
+    let actuators = EmbeddedBindable::new(actuators);
     let to_actuators = actuators.bind(LocalMemoryPublish);
     EmbeddedApp::new()
         .with_broker(actuators, |b| b)
@@ -82,7 +81,7 @@ async fn on_command(command: &Frame<'_>, Out(acks): Out<impl Publisher, Acks>) -
 /// The token's broker is registered after the broker that publishes through it.
 #[ruststream::app(runtime = embassy)]
 fn target_last(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mounts> {
-    let actuators = Bindable::new(actuators);
+    let actuators = EmbeddedBindable::new(actuators);
     let to_actuators = actuators.bind(LocalMemoryPublish);
     EmbeddedApp::new()
         .with_broker(sensors, |b| b.include(on_level).out(Commands, to_actuators))
@@ -92,8 +91,8 @@ fn target_last(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mount
 /// Each broker publishes through a token bound to the other.
 #[ruststream::app(runtime = embassy)]
 fn bridge(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mounts> {
-    let sensors = Bindable::new(sensors);
-    let actuators = Bindable::new(actuators);
+    let sensors = EmbeddedBindable::new(sensors);
+    let actuators = EmbeddedBindable::new(actuators);
     let to_actuators = actuators.bind(LocalMemoryPublish);
     let to_sensors = sensors.bind(LocalMemoryPublish);
     EmbeddedApp::new()
