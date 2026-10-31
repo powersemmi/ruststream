@@ -176,7 +176,7 @@ pub use failure::DispatchFailure;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use handle::{AsBodyFn, BodyCall, DeclareBody, FnBody, FnDecl, Tag};
+pub use handle::{AsBodyFn, BodyCall, DeclareBody, FnBody, FnDecl, BodyTag};
 #[cfg(feature = "alloc")]
 pub use handle::{AsDeclared, IntoDeclared};
 #[cfg(feature = "alloc")]

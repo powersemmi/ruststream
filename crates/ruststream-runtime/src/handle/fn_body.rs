@@ -16,9 +16,9 @@ use crate::settings::Declared;
 /// The first argument of a `#[subscriber]` body: names the declaration that goes with the body.
 ///
 /// Zero-sized; the body never reads it.
-pub struct Tag<M>(PhantomData<fn() -> M>);
+pub struct BodyTag<M>(PhantomData<fn() -> M>);
 
-impl<M> Tag<M> {
+impl<M> BodyTag<M> {
     /// The tag of the declaration `M`.
     #[must_use]
     pub const fn new() -> Self {
@@ -26,7 +26,7 @@ impl<M> Tag<M> {
     }
 }
 
-impl<M> Default for Tag<M> {
+impl<M> Default for BodyTag<M> {
     fn default() -> Self {
         Self::new()
     }
@@ -34,7 +34,7 @@ impl<M> Default for Tag<M> {
 
 /// One call of a body function with the borrows of one delivery; names the future the call
 /// returns, which is what lets a runner bound it.
-pub trait BodyCall<M, I, O, X>: Fn(Tag<M>, I, O, X) -> Self::Fut {
+pub trait BodyCall<M, I, O, X>: Fn(BodyTag<M>, I, O, X) -> Self::Fut {
     /// The future one call returns.
     type Fut: Future<Output = Self::Out>;
     /// What the future resolves to.
@@ -43,7 +43,7 @@ pub trait BodyCall<M, I, O, X>: Fn(Tag<M>, I, O, X) -> Self::Fut {
 
 impl<M, I, O, X, F, Fut> BodyCall<M, I, O, X> for F
 where
-    F: Fn(Tag<M>, I, O, X) -> Fut,
+    F: Fn(BodyTag<M>, I, O, X) -> Fut,
     Fut: Future,
 {
     type Fut = Fut;
@@ -99,7 +99,7 @@ where
         outs: &O,
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = Verdict<In, R>> + Send {
-        (self.body)(Tag::new(), input, outs, ctx)
+        (self.body)(BodyTag::new(), input, outs, ctx)
     }
 }
 
@@ -120,7 +120,7 @@ where
         outs: &O,
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = Verdict<In, R>> {
-        (self.body)(Tag::new(), input, outs, ctx)
+        (self.body)(BodyTag::new(), input, outs, ctx)
     }
 }
 
@@ -181,7 +181,7 @@ impl<D: Declared> IntoDeclared<AsDeclared> for D {
 
 impl<F, M, I, O, X, Fut> IntoDeclared<AsBodyFn<M, I, O, X>> for F
 where
-    F: Fn(Tag<M>, I, O, X) -> Fut,
+    F: Fn(BodyTag<M>, I, O, X) -> Fut,
     Fut: Future,
     M: DeclareBody<FnBody<M, F>>,
 {
@@ -191,3 +191,15 @@ where
         FnDecl(FnBody::new(self))
     }
 }
+
+macro_rules! opaque_debug {
+    ($($ty:ident $(<$($p:ident),+>)?),+ $(,)?) => {$(
+        impl$(<$($p),+>)? core::fmt::Debug for $ty$(<$($p),+>)? {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.debug_struct(stringify!($ty)).finish_non_exhaustive()
+            }
+        }
+    )+};
+}
+
+opaque_debug!(BodyTag<M>, FnBody<M, F>, FnDecl<M, F>, AsDeclared, AsBodyFn<M, I, O, X>);

@@ -198,7 +198,7 @@ pub(super) fn expand(
                 clippy::used_underscore_binding,
             )]
             #vis async fn #name<#lifetime #state_param>(
-                _: ::ruststream::runtime::Tag<#name>,
+                _: ::ruststream::runtime::BodyTag<#name>,
                 #input_arg,
                 #outs_param,
                 #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
