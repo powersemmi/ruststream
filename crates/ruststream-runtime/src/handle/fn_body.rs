@@ -251,3 +251,17 @@ where
         M::bind_local_body(self, sources)
     }
 }
+
+// A settings builder over a slot-carrying body reads the body's form off it, as it read the
+// unit definition's before.
+impl<M, F> Declared for FnBody<M, F>
+where
+    M: DeclareBody<Self>,
+{
+    type Form = M::Form;
+    type Settings = M::Settings;
+
+    fn declare(self) -> Self::Settings {
+        M::declare_body(self)
+    }
+}
