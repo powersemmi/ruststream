@@ -373,6 +373,8 @@ impl<M, W: ShardLanes, E, Pipe, Body> ShardLanes for Slot<M, W, E, Pipe, Body> {
 
 /// The bound the graft buys: a helper generic over the capability, not over the concrete live
 /// type, takes the entry a handler body holds.
+// `Send` exactly where the entry is: the multi-thread runner checks it where it mounts the body.
+#[allow(clippy::future_not_send)]
 async fn sent<L: ShardLanes>(lanes: &L, event: &Event) -> bool {
     let (publisher, dest) = lanes.lane(event.id);
     publisher.message(event).to(dest).publish().await.is_ok()
