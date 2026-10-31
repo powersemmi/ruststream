@@ -222,6 +222,6 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
         Conn: ConnectedBroker,
         Src: SubscriptionSource<Conn>,
     {
-        self.source.name()
+        self.source.value.name()
     }
 }
