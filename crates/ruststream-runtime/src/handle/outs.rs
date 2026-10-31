@@ -79,11 +79,13 @@
 //! publish path, so their messages would go where that transform never looked, and a body asking
 //! for one of them fails to mount.
 
+mod any_entry;
 mod arena;
 mod cells;
 mod entry;
 mod local_entry;
 
+pub use any_entry::{AnyOutPos, SelectEntry, SlotEntry};
 pub use arena::{EntryMarkers, LocalOutPos, OutPos, Outs, SelectSlot, SlotDictionary};
 pub use entry::{OutEntry, Slot};
 pub use local_entry::{LocalEntryMarkers, LocalOutEntry, LocalSlot};

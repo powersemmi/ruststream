@@ -92,7 +92,6 @@ pub(super) fn expand(
     args: &SubscriberArgs,
     parts: &HandlerParts<'_>,
     func: &ItemFn,
-    runtime: Runtime,
 ) -> syn::Result<TokenStream2> {
     let HandlerParts {
         vis,
@@ -119,33 +118,18 @@ pub(super) fn expand(
     } = input_axis(shape, input_ty, pat);
 
     let reply = reply_plan(args, func, block, batched)?;
-    local_forms(runtime, &reply, outs, batched, func)?;
     let r_tokens = reply.r_tokens(batched);
+    let _ = in_ty;
 
     // The handler's named or `Ctx`-projected context type, on the solo and batch forms alike: a
     // batch context is subscription-scoped data (see `BuildBatchContext` in the core crate).
     let ctx_ty = parts.ctx_ty.clone();
-    // The multi-thread runner shares the state across its workers; the embedded runner polls
-    // every delivery on the app's one task, so the state needs no bound there.
-    let (state_param, state_in_ctx, state_bound) = state_ty.as_ref().map_or_else(
-        || {
-            (
-                quote!(__RsState,),
-                quote!(__RsState),
-                (runtime == Runtime::Tokio)
-                    .then(|| quote!(__RsState: ::core::marker::Send + ::core::marker::Sync)),
-            )
-        },
-        |state_ty| (quote!(), quote!(#state_ty), None),
+    // The state is whatever the app holds: the runner that shares it across threads asks
+    // `Send + Sync` of it where it mounts.
+    let (state_param, state_in_ctx) = state_ty.as_ref().map_or_else(
+        || (quote!(__RsState,), quote!(__RsState)),
+        |state_ty| (quote!(), quote!(#state_ty)),
     );
-
-    let arena = ArenaPieces::of(outs, name, runtime);
-    let o_ty = &arena.o_ty;
-    let outs_param = if outs.is_empty() {
-        quote!(__rs_outs: &())
-    } else {
-        quote!(__rs_outs: &#o_ty)
-    };
 
     let VerdictPieces {
         verdict_ty,
@@ -155,88 +139,53 @@ pub(super) fn expand(
     } = verdict_pieces(func, block, &reply, batched);
 
     let prelude = extractor_prelude(extractors, ctx_param, &ctx_ty, &state_in_ctx, &reject);
-    let slot_bindings = &arena.bindings;
 
+    // The runtime-neutral expansion: the body stays a function, and each runner states what it
+    // needs of the function's future where it mounts it.
+    let arena = NeutralArena::of(outs, name);
+    let params = &arena.params;
+    let bindings = &arena.bindings;
+    let outs_param = if outs.is_empty() {
+        quote!(__rs_outs: &())
+    } else {
+        let o_ty = &arena.o_ty;
+        quote!(__rs_outs: &#o_ty)
+    };
     let mut preds = extractor_preds(extractors, &ctx_ty, &state_in_ctx);
     preds.extend(arena.bounds.iter().cloned());
-    // The slot-less body is runtime-neutral: the runner that shares the state across threads
-    // asks `Send + Sync` of it where it mounts.
-    if !outs.is_empty() {
-        preds.extend(state_bound);
-    }
-    let handle_where = where_clause(&preds);
-    let we_params = &arena.we_params;
-    let handle_trait = runtime.handle_trait();
-    let handle_impl = quote! {
-        impl<#lifetime #(#we_params,)* #state_param>
-            #handle_trait<#in_ty, #r_tokens, #o_ty, #ctx_ty, #state_in_ctx>
-            for #name
-        #handle_where
+    let body_where = where_clause(&preds);
+    let body_fn = quote! {
+        #[allow(
+            clippy::future_not_send,
+            clippy::unused_async,
+            clippy::needless_pass_by_ref_mut,
+            clippy::trivially_copy_pass_by_ref,
+            clippy::used_underscore_binding,
+        )]
+        #vis async fn #name<#lifetime #(#params,)* #state_param>(
+            _: ::ruststream::runtime::BodyTag<#name>,
+            #input_arg,
+            #outs_param,
+            #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
+        ) -> #verdict_ty
+        #body_where
         {
-            async fn handle(
-                &self,
-                #input_arg,
-                #outs_param,
-                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
-            ) -> #verdict_ty {
-                #input_binding
-                #batch_len
-                #prelude
-                #(#slot_bindings)*
-                #glue
-            }
+            #input_binding
+            #batch_len
+            #prelude
+            #(#bindings)*
+            #glue
         }
     };
 
     let docs_expr = probed_docs_expr(parts, &reply);
-
-    if outs.is_empty() {
-        // The runtime-neutral expansion: the body stays a function, and each runner states what
-        // it needs of the function's future where it mounts it.
-        let body_fn = quote! {
-            #[allow(
-                clippy::future_not_send,
-                clippy::unused_async,
-                clippy::needless_pass_by_ref_mut,
-                clippy::trivially_copy_pass_by_ref,
-                clippy::used_underscore_binding,
-            )]
-            #vis async fn #name<#lifetime #state_param>(
-                _: ::ruststream::runtime::BodyTag<#name>,
-                #input_arg,
-                #outs_param,
-                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
-            ) -> #verdict_ty
-            #handle_where
-            {
-                #input_binding
-                #batch_len
-                #prelude
-                #glue
-            }
-        };
-        let wiring = body_wiring(parts, &reply, &docs_expr, &axis, &r_tokens, &ctx_ty);
-        return Ok(quote! {
-            #[allow(non_camel_case_types)]
-            #[doc(hidden)]
-            #vis struct #name {}
-
-            #body_fn
-
-            #wiring
-        });
-    }
-
-    let wiring = definition_wiring(
-        parts, &reply, &docs_expr, &axis, &r_tokens, &ctx_ty, runtime,
-    );
-
+    let wiring = body_wiring(parts, &reply, &docs_expr, &axis, &r_tokens, &ctx_ty);
     Ok(quote! {
-        #[derive(Clone, Copy)]
         #[allow(non_camel_case_types)]
-        #vis struct #name;
+        #[doc(hidden)]
+        #vis struct #name {}
 
-        #handle_impl
+        #body_fn
 
         #wiring
     })
@@ -328,9 +277,10 @@ fn reply_plan<'a>(
     })
 }
 
-/// The declaration of a slot-less handler over the body function it wraps: the settings builder
+/// The declaration of one handler over the body function it wraps: the settings builder
 /// `subscriber(..)` also produces, generic over the body so that each runner mounts the same
-/// declaration.
+/// declaration. With slots the builder wraps the body itself, and the slot binding instantiates
+/// the sealed definition once the policies are known, for either runner.
 fn body_wiring(
     parts: &HandlerParts<'_>,
     reply: &ReplyPlan<'_>,
@@ -338,68 +288,6 @@ fn body_wiring(
     axis: &TokenStream2,
     r_tokens: &TokenStream2,
     ctx_ty: &TokenStream2,
-) -> TokenStream2 {
-    let HandlerParts {
-        name,
-        source_expr,
-        settings_chain,
-        settings_source_ty,
-        settings_state_ty,
-        ..
-    } = parts;
-    let form = form_token(axis, r_tokens, reply, false);
-    let doc_state = quote!(::ruststream::runtime::Probed);
-    let plain = quote! {
-        ::ruststream::runtime::HandleValue<#axis, #r_tokens, (), #ctx_ty, __RsBody, #doc_state>
-    };
-    let (sealed, def_expr) = match reply {
-        ReplyPlan::None => (
-            quote!(::ruststream::runtime::Sealed<#plain>),
-            quote!(::ruststream::runtime::probed_def(__rs_body, #docs_expr)),
-        ),
-        ReplyPlan::Reply { dest, ty, .. } => {
-            let resolved = ReplyPlan::resolved(dest, ty);
-            (
-                quote! {
-                    ::ruststream::runtime::Sealed<
-                        ::ruststream::runtime::ReplyValue<#plain, ::ruststream::runtime::ResolvedDest>,
-                    >
-                },
-                quote!(::ruststream::runtime::probed_reply_def(__rs_body, #docs_expr, #resolved)),
-            )
-        }
-    };
-    quote! {
-        impl<__RsBody> ::ruststream::runtime::DeclareBody<__RsBody> for #name {
-            type Form = #form;
-            type Settings = ::ruststream::runtime::SubscriberBuilder<
-                #sealed,
-                #settings_source_ty,
-                #settings_state_ty,
-            >;
-
-            fn declare_body(__rs_body: __RsBody) -> Self::Settings {
-                #[allow(unused_imports)]
-                use ::ruststream::runtime::SubscriberSettings as _;
-                ::ruststream::runtime::SubscriberBuilder::new(#def_expr, #source_expr)
-                    #settings_chain
-            }
-        }
-    }
-}
-
-/// The `Declared` wiring of one unified handler: without slots the declaration wraps the sealed
-/// value itself in the settings builder, exactly as `subscriber(..)` wraps it; with slots the
-/// unit struct stays the include-site value and `BindSlots::bind` instantiates the sealed arena
-/// definition once the policies are known.
-fn definition_wiring(
-    parts: &HandlerParts<'_>,
-    reply: &ReplyPlan<'_>,
-    docs_expr: &TokenStream2,
-    axis: &TokenStream2,
-    r_tokens: &TokenStream2,
-    ctx_ty: &TokenStream2,
-    runtime: Runtime,
 ) -> TokenStream2 {
     let HandlerParts {
         name,
@@ -414,38 +302,31 @@ fn definition_wiring(
     let doc_state = quote!(::ruststream::runtime::Probed);
     let sealed_ty = |o: &TokenStream2| {
         let plain = quote! {
-            ::ruststream::runtime::HandleValue<#axis, #r_tokens, #o, #ctx_ty, #name, #doc_state>
+            ::ruststream::runtime::HandleValue<#axis, #r_tokens, #o, #ctx_ty, __RsBody, #doc_state>
         };
-        // One destination type for both clause forms: the expansion resolves the destination, so
-        // the definition carries a name rather than the obligation to work one out.
-        let dest_ty = match reply {
-            ReplyPlan::None => return quote!(::ruststream::runtime::Sealed<#plain>),
-            ReplyPlan::Reply { .. } => quote!(::ruststream::runtime::ResolvedDest),
-        };
-        quote! {
-            ::ruststream::runtime::Sealed<
-                ::ruststream::runtime::ReplyValue<#plain, #dest_ty>,
-            >
+        match reply {
+            ReplyPlan::None => quote!(::ruststream::runtime::Sealed<#plain>),
+            ReplyPlan::Reply { .. } => quote! {
+                ::ruststream::runtime::Sealed<
+                    ::ruststream::runtime::ReplyValue<#plain, ::ruststream::runtime::ResolvedDest>,
+                >
+            },
         }
     };
     let def_expr = match reply {
-        ReplyPlan::None => quote!(::ruststream::runtime::probed_def(self, #docs_expr)),
+        ReplyPlan::None => quote!(::ruststream::runtime::probed_def(__rs_body, #docs_expr)),
         ReplyPlan::Reply { dest, ty, .. } => {
             let resolved = ReplyPlan::resolved(dest, ty);
-            quote!(::ruststream::runtime::probed_reply_def(self, #docs_expr, #resolved))
+            quote!(::ruststream::runtime::probed_reply_def(__rs_body, #docs_expr, #resolved))
         }
     };
-
-    // The declaration: the settings-builder wrapper `subscriber(..)` also produces. Without
-    // slots it wraps the sealed value itself; with slots it wraps the unit struct (the arena's
-    // publisher types are only known once the policies bind).
     let (settings_def_ty, declared_expr) = if outs.is_empty() {
         (sealed_ty(&quote!(())), def_expr.clone())
     } else {
-        (quote!(#name), quote!(self))
+        (quote!(__RsBody), quote!(__rs_body))
     };
     let declared = quote! {
-        impl ::ruststream::runtime::Declared for #name {
+        impl<__RsBody> ::ruststream::runtime::DeclareBody<__RsBody> for #name {
             type Form = #form;
             type Settings = ::ruststream::runtime::SubscriberBuilder<
                 #settings_def_ty,
@@ -453,7 +334,7 @@ fn definition_wiring(
                 #settings_state_ty,
             >;
 
-            fn declare(self) -> Self::Settings {
+            fn declare_body(__rs_body: __RsBody) -> Self::Settings {
                 #[allow(unused_imports)]
                 use ::ruststream::runtime::SubscriberSettings as _;
                 ::ruststream::runtime::SubscriberBuilder::new(#declared_expr, #source_expr)
@@ -464,9 +345,6 @@ fn definition_wiring(
     if outs.is_empty() {
         return declared;
     }
-    // With slots the include-site value is the unit struct, so the reply type and context the
-    // mount chain's `.transform(..)` step reads are stated here rather than read off the sealed
-    // definition.
     let declares_reply = (!reply.is_none()).then(|| {
         quote! {
             impl ::ruststream::runtime::DeclaresReply for #name {
@@ -481,7 +359,6 @@ fn definition_wiring(
         &sealed_ty,
         &def_expr,
         parts.shape == Shape::Batch,
-        runtime,
     );
     quote! {
         #declared
@@ -492,21 +369,17 @@ fn definition_wiring(
     }
 }
 
-/// The slot-carrying wiring next to the declaration: the marker metadata (`HasSlots`) and the
-/// `BindSlots` instantiation that builds the sealed arena definition from the bound policies,
-/// which the runtime's own definition impls then drive.
+/// The slot-carrying wiring next to the declaration: the marker metadata and, for each runner,
+/// the slot binding that builds the sealed arena definition around the body from the bound
+/// policies. The two bindings differ only in the entry type each runner pairs; the body is the
+/// same function in both.
 fn slot_binding_impls(
     name: &Ident,
     outs: &[OutParam<'_>],
     sealed_ty: &dyn Fn(&TokenStream2) -> TokenStream2,
     def_expr: &TokenStream2,
     batched: bool,
-    runtime: Runtime,
 ) -> TokenStream2 {
-    // The include-site value is the unit struct until the slots bind, so the batch-size step is
-    // declared on it directly; the size itself rides the settings builder either way. Only a
-    // batch handler declares it, which is what keeps `.batch(..)` a compile error on a
-    // single-message body with slots.
     let caps_batches = batched.then(|| {
         quote! {
             impl ::ruststream::runtime::CapsBatches for #name {}
@@ -515,31 +388,28 @@ fn slot_binding_impls(
     let markers: Vec<&TokenStream2> = outs.iter().map(|out| &out.marker).collect();
     let policies = numbered_idents("__RsPolicy", outs.len(), name);
     let codecs = numbered_idents("__RsCodec", outs.len(), name);
-    // The slot's publish pipeline: what the mount site composed from its `.transform(..)` steps
-    // and the app's own middleware. The definition stays generic over it, so one handler mounts
-    // under any of them.
     let pipelines = numbered_idents("__RsPipeline", outs.len(), name);
-    let bound_entries = bound_slot_entries(outs, &policies, &codecs, &pipelines, runtime);
-    let bound_ty = sealed_ty(&quote!(::ruststream::runtime::Outs<(#(#bound_entries,)*)>));
-    let bind_slots = bind_slots_impl(
-        name, &policies, &codecs, &pipelines, &bound_ty, def_expr, runtime,
-    );
-    let has_slots = match runtime {
-        Runtime::Tokio => quote!(::ruststream::runtime::HasSlots),
-        Runtime::Embassy => quote!(::ruststream::runtime::LocalHasSlots),
-    };
+    let bindings = [Family::Tokio, Family::Local].map(|family| {
+        let entries = bound_slot_entries(outs, &policies, &codecs, &pipelines, family);
+        let bound_ty = sealed_ty(&quote!(::ruststream::runtime::Outs<(#(#entries,)*)>));
+        bind_slots_impl(
+            name, &policies, &codecs, &pipelines, &bound_ty, def_expr, family,
+        )
+    });
     let witness_tys: Vec<&syn::Type> = outs.iter().map(|out| out.ty).collect();
     quote! {
         #caps_batches
 
-        impl #has_slots for #name {
+        impl ::ruststream::runtime::HasSlots for #name {
             type Markers = (#(#markers,)*);
         }
 
-        #bind_slots
+        impl ::ruststream::runtime::LocalHasSlots for #name {
+            type Markers = (#(#markers,)*);
+        }
 
-        // Keeps the signature's own vocabulary (the `Out` path, the markers, the declared
-        // capabilities) used, the way the retired shell bindings did.
+        #(#bindings)*
+
         const _: () = {
             #[allow(dead_code)]
             fn __rs_signature_witness(#(_: #witness_tys),*) {}
@@ -547,8 +417,15 @@ fn slot_binding_impls(
     }
 }
 
-/// The `BindSlots` instantiation: given the policy, codec and pipeline of every slot, it builds the
-/// sealed arena definition and hands the sources back as the extra state.
+/// The two families of slot entries: the multi-thread runner's and the embedded runner's.
+#[derive(Clone, Copy)]
+enum Family {
+    Tokio,
+    Local,
+}
+
+/// One runner's slot binding: given the policy, codec and pipeline of every slot, it builds the
+/// sealed arena definition around the body and hands the sources back as the extra state.
 fn bind_slots_impl(
     name: &Ident,
     policies: &[Ident],
@@ -556,14 +433,29 @@ fn bind_slots_impl(
     pipelines: &[Ident],
     bound_ty: &TokenStream2,
     def_expr: &TokenStream2,
-    runtime: Runtime,
+    family: Family,
 ) -> TokenStream2 {
-    let (bind_slots, connected, policy, bind) = binding_vocabulary(runtime);
+    let span = proc_macro2::Span::call_site();
+    let (bind_slots, connected, policy, bind) = match family {
+        Family::Tokio => (
+            quote!(::ruststream::runtime::BindSlotsBody),
+            quote!(::ruststream::ConnectedBroker),
+            quote!(::ruststream::PublishPolicy),
+            Ident::new("bind_body", span),
+        ),
+        Family::Local => (
+            quote!(::ruststream::runtime::LocalBindSlotsBody),
+            quote!(::ruststream::LocalConnectedBroker),
+            quote!(::ruststream::LocalPublishPolicy),
+            Ident::new("bind_local_body", span),
+        ),
+    };
     quote! {
-        impl<__RsConn, #(#policies,)* #(#codecs,)* #(#pipelines,)*>
+        impl<__RsBody, __RsConn, #(#policies,)* #(#codecs,)* #(#pipelines,)*>
             #bind_slots<
                 __RsConn,
                 (#((#policies, #codecs, #pipelines),)*),
+                __RsBody,
             >
             for #name
         where
@@ -574,32 +466,12 @@ fn bind_slots_impl(
             type Extra = (#((#policies, #codecs, #pipelines),)*);
 
             fn #bind(
-                self,
+                __rs_body: __RsBody,
                 sources: (#((#policies, #codecs, #pipelines),)*),
             ) -> (Self::Bound, Self::Extra) {
                 (#def_expr, sources)
             }
         }
-    }
-}
-
-/// The binding vocabulary of one runtime's family: the binding trait, the connected broker and
-/// the publish policy it pairs, and the binding method.
-fn binding_vocabulary(runtime: Runtime) -> (TokenStream2, TokenStream2, TokenStream2, Ident) {
-    let span = proc_macro2::Span::call_site();
-    match runtime {
-        Runtime::Tokio => (
-            quote!(::ruststream::runtime::BindSlots),
-            quote!(::ruststream::ConnectedBroker),
-            quote!(::ruststream::PublishPolicy),
-            Ident::new("bind", span),
-        ),
-        Runtime::Embassy => (
-            quote!(::ruststream::runtime::LocalBindSlots),
-            quote!(::ruststream::LocalConnectedBroker),
-            quote!(::ruststream::LocalPublishPolicy),
-            Ident::new("bind_local", span),
-        ),
     }
 }
 
@@ -617,14 +489,14 @@ fn bound_slot_entries(
     policies: &[Ident],
     codecs: &[Ident],
     pipelines: &[Ident],
-    runtime: Runtime,
+    family: Family,
 ) -> Vec<TokenStream2> {
-    let (slot, policy_trait) = match runtime {
-        Runtime::Tokio => (
+    let (slot, policy_trait) = match family {
+        Family::Tokio => (
             quote!(::ruststream::runtime::Slot),
             quote!(::ruststream::PublishPolicy),
         ),
-        Runtime::Embassy => (
+        Family::Local => (
             quote!(::ruststream::runtime::LocalSlot),
             quote!(::ruststream::LocalPublishPolicy),
         ),
@@ -770,148 +642,56 @@ fn form_token(
     }
 }
 
-/// The arena pieces of a handler's `Out` parameters: the `O` axis, the per-slot generics with
-/// their bounds, and the body bindings picking each entry by marker.
-struct ArenaPieces {
-    /// The `O` axis of the `Handle` impl: `()` without slots, `Outs<(Slot<..>,)>` with them.
+/// The arena of a runtime-neutral body: one generic entry per slot, bound by its marker, its
+/// declared set and the capability the body named on the entry's wire; and the bindings that
+/// pick each entry by marker.
+struct NeutralArena {
+    /// `Outs<(E0, E1, ..)>`.
     o_ty: TokenStream2,
-    /// The per-slot `W` / `E` / pipeline generic parameters, in declaration order.
-    we_params: Vec<Ident>,
-    /// The bounds of those generics: the user's capability bounds on `W`, the codec's on `E`,
-    /// and the publish path's on the pipeline.
+    /// The entry parameters, in declaration order.
+    params: Vec<Ident>,
+    /// Their bounds.
     bounds: Vec<TokenStream2>,
-    /// The body bindings: `let out = __rs_outs.get(Marker);` per parameter.
+    /// `let out = __rs_outs.slot(Marker);` per parameter.
     bindings: Vec<TokenStream2>,
 }
 
-impl ArenaPieces {
-    fn of(outs: &[OutParam<'_>], name: &Ident, runtime: Runtime) -> Self {
-        if outs.is_empty() {
-            return Self {
-                o_ty: quote!(()),
-                we_params: Vec::new(),
-                bounds: Vec::new(),
-                bindings: Vec::new(),
-            };
-        }
-        let mut entries = Vec::new();
-        let mut we_params = Vec::new();
-        let mut bounds = Vec::new();
-        let mut bindings = Vec::new();
-        if runtime == Runtime::Embassy {
-            return Self::local(outs, name);
-        }
-        for (index, out) in outs.iter().enumerate() {
-            let wired = Ident::new(&format!("__RsOutW{index}"), name.span());
-            let codec = Ident::new(&format!("__RsOutE{index}"), name.span());
-            let pipeline = Ident::new(&format!("__RsOutP{index}"), name.span());
-            let marker = &out.marker;
-            let capability = out.bounds;
-            let body = body_ty(out.bodies.as_ref());
-            entries.push(
-                quote!(::ruststream::runtime::Slot<#marker, #wired, #codec, #pipeline, #body>),
-            );
-            // The dispatch machinery shares the arena across worker tasks, so Send + Sync are
-            // structural; the codec bound is what the entry's typed publishes encode with, and
-            // the pipeline bound is the publish path the mount site composed for the slot.
-            bounds.push(quote! {
-                #wired: #capability + ::core::marker::Send + ::core::marker::Sync + 'static
-            });
-            bounds.push(quote! {
-                #codec: ::ruststream::codec::Codec
-                    + ::core::marker::Send
-                    + ::core::marker::Sync
-                    + 'static
-            });
-            bounds.push(quote! {
-                #pipeline: ::ruststream::runtime::OutPipeline<#wired> + 'static
-            });
-            bindings.push(arena_binding(out.pat, marker));
-            we_params.push(wired);
-            we_params.push(codec);
-            we_params.push(pipeline);
-        }
-        Self {
-            o_ty: quote!(::ruststream::runtime::Outs<(#(#entries,)*)>),
-            we_params,
-            bounds,
-            bindings,
-        }
-    }
-}
-
-impl ArenaPieces {
-    /// The arena of a [`LocalHandle`] body: one generic entry per slot, bound by the marker, the
-    /// declared set and the capability's local twin on its wire. The entry is whatever the local
-    /// chain pairs; nothing of it has to be `Send`.
-    ///
-    /// [`LocalHandle`]: https://docs.rs/ruststream/latest/ruststream/runtime/trait.LocalHandle.html
-    fn local(outs: &[OutParam<'_>], name: &Ident) -> Self {
-        let mut entries = Vec::new();
+impl NeutralArena {
+    fn of(outs: &[OutParam<'_>], name: &Ident) -> Self {
+        let mut params = Vec::new();
         let mut bounds = Vec::new();
         let mut bindings = Vec::new();
         for (index, out) in outs.iter().enumerate() {
-            let entry = Ident::new(&format!("__RsOutEntry{index}"), name.span());
+            let entry = Ident::new(&format!("__RsSlot{index}"), name.span());
             let marker = &out.marker;
+            // The local family's capability is the weaker one: every `Publisher` is a
+            // `LocalPublisher`, and the multi-thread runner checks `Send` at its mount.
             let capability = Runtime::Embassy.capability(out.bounds);
             let body = body_ty(out.bodies.as_ref());
             bounds.push(quote! {
-                #entry: ::ruststream::runtime::LocalOutEntry<#marker, #body, Wire: #capability>
+                #entry: ::ruststream::runtime::SlotEntry<#marker, #body, Wire: #capability>
             });
             bindings.push(arena_binding(out.pat, marker));
-            entries.push(entry);
+            params.push(entry);
         }
         Self {
-            o_ty: quote!(::ruststream::runtime::Outs<(#(#entries,)*)>),
-            we_params: entries,
+            o_ty: quote!(::ruststream::runtime::Outs<(#(#params,)*)>),
+            params,
             bounds,
             bindings,
         }
     }
 }
 
-/// The forms the local family does not offer yet, refused with the reason instead of an
-/// expansion the compiler would reject deep inside the mount chain.
-fn local_forms(
-    runtime: Runtime,
-    reply: &ReplyPlan<'_>,
-    outs: &[OutParam<'_>],
-    batched: bool,
-    func: &ItemFn,
-) -> syn::Result<()> {
-    if runtime == Runtime::Tokio {
-        return Ok(());
-    }
-    let Some(first) = outs.first() else {
-        return Ok(());
-    };
-    if batched {
-        return Err(syn::Error::new_spanned(
-            first.ty,
-            "a batch handler takes no `Out` parameter on the embassy runtime; publish from a \
-             handler that takes one message at a time",
-        ));
-    }
-    if !reply.is_none() {
-        return Err(syn::Error::new_spanned(
-            &func.sig.output,
-            "a handler with an `Out` parameter does not reply on the embassy runtime; publish \
-             the reply through a slot of its own",
-        ));
-    }
-    Ok(())
-}
-
-/// One `Out` parameter's body binding: an `Out(x)`-shaped pattern binds its inner name to the
-/// arena entry; any other pattern binds the whole entry.
+/// The body binding of one slot, unwrapping the user's `Out(..)` pattern.
 fn arena_binding(pat: &Pat, marker: &TokenStream2) -> TokenStream2 {
     if let Pat::TupleStruct(tuple) = pat
         && tuple.elems.len() == 1
     {
         let inner = &tuple.elems[0];
-        return quote!(let #inner = __rs_outs.get(#marker););
+        return quote!(let #inner = __rs_outs.slot(#marker););
     }
-    quote!(let #pat = __rs_outs.get(#marker);)
+    quote!(let #pat = __rs_outs.slot(#marker);)
 }
 
 /// The probe-captured metadata expression of one unified handler: everything the definition

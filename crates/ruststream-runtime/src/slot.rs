@@ -942,6 +942,29 @@ pub trait LocalBindSlots<C: LocalConnectedBroker, Sources>: Sized {
 
 /// Implements [`InitSlots`] for each marker-tuple arity: every position starts as its marker's
 /// [`MissingSlot`].
+/// [`BindSlots`] of a `#[subscriber]` declaration over the body function it wraps: the
+/// declaration builds the bound definition around `Body`.
+#[doc(hidden)]
+pub trait BindSlotsBody<C: ConnectedBroker, Sources, Body>: Sized {
+    /// See [`BindSlots::Bound`].
+    type Bound;
+    /// See [`BindSlots::Extra`].
+    type Extra;
+    /// See [`BindSlots::bind`].
+    fn bind_body(body: Body, sources: Sources) -> (Self::Bound, Self::Extra);
+}
+
+/// [`LocalBindSlots`] of a `#[subscriber]` declaration over the body function it wraps.
+#[doc(hidden)]
+pub trait LocalBindSlotsBody<C: LocalConnectedBroker, Sources, Body>: Sized {
+    /// See [`LocalBindSlots::Bound`].
+    type Bound;
+    /// See [`LocalBindSlots::Extra`].
+    type Extra;
+    /// See [`LocalBindSlots::bind_local`].
+    fn bind_local_body(body: Body, sources: Sources) -> (Self::Bound, Self::Extra);
+}
+
 macro_rules! impl_init_slots {
     ($(($($marker:ident),+))+) => {$(
         impl<$($marker),+> InitSlots for ($($marker,)+) {

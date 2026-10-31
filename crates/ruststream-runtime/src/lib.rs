@@ -176,6 +176,9 @@ pub use failure::DispatchFailure;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
+pub use handle::{AnyOutPos, SelectEntry, SlotEntry};
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
 pub use handle::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
 #[cfg(feature = "alloc")]
 pub use handle::{AsDeclared, IntoDeclared};
@@ -216,6 +219,9 @@ pub use host::{Detach, Halt, HostDetach, LocalDetach, OnOneThread};
 pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept};
 #[cfg(feature = "tokio")]
 pub use main_runtime::MainRuntime;
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use slot::{BindSlotsBody, LocalBindSlotsBody};
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 #[doc(hidden)]

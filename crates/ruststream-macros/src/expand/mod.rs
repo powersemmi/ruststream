@@ -15,7 +15,6 @@ use crate::parse::{
     FailurePolicyArg, SubscriberArgs, WorkersArg, doc_description, position_type, source_tokens,
     vec_element,
 };
-use crate::runtime::Runtime;
 
 use params::{
     BodyDecl, OutParam, Shape, collect_extractors, ctx_extractor_key, from_headers_ty,
@@ -25,7 +24,7 @@ use params::{
 
 pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
     let parts = handler_parts(args, func)?;
-    Ok(unified::expand(args, &parts, func, Runtime::SELECTED)?.into())
+    Ok(unified::expand(args, &parts, func)?.into())
 }
 
 /// The pieces of the handler shared by every expansion form, extracted from the signature.

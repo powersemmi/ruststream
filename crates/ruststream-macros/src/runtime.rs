@@ -25,14 +25,6 @@ impl Runtime {
         Self::Tokio
     };
 
-    /// The body contract the handler's impl names.
-    pub(crate) fn handle_trait(self) -> TokenStream2 {
-        match self {
-            Self::Tokio => quote!(::ruststream::runtime::Handle),
-            Self::Embassy => quote!(::ruststream::runtime::LocalHandle),
-        }
-    }
-
     /// The bounds a capability written on an `Out` parameter becomes: as written on tokio; on
     /// embassy each publisher capability of the core maps to its local twin, so
     /// `Out<impl Publisher>` asks for a `LocalPublisher`.

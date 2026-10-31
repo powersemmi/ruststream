@@ -41,6 +41,10 @@ pub use ruststream_runtime::{
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
 #[doc(hidden)]
+pub use ruststream_runtime::{
+    AnyOutPos, BindSlotsBody, LocalBindSlotsBody, SelectEntry, SlotEntry,
+};
+#[doc(hidden)]
 pub use ruststream_runtime::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
 pub use ruststream_runtime::{AsDeclared, IntoDeclared};
 #[doc(hidden)]

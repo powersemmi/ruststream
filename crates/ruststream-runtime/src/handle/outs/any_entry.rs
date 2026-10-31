@@ -1,0 +1,153 @@
+//! One arena entry as a runtime-neutral body sees it: either runner's slot, picked by marker.
+//!
+//! A `#[subscriber]` body that publishes is one function for both runners. It is generic over
+//! each of its entries and bounds it with [`SlotEntry`], whose capability is the local family's
+//! (`Wire: LocalPublisher`), which every `Publisher` satisfies. The multi-thread runner's mount
+//! then asks the body's future to be `Send` at the concrete entries it wired, where the compiler
+//! sees through every publish the body makes.
+
+use core::ops::Deref;
+
+use crate::codec::Codec;
+use crate::publish::{
+    HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, OutPipeline, PublishBuilder,
+};
+use crate::slot::{ContainsMessage, OutSlot, PublishedThrough};
+use crate::{LocalPublisher, OutgoingDestination, Publisher};
+
+use super::arena::Outs;
+use super::entry::Slot;
+use super::local_entry::{LocalSlot, SlotEncoding};
+
+/// An arena entry of either runner, as a runtime-neutral body publishes through it.
+pub trait SlotEntry<M, Body = ()>: Deref<Target = Self::Wire> {
+    /// The live publisher the slot's policy paired.
+    type Wire;
+    /// The codec typed publishes through the slot encode with.
+    type Enc: SlotEncoding;
+    /// The sink a publish through the slot travels.
+    type Sink<'a>: LocalPublishSink
+    where
+        Self: 'a;
+
+    /// Starts a typed publish through the slot.
+    fn message<'a, T, Index>(
+        &'a self,
+        value: &'a T,
+    ) -> PublishBuilder<Self::Sink<'a>, MessageBody<'a, T>, &'a Self::Enc, HeadersUnset, T::Form>
+    where
+        Body: ContainsMessage<T, Index>,
+        T: OutgoingDestination + PublishedThrough<M>;
+}
+
+impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for Slot<M, W, E, Pipe, Body>
+where
+    M: OutSlot,
+    W: Publisher,
+    E: Codec + Send + Sync,
+    Pipe: OutPipeline<W>,
+{
+    type Wire = W;
+    type Enc = E;
+    type Sink<'a>
+        = &'a Self
+    where
+        Self: 'a;
+
+    fn message<'a, T, Index>(
+        &'a self,
+        value: &'a T,
+    ) -> PublishBuilder<&'a Self, MessageBody<'a, T>, &'a E, HeadersUnset, T::Form>
+    where
+        Body: ContainsMessage<T, Index>,
+        T: OutgoingDestination + PublishedThrough<M>,
+    {
+        Self::message(self, value)
+    }
+}
+
+impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body>
+where
+    M: OutSlot,
+    W: LocalPublisher,
+    E: SlotEncoding,
+    Pipe: LocalOutPipeline<W>,
+{
+    type Wire = W;
+    type Enc = E;
+    type Sink<'a>
+        = &'a Self
+    where
+        Self: 'a;
+
+    fn message<'a, T, Index>(
+        &'a self,
+        value: &'a T,
+    ) -> PublishBuilder<&'a Self, MessageBody<'a, T>, &'a E, HeadersUnset, T::Form>
+    where
+        Body: ContainsMessage<T, Index>,
+        T: OutgoingDestination + PublishedThrough<M>,
+    {
+        Self::message(self, value)
+    }
+}
+
+/// The position of an entry in the arena tuple, for [`Outs::slot`].
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct AnyOutPos<const N: usize>;
+
+/// Picks the entry of marker `M` out of an arena tuple, whichever runner built it.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this arena has no `{M}` slot",
+    note = "the body's `Out` parameters list the slots it may publish through; check the marker"
+)]
+pub trait SelectEntry<M, I> {
+    /// The picked entry.
+    type Picked;
+    /// Borrows the picked entry.
+    fn pick_entry(&self) -> &Self::Picked;
+}
+
+macro_rules! impl_select_entry {
+    ($(($($before:ident,)* @ $pos:literal $(, $after:ident)*))+) => {$(
+        impl<M, Body, Entry $(, $before)* $(, $after)*> SelectEntry<M, (AnyOutPos<$pos>, Body)>
+            for ($($before,)* Entry, $($after,)*)
+        where
+            Entry: SlotEntry<M, Body>,
+        {
+            type Picked = Entry;
+
+            fn pick_entry(&self) -> &Entry {
+                #[allow(non_snake_case)]
+                let ($($before,)* picked, $($after,)*) = self;
+                $(let _ = $before;)*
+                $(let _ = $after;)*
+                picked
+            }
+        }
+    )+};
+}
+
+impl_select_entry! {
+    (@ 0)
+    (@ 0, A1)
+    (A0, @ 1)
+    (@ 0, A1, A2)
+    (A0, @ 1, A2)
+    (A0, A1, @ 2)
+}
+
+impl<E> Outs<E> {
+    /// The entry of `marker`, as a runtime-neutral body reaches it.
+    #[doc(hidden)]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn slot<M, I>(&self, marker: M) -> &<E as SelectEntry<M, I>>::Picked
+    where
+        E: SelectEntry<M, I>,
+    {
+        let _ = marker;
+        self.entries().pick_entry()
+    }
+}

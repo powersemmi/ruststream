@@ -9,9 +9,14 @@
 
 use core::marker::PhantomData;
 
+use super::reply::DeclaresReply;
 use super::{Handle, Input, LocalHandle, Verdict};
 use crate::context::Context;
-use crate::settings::Declared;
+use crate::settings::{CapsBatches, Declared};
+use crate::slot::{
+    BindSlots, BindSlotsBody, HasSlots, LocalBindSlots, LocalBindSlotsBody, LocalHasSlots,
+};
+use crate::{ConnectedBroker, LocalConnectedBroker};
 
 /// The first argument of a `#[subscriber]` body: names the declaration that goes with the body.
 ///
@@ -203,3 +208,46 @@ macro_rules! opaque_debug {
 }
 
 opaque_debug!(BodyTag<M>, FnBody<M, F>, FnDecl<M, F>, AsDeclared, AsBodyFn<M, I, O, X>);
+
+// A body function stands in for its declaration wherever the mount chain reads one: the slots it
+// declares, the reply it gives, the batch step it takes, and how its slots bind.
+impl<M: HasSlots, F> HasSlots for FnBody<M, F> {
+    type Markers = M::Markers;
+}
+
+impl<M: LocalHasSlots, F> LocalHasSlots for FnBody<M, F> {
+    type Markers = M::Markers;
+}
+
+impl<M: CapsBatches, F> CapsBatches for FnBody<M, F> {}
+
+impl<M: DeclaresReply, F> DeclaresReply for FnBody<M, F> {
+    type Reply = M::Reply;
+    type Context = M::Context;
+}
+
+impl<M, F, C, Sources> BindSlots<C, Sources> for FnBody<M, F>
+where
+    C: ConnectedBroker,
+    M: BindSlotsBody<C, Sources, Self>,
+{
+    type Bound = M::Bound;
+    type Extra = M::Extra;
+
+    fn bind(self, sources: Sources) -> (Self::Bound, Self::Extra) {
+        M::bind_body(self, sources)
+    }
+}
+
+impl<M, F, C, Sources> LocalBindSlots<C, Sources> for FnBody<M, F>
+where
+    C: LocalConnectedBroker,
+    M: LocalBindSlotsBody<C, Sources, Self>,
+{
+    type Bound = M::Bound;
+    type Extra = M::Extra;
+
+    fn bind_local(self, sources: Sources) -> (Self::Bound, Self::Extra) {
+        M::bind_local_body(self, sources)
+    }
+}
