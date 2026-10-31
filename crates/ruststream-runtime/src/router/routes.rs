@@ -23,8 +23,8 @@ use crate::redelivery::{
     BoundRetry, CopyPathAddress, CopyPathPairing, RetrySetup, RetrySlot, ScopeDelivery,
     open_subscription,
 };
-use crate::retry::DestinationDeclared;
 use crate::retry::RetryOpen;
+use crate::retry::{Absent, DestinationDeclared, Present};
 use crate::{BrokerMoves, CopyPath, RetryDeclaration};
 
 use super::head::{Plain, PoisonAt};
@@ -155,7 +155,7 @@ impl_destination_declared!(
     [S, H, Cx] SubscribeRoute<S, H, Cx>,
     [S, H, Cx] BatchRoute<S, H, Cx>,
     [S, H] HandleRoute<S, H>,
-    [Route] DeclaredRoute<Route>,
+    [Route, Dead] DeclaredRoute<Route, Dead>,
 );
 
 // The registration that bound the position answered when it was wired: see `AttachRetry`.
@@ -224,32 +224,56 @@ impl<Route, B: Broker, Cx, Parts, Settled> RetriedRoute<Route, B, Cx, Parts, Set
 /// out of every route type: a route that declares nothing carries nothing.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct DeclaredRoute<Route> {
+pub struct DeclaredRoute<Route, Dead = Absent> {
     pub(super) route: Route,
     pub(super) declaration: RetryDeclaration,
+    _dead_letter: PhantomData<fn() -> Dead>,
 }
 
-impl<Route> DeclaredRoute<Route> {
+impl<Route, Dead> DeclaredRoute<Route, Dead> {
     pub(super) fn new(route: Route, declaration: RetryDeclaration) -> Self {
-        Self { route, declaration }
+        Self {
+            route,
+            declaration,
+            _dead_letter: PhantomData,
+        }
     }
 }
 
-impl<Route: RouteMeta> RouteMeta for DeclaredRoute<Route> {
+/// A registration whose mount chain declared a dead-letter destination with `.dead_letter(..)`,
+/// so a delivery can be sent there. Machinery; never named directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`DeadLetter` sends a delivery to the destination `.dead_letter(..)` declares, and \
+               this registration declares none",
+    label = "`.dead_letter(..)` is missing on this registration",
+    note = "declare it right after `include(..)`, before `.retry_capacity::<CAP>()`: \
+            `b.include(job).max_attempts(nonzero!(3u32)).dead_letter(\"jobs.dead\")\
+            .retry_capacity::<4>().when_retry_full(DeadLetter)`"
+)]
+pub trait DeadLetterDeclared {}
+
+impl<Route> DeadLetterDeclared for DeclaredRoute<Route, Present> {}
+
+impl<Route: DeadLetterDeclared> DeadLetterDeclared for DeclaredRoute<Route, Absent> {}
+
+impl<Route: RouteMeta, Dead> RouteMeta for DeclaredRoute<Route, Dead> {
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         self.route.collect(out);
     }
 }
 
-impl<Route: RouteMetadata> RouteMetadata for DeclaredRoute<Route> {
+impl<Route: RouteMetadata, Dead> RouteMetadata for DeclaredRoute<Route, Dead> {
     fn metadata_mut(&mut self) -> &mut HandlerMetadata {
         self.route.metadata_mut()
     }
 }
 
-impl<Route: RetryOpen> RetryOpen for DeclaredRoute<Route> {}
+impl<Route: RetryOpen, Dead> RetryOpen for DeclaredRoute<Route, Dead> {}
 
-impl<B: Broker, Route: RouteSubscription<B>> RouteSubscription<B> for DeclaredRoute<Route> {
+impl<B: Broker, Route: RouteSubscription<B>, Dead> RouteSubscription<B>
+    for DeclaredRoute<Route, Dead>
+{
     type Source = Route::Source;
     type Copies = Route::Copies;
     type Context = Route::Context;
@@ -257,7 +281,8 @@ impl<B: Broker, Route: RouteSubscription<B>> RouteSubscription<B> for DeclaredRo
 
 // The wrapped route mounts as it always does, with the declaration the mount site made: this is
 // the one place a declaration reaches the sink.
-impl<B, Route, State, RetryPipeline> MountRoute<B, State, RetryPipeline> for DeclaredRoute<Route>
+impl<B, Route, State, RetryPipeline, Dead> MountRoute<B, State, RetryPipeline>
+    for DeclaredRoute<Route, Dead>
 where
     B: Broker + 'static,
     Route: MountRoute<B, State, RetryPipeline>,

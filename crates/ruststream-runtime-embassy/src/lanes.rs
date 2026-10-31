@@ -31,15 +31,16 @@ use ruststream_runtime::{
 use tracing::error;
 
 use crate::copies::CopyStore;
+use crate::full::{FullPolicy, HasRetryRoom, Panic, PolicyFits};
 use crate::mailbox::{Mailbox, join_workers};
 
 /// The plan of one registration on the embedded runner: its lanes and the room it keeps for
 /// retry copies, [`NoRoom`] for none.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct EmbeddedPlan<Lanes, Capacity> {
+pub struct EmbeddedPlan<Lanes, Capacity, Full = Panic> {
     lanes: Lanes,
-    room: PhantomData<Capacity>,
+    room: PhantomData<(Capacity, Full)>,
 }
 
 /// Room for `CAPACITY` retry copies.
@@ -167,7 +168,9 @@ impl<L: Lanes> LocalDispatch for EmbeddedPlan<L, NoRoom> {
     }
 }
 
-impl<L: Lanes, const CAPACITY: usize> LocalDispatch for EmbeddedPlan<L, Room<CAPACITY>> {
+impl<L: Lanes, const CAPACITY: usize, Full: FullPolicy> LocalDispatch
+    for EmbeddedPlan<L, Room<CAPACITY>, Full>
+{
     type Copies = KeepCopies;
 
     async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
@@ -193,19 +196,11 @@ impl<L: Lanes, const CAPACITY: usize> LocalDispatch for EmbeddedPlan<L, Room<CAP
         };
         // The registration's own store: its copies wait in its records, and its driver
         // publishes the last of them after the lanes have stopped.
-        let store = CopyStore::<Path, CAPACITY>::new(path, Arc::clone(&route.name));
-        let stopped = signal.clone();
+        let store =
+            CopyStore::<Path, CAPACITY>::new(path, Arc::clone(&route.name)).when_full(Full::WHEN);
         let lanes = async {
             let keeping = Keeping(host, &store);
-            let running = pin!(self.lanes.run(route, signal, state, &keeping));
-            // A stop ends the wait of a delivery holding for a record, so the lanes can finish.
-            let stop = pin!(async {
-                stopped.cancelled().await;
-                store.stop();
-            });
-            if let Either::Left(((), running)) = select(stop, running).await {
-                running.await;
-            }
+            self.lanes.run(route, signal, state, &keeping).await;
             store.close();
         };
         join(lanes, store.drive()).await;
@@ -499,17 +494,24 @@ pub trait MountSteps: Sized {
     /// The router once the registration keeps room for `CAP` delayed retries.
     #[doc(hidden)]
     type WithCapacity<const CAP: usize>;
+    /// The room the registration keeps so far.
+    #[doc(hidden)]
+    type Room;
+    /// The registration the steps are made on, which the policy of a full store is checked
+    /// against.
+    #[doc(hidden)]
+    type Registration;
+    /// The router once the registration names what a full store does.
+    #[doc(hidden)]
+    type WithFull<Policy>;
 
     /// Runs the registration on `lanes`.
     #[doc(hidden)]
     fn lanes<Next>(self, lanes: Next) -> Self::WithLanes<Next>;
 
-    /// Keeps room for `CAP` copies of `retry_after`; a delivery that asks for one more waits
-    /// for a record to free, and the registration takes no further delivery meanwhile, unless
-    /// the store is saturated by refused copies: when the broker refuses a due copy while the
-    /// delivery waits, the copy needs the room the delivery holds, so the delivery goes back to
-    /// the broker. The store's size and the broker's capacity are the service's to size for its
-    /// load.
+    /// Keeps room for `CAP` copies of `retry_after`. A delivery that asks for one more finds the
+    /// store full and gets the answer the mount chose with
+    /// [`when_retry_full`](Self::when_retry_full): the run panics when it chose none.
     ///
     /// Each copy waits in one of the registration's `CAP` records, its bytes and headers kept as
     /// data, and the registration's own loop publishes it on the clock once it is due, back to
@@ -522,7 +524,60 @@ pub trait MountSteps: Sized {
     /// The `.transform(..)` steps after `.out_retry(..)` run over a copy when it is kept, while
     /// the delivery it copies is still at hand to read, and the copy leaves as they left it,
     /// with the publish settings they wrote. They read the destination and do not name one.
+    ///
+    /// # Panics
+    ///
+    /// The run panics when a delayed retry finds every record taken and the mount named no
+    /// answer with [`when_retry_full`](Self::when_retry_full). A device resets rather than
+    /// losing a retry or spinning on a record that never frees. The message names the
+    /// subscription, the message type and the capacity. Size the store for the retries that wait
+    /// at once, or choose [`DeadLetter`](crate::DeadLetter) or [`SkipDelay`](crate::SkipDelay).
     fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP>;
+
+    /// Names what a delayed retry does when the store sized by
+    /// [`retry_capacity`](Self::retry_capacity) has no free record.
+    ///
+    /// - [`Panic`](crate::Panic), the default when this step is absent: the run panics.
+    /// - [`DeadLetter`](crate::DeadLetter): the delivery goes to the destination `.dead_letter(..)`
+    ///   declared, and the original is settled. A mount without that declaration does not compile.
+    /// - [`SkipDelay`](crate::SkipDelay): the copy is published at once instead of waiting in the
+    ///   store, with its retry count advanced so `max_attempts` still counts the attempt, and the
+    ///   original is settled.
+    ///
+    /// The last two take no record: the copy is prepared in buffers of its own, which allocates.
+    /// A copy that never waits (a dead letter, a zero delay) leaves the same way whatever the
+    /// answer is. The step follows `.retry_capacity::<CAP>()`, and a mount without one does not
+    /// compile.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
+    /// # use ruststream_runtime::{Context, Deserialized, HandlerOutcome, Input, LocalHandle, SoloDeserialized, local_subscriber};
+    /// # use ruststream_runtime_embassy::{DeadLetter, EmbeddedApp, MountSteps, Mounts};
+    /// # struct Job;
+    /// # impl Deserialized for Job { type Output<'a> = Job; type Error = core::convert::Infallible;
+    /// #     fn from_payload(_: &[u8]) -> Result<Job, Self::Error> { Ok(Job) } }
+    /// # impl Input for Job { type Axis = SoloDeserialized<Job>; }
+    /// # struct Work;
+    /// # impl LocalHandle<Job> for Work {
+    /// #     fn handle(&self, _: &Job, _: &(), _: &mut Context<'_>)
+    /// #         -> impl Future<Output = Result<(), HandlerOutcome>> { core::future::ready(Ok(())) } }
+    /// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
+    ///     EmbeddedApp::new().with_broker(bus, |b| {
+    ///         // Room for four delayed retries; a fifth goes to the dead letter.
+    ///         b.include(local_subscriber(LocalMemorySource::new("jobs"), Work).build())
+    ///             .dead_letter("jobs.dead")
+    ///             .retry_capacity::<4>()
+    ///             .when_retry_full(DeadLetter)
+    ///     })
+    /// }
+    /// # let _ = app(LocalMemoryBroker::new());
+    /// ```
+    fn when_retry_full<Policy>(self, policy: Policy) -> Self::WithFull<Policy>
+    where
+        Self::Room: HasRetryRoom,
+        Policy: PolicyFits<Self::Registration>;
 
     /// Runs up to `N` deliveries of the registration at once, each on the next free worker.
     fn pool<const N: usize>(self) -> Self::WithLanes<Pool<N>> {
@@ -558,6 +613,8 @@ pub trait SoFar {
     type Lanes;
     /// Its room for delayed retries.
     type Room;
+    /// What it does when the room is full.
+    type Full;
 
     /// Its lanes, for a step that keeps them.
     fn into_lanes(self) -> Self::Lanes;
@@ -566,15 +623,17 @@ pub trait SoFar {
 impl SoFar for () {
     type Lanes = OneLane;
     type Room = NoRoom;
+    type Full = Panic;
 
     fn into_lanes(self) -> OneLane {
         OneLane
     }
 }
 
-impl<L, R> SoFar for EmbeddedPlan<L, R> {
+impl<L, R, F> SoFar for EmbeddedPlan<L, R, F> {
     type Lanes = L;
     type Room = R;
+    type Full = F;
 
     fn into_lanes(self) -> L {
         self.lanes
@@ -589,7 +648,10 @@ where
     type WithLanes<Next> = Router<
         B,
         (
-            Dispatched<Head::Route, EmbeddedPlan<Next, <Head::Plan as SoFar>::Room>>,
+            Dispatched<
+                Head::Route,
+                EmbeddedPlan<Next, <Head::Plan as SoFar>::Room, <Head::Plan as SoFar>::Full>,
+            >,
             Routes,
         ),
         RouteCodec,
@@ -599,7 +661,25 @@ where
     type WithCapacity<const CAP: usize> = Router<
         B,
         (
-            Dispatched<Head::Route, EmbeddedPlan<<Head::Plan as SoFar>::Lanes, Room<CAP>>>,
+            Dispatched<
+                Head::Route,
+                EmbeddedPlan<<Head::Plan as SoFar>::Lanes, Room<CAP>, <Head::Plan as SoFar>::Full>,
+            >,
+            Routes,
+        ),
+        RouteCodec,
+        RouteLayers,
+        LocalPipeline<Pipe>,
+    >;
+    type Room = <Head::Plan as SoFar>::Room;
+    type Registration = Head::Route;
+    type WithFull<Policy> = Router<
+        B,
+        (
+            Dispatched<
+                Head::Route,
+                EmbeddedPlan<<Head::Plan as SoFar>::Lanes, <Head::Plan as SoFar>::Room, Policy>,
+            >,
             Routes,
         ),
         RouteCodec,
@@ -626,6 +706,17 @@ where
             room: PhantomData,
         })
     }
+
+    fn when_retry_full<Policy>(self, _policy: Policy) -> Self::WithFull<Policy>
+    where
+        Self::Room: HasRetryRoom,
+        Policy: PolicyFits<Self::Registration>,
+    {
+        self.replan(|plan: Head::Plan| EmbeddedPlan {
+            lanes: plan.into_lanes(),
+            room: PhantomData,
+        })
+    }
 }
 
 // A registration with steps of its own (`.out_reply(..)`, `.out(..)`) is committed first, so
@@ -636,6 +727,9 @@ where
 {
     type WithLanes<Next> = <Attach::Out as MountSteps>::WithLanes<Next>;
     type WithCapacity<const CAP: usize> = <Attach::Out as MountSteps>::WithCapacity<CAP>;
+    type Room = <Attach::Out as MountSteps>::Room;
+    type Registration = <Attach::Out as MountSteps>::Registration;
+    type WithFull<Policy> = <Attach::Out as MountSteps>::WithFull<Policy>;
 
     fn lanes<Next>(self, lanes: Next) -> Self::WithLanes<Next> {
         self.build().lanes(lanes)
@@ -643,5 +737,13 @@ where
 
     fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP> {
         self.build().retry_capacity::<CAP>()
+    }
+
+    fn when_retry_full<Policy>(self, policy: Policy) -> Self::WithFull<Policy>
+    where
+        Self::Room: HasRetryRoom,
+        Policy: PolicyFits<Self::Registration>,
+    {
+        self.build().when_retry_full(policy)
     }
 }

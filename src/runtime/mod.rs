@@ -152,11 +152,11 @@ pub mod cli;
 #[cfg(feature = "embassy")]
 #[doc(hidden)]
 pub use ruststream_runtime_embassy::{
-    BrokerMount, CloseAll, EmbeddedPlan, HookList, Hooks, Keyed, Lanes, NoHooks, OneLane, Pool,
-    Room, SoFar, StartMounts,
+    BrokerMount, CloseAll, EmbeddedPlan, FullPolicy, HasRetryRoom, HookList, Hooks, Keyed, Lanes,
+    NoHooks, OneLane, PolicyFits, Pool, Room, SoFar, StartMounts,
 };
 #[cfg(feature = "embassy")]
 pub use ruststream_runtime_embassy::{
-    Control, EmbassyClock, EmbeddedApp, Health, MountSteps, Mounts, Parts, RunError, Scope,
-    Stopping,
+    Control, DeadLetter, EmbassyClock, EmbeddedApp, Health, MountSteps, Mounts, Panic, Parts,
+    RunError, Scope, SkipDelay, Stopping,
 };

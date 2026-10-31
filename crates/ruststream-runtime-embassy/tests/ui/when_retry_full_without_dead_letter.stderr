@@ -1,0 +1,38 @@
+error[E0277]: `DeadLetter` sends a delivery to the destination `.dead_letter(..)` declares, and this registration declares none
+  --> tests/ui/when_retry_full_without_dead_letter.rs:19:30
+   |
+19 |             .when_retry_full(DeadLetter)
+   |              --------------- ^^^^^^^^^^ `.dead_letter(..)` is missing on this registration
+   |              |
+   |              required by a bound introduced by this call
+   |
+   = help: the trait `ruststream_runtime::router::routes::DeadLetterDeclared` is not implemented for `ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>`
+   = note: declare it right after `include(..)`, before `.retry_capacity::<CAP>()`: `b.include(job).max_attempts(nonzero!(3u32)).dead_letter("jobs.dead").retry_capacity::<4>().when_retry_full(DeadLetter)`
+help: the following other types implement trait `ruststream_runtime::router::routes::DeadLetterDeclared`
+  --> $WORKSPACE/crates/ruststream-runtime/src/router/fold_plan.rs
+   |
+   |   impl<Route: DeadLetterDeclared, Plan> DeadLetterDeclared for Dispatched<Route, Plan> {}
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime::router::fold_plan::Dispatched<Route, Plan>`
+   |
+  ::: $WORKSPACE/crates/ruststream-runtime/src/router/fold_retry.rs
+   |
+   | / impl<Route: DeadLetterDeclared, Policy, Stack, Settled> DeadLetterDeclared
+   | |     for LocalRetriedRoute<Route, Policy, Stack, Settled>
+   | |________________________________________________________^ `ruststream_runtime::router::fold_retry::LocalRetriedRoute<Route, Policy, Stack, Settled>`
+   |
+  ::: $WORKSPACE/crates/ruststream-runtime/src/router/routes.rs
+   |
+   |   impl<Route> DeadLetterDeclared for DeclaredRoute<Route, Present> {}
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime::router::routes::DeclaredRoute<Route, ruststream::runtime::Present>`
+   |
+   |   impl<Route: DeadLetterDeclared> DeadLetterDeclared for DeclaredRoute<Route, Absent> {}
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime::router::routes::DeclaredRoute<Route>`
+   = note: required for `ruststream::runtime::DeadLetter` to implement `ruststream::runtime::PolicyFits<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>>`
+note: required by a bound in `ruststream::runtime::MountSteps::when_retry_full`
+  --> src/lanes.rs
+   |
+   |     fn when_retry_full<Policy>(self, policy: Policy) -> Self::WithFull<Policy>
+   |        --------------- required by a bound in this associated function
+...
+   |         Policy: PolicyFits<Self::Registration>;
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `MountSteps::when_retry_full`

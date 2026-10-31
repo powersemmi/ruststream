@@ -144,20 +144,6 @@ async fn check_retries(spawner: Spawner, stand: &'static Stand) {
     let failed = allocations_of(&stand.bus, b'f').await;
     let carried = allocations_of_the_copy_headers();
 
-    // The one record holds `f`'s copy, so `g`'s failure finds the store full: the delivery waits
-    // for a record, and the subscription, not the broker, holds it.
-    publish(&stand.bus, b'g').await;
-    settle().await;
-    let waiting = seen(b'g');
-    let kept = seen(b'f');
-    advance(LATER).await;
-    let fired = seen(b'f');
-    let still_waiting = seen(b'g');
-    advance(ALMOST).await;
-    let before_its_delay = seen(b'g');
-    advance(Duration::from_secs(1)).await;
-    let after_its_delay = seen(b'g');
-
     app::CONTROL.stop();
     settle().await;
 
@@ -174,22 +160,6 @@ async fn check_retries(spawner: Spawner, stand: &'static Stand) {
         "allocations of a failure beyond an acked delivery's, against the copy's headers alone"
     );
     passed("the store allocates nothing per failure");
-    assert_eq!(waiting, 1, "deliveries of `g` while the store is full");
-    assert_eq!(kept, 1, "deliveries of `f` while its copy waits");
-    assert_eq!(fired, 2, "deliveries of `f` once its copy fell due");
-    assert_eq!(
-        still_waiting, 1,
-        "deliveries of `g`, kept once a record freed"
-    );
-    assert_eq!(
-        before_its_delay, 1,
-        "deliveries of `g` a second before its copy is due"
-    );
-    assert_eq!(
-        after_its_delay, 2,
-        "deliveries of `g` once its own delay passed"
-    );
-    passed("a full store holds the delivery until a record frees");
 }
 
 #[embassy_executor::task]
