@@ -16,18 +16,17 @@ mod expand;
 mod from_ref;
 mod in_messages;
 mod lanes;
+mod message_info;
 mod outgoing;
 mod parse;
 mod runtime;
+mod slots;
 
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
-use quote::{ToTokens, quote};
-use syn::punctuated::Punctuated;
-use syn::{Attribute, DeriveInput, Ident, ItemFn, Meta, Token, Type, parse_macro_input};
+use syn::{DeriveInput, ItemFn, parse_macro_input};
 
 use app::{AppRuntimeArgs, expand_app};
-use parse::{SubscriberArgs, derive_generics, doc_description};
+use parse::SubscriberArgs;
 
 /// Turns an `async fn` handler into a mountable subscriber definition.
 ///
@@ -357,28 +356,9 @@ pub fn app(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_derive(MessageInfo, attributes(message))]
 pub fn derive_message(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
-    let name = &input.ident;
-    let name_str = name.to_string();
-    let description = doc_description(&input.attrs);
-    let contract = match message_headers_contract(&input.attrs) {
-        Ok(Some(headers)) => quote!(::ruststream::WithHeaders<#headers>),
-        Ok(None) => quote!(::ruststream::NoHeaders),
-        Err(err) => return err.into_compile_error().into(),
-    };
-    let generics = derive_generics(&input.generics);
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-
-    quote! {
-        impl #impl_generics ::ruststream::MessageInfo for #name #ty_generics #where_clause {
-            const NAME: &'static str = #name_str;
-            const DESCRIPTION: ::core::option::Option<&'static str> = #description;
-        }
-
-        impl #impl_generics ::ruststream::MessageHeaders for #name #ty_generics #where_clause {
-            type Contract = #contract;
-        }
-    }
-    .into()
+    message_info::expand(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 /// Derives everything a message type declares about being sent, from one `key = value`
@@ -429,34 +409,6 @@ pub fn derive_outgoing(item: TokenStream) -> TokenStream {
     outgoing::expand(&input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
-}
-
-/// Parses the optional `#[message(headers(Type))]` helper attribute of `#[derive(MessageInfo)]`.
-fn message_headers_contract(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
-    let mut found: Option<Type> = None;
-    for attr in attrs.iter().filter(|attr| attr.path().is_ident("message")) {
-        let meta: Meta = attr.parse_args()?;
-        let Meta::List(list) = &meta else {
-            return Err(syn::Error::new_spanned(
-                meta,
-                "expected `headers(<Type>)` inside #[message(..)]",
-            ));
-        };
-        if !list.path.is_ident("headers") {
-            return Err(syn::Error::new_spanned(
-                &list.path,
-                "expected `headers(<Type>)` inside #[message(..)]",
-            ));
-        }
-        let headers: Type = list.parse_args()?;
-        if found.replace(headers).is_some() {
-            return Err(syn::Error::new_spanned(
-                attr,
-                "duplicate `headers(..)`: a message declares one header contract",
-            ));
-        }
-    }
-    Ok(found)
 }
 
 /// Derives [`FromRef`](../ruststream/runtime/trait.FromRef.html) for each field of an
@@ -514,93 +466,9 @@ pub fn derive_from_ref(item: TokenStream) -> TokenStream {
 #[proc_macro_derive(OutSlot, attributes(publishes))]
 pub fn derive_out_slot(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
-    let syn::Data::Struct(data) = &input.data else {
-        return syn::Error::new_spanned(&input.ident, "OutSlot is derived on a unit struct")
-            .into_compile_error()
-            .into();
-    };
-    if !matches!(data.fields, syn::Fields::Unit) {
-        return syn::Error::new_spanned(
-            &data.fields,
-            "an OutSlot marker is a unit struct: it identifies the slot and carries no data",
-        )
-        .into_compile_error()
-        .into();
-    }
-    if !input.generics.params.is_empty() {
-        return syn::Error::new_spanned(
-            &input.generics,
-            "an OutSlot marker takes no generic parameters",
-        )
-        .into_compile_error()
-        .into();
-    }
-    let dictionary = match publishes_dictionary(&input.attrs) {
-        Ok(dictionary) => dictionary,
-        Err(err) => return err.into_compile_error().into(),
-    };
-    let name = &input.ident;
-    let name_str = name.to_string();
-
-    let outgoing = slot_outgoing_metadata(name, &dictionary);
-    // The list is the whole membership: what the document reports as leaving the slot is exactly
-    // what the publish builder admits.
-    let memberships = dictionary.iter().map(|ty| {
-        quote! {
-            impl ::ruststream::runtime::PublishedThrough<#name> for #ty {}
-        }
-    });
-    let destination = slot_destination(&dictionary);
-
-    quote! {
-        impl ::ruststream::runtime::OutSlot for #name {
-            const NAME: &'static str = #name_str;
-
-            type Destination = #destination;
-
-            #outgoing
-        }
-
-        #(#memberships)*
-    }
-    .into()
-}
-
-/// What the marker offers a transform, folded out of its `#[publishes(..)]` list: the list as
-/// types, nested right and closed with `()`, projected through `ListOffer`. A marker with no list
-/// promises nothing, because it admits every declared message, so it offers `Reads`.
-fn slot_destination(dictionary: &[Type]) -> TokenStream2 {
-    if dictionary.is_empty() {
-        return quote!(::ruststream::runtime::Reads);
-    }
-    let list = dictionary
-        .iter()
-        .rev()
-        .fold(quote!(()), |tail, ty| quote!((#ty, #tail)));
-    quote!(<#list as ::ruststream::runtime::ListOffer>::Offer)
-}
-
-/// The marker's `outgoing()` override, reporting its `#[publishes(..)]` list as the document's
-/// outgoing messages: each listed type contributes what its own `#[derive(Outgoing)]` declares.
-/// An empty list keeps the trait's own default (nothing declared).
-fn slot_outgoing_metadata(name: &Ident, dictionary: &[Type]) -> TokenStream2 {
-    if dictionary.is_empty() {
-        return quote!();
-    }
-    let entries = dictionary.iter().map(|ty| {
-        quote! {
-            __rs_entries.extend(
-                <#ty as ::ruststream::runtime::OutMessages<#name>>::outgoing(),
-            );
-        }
-    });
-    quote! {
-        fn outgoing() -> ::ruststream::__private::Vec<::ruststream::runtime::OutgoingMessageMetadata> {
-            let mut __rs_entries = ::ruststream::__private::Vec::new();
-            #(#entries)*
-            __rs_entries
-        }
-    }
+    slots::expand_out_slot(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 /// Derives a declared message set (`OutMessages` in the core crate) from an enum whose
@@ -633,64 +501,9 @@ fn slot_outgoing_metadata(name: &Ident, dictionary: &[Type]) -> TokenStream2 {
 #[proc_macro_derive(OutMessages)]
 pub fn derive_out_messages(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
-    let syn::Data::Enum(data) = &input.data else {
-        return syn::Error::new_spanned(
-            &input.ident,
-            "OutMessages is derived on an enum whose variants each wrap one message model",
-        )
-        .into_compile_error()
-        .into();
-    };
-    if !input.generics.params.is_empty() {
-        return syn::Error::new_spanned(
-            &input.generics,
-            "an OutMessages set takes no generic parameters",
-        )
-        .into_compile_error()
-        .into();
-    }
-    let models = match out_messages_models(data) {
-        Ok(models) => models,
-        Err(err) => return err.into_compile_error().into(),
-    };
-    let name = &input.ident;
-    let memberships = models.iter().enumerate().map(|(index, model)| {
-        quote! {
-            impl ::ruststream::runtime::ContainsMessage<
-                #model,
-                ::ruststream::runtime::SlotPos<#index>,
-            > for #name
-            {
-            }
-        }
-    });
-    // Each model already declares itself as a one-element set; the enum's contribution is the
-    // concatenation, so a model's destination is described in exactly one place.
-    let entries = models.iter().map(|model| {
-        quote! {
-            __rs_entries.extend(
-                <#model as ::ruststream::runtime::OutMessages<__RsM>>::outgoing(),
-            );
-        }
-    });
-    quote! {
-        #(#memberships)*
-
-        impl<__RsM: ::ruststream::runtime::OutSlot> ::ruststream::runtime::OutMessages<__RsM>
-            for #name
-        where
-            #(#models: ::ruststream::runtime::OutMessages<__RsM>,)*
-        {
-            fn outgoing()
-                -> ::ruststream::__private::Vec<::ruststream::runtime::OutgoingMessageMetadata>
-            {
-                let mut __rs_entries = ::ruststream::__private::Vec::new();
-                #(#entries)*
-                __rs_entries
-            }
-        }
-    }
-    .into()
+    slots::expand_out_messages(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 /// Derives a declared set of message models a handler receives (`InMessages` in the core crate)
@@ -855,64 +668,4 @@ pub fn derive_serialized(item: TokenStream) -> TokenStream {
     lanes::derive_serialized(&input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
-}
-
-/// The set enum's models, one per variant: each variant wraps exactly one type, and a
-/// duplicate model is rejected (its membership index inference would be ambiguous).
-fn out_messages_models(data: &syn::DataEnum) -> syn::Result<Vec<&Type>> {
-    let mut models: Vec<&Type> = Vec::new();
-    for variant in &data.variants {
-        let syn::Fields::Unnamed(fields) = &variant.fields else {
-            return Err(syn::Error::new_spanned(
-                variant,
-                "an OutMessages variant wraps exactly one message model: `Variant(Model)`",
-            ));
-        };
-        if fields.unnamed.len() != 1 {
-            return Err(syn::Error::new_spanned(
-                fields,
-                "an OutMessages variant wraps exactly one message model: `Variant(Model)`",
-            ));
-        }
-        let model = &fields.unnamed[0].ty;
-        let rendered = model.to_token_stream().to_string();
-        if models
-            .iter()
-            .any(|existing| existing.to_token_stream().to_string() == rendered)
-        {
-            return Err(syn::Error::new_spanned(
-                model,
-                "this model is already in the set: a duplicate would make the membership \
-                 index inference ambiguous",
-            ));
-        }
-        models.push(model);
-    }
-    Ok(models)
-}
-
-/// Parses every `#[publishes(Type, ..)]` attribute into one list, rejecting a type listed twice
-/// (a second entry would say nothing the first does not).
-fn publishes_dictionary(attrs: &[Attribute]) -> syn::Result<Vec<Type>> {
-    let mut dictionary: Vec<Type> = Vec::new();
-    for attr in attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("publishes"))
-    {
-        let entries = attr.parse_args_with(Punctuated::<Type, Token![,]>::parse_terminated)?;
-        for ty in entries {
-            let name = ty.to_token_stream().to_string();
-            if dictionary
-                .iter()
-                .any(|existing| existing.to_token_stream().to_string() == name)
-            {
-                return Err(syn::Error::new_spanned(
-                    &ty,
-                    "this type is already listed on the slot: a type appears once",
-                ));
-            }
-            dictionary.push(ty);
-        }
-    }
-    Ok(dictionary)
 }
