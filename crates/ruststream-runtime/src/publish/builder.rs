@@ -34,7 +34,7 @@ use crate::wire::Serialized;
 /// through [`PublishExt`](super::PublishExt)), and finished by
 /// [`publish`](Self::publish). The type parameters are the positions:
 ///
-/// * `Sink` - where the bytes go, a [`PublishSink`].
+/// * `Sink` - where the bytes go, a [`PublishSink`](super::sink::PublishSink).
 /// * `Body` - [`MessageBody`], the value to encode. The runtime also fills this position with a
 ///   crate-internal byte body where it republishes a delivery it already holds as bytes.
 /// * `Enc` - the codec position ([`PublishCodec`]); `()` on the byte body, which has none.
@@ -43,7 +43,7 @@ use crate::wire::Serialized;
 ///   and [`NameTemplate`] are still waiting for the call site.
 ///
 /// Beside the positions it carries the broker's per-message settings
-/// ([`PublishSink::Options`]), unset until a step of the broker's own extension trait fills one
+/// ([`PublishSink::Options`](super::sink::PublishSink::Options)), unset until a step of the broker's own extension trait fills one
 /// in through [`options_mut`](Self::options_mut); what no step touches keeps what the publish
 /// policy fixed.
 ///
