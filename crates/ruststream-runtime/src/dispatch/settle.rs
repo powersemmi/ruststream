@@ -668,7 +668,6 @@ mod tests {
     use core::future::ready;
     use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
     use std::io;
-    use std::sync::LazyLock;
 
     use futures::{StreamExt, poll};
     use tokio::sync::mpsc;
@@ -693,28 +692,6 @@ mod tests {
     /// The per-delivery context of a registration that reads none: what a test delivery's transforms
     /// would see.
     fn unit_cx<M>(_msg: &M) {}
-
-    /// A delivery whose settlement always fails, so the dispatcher's ack-failure path runs.
-    struct UnsettleableMessage;
-
-    impl IncomingMessage for UnsettleableMessage {
-        fn payload(&self) -> &[u8] {
-            b"body"
-        }
-
-        fn headers(&self) -> &HeaderMap {
-            static EMPTY: LazyLock<HeaderMap> = LazyLock::new(HeaderMap::new);
-            &EMPTY
-        }
-
-        fn ack(self) -> impl Future<Output = Result<(), AckError>> {
-            ready(Err(AckError::Timeout))
-        }
-
-        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
-            ready(Err(AckError::Unsupported))
-        }
-    }
 
     /// A reading publisher that reports the address the payload reached it at, for the assertion the
     /// benchmarks cannot make: the in-memory broker redelivers natively, so no measured scenario
@@ -760,8 +737,9 @@ mod tests {
     #[tokio::test]
     async fn a_failed_acknowledgement_is_logged_rather_than_propagated() {
         // Settlement is best-effort: a broker that rejects the ack must not take the loop down.
+        let settled = Arc::new(AtomicU8::new(0));
         settle_outcome(
-            &mut Slot::new(UnsettleableMessage),
+            &mut Slot::new(plain_on(&[], &settled, Settlement::Rejected)),
             HandlerResult::Ack,
             "orders",
             &Delivery::empty(),
@@ -770,7 +748,7 @@ mod tests {
         )
         .await;
         settle_outcome(
-            &mut Slot::new(UnsettleableMessage),
+            &mut Slot::new(plain_on(&[], &settled, Settlement::Rejected)),
             HandlerResult::drop(),
             "orders",
             &Delivery::empty(),
