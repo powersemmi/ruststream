@@ -481,21 +481,21 @@ async fn check_start_order(spawner: Spawner, stand: &'static Stand) {
         started,
         events(&[
             "connect first",
+            "connect second",
+            "connect third",
             "subscribe first/0",
             "subscribe first/1",
             "subscribe first/2",
-            "connect second",
             "subscribe second/0",
             "subscribe second/1",
             "subscribe second/2",
             "subscribe second/3",
             "subscribe second/4",
-            "connect third",
             "subscribe third/0",
         ]),
         "what the app did to start"
     );
-    passed("brokers connect and routes open in the order they were registered");
+    passed("brokers connect, then routes open, in the order they were registered");
     assert_eq!(
         stopped,
         events(&["close third", "close second", "close first"]),
@@ -515,10 +515,12 @@ async fn check_refused_subscription(spawner: Spawner, stand: &'static Stand) {
         log,
         events(&[
             "connect first",
-            "subscribe first/0",
             "connect second",
+            "connect third",
+            "subscribe first/0",
             "subscribe second/0",
             "refuse second/refused",
+            "close third",
             "close second",
             "close first",
         ]),
@@ -541,9 +543,7 @@ async fn check_refused_connect(spawner: Spawner, stand: &'static Stand) {
         log,
         events(&[
             "connect first",
-            "subscribe first/0",
             "connect second",
-            "subscribe second/0",
             "refuse third",
             "close second",
             "close first",

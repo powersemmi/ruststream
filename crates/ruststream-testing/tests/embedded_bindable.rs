@@ -60,6 +60,85 @@ fn app(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mounts> {
         .with_broker(sensors, |b| b.include(on_level).out(Commands, to_actuators))
 }
 
+/// An acknowledgement for the sensors' bus.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "acks")]
+struct Ack(Vec<u8>);
+
+/// The slot acknowledgements leave through.
+#[derive(OutSlot)]
+#[publishes(Ack)]
+struct Acks;
+
+/// Answers every command on the sensors' bus.
+#[subscriber(LocalMemorySource::new("commands"))]
+async fn on_command(command: &Frame<'_>, Out(acks): Out<impl Publisher, Acks>) -> HandlerOutcome {
+    match acks.message(&Ack(command.0.to_vec())).publish().await {
+        Ok(()) => HandlerOutcome::ack(),
+        Err(_) => HandlerOutcome::retry(),
+    }
+}
+
+/// The token's broker is registered after the broker that publishes through it.
+#[ruststream::app]
+fn target_last(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mounts> {
+    let actuators = Bindable::new(actuators);
+    let to_actuators = actuators.bind(LocalMemoryPublish);
+    EmbeddedApp::new()
+        .with_broker(sensors, |b| b.include(on_level).out(Commands, to_actuators))
+        .with_broker(actuators, |b| b)
+}
+
+/// Each broker publishes through a token bound to the other.
+#[ruststream::app]
+fn bridge(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mounts> {
+    let sensors = Bindable::new(sensors);
+    let actuators = Bindable::new(actuators);
+    let to_actuators = actuators.bind(LocalMemoryPublish);
+    let to_sensors = sensors.bind(LocalMemoryPublish);
+    EmbeddedApp::new()
+        .with_broker(sensors, |b| b.include(on_level).out(Commands, to_actuators))
+        .with_broker(actuators, |b| b.include(on_command).out(Acks, to_sensors))
+}
+
+#[test]
+fn a_command_reaches_a_bus_registered_after_its_publisher() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(target_last(Sensors::new(), Actuators::new())).await?;
+        tb.broker::<Sensors>()
+            .message(&Sent(b"high"))
+            .to("sensors/level")
+            .publish()
+            .await?;
+
+        tb.broker::<Actuators>()
+            .published::<()>("commands")
+            .assert_called_once()
+            .with_raw(b"high");
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_two_way_bridge_carries_a_frame_both_ways() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(bridge(Sensors::new(), Actuators::new())).await?;
+        tb.broker::<Sensors>()
+            .message(&Sent(b"high"))
+            .to("sensors/level")
+            .publish()
+            .await?;
+
+        tb.broker::<Sensors>()
+            .published::<()>("acks")
+            .assert_called_once()
+            .with_raw(b"high");
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
 #[test]
 fn a_command_reaches_the_bus_its_token_is_bound_to() -> Result<(), Box<dyn Error>> {
     block_on(async {
