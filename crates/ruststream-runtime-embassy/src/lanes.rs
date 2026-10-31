@@ -255,25 +255,26 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
         let mut stream = pin!(subscriber.stream());
         let mut cancelled = pin!(signal.cancelled());
         let mut rotation = 0;
+        // A pool's free worker, held until a delivery goes to it: a stream error or a cancelled
+        // read hands no delivery over, so the worker stays reserved for the next one.
+        let mut held = None;
         loop {
             if signal.is_cancelled() {
                 break;
             }
-            let held = if keyed {
-                None
-            } else {
+            if !keyed && held.is_none() {
                 match select(pin!(free.receive()), cancelled.as_mut()).await {
-                    Either::Left((index, _)) => Some(index),
+                    Either::Left((index, _)) => held = Some(index),
                     Either::Right(((), _)) => break,
                 }
-            };
+            }
             let next = match select(stream.next(), cancelled.as_mut()).await {
                 Either::Left((next, _)) => next,
                 Either::Right(((), _)) => break,
             };
             match next {
                 Some(Ok(msg)) => {
-                    let lane = held.unwrap_or_else(|| {
+                    let lane = held.take().unwrap_or_else(|| {
                         msg.partition_key().map_or_else(
                             || {
                                 rotation = (rotation + 1) % COUNT;

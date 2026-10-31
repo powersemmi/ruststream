@@ -11,6 +11,8 @@
 
 use core::cell::Cell;
 use core::convert::Infallible;
+use core::error::Error;
+use core::fmt;
 use core::future::ready;
 use core::pin::Pin;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -45,12 +47,36 @@ const SETTLE_ROUNDS: usize = 8;
 /// How long every handler works on the clock.
 const WORK: Duration = Duration::from_secs(10);
 
-/// A frame: its partition key and one byte of payload, its sequence number.
+/// A frame: its partition key and one byte of payload, its sequence number. A faulty frame
+/// reaches the subscription as an error of its stream instead of a delivery.
 #[derive(Debug, Clone, Copy)]
 struct Keyed {
     key: Option<&'static [u8]>,
     seq: [u8; 1],
+    faulty: bool,
 }
+
+impl Keyed {
+    const fn delivery(key: Option<&'static [u8]>, seq: u8) -> Self {
+        Self {
+            key,
+            seq: [seq],
+            faulty: false,
+        }
+    }
+}
+
+/// The error a faulty frame reaches the subscription as.
+#[derive(Debug)]
+struct Fault;
+
+impl fmt::Display for Fault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a faulty frame")
+    }
+}
+
+impl Error for Fault {}
 
 type Wire = Channel<NoopRawMutex, Keyed, 8>;
 
@@ -104,25 +130,29 @@ struct KeyedSubscriber {
 struct Deliveries<'a>(&'a KeyedSubscriber);
 
 impl Stream for Deliveries<'_> {
-    type Item = Result<KeyedDelivery, Infallible>;
+    type Item = Result<KeyedDelivery, Fault>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
         let acked = self.0.acked;
         self.0.receiver.poll_receive(cx).map(|frame| {
-            Some(Ok(KeyedDelivery {
-                frame,
-                headers: HeaderMap::new(),
-                acked,
-            }))
+            Some(if frame.faulty {
+                Err(Fault)
+            } else {
+                Ok(KeyedDelivery {
+                    frame,
+                    headers: HeaderMap::new(),
+                    acked,
+                })
+            })
         })
     }
 }
 
 impl LocalSubscriber for KeyedSubscriber {
     type Message = KeyedDelivery;
-    type Error = Infallible;
+    type Error = Fault;
 
-    fn stream(&mut self) -> impl Stream<Item = Result<KeyedDelivery, Infallible>> + '_ {
+    fn stream(&mut self) -> impl Stream<Item = Result<KeyedDelivery, Fault>> + '_ {
         Deliveries(self)
     }
 }
@@ -248,6 +278,9 @@ struct Stand {
     keyed_wire: Wire,
     keyed_acked: Cell<u32>,
     keyed: Control,
+    single_wire: Wire,
+    single_acked: Cell<u32>,
+    single: Control,
     record: Record,
     done: Cell<bool>,
 }
@@ -290,6 +323,25 @@ fn keyed(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
     })
 }
 
+fn single(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
+    let broker = KeyedBroker {
+        wire: &stand.single_wire,
+        acked: &stand.single_acked,
+    };
+    EmbeddedApp::new().with_broker(broker, |b| {
+        b.include(
+            local_subscriber(
+                KeyedSource,
+                Slow {
+                    record: &stand.record,
+                },
+            )
+            .build(),
+        )
+        .pool::<1>()
+    })
+}
+
 // Four workers each hold a delivery's whole dispatch, so the app's future is as large as four
 // handlers in flight: an embassy task holds it in place, and nothing moves it.
 #[allow(clippy::large_futures)]
@@ -305,6 +357,14 @@ async fn run_pooled(stand: &'static Stand) {
 async fn run_keyed(stand: &'static Stand) {
     keyed(stand)
         .run(&stand.keyed)
+        .await
+        .expect("the app stops cleanly");
+}
+
+#[embassy_executor::task]
+async fn run_single(stand: &'static Stand) {
+    single(stand)
+        .run(&stand.single)
         .await
         .expect("the app stops cleanly");
 }
@@ -331,13 +391,7 @@ async fn check_pool(spawner: Spawner, stand: &'static Stand) {
     stand.record.started.lock().expect("unpoisoned").reserve(16);
     let delivery_path = Region::new(ALLOCATOR);
     for seq in 0..5 {
-        stand
-            .pooled_wire
-            .send(Keyed {
-                key: None,
-                seq: [seq],
-            })
-            .await;
+        stand.pooled_wire.send(Keyed::delivery(None, seq)).await;
     }
     settle().await;
     let busy = stand.record.in_flight.load(Ordering::Relaxed);
@@ -382,13 +436,7 @@ async fn check_keyed(spawner: Spawner, stand: &'static Stand) {
     // Two keys that hash to different lanes of two, each sent twice in a row.
     let (first, second): (&'static [u8], &'static [u8]) = (b"a", b"b");
     for (key, seq) in [(first, 1), (first, 2), (second, 3), (second, 4)] {
-        stand
-            .keyed_wire
-            .send(Keyed {
-                key: Some(key),
-                seq: [seq],
-            })
-            .await;
+        stand.keyed_wire.send(Keyed::delivery(Some(key), seq)).await;
     }
     settle().await;
     let started_early = stand.record.started.lock().expect("unpoisoned").clone();
@@ -410,10 +458,38 @@ async fn check_keyed(spawner: Spawner, stand: &'static Stand) {
     passed("the deliveries of one key run in order, one at a time");
 }
 
+async fn check_stream_error(spawner: Spawner, stand: &'static Stand) {
+    stand.record.reset();
+    spawner.spawn(run_single(stand).expect("the app task is free"));
+    settle().await;
+    for frame in [
+        Keyed {
+            key: None,
+            seq: [7],
+            faulty: true,
+        },
+        Keyed::delivery(None, 8),
+    ] {
+        stand.single_wire.send(frame).await;
+    }
+    settle().await;
+    advance(WORK).await;
+    let acked = stand.single_acked.get();
+    stand.single.stop();
+    settle().await;
+
+    assert_eq!(
+        acked, 1,
+        "deliveries the pool of one handled after its stream reported an error"
+    );
+    passed("a stream error leaves the pool's worker free");
+}
+
 #[embassy_executor::task]
 async fn drive(spawner: Spawner, stand: &'static Stand) {
     check_pool(spawner, stand).await;
     check_keyed(spawner, stand).await;
+    check_stream_error(spawner, stand).await;
     stand.done.set(true);
 }
 
@@ -428,6 +504,9 @@ fn main() {
         keyed_wire: Wire::new(),
         keyed_acked: Cell::new(0),
         keyed: Control::new(),
+        single_wire: Wire::new(),
+        single_acked: Cell::new(0),
+        single: Control::new(),
         record: Record::new(),
         done: Cell::new(false),
     });
