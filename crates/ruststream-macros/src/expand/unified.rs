@@ -186,6 +186,43 @@ pub(super) fn expand(
 
     let docs_expr = probed_docs_expr(parts, &reply);
 
+    if outs.is_empty() {
+        // The runtime-neutral expansion: the body stays a function, and each runner states what
+        // it needs of the function's future where it mounts it.
+        let body_fn = quote! {
+            #[allow(
+                clippy::future_not_send,
+                clippy::unused_async,
+                clippy::needless_pass_by_ref_mut,
+                clippy::trivially_copy_pass_by_ref,
+                clippy::used_underscore_binding,
+            )]
+            #vis async fn #name<#lifetime #state_param>(
+                _: ::ruststream::runtime::Tag<#name>,
+                #input_arg,
+                #outs_param,
+                #ctx_param: &mut ::ruststream::runtime::Context<'_, #ctx_ty, #state_in_ctx>,
+            ) -> #verdict_ty
+            #handle_where
+            {
+                #input_binding
+                #batch_len
+                #prelude
+                #glue
+            }
+        };
+        let wiring = body_wiring(parts, &reply, &docs_expr, &axis, &r_tokens, &ctx_ty);
+        return Ok(quote! {
+            #[allow(non_camel_case_types)]
+            #[doc(hidden)]
+            #vis struct #name {}
+
+            #body_fn
+
+            #wiring
+        });
+    }
+
     let wiring = definition_wiring(
         parts, &reply, &docs_expr, &axis, &r_tokens, &ctx_ty, runtime,
     );
@@ -285,6 +322,66 @@ fn reply_plan<'a>(
             body,
         }
     })
+}
+
+/// The declaration of a slot-less handler over the body function it wraps: the settings builder
+/// `subscriber(..)` also produces, generic over the body so that each runner mounts the same
+/// declaration.
+fn body_wiring(
+    parts: &HandlerParts<'_>,
+    reply: &ReplyPlan<'_>,
+    docs_expr: &TokenStream2,
+    axis: &TokenStream2,
+    r_tokens: &TokenStream2,
+    ctx_ty: &TokenStream2,
+) -> TokenStream2 {
+    let HandlerParts {
+        name,
+        source_expr,
+        settings_chain,
+        settings_source_ty,
+        settings_state_ty,
+        ..
+    } = parts;
+    let form = form_token(axis, r_tokens, reply, false);
+    let doc_state = quote!(::ruststream::runtime::Probed);
+    let plain = quote! {
+        ::ruststream::runtime::HandleValue<#axis, #r_tokens, (), #ctx_ty, __RsBody, #doc_state>
+    };
+    let (sealed, def_expr) = match reply {
+        ReplyPlan::None => (
+            quote!(::ruststream::runtime::Sealed<#plain>),
+            quote!(::ruststream::runtime::probed_def(__rs_body, #docs_expr)),
+        ),
+        ReplyPlan::Reply { dest, ty, .. } => {
+            let resolved = ReplyPlan::resolved(dest, ty);
+            (
+                quote! {
+                    ::ruststream::runtime::Sealed<
+                        ::ruststream::runtime::ReplyValue<#plain, ::ruststream::runtime::ResolvedDest>,
+                    >
+                },
+                quote!(::ruststream::runtime::probed_reply_def(__rs_body, #docs_expr, #resolved)),
+            )
+        }
+    };
+    quote! {
+        impl<__RsBody> ::ruststream::runtime::DeclareBody<__RsBody> for #name {
+            type Form = #form;
+            type Settings = ::ruststream::runtime::SubscriberBuilder<
+                #sealed,
+                #settings_source_ty,
+                #settings_state_ty,
+            >;
+
+            fn declare_body(__rs_body: __RsBody) -> Self::Settings {
+                #[allow(unused_imports)]
+                use ::ruststream::runtime::SubscriberSettings as _;
+                ::ruststream::runtime::SubscriberBuilder::new(#def_expr, #source_expr)
+                    #settings_chain
+            }
+        }
+    }
 }
 
 /// The `Declared` wiring of one unified handler: without slots the declaration wraps the sealed

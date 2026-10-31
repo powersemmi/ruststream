@@ -184,6 +184,11 @@ pub use handle::{
     probed_reply_def,
 };
 #[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use handle::{AsBodyFn, BodyCall, DeclareBody, FnBody, FnDecl, Tag};
+#[cfg(feature = "alloc")]
+pub use handle::{AsDeclared, IntoDeclared};
+#[cfg(feature = "alloc")]
 pub use handle::{
     BatchDeserialized, BatchSet, Deserialized, Documentable, Documented, EncodedReply, Handle,
     Input, IntoSource, LocalHandle, LocalOutEntry, LocalSlot, Message, OutEntry, Outs, ReplyShape,

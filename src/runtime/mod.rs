@@ -36,6 +36,9 @@ pub use ruststream_runtime::{
     TransformAt, TransformLast, WithSource,
 };
 pub use ruststream_runtime::{After, Context};
+pub use ruststream_runtime::{AsDeclared, IntoDeclared};
+#[doc(hidden)]
+pub use ruststream_runtime::{AsBodyFn, BodyCall, DeclareBody, FnBody, FnDecl, Tag};
 pub use ruststream_runtime::{
     AllOpen, BatchSized, BatchStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,

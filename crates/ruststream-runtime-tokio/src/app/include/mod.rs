@@ -15,7 +15,7 @@
 #[cfg(test)]
 mod parity_tests;
 
-use crate::{BlanketLayer, Broker, Declared, PublishIdentity, PublishPipeline};
+use crate::{BlanketLayer, Broker, Declared, IntoDeclared, PublishIdentity, PublishPipeline};
 use crate::{ChainHead, Identity, PoolFits, RetryDestinationsDeclared, SplitHead};
 use crate::{Router, RouterCommit, RouterDef, RouterMount, RouterWith};
 
@@ -173,14 +173,19 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline, Pre>
     /// # }
     /// # fn main() {}
     /// ```
-    pub fn include<D>(
+    #[allow(clippy::type_complexity)] // the mount's own output; an alias would hide it
+    pub fn include<D, Mk>(
         self,
         def: D,
-    ) -> <D::Form as RouterMount<ScopeRouter<B, C, Pipeline, Pre>, D::Settings>>::Out
+    ) -> <<D::Decl as Declared>::Form as RouterMount<
+        ScopeRouter<B, C, Pipeline, Pre>,
+        <D::Decl as Declared>::Settings,
+    >>::Out
     where
-        D: Declared,
-        D::Settings: PoolFits<Pipeline>,
-        D::Form: RouterMount<ScopeRouter<B, C, Pipeline, Pre>, D::Settings>,
+        D: IntoDeclared<Mk>,
+        <D::Decl as Declared>::Settings: PoolFits<Pipeline>,
+        <D::Decl as Declared>::Form:
+            RouterMount<ScopeRouter<B, C, Pipeline, Pre>, <D::Decl as Declared>::Settings>,
     {
         Router::for_scope_with(self.pre, self.codec, self.pipeline).include(def)
     }
