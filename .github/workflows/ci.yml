@@ -373,8 +373,11 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-minimal
+        # Each member with every feature it has, but the two that select a runtime: those build
+        # once with each runtime's set.
         run: |
-          cargo check --workspace --features "$WORKSPACE_FEATURES"
+          cargo hack check --workspace --exclude ruststream --exclude ruststream-macros --all-features
+          cargo check -p ruststream --features "$TOKIO_FEATURES"
           cargo check -p ruststream --no-default-features --features "$EMBASSY_FEATURES"
 
       - name: Delete the minimal versions build
@@ -476,9 +479,15 @@ jobs:
           REQUIRE_UI_TESTS: '1'
         # `--tests` and not every target: the examples' tests are modules of one test binary, so
         # an example needs no binary of its own, and clippy has already compiled each one.
-        run: >-
-          cargo llvm-cov --locked --no-report --workspace $TOKIO_LEGS_EXCLUDE --features "$WORKSPACE_FEATURES"
-          --no-fail-fast --tests
+        # The embassy runtime's legs build the facade with the other runtime, so they are runs of
+        # their own, and the report below merges every run's profile.
+        run: |
+          cargo llvm-cov --locked --no-report --workspace $TOKIO_LEGS_EXCLUDE --features "$WORKSPACE_FEATURES" \
+            --no-fail-fast --tests
+          cargo llvm-cov --locked --no-report -p ruststream-runtime-embassy --no-fail-fast --tests
+          cargo llvm-cov --locked --no-report -p ruststream-memory --no-default-features --features embassy \
+            --no-fail-fast --tests
+          cargo llvm-cov --locked --no-report -p ruststream-testing --features embassy,json --no-fail-fast --tests
 
       # The summary is written before the gate's exit code propagates, so it shows up even on a
       # failure. Each report reads the packages the run covered, the whole workspace.
@@ -555,15 +564,16 @@ jobs:
           CARGO_BUILD_WARNINGS: deny
         run: cargo test --locked -p ruststream --no-fail-fast
 
-      # The embassy runtime's host tests: the embedded runner, the local bus and the harness.
-      - name: cargo test (embassy runtime)
+      # The doc examples of the embassy runtime's crates: the embedded runner, the local bus and
+      # the harness. Their tests ran under coverage.
+      - name: cargo test --doc (embassy runtime)
         env:
           CARGO_BUILD_WARNINGS: deny
         run: |
-          cargo test --locked -p ruststream-runtime-embassy --no-fail-fast
+          cargo test --locked -p ruststream-runtime-embassy --no-fail-fast --doc
           cargo test --locked -p ruststream-memory --no-default-features --features embassy \
-            --no-fail-fast
-          cargo test --locked -p ruststream-testing --features embassy,json --no-fail-fast
+            --no-fail-fast --doc
+          cargo test --locked -p ruststream-testing --features embassy,json --no-fail-fast --doc
 
       # The workspace run hides a doc example that names a feature-gated item without gating itself.
       # Both ends of the range catch it, on the facade alone for the reason the default-features

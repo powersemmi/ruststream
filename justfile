@@ -247,13 +247,22 @@ deny:
 # Line-coverage gate, same threshold as CI. The floor sits at the 95% target;
 # raise it here and in ci.yml together if coverage climbs further. Needs
 # cargo-llvm-cov: cargo install cargo-llvm-cov --locked
-cov:
-    cargo llvm-cov --workspace {{ tokio_legs_exclude }} --features {{ workspace_features }} --fail-under-lines 95
+cov: cov-run
+    cargo llvm-cov report --workspace --summary-only --fail-under-lines 95
 
 # HTML coverage report at target/llvm-cov/html/index.html, for finding the
 # uncovered lines the gate complains about.
-cov-html:
-    cargo llvm-cov --workspace {{ tokio_legs_exclude }} --features {{ workspace_features }} --html
+cov-html: cov-run
+    cargo llvm-cov report --workspace --html
+
+# The suite under instrumentation, as CI runs it: the embassy runtime's legs build the facade
+# with the other runtime, so they are runs of their own, and a report merges every run.
+cov-run:
+    cargo llvm-cov clean --workspace
+    cargo llvm-cov --no-report --workspace {{ tokio_legs_exclude }} --features {{ workspace_features }} --tests
+    cargo llvm-cov --no-report -p ruststream-runtime-embassy --tests
+    cargo llvm-cov --no-report -p ruststream-memory --no-default-features --features embassy --tests
+    cargo llvm-cov --no-report -p ruststream-testing --features embassy,json --tests
 
 build:
     cargo build --workspace --release --features {{ workspace_features }}
