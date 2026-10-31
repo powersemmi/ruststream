@@ -6,6 +6,7 @@
 //! an allocation per message; built here once per name, a message pays one lookup.
 
 use std::collections::HashMap;
+#[cfg(feature = "metrics")]
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -61,6 +62,9 @@ impl<Entry> ByName<Entry> {
 
     /// The entry of `name` as [`get`](Self::get) finds it, or, past the capacity, one `build`
     /// makes for this call alone.
+    // The Prometheus layers need an entry for every message; the OpenTelemetry layer records a
+    // name past the capacity without one, through `get`.
+    #[cfg(feature = "metrics")]
     pub(crate) fn get_or_build(
         &self,
         name: &str,
@@ -72,6 +76,7 @@ impl<Entry> ByName<Entry> {
 }
 
 /// An entry the cache keeps, or one built for a single message past its capacity.
+#[cfg(feature = "metrics")]
 pub(crate) enum Recorded<'a, Entry> {
     /// The entry the cache keeps for the name.
     Kept(&'a Entry),
@@ -79,6 +84,7 @@ pub(crate) enum Recorded<'a, Entry> {
     Once(Entry),
 }
 
+#[cfg(feature = "metrics")]
 impl<Entry> Deref for Recorded<'_, Entry> {
     type Target = Entry;
 
@@ -94,7 +100,7 @@ impl<Entry> Deref for Recorded<'_, Entry> {
 mod tests {
     use std::cell::Cell;
 
-    use super::{ByName, Recorded};
+    use super::ByName;
 
     #[test]
     fn a_name_is_built_once_and_found_after() {
@@ -105,22 +111,41 @@ mod tests {
             name.len()
         };
 
-        let first = cache.get_or_build("orders", build);
-        assert!(matches!(first, Recorded::Kept(_)));
-        assert_eq!(*first, 6);
-        let again = cache.get_or_build("orders", build);
-        assert!(matches!(again, Recorded::Kept(_)));
+        assert_eq!(cache.get("orders", build), Some(&6));
+        assert_eq!(cache.get("orders", build), Some(&6));
         assert_eq!(
             calls.get(),
             1,
             "a name seen before is found, not built again"
         );
-        assert_eq!(*cache.get_or_build("invoices", build), 8);
+        assert_eq!(cache.get("invoices", build), Some(&8));
         assert_eq!(calls.get(), 2);
     }
 
     #[test]
+    fn a_name_past_the_capacity_has_no_entry() {
+        let cache = ByName::new(1);
+        let calls = Cell::new(0);
+        let build = |name: &str| {
+            calls.set(calls.get() + 1);
+            name.len()
+        };
+
+        assert_eq!(cache.get("kept", build), Some(&4));
+        assert_eq!(cache.get("overflow", build), None);
+        assert_eq!(calls.get(), 1, "a name past the capacity is not built");
+        assert_eq!(
+            cache.get("kept", build),
+            Some(&4),
+            "a name kept before the capacity filled is still found",
+        );
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
     fn a_name_past_the_capacity_is_built_for_each_message() {
+        use super::Recorded;
+
         let cache = ByName::new(1);
         let calls = Cell::new(0);
         let build = |name: &str| {
@@ -143,10 +168,6 @@ mod tests {
             calls.get(),
             3,
             "a name past the capacity is built on every message"
-        );
-        assert!(
-            matches!(cache.get_or_build("kept", build), Recorded::Kept(_)),
-            "a name kept before the capacity filled is still found",
         );
     }
 }
