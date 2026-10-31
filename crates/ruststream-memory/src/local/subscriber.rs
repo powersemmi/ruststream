@@ -13,7 +13,7 @@ use core::task::{Context, Poll};
 use futures_core::Stream;
 use ruststream_core::{
     AckError, AddressedCopies, FromName, HeaderMap, LocalBatchSubscriber, LocalIncomingMessage,
-    LocalRedeliveryAddressed, LocalSubscriber, LocalSubscriptionSource, RedeliveryAddress,
+    LocalRedeliveryAddressed, LocalSubscriber, LocalSubscriptionSource, Name, RedeliveryAddress,
 };
 use ruststream_runtime::IntoSource;
 
@@ -136,6 +136,34 @@ impl<const CAP: usize> LocalRedeliveryAddressed<ConnectedLocalMemoryBroker<CAP>>
     ) -> impl Future<Output = Result<RedeliveryAddress, LocalMemoryError>> {
         // One name is both ends of the bus, and no lookup is needed to say so.
         ready(Ok(RedeliveryAddress::new(self.name.clone())))
+    }
+}
+
+// PROTOTYPE: the by-name source on the local bus, so a `#[subscriber("name")]` handler mounts on
+// an embedded app too. The core's local twin of the by-name impl lands with the removal of the
+// cold twins; until then the bus provides it for itself.
+impl<const CAP: usize> LocalSubscriptionSource<ConnectedLocalMemoryBroker<CAP>> for Name {
+    type Subscriber = LocalMemorySubscriber<CAP>;
+    type Copies = AddressedCopies;
+
+    fn name(&self) -> &str {
+        self.as_str()
+    }
+
+    fn subscribe(
+        self,
+        connected: &ConnectedLocalMemoryBroker<CAP>,
+    ) -> impl Future<Output = Result<Self::Subscriber, LocalMemoryError>> {
+        ready(connected.open(self.as_str()))
+    }
+}
+
+impl<const CAP: usize> LocalRedeliveryAddressed<ConnectedLocalMemoryBroker<CAP>> for Name {
+    fn redelivery_address(
+        &self,
+        _connected: &ConnectedLocalMemoryBroker<CAP>,
+    ) -> impl Future<Output = Result<RedeliveryAddress, LocalMemoryError>> {
+        ready(Ok(RedeliveryAddress::new(self.as_str().to_owned())))
     }
 }
 
