@@ -573,7 +573,7 @@ mod scenarios {
         stand.done.set(true);
     }
 
-    pub fn main() {
+    pub(super) fn main() {
         static STAND: StaticCell<Stand> = StaticCell::new();
         static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
