@@ -88,8 +88,9 @@ impl<M, F> FnBody<M, F> {
 impl<M, F, In, R, O, C, S> Handle<In, R, O, C, S> for FnBody<M, F>
 where
     In: ?Sized + Input,
-    F: Send + Sync,
-    F: for<'i, 'o, 'c, 'x> BodyCall<
+    F: Send
+        + Sync
+        + for<'i, 'o, 'c, 'x> BodyCall<
             M,
             &'i In,
             &'o O,
@@ -160,6 +161,7 @@ pub struct AsDeclared;
 
 /// The marker of a `#[subscriber]` body function, recording the declaration it names and the
 /// argument types one call takes.
+#[allow(clippy::type_complexity)] // a marker: the tuple is never built
 pub struct AsBodyFn<M, I, O, X>(PhantomData<fn() -> (M, I, O, X)>);
 
 /// A value `include` accepts: a [`Declared`] definition, or a `#[subscriber]` body function.

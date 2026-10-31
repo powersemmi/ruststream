@@ -163,9 +163,7 @@ impl<const CAP: usize> LocalRedeliveryAddressed<ConnectedLocalMemoryBroker<CAP>>
         &self,
         _connected: &ConnectedLocalMemoryBroker<CAP>,
     ) -> impl Future<Output = Result<RedeliveryAddress, LocalMemoryError>> {
-        ready(Ok(RedeliveryAddress::new(alloc::string::String::from(
-            self.as_str(),
-        ))))
+        ready(Ok(RedeliveryAddress::new(String::from(self.as_str()))))
     }
 }
 

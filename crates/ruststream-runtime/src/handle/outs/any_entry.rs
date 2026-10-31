@@ -6,6 +6,7 @@
 //! then asks the body's future to be `Send` at the concrete entries it wired, where the compiler
 //! sees through every publish the body makes.
 
+use core::marker::PhantomData;
 use core::ops::Deref;
 
 use crate::codec::Codec;
@@ -203,6 +204,7 @@ pub trait SlotTransactions<M: 'static, Body = ()>:
     SlotPublish<M, Body, Wire: 'static, Enc: 'static>
 {
     /// Opens a broker-side transaction scope over the slot's wire.
+    #[allow(clippy::type_complexity)] // the scope's own type, which the body never names
     fn begin(
         &self,
     ) -> impl Future<
@@ -271,7 +273,7 @@ where
 /// narrowed by the parameter's declared set, as the slot's own typed publish.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct SlotAdmit<M, Body>(core::marker::PhantomData<fn() -> (M, Body)>);
+pub struct SlotAdmit<M, Body>(PhantomData<fn() -> (M, Body)>);
 
 impl<M, Body, T, Index> Admits<T, Index> for SlotAdmit<M, Body>
 where
