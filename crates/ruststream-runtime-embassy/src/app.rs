@@ -220,20 +220,23 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
     /// # let _ = app(LocalMemoryBroker::new(), LocalMemoryBroker::new());
     /// ```
     #[allow(clippy::type_complexity)] // the app's own type, which the caller names as `impl Mounts`
-    pub fn with_broker<Reg, Mount, Chain>(
+    pub fn with_broker<Enrolled, Mount, Chain>(
         self,
-        broker: Reg,
+        broker: Enrolled,
         mount: Mount,
     ) -> EmbeddedApp<
         Parts<
             State,
-            (BrokerMount<Reg::Broker, Chain::Routes, Reg::Slot>, Brokers),
+            (
+                BrokerMount<Enrolled::Broker, Chain::Routes, Enrolled::Slot>,
+                Brokers,
+            ),
             Hooks<AfterStartup, OnShutdown, AfterShutdown>,
         >,
     >
     where
-        Reg: Registration,
-        Mount: FnOnce(Scope<Reg::Broker>) -> Chain,
+        Enrolled: Registration,
+        Mount: FnOnce(Scope<Enrolled::Broker>) -> Chain,
         Chain: MountChain,
     {
         let (broker, slot) = broker.into_parts();
