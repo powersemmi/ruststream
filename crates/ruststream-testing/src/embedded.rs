@@ -2,7 +2,7 @@
 //! [`EmbeddedApp`] on the host, every broker connected in process, and moves the clock the app
 //! reads through embassy-time.
 //!
-//! The facade re-exports it as `ruststream::testing::TestApp` when the build selects the
+//! The facade re-exports it as `ruststream::testing::embedded::TestApp` when the build enables the
 //! `embassy` runtime.
 
 // The app and its brokers are not `Send`: the harness polls them inside the test's own future.
@@ -78,7 +78,7 @@ type HookRun = Pin<Box<dyn Future<Output = ()>>>;
 /// ```
 /// use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 /// use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts};
-/// use ruststream::testing::TestApp;
+/// use ruststream::testing::embedded::TestApp;
 /// use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
 ///
 /// /// The board's bus: each subscription holds four messages.
@@ -95,7 +95,7 @@ type HookRun = Pin<Box<dyn Future<Output = ()>>>;
 /// }
 ///
 /// /// The app the device's task runs, and the one the test hands the harness.
-/// #[ruststream::app]
+/// #[ruststream::app(runtime = embassy)]
 /// fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
 ///     EmbeddedApp::new().with_broker(bus, |b| b.include(on_reading))
 /// }
@@ -211,7 +211,7 @@ impl TestApp {
     /// ```
     /// use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
     /// use ruststream::runtime::{Context, EmbeddedApp, HandlerOutcome, Mounts};
-    /// use ruststream::testing::TestApp;
+    /// use ruststream::testing::embedded::TestApp;
     /// use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
     ///
     /// type Bus = LocalMemoryBroker<4>;
@@ -327,7 +327,7 @@ impl TestApp {
     /// ```
     /// # use ruststream::memory::local::LocalMemoryBroker;
     /// # use ruststream::runtime::{EmbeddedApp, Mounts};
-    /// use ruststream::testing::TestApp;
+    /// use ruststream::testing::embedded::TestApp;
     ///
     /// # fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
     /// #     EmbeddedApp::new().with_broker(bus, |b| b)
@@ -361,7 +361,7 @@ impl TestApp {
     /// use embassy_time::Timer;
     /// use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
     /// use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts};
-    /// use ruststream::testing::TestApp;
+    /// use ruststream::testing::embedded::TestApp;
     /// use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
     ///
     /// type Bus = LocalMemoryBroker<4>;
@@ -500,7 +500,7 @@ impl TestApp {
     /// ```
     /// use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
     /// use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out};
-    /// use ruststream::testing::TestApp;
+    /// use ruststream::testing::embedded::TestApp;
     /// use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
     ///
     /// type Bus = LocalMemoryBroker<4>;

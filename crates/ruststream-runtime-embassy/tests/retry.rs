@@ -75,7 +75,7 @@ async fn on_job(job: &Job<'_>) -> HandlerOutcome {
     }
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| b.include(on_job).retry_capacity::<1>())
 }

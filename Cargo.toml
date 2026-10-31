@@ -980,20 +980,18 @@ features = [
 
 [features]
 default = ["json", "tokio"]
-# The runtime: `tokio` or `embassy`. The two exclude each other, and every feature that runs on
-# tokio's runner, the observability layers among them, turns `tokio` on. The harness, `testing`,
-# drives the app of whichever runtime the build selects.
+# The runners: `tokio` and `embassy`, alone or together. Every feature that runs on tokio's runner,
+# the observability layers among them, turns `tokio` on. An app picks its runner by its type
+# (`RustStream` or `EmbeddedApp`), and the handlers are the same for both.
 tokio = [
     "dep:ruststream-runtime-tokio",
     "dep:ruststream-cli",
-    "ruststream-macros?/tokio",
     "ruststream-memory?/std",
     "ruststream-testing?/tokio",
 ]
 embassy = [
     "dep:ruststream-runtime-embassy",
     "dep:tracing",
-    "ruststream-macros?/embassy",
     "ruststream-memory?/embassy",
     "ruststream-testing?/embassy",
 ]

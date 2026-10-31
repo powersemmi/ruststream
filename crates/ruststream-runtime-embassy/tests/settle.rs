@@ -106,7 +106,7 @@ async fn on_ping(ping: &Job<'_>) -> Pong {
     Pong(ping.0.to_vec())
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_after)

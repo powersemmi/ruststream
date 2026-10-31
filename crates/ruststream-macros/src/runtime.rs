@@ -15,14 +15,6 @@ pub(crate) enum Runtime {
 }
 
 impl Runtime {
-    /// The runtime the facade's feature selected. A build that names neither (the macros on
-    /// their own) keeps the tokio forms.
-    pub(crate) const SELECTED: Self = if cfg!(feature = "embassy") {
-        Self::Embassy
-    } else {
-        Self::Tokio
-    };
-
     /// The bounds a capability written on an `Out` parameter becomes: as written on tokio; on
     /// embassy each publisher capability of the core maps to its local twin, so
     /// `Out<impl Publisher>` asks for a `LocalPublisher`.
