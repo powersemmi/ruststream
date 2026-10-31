@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use tokio_util::task::TaskTracker;
 
-use crate::{Clock, Copying, Delivery, Detach, Lent, RetryCopies, RetryRoute, Tokio};
+use crate::{Clock, Continuation, Copying, Delivery, Detach, Lent, RetryCopies, RetryRoute, Tokio};
 
 /// The tokio runner's handle: what a delivery leaves behind is a task of the app's tracker, which
 /// the teardown drains. On a dedicated thread (`threads(n)`) the task runs on the thread's runtime
@@ -63,6 +63,10 @@ impl Detach for Tracked {
     where
         Work: Future<Output = ()> + Send + 'static,
     {
+        self.spawn(work);
+    }
+
+    fn detach_boxed(&self, work: Continuation) {
         self.spawn(work);
     }
 

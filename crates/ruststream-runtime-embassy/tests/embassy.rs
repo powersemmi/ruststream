@@ -26,8 +26,9 @@ use ruststream_core::{
     BytesMut, CallerName, LocalPublisher, MessageHeaders, NoHeaders, OutgoingDestination,
 };
 use ruststream_runtime::{
-    Clock, Context, Delivery, Detach, DispatchFailure, FailurePolicies, HandlerOutcome,
-    HeadersAtOnce, INSTRUMENTED_BODY, LocalDetach, LocalHandler, ScopeDelivery, run_sequential,
+    Clock, Context, Continuation, Delivery, Detach, DispatchFailure, FailurePolicies,
+    HandlerOutcome, HeadersAtOnce, INSTRUMENTED_BODY, LocalDetach, LocalHandler, ScopeDelivery,
+    run_sequential,
 };
 use ruststream_runtime::{
     Deserialized, Input, LocalBlanketLayer, LocalHandle, LocalOutEntry, MessageWire, OpenRoutes,
@@ -77,6 +78,10 @@ impl Detach for CountDetached {
     where
         Work: Future<Output = ()> + Send + 'static,
     {
+        self.detached.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn detach_boxed(&self, _work: Continuation) {
         self.detached.fetch_add(1, Ordering::Relaxed);
     }
 

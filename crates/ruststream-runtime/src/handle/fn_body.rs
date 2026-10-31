@@ -7,6 +7,7 @@
 //! site ([`Handle`] for [`FnBody`]), and a runner that polls on one thread asks nothing
 //! ([`LocalHandle`] for [`FnBody`]). The expansion itself is the same for both.
 
+use crate::handler::MaybeSend;
 use core::marker::PhantomData;
 
 use super::reply::DeclaresReply;
@@ -104,7 +105,7 @@ where
         input: &In,
         outs: &O,
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Verdict<In, R>> + Send {
+    ) -> impl Future<Output = Verdict<In, R>> + MaybeSend {
         (self.body)(BodyTag::new(), input, outs, ctx)
     }
 }

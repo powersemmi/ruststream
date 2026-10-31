@@ -70,10 +70,10 @@ testing = [
     "dep:inventory",
     "dep:tokio",
     "dep:tokio-util",
-    "tokio/macros",
-    "tokio/sync",
-    "tokio/time",
-    "tokio/test-util",
+    "tokio?/macros",
+    "tokio?/sync",
+    "tokio?/time",
+    "tokio?/test-util",
     "ruststream-core/testing",
 ]
 # The app's runtime as a handler reaches it (`MainRuntime`), for the runner built on Tokio.

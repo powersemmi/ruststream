@@ -6,9 +6,60 @@ use core::{convert::Infallible, fmt, pin::Pin, time::Duration};
 
 use super::context::Context;
 
-/// A boxed, owned continuation run after a message is settled. Private: a [`HandlerOutcome`]
-/// hands it to the dispatcher, which spawns it; it never crosses the public API by itself.
-type AfterFut = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+/// A boxed, owned continuation run after a message is settled: what a [`HandlerOutcome`] hands
+/// the dispatcher, and what the dispatcher hands the runner's host.
+///
+/// With the runtime crate's `tokio` feature it is `Send`, because the Tokio runner may poll it on
+/// any worker thread. Without it the box carries no `Send`, so a continuation on a device runner
+/// may hold the local bus's publisher or an `Rc`.
+#[cfg(feature = "tokio")]
+#[doc(hidden)]
+pub type Continuation = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+/// See the `tokio` form: without the feature a continuation is not required to be `Send`.
+#[cfg(not(feature = "tokio"))]
+#[doc(hidden)]
+pub type Continuation = Pin<Box<dyn Future<Output = ()> + 'static>>;
+
+/// `Send` where the runtime crate's `tokio` feature is on, and nothing otherwise.
+///
+/// The Tokio runner's handler traits name it where they need a `Send` future, so a build for the
+/// embedded runtime alone, whose continuations carry no `Send`, uses the same traits.
+#[cfg(feature = "tokio")]
+#[doc(hidden)]
+pub trait MaybeSend: Send {}
+
+#[cfg(feature = "tokio")]
+impl<Value: Send + ?Sized> MaybeSend for Value {}
+
+/// See the `tokio` form: without the feature every type is `MaybeSend`.
+#[cfg(not(feature = "tokio"))]
+#[doc(hidden)]
+pub trait MaybeSend {}
+
+#[cfg(not(feature = "tokio"))]
+impl<Value: ?Sized> MaybeSend for Value {}
+
+/// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: `Send` where the
+/// runtime crate's `tokio` feature is on.
+#[cfg(feature = "tokio")]
+#[diagnostic::on_unimplemented(
+    message = "the continuation `{Self}` must be `Send` to run on the Tokio runner",
+    label = "this continuation holds a value that is not `Send`",
+    note = "a continuation runs on a worker thread of the Tokio runner; keep a non-`Send` value out of it, or build for the embedded runtime alone"
+)]
+pub trait ContinuationFuture: Future<Output = ()> + Send + 'static {}
+
+#[cfg(feature = "tokio")]
+impl<Work: Future<Output = ()> + Send + 'static> ContinuationFuture for Work {}
+
+/// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: any
+/// `'static` future where the runtime crate's `tokio` feature is off.
+#[cfg(not(feature = "tokio"))]
+pub trait ContinuationFuture: Future<Output = ()> + 'static {}
+
+#[cfg(not(feature = "tokio"))]
+impl<Work: Future<Output = ()> + 'static> ContinuationFuture for Work {}
 
 /// The broker status half of a [`HandlerOutcome`].
 ///
@@ -146,7 +197,7 @@ impl HandlerResult {
 #[must_use]
 pub struct HandlerOutcome {
     outcome: HandlerResult,
-    after: Option<AfterFut>,
+    after: Option<Continuation>,
 }
 
 impl HandlerOutcome {
@@ -303,7 +354,7 @@ impl HandlerOutcome {
     /// ```
     pub fn and_after<F>(self, fut: F) -> Self
     where
-        F: Future<Output = ()> + Send + 'static,
+        F: ContinuationFuture,
     {
         Self {
             outcome: self.outcome,
@@ -356,7 +407,7 @@ impl HandlerOutcome {
         self.after.is_some()
     }
 
-    pub(crate) fn take_after(&mut self) -> Option<AfterFut> {
+    pub(crate) fn take_after(&mut self) -> Option<Continuation> {
         self.after.take()
     }
 }
@@ -472,7 +523,7 @@ pub trait Handler<M: ?Sized, C = (), S = ()>: Send + Sync {
         &self,
         msg: &M,
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = HandlerOutcome> + Send;
+    ) -> impl Future<Output = HandlerOutcome> + MaybeSend;
 }
 
 impl<M: ?Sized, C, S, F, Fut> Handler<M, C, S> for F
@@ -485,7 +536,7 @@ where
         &self,
         msg: &M,
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = HandlerOutcome> + Send {
+    ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
         // Build the inner future before the async block so it owns the closure's output and the
         // returned future is outcome-valued for any accepted return shape.
         let fut = (self)(msg, ctx);
@@ -501,7 +552,7 @@ where
         &self,
         msg: &M,
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = HandlerOutcome> + Send {
+    ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
         (**self).handle(msg, ctx)
     }
 }

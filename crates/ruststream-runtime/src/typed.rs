@@ -7,6 +7,7 @@
 //! passed in here. Both use the same [`Layer`](super::Layer) / [`HandlerExt`](super::HandlerExt)
 //! machinery, just at different inputs.
 
+use crate::handler::MaybeSend;
 use alloc::format;
 use core::{fmt, marker::PhantomData};
 
@@ -92,7 +93,7 @@ where
         &self,
         msg: &M,
         ctx: &mut Context<'_, Cx, St>,
-    ) -> impl Future<Output = HandlerOutcome> + Send {
+    ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
         self.handle_local::<SendCall, Cx, St>(msg, ctx)
     }
 }

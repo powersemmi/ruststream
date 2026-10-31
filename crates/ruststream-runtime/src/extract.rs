@@ -8,6 +8,7 @@
 //! dependencies arrive as arguments instead of being reached for through `ctx.state()`. A failed
 //! extraction short-circuits the delivery with the rejection's [`HandlerOutcome`].
 
+use crate::handler::MaybeSend;
 use alloc::format;
 use core::any::type_name;
 use core::convert::Infallible;
@@ -75,7 +76,7 @@ pub trait FromContext<C = (), S = ()>: Sized {
     /// settles the delivery by the resulting [`HandlerOutcome`] instead of running the handler.
     fn from_context(
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + MaybeSend;
 }
 
 /// Produces a value from a reference to the shared application state `S`.
@@ -177,7 +178,7 @@ where
     type Rejection = Infallible;
     fn from_context(
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Result<Self, Infallible>> + Send {
+    ) -> impl Future<Output = Result<Self, Infallible>> + MaybeSend {
         let value = T::from_ref(ctx.state());
         async move { Ok(Self(value)) }
     }
@@ -313,7 +314,7 @@ where
     type Rejection = Infallible;
     fn from_context(
         ctx: &mut Context<'_, K::Context, S>,
-    ) -> impl Future<Output = Result<Self, Infallible>> + Send {
+    ) -> impl Future<Output = Result<Self, Infallible>> + MaybeSend {
         let value = K::default().read(ctx.cx_ref());
         async move { Ok(Self(value)) }
     }
@@ -328,7 +329,7 @@ where
     type Rejection = Infallible;
     fn from_context(
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Result<Self, Infallible>> + Send {
+    ) -> impl Future<Output = Result<Self, Infallible>> + MaybeSend {
         let value = ctx.main_runtime().clone();
         async move { Ok(Self(value)) }
     }
@@ -424,7 +425,7 @@ where
     type Rejection = HandlerOutcome;
     fn from_context(
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Result<Self, HandlerOutcome>> + Send {
+    ) -> impl Future<Output = Result<Self, HandlerOutcome>> + MaybeSend {
         let result = Self::extract(ctx, FailurePolicy::Drop);
         async move { result }
     }

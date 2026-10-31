@@ -11,6 +11,7 @@
 // The shared body serves the local contract, whose futures carry no Send.
 #![allow(clippy::future_not_send)]
 
+use crate::handler::MaybeSend;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -349,7 +350,7 @@ pub(crate) trait InjectCall<S>: InjectDef {
         input: &<Self::Input as InputKind>::Target,
         injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
-    ) -> impl Future<Output = HandlerOutcome> + Send;
+    ) -> impl Future<Output = HandlerOutcome> + MaybeSend;
 }
 
 /// [`InjectCall`] for a runner that polls every delivery on one thread: the body's future need

@@ -9,6 +9,7 @@
 //! reply codec). The destination name comes from the macro; the publisher and codec come from
 //! the chain.
 
+use crate::handler::MaybeSend;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -424,7 +425,7 @@ pub(crate) trait PublishingCall<S>: PublishingDef {
         input: &<Self::Input as InputKind>::Target,
         injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
-    ) -> impl Future<Output = Result<Self::Reply, HandlerOutcome>> + Send;
+    ) -> impl Future<Output = Result<Self::Reply, HandlerOutcome>> + MaybeSend;
 }
 
 /// The local twin of [`PublishingCall`]: runs the body on a runner that polls it where it
@@ -637,7 +638,7 @@ where
         &self,
         msg: &Msg,
         ctx: &mut Context<'_, Def::Context, State>,
-    ) -> impl Future<Output = HandlerOutcome> + Send {
+    ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
         self.handle_with::<SendCall, _, _, _>(SendSink(&self.publisher), msg, ctx)
     }
 }

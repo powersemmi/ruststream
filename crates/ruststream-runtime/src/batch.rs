@@ -8,6 +8,7 @@
 //! [`Handler`](super::Handler) counterpart, and [`TypedBatch`] the [`Typed`](super::Typed) decode
 //! adapter.
 
+use crate::handler::MaybeSend;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -176,7 +177,7 @@ pub(crate) trait SliceHandler<T, C = (), S = ()>: Send + Sync {
         &self,
         batch: &[T],
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = BatchResult> + Send;
+    ) -> impl Future<Output = BatchResult> + MaybeSend;
 }
 
 impl<T, F, Fut, C, S> SliceHandler<T, C, S> for F
@@ -189,7 +190,7 @@ where
         &self,
         batch: &[T],
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = BatchResult> + Send {
+    ) -> impl Future<Output = BatchResult> + MaybeSend {
         // Build the inner future before the async block so the returned future does not hold
         // `&[T]` (which would demand `T: Sync` for it to be `Send`).
         let fut = (self)(batch, ctx);
@@ -401,7 +402,7 @@ pub trait BatchHandler<Batch, C = (), S = ()>: Send + Sync {
         scratch: &mut Self::Scratch,
         ctx: &mut Context<'_, C, S>,
         host: &Host,
-    ) -> impl Future<Output = ()> + Send;
+    ) -> impl Future<Output = ()> + MaybeSend;
 }
 
 /// Hands `handler` one batch of deliveries the way the dispatch loop does once it took them off
@@ -603,7 +604,7 @@ where
         scratch: &mut (),
         ctx: &mut Context<'_, C, S>,
         host: &Host,
-    ) -> impl Future<Output = ()> + Send {
+    ) -> impl Future<Output = ()> + MaybeSend {
         self.handle_local::<SendCall, C, S, Host>(batch, scratch, ctx, host)
     }
 }

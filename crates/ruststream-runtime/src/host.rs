@@ -22,6 +22,8 @@ use alloc::sync::Arc;
 use core::convert::Infallible;
 
 #[cfg(feature = "alloc")]
+use crate::handler::Continuation;
+#[cfg(feature = "alloc")]
 use crate::lifecycle::BoxError;
 #[cfg(feature = "alloc")]
 use crate::redelivery::{NoRetry, RetryCopies, RetryRoute};
@@ -209,6 +211,15 @@ pub trait Detach: Send + Sync {
     where
         Work: Future<Output = ()> + Send + 'static;
 
+    /// Runs a continuation the delivery already boxed: an `and_after` continuation or a
+    /// post-settle hook.
+    ///
+    /// The box is [`Continuation`], `Send` where the runtime crate's `tokio` feature is on. A
+    /// runner built on this trait is a multi-thread one, so it is built with that feature, and
+    /// it spawns the box as the future it is.
+    #[cfg(feature = "alloc")]
+    fn detach_boxed(&self, work: Continuation);
+
     /// Runs `work` once `delay` has passed on the runner's clock.
     ///
     /// The body calls it only after a [`reserve`](Self::reserve) that returned `true`, and the
@@ -264,12 +275,9 @@ pub trait HostDetach {
     /// Runs work the delivery already boxed: an `and_after` continuation or a post-settle hook.
     ///
     /// A runner that keeps its work boxed takes this box as it is, so a continuation costs one
-    /// allocation and not a box around a box. The default hands the box to
-    /// [`detach`](Self::detach), which a runner that spawns its work takes as the future it is.
+    /// allocation and not a box around a box.
     #[cfg(feature = "alloc")]
-    fn detach_boxed(&self, work: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        self.detach(work);
-    }
+    fn detach_boxed(&self, work: Continuation);
 
     /// Runs `work` once `delay` has passed on the runner's clock.
     fn detach_after<Work>(&self, delay: Duration, work: Work)
@@ -315,6 +323,12 @@ impl<Host: Detach> HostDetach for Host {
         Work: Future<Output = ()> + Send + 'static,
     {
         Detach::detach(self, work);
+    }
+
+    #[cfg(feature = "alloc")]
+    #[inline]
+    fn detach_boxed(&self, work: Continuation) {
+        Detach::detach_boxed(self, work);
     }
 
     #[inline]
@@ -382,7 +396,7 @@ impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
 
     #[cfg(feature = "alloc")]
     #[inline]
-    fn detach_boxed(&self, work: Pin<Box<dyn Future<Output = ()> + Send>>) {
+    fn detach_boxed(&self, work: Continuation) {
         LocalDetach::detach_boxed(self.0, work);
     }
 
@@ -479,6 +493,11 @@ impl<Host: Detach, Retry: 'static> HostDetach for Copying<Host, Retry> {
     }
 
     #[inline]
+    fn detach_boxed(&self, work: Continuation) {
+        Detach::detach_boxed(&self.host, work);
+    }
+
+    #[inline]
     fn detach_after<Work>(&self, delay: Duration, work: Work)
     where
         Work: Future<Output = ()> + Send + 'static,
@@ -542,7 +561,7 @@ impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept>
 
     #[cfg(feature = "alloc")]
     #[inline]
-    fn detach_boxed(&self, work: Pin<Box<dyn Future<Output = ()> + Send>>) {
+    fn detach_boxed(&self, work: Continuation) {
         LocalDetach::detach_boxed(self.0, work);
     }
 
