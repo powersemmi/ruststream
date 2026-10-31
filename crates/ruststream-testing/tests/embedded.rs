@@ -621,6 +621,59 @@ fn a_destination_hook_waiting_on_the_clock_leaves_the_publish_and_finishes_on_ad
 }
 
 #[test]
+fn a_shutdown_runs_a_destination_hook_still_waiting_on_the_clock_to_its_end()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .published::<()>("sensors/temp")
+            .on_publish(async move |_readings| {
+                Timer::after_secs(1).await;
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await?;
+
+        tb.shutdown().await?;
+        assert_eq!(
+            hooked.load(Ordering::SeqCst),
+            1,
+            "the hook ran to its end before the shutdown returned"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_shutdown_with_a_hook_nothing_wakes_fails() {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new()))
+            .await
+            .expect("the app starts");
+        tb.broker::<Bus>()
+            .published::<()>("sensors/temp")
+            .on_publish(async move |_readings| pending::<()>().await);
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await
+            .expect("the publish returns while its hook waits");
+
+        let stopped = tb.shutdown().await;
+        assert!(
+            matches!(stopped, Err(TestError::Stalled)),
+            "a hook nothing wakes keeps the shutdown from finishing: {stopped:?}"
+        );
+    });
+}
+
+#[test]
 fn a_shutdown_lets_a_hook_waiting_on_the_clock_finish_and_shuts_the_bus_down()
 -> Result<(), Box<dyn Error>> {
     block_on(async {

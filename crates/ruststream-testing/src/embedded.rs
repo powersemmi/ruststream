@@ -424,12 +424,13 @@ impl TestApp {
     /// See [`TestApp`].
     pub async fn shutdown(self) -> Result<(), TestError> {
         self.control.stop();
-        // Each round lets the app run until it waits on the clock, then moves the clock to the
-        // deadline it waits for; the round limit ends a stop that a periodic timer never lets
-        // come.
+        // Each round lets the app and the queued hooks run until they wait on the clock, then
+        // moves the clock to the deadline they wait for; the round limit ends a stop that a
+        // periodic timer never lets come. A hook still waiting holds its checks, so the shutdown
+        // returns only once the app has ended and every hook has finished.
         for _ in 0..MAX_POLLS {
             self.drive().await?;
-            if self.run.borrow().is_none() {
+            if self.run.borrow().is_none() && self.hooks.borrow().is_empty() {
                 return self
                     .ended
                     .take()
