@@ -45,3 +45,22 @@ async fn a_failing_ack_fails_the_local_suite() {
 async fn a_failing_requeue_fails_the_local_suite() {
     run_local_suite(faulty(Fault::RequeueFailsWhenCounted)).await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+#[should_panic(expected = "nack must succeed or be unsupported, got: Broker")]
+async fn a_requeue_that_fails_in_routing_fails_the_local_suite() {
+    run_local_suite(faulty(Fault::RequeueFails)).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[should_panic(expected = "nack must succeed or be unsupported, got: Broker")]
+async fn a_drop_that_fails_fails_the_local_suite() {
+    run_local_suite(faulty(Fault::DropFails)).await;
+}
+
+/// A transport with nothing to take back answers the requeue `Unsupported`, and owes neither a
+/// redelivery nor a second count.
+#[tokio::test(flavor = "current_thread")]
+async fn a_requeue_answering_unsupported_passes_the_local_suite() {
+    run_local_suite(faulty(Fault::RequeueUnsupported)).await;
+}

@@ -82,6 +82,13 @@ enum Fault {
     NackFailsWhenCounted,
     /// Every requeue fails once the transport reports to a coordinator.
     RequeueFailsWhenCounted,
+    /// Every requeue fails.
+    RequeueFails,
+    /// Every nack without requeue fails.
+    DropFails,
+    /// Every requeue answers `Unsupported` and drops the delivery, the way a transport with
+    /// nothing to take back does.
+    RequeueUnsupported,
     /// Every delayed nack fails.
     DelayedNackFails,
     /// A delivery reports a delayed nack, and the nack answers `Unsupported` after releasing it.
@@ -424,6 +431,11 @@ impl IncomingMessage for FaultyMessage {
                 if self.counted =>
             {
                 Err(settlement_lost())
+            }
+            (Fault::RequeueFails, true) | (Fault::DropFails, false) => Err(settlement_lost()),
+            (Fault::RequeueUnsupported, true) => {
+                self.into_inner().nack(false).await?;
+                Err(AckError::Unsupported)
             }
             _ => self.into_inner().nack(requeue).await,
         }
