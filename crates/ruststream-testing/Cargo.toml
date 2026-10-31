@@ -101,6 +101,12 @@ name = "embedded_dead_letter"
 path = "tests/embedded_dead_letter.rs"
 required-features = ["embassy", "json"]
 
+# A device service relaying to a second bus through a token minted before the scopes.
+[[test]]
+name = "embedded_bindable"
+path = "tests/embedded_bindable.rs"
+required-features = ["embassy", "json"]
+
 # The same device service declared without the macros.
 [[test]]
 name = "embedded_manual"
