@@ -5,7 +5,7 @@
 //! [`run_suite`] against their production broker: each scenario starts from a fresh broker
 //! produced by the caller-supplied factory, connects it through its
 //! [`InProcess`] transition and drives the connected form through the broker's own
-//! [`Subscribe`] / [`TestableBroker::inject`] surface - no server.
+//! [`Subscribe`](ruststream_core::Subscribe) / [`TestableBroker::inject`] surface - no server.
 //!
 //! # Examples
 //!
@@ -63,7 +63,7 @@ type SubscriberMessage<S> = <S as Subscriber>::Message;
 /// `factory` is invoked once per scenario to obtain a fresh broker, so tests cannot leak state
 /// between each other. It builds the production broker, the one a service builds its app on;
 /// each scenario connects it through its [`InProcess`] transition and drives the connected form
-/// through the broker's own [`Subscribe`] / [`TestableBroker::inject`] surface.
+/// through the broker's own [`Subscribe`](ruststream_core::Subscribe) / [`TestableBroker::inject`] surface.
 ///
 /// This is the routing contract and nothing else. A capability
 /// ([`BatchSubscriber`](ruststream_core::BatchSubscriber),
@@ -210,7 +210,7 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 /// reaches it from.
 ///
 /// The steps are: synchronous construction, then the consuming `connect` producing the typed
-/// connected form, a subscription opened through the broker's own [`SubscriptionSource`], publishes
+/// connected form, a subscription opened through the broker's own [`SubscriptionSource`](ruststream_core::SubscriptionSource), publishes
 /// the subscription receives and settles, then the consuming `shutdown` producing the terminal
 /// witness. Owner-side misuse after shutdown is a compile error under the ladder, so what remains
 /// checkable at runtime is the aliased-handle contract.
@@ -227,7 +227,7 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 ///   again, from the broker's runtime and from a new runtime, and both messages must arrive (a
 ///   connection attached lazily on the first caller's runtime dies with it). `nack(requeue =
 ///   true)` answering `Ok` must bring the message back, `nack(requeue = false)` must not.
-/// * **The delay.** Where the delivery offers [`nack_after`](Settle::nack_after), it is
+/// * **The delay.** Where the delivery offers [`nack_after`](ruststream_core::Settle::nack_after), it is
 ///   settled with a delay of 1.5 s and must come back no sooner than that and within ten seconds
 ///   after it: a broker that ignores the delay, rounds it down or runs its timer on the settling
 ///   caller's runtime fails.

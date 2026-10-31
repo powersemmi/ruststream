@@ -113,7 +113,7 @@ const POISON: &[u8] = b"poison";
 /// * arrive with both headers byte for byte.
 ///
 /// The copy is then requeued twice with `nack(true)`. Each redelivery keeps both headers, and
-/// where the delivery reports a [`redelivery_count`](IncomingMessage::redelivery_count), it
+/// where the delivery reports a [`redelivery_count`](ruststream_core::IncomingMessage::redelivery_count), it
 /// continues the count the copy's header carries and grows by one on each redelivery: a broker
 /// that delays natively
 /// ([`supports_nack_after`](Settle::supports_nack_after)) counts the copy as a new
@@ -470,7 +470,7 @@ fn assert_count<M: Settle>(msg: &M, expected: u64, which: &str) {
 /// message and requeues every delivery of it with `nack(true)`. It expects exactly `attempts`
 /// deliveries on the subscription, then the message in the dead-letter destination, once, and
 /// nowhere after that. Where a delivery reports a
-/// [`redelivery_count`](IncomingMessage::redelivery_count) it is the delivery's number, from `1`.
+/// [`redelivery_count`](ruststream_core::IncomingMessage::redelivery_count) it is the delivery's number, from `1`.
 /// A requeue the transport reports as [`AckError::Unsupported`] ends the cycle: such a transport
 /// redelivers nothing to count.
 ///
