@@ -595,6 +595,9 @@ pub trait KeptCopies {
     /// How many records the store has.
     fn capacity(&self) -> usize;
 
+    /// The name of the type the handler receives, for the diagnostic of a full store.
+    fn input(&self) -> &'static str;
+
     /// What a delivery does when no record is free.
     fn when_full(&self) -> WhenFull;
 
@@ -691,6 +694,10 @@ impl KeptCopies for NoKept {
     type Spilled = Infallible;
 
     fn capacity(&self) -> usize {
+        match *self {}
+    }
+
+    fn input(&self) -> &'static str {
         match *self {}
     }
 

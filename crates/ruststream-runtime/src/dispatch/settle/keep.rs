@@ -2,7 +2,6 @@
 //! takes the copy before the delivery settles, and the store publishes it.
 
 use alloc::string::ToString;
-use core::any::type_name;
 use core::time::Duration;
 
 use tracing::warn;
@@ -120,7 +119,7 @@ where
                  a full store does with `.when_retry_full(DeadLetter)` or \
                  `.when_retry_full(SkipDelay)`",
                 kept.capacity(),
-                type_name::<M>(),
+                kept.input(),
             ),
             WhenFull::DeadLetter => declared,
             WhenFull::SkipDelay => None,
@@ -254,6 +253,10 @@ mod tests {
 
         fn capacity(&self) -> usize {
             self.room
+        }
+
+        fn input(&self) -> &'static str {
+            "Order"
         }
 
         fn when_full(&self) -> WhenFull {

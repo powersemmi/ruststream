@@ -110,7 +110,10 @@ macro_rules! publish_two {
 }
 
 #[test]
-#[should_panic(expected = "the store of retry copies of subscription `jobs` is full (capacity 1)")]
+#[should_panic(
+    expected = "the store of retry copies of subscription `jobs` is full (capacity 1) while a \
+                `embedded_retry_full::Job<'_>` waits for a retry"
+)]
 fn a_full_store_panics_unless_the_mount_chose_a_policy() {
     let _ = block_on(async {
         let tb = TestApp::start(default_app(Bus::new())).await?;

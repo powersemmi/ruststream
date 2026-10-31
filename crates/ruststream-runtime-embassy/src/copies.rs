@@ -90,6 +90,8 @@ pub(crate) struct CopyStore<Path: CopyPublisher, const CAP: usize, Timers: Clock
     clock: Timers,
     /// What a delivery that finds no free record does.
     when_full: WhenFull,
+    /// The name of the type the handler receives, for the panic of a full store.
+    input: &'static str,
 }
 
 impl<Path: CopyPublisher, const CAP: usize> CopyStore<Path, CAP> {
@@ -111,7 +113,14 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             waker: RefCell::new(None),
             clock,
             when_full: WhenFull::Panic,
+            input: "message",
         }
+    }
+
+    /// Names the type the handler receives, as the panic of a full store calls its messages.
+    pub(crate) fn input(mut self, input: &'static str) -> Self {
+        self.input = input;
+        self
     }
 
     /// Sets what a delivery that finds no free record does.
@@ -312,6 +321,10 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
 
     fn capacity(&self) -> usize {
         CAP
+    }
+
+    fn input(&self) -> &'static str {
+        self.input
     }
 
     fn when_full(&self) -> WhenFull {

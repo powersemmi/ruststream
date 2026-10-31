@@ -19,7 +19,7 @@ use crate::dispatch::{Delivery, HeadersAtOnce, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::LocalHandler;
 use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, PrepareKept, ShutdownWait};
-use crate::input::Materialize;
+use crate::input::{InputKind, Materialize};
 use crate::lifecycle::BoxError;
 use crate::middleware::LocalBlanketLayer;
 use crate::redelivery::{
@@ -88,6 +88,9 @@ pub struct LocalRoute<Sub, Body, Cx> {
     pub delivery: Delivery<Cx>,
     /// The registration's failure policies.
     pub policies: FailurePolicies,
+    /// The name of the type the handler receives, decoded: what a diagnostic about the
+    /// subscription's store of copies calls its messages. Read once when the registration opens.
+    pub input: &'static str,
 }
 
 impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
@@ -431,6 +434,7 @@ where
             name,
             delivery,
             policies: self.policies,
+            input: <Input as InputKind>::input_label(),
         })
     }
 }
@@ -527,6 +531,7 @@ where
             name: route.name,
             delivery: route.delivery,
             policies: route.policies,
+            input: route.input,
         };
         plan.run(route, path, signal, state, host).await;
     }

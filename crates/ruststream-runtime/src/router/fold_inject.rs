@@ -7,7 +7,7 @@
 #![allow(clippy::future_not_send)]
 
 use crate::inject::{InjectHandler, LocalFromStartup, LocalInject, LocalInjectCall};
-use crate::input::Materialize;
+use crate::input::{InputKind, Materialize};
 use crate::lifecycle::BoxError;
 use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
 use crate::{
@@ -72,6 +72,7 @@ where
             name,
             delivery,
             policies,
+            input: <Def::Input as InputKind>::input_label(),
         })
     }
 }

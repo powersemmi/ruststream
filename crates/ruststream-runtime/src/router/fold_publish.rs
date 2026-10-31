@@ -9,7 +9,7 @@
 use core::any::type_name;
 
 use crate::inject::LocalFromStartup;
-use crate::input::Materialize;
+use crate::input::{InputKind, Materialize};
 use crate::lifecycle::BoxError;
 use crate::publish::{
     BatchTransformIdentity, Direct, ForReply, PublishCodec, PublishIdentity, PublishTransform,
@@ -119,6 +119,7 @@ where
             name,
             delivery,
             policies,
+            input: <Def::Input as InputKind>::input_label(),
         })
     }
 }
@@ -194,6 +195,7 @@ where
             name,
             delivery,
             policies,
+            input: <Def::Input as InputKind>::input_label(),
         })
     }
 }

@@ -196,8 +196,9 @@ impl<L: Lanes, const CAPACITY: usize, Full: FullPolicy> LocalDispatch
         };
         // The registration's own store: its copies wait in its records, and its driver
         // publishes the last of them after the lanes have stopped.
-        let store =
-            CopyStore::<Path, CAPACITY>::new(path, Arc::clone(&route.name)).when_full(Full::WHEN);
+        let store = CopyStore::<Path, CAPACITY>::new(path, Arc::clone(&route.name))
+            .when_full(Full::WHEN)
+            .input(route.input);
         let lanes = async {
             let keeping = Keeping(host, &store);
             self.lanes.run(route, signal, state, &keeping).await;
