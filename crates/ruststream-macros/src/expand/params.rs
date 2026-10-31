@@ -571,10 +571,11 @@ mod tests {
         let pair: Type = parse_quote!(Message<Meta, Order>);
         assert!(message_pair_args(&pair).is_some());
 
-        let plain: [Type; 5] = [
+        let plain: [Type; 6] = [
             parse_quote!([Message<Meta, Order>]),
             parse_quote!(Message),
             parse_quote!(Message<'static, Order>),
+            parse_quote!(Message<'static>),
             parse_quote!(Message<Order>),
             parse_quote!(Message<Meta, Order, Extra>),
         ];

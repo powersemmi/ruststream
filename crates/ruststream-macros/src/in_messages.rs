@@ -849,6 +849,34 @@ mod tests {
     }
 
     #[test]
+    fn a_malformed_attribute_is_refused() {
+        let on_enum: DeriveInput = syn::parse_quote!(
+            #[in_messages(+)]
+            enum OrderEvent {
+                Created(OrderCreated),
+            }
+        );
+        let on_variant: DeriveInput = syn::parse_quote!(
+            #[in_messages(header = "event")]
+            enum OrderEvent {
+                #[in_messages(+)]
+                Created(OrderCreated),
+            }
+        );
+        let value_not_a_literal: DeriveInput = syn::parse_quote!(
+            #[in_messages(header = "event")]
+            enum OrderEvent {
+                #[in_messages(value = CREATED)]
+                Created(OrderCreated),
+            }
+        );
+
+        for input in [on_enum, on_variant, value_not_a_literal] {
+            assert!(expand(&input).is_err());
+        }
+    }
+
+    #[test]
     fn each_key_is_given_once() {
         let twice: DeriveInput = syn::parse_quote!(
             #[in_messages(header = "event", header = "kind")]

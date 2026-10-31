@@ -462,6 +462,23 @@ mod tests {
     }
 
     #[test]
+    fn a_malformed_attribute_or_shape_is_rejected_by_either_derive() {
+        let malformed: DeriveInput = syn::parse_quote!(
+            #[wire(+)]
+            struct Order {
+                id: u64,
+            }
+        );
+        let two_fields: DeriveInput = syn::parse_quote!(
+            struct Frame<'a>(&'a [u8], u32);
+        );
+
+        assert!(derive_deserialized(&malformed).is_err());
+        assert!(derive_serialized(&malformed).is_err());
+        assert!(rejection(derive_deserialized(&two_fields)).contains("exactly one field"));
+    }
+
+    #[test]
     fn an_entry_whose_key_is_not_a_name_is_rejected() {
         let input: DeriveInput = syn::parse_quote!(
             #[wire(1 = write_order)]
