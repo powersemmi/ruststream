@@ -1,7 +1,7 @@
 ---
 sidebar_position: 8
 title: Testing an embedded app
-description: "TestApp runs a device service's EmbeddedApp on the host: it records what went through each Out slot, runs a test's hooks inside the test's own future and starts the app with a state the test builds."
+description: "TestApp runs a device service's EmbeddedApp on the host: Out slot records, hooks in the test's own future, and a state the test builds."
 ---
 
 import Tabs from '@theme/Tabs';
@@ -23,11 +23,32 @@ A broker that waits on the clock to connect, or a subscription that waits to ope
 A handler or a hook that waits on a timer finishes, the shutdown hooks run and every broker shuts down.
 Work that waits on something nothing wakes makes `shutdown` return `TestError::Stalled`, and an app that stopped on its own error returns it as `TestError::Failed`.
 
-## Out slot records
+## What the harness adds
+
+### Out slot records
 
 `tb.out::<M>()` opens the record of the `Out` slot marked `M`: every message a handler sent through it, with its destination and headers.
 It reads the same way as on tokio, as the [`out`](./records/out.md) page describes.
 A slot publish is also recorded on its destination, so [`published::<T>(name)`](./records/published.md) on the broker it went to sees it.
+
+### Hooks
+
+[`on_call`](./hooks/on-call.md) and [`on_publish`](./hooks/on-publish.md) take the same async closures as on tokio.
+A hook runs inside the test's own future: the dispatch that recorded the event waits for it, and the step that drives the app polls it beside the app.
+A hook runs on the test's own thread, and a hook that waits on the clock finishes once the test advances it or shuts the app down.
+A hook on a destination the test itself publishes to runs in that publish, up to where it waits on the clock.
+A panic inside a hook, a failed assertion included, fails the publish, `settle`, `advance` or `shutdown` that ran it.
+
+### A state the test builds
+
+`TestApp::with_state(app, build)` starts the app with the state `build` returns in place of the one the app was built with: a value read from the board's flash, a driver of its hardware.
+The app function names its state in its type, `EmbeddedApp<impl Mounts<State = Limits>>`, so the test can build one.
+The harness connects every broker first, then calls `build` with the brokers, so `brokers.broker::<B>()` returns the connected form of the app's broker of type `B`, as on [tokio](./starting-and-stopping/with-state.md).
+Everything else of startup runs as in `TestApp::start`.
+
+## Example
+
+### Out slot records
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
@@ -44,13 +65,7 @@ A slot publish is also recorded on its destination, so [`published::<T>(name)`](
 </TabItem>
 </Tabs>
 
-## Hooks
-
-[`on_call`](./hooks/on-call.md) and [`on_publish`](./hooks/on-publish.md) take the same async closures as on tokio.
-A hook runs inside the test's own future: the dispatch that recorded the event waits for it, and the step that drives the app polls it beside the app.
-A hook runs on the test's own thread, and a hook that waits on the clock finishes once the test advances it or shuts the app down.
-A hook on a destination the test itself publishes to runs in that publish, up to where it waits on the clock.
-A panic inside a hook, a failed assertion included, fails the publish, `settle`, `advance` or `shutdown` that ran it.
+### Hooks
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
@@ -67,12 +82,7 @@ A panic inside a hook, a failed assertion included, fails the publish, `settle`,
 </TabItem>
 </Tabs>
 
-## A state the test builds
-
-`TestApp::with_state(app, build)` starts the app with the state `build` returns in place of the one the app was built with: a value read from the board's flash, a driver of its hardware.
-The app function names its state in its type, `EmbeddedApp<impl Mounts<State = Limits>>`, so the test can build one.
-The harness connects every broker first, then calls `build` with the brokers, so `brokers.broker::<B>()` returns the connected form of the app's broker of type `B`, as on [tokio](./starting-and-stopping/with-state.md).
-Everything else of startup runs as in `TestApp::start`.
+### A state the test builds
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
