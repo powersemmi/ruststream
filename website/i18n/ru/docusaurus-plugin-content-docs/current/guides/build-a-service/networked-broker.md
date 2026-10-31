@@ -20,8 +20,8 @@ import TabItem from '@theme/TabItem';
 
 ```toml title="Cargo.toml"
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "json", "cbor", "asyncapi", "logging"] }
-ruststream-nats = { version = "0.7", features = ["asyncapi"] }
+ruststream = { version = "0.8", features = ["macros", "json", "cbor", "asyncapi", "logging"] }
+ruststream-nats = { version = "0.8", features = ["asyncapi"] }
 ```
 
 Фича `memory` больше не нужна.

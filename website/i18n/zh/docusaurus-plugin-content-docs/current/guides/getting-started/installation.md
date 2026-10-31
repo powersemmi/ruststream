@@ -9,7 +9,7 @@ RustStream 的各个 crate，所以服务从不直接引用它们。把它加进
 
 ```toml
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -45,11 +45,11 @@ RustStream 面向 **edition 2024**，最低支持的 Rust 版本是 **1.95**。�
 | `cli` | clap, anyhow | `ruststream` 二进制程序 |
 
 一个服务里可以同时启用多个编解码器（参见[编解码器](https://docs.rs/ruststream/latest/ruststream/codec/index.html)）。要去掉内置的 JSON
-编解码器（例如在只需要 trait 和运行时的 Broker crate 里），关掉默认 feature：
+编解码器（例如在只需要 trait 和运行时的 Broker crate 里），关掉默认 feature，并指明运行时：
 
 ```toml
 [dependencies]
-ruststream = { version = "0.7", default-features = false }
+ruststream = { version = "0.8", default-features = false, features = ["tokio"] }
 ```
 
 ## 不依赖标准库的契约
@@ -58,7 +58,7 @@ ruststream = { version = "0.7", default-features = false }
 
 ```toml
 [dependencies]
-ruststream-core = { version = "0.7", default-features = false, features = ["alloc"] }
+ruststream-core = { version = "0.8", default-features = false, features = ["alloc"] }
 ```
 
 它的 `std` feature 默认开启，`ruststream` 也会打开它。运行时、编解码器和测试工具需要标准库。

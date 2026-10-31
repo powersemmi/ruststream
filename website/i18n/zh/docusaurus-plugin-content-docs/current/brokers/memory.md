@@ -8,7 +8,7 @@ description: "MemoryBroker 是运行在服务进程内的完整 Broker：不需�
 不需要服务器，适合只属于单个应用的队列。默认的 `cargo generate` 模板就以它起步。
 
 ```toml
-ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
 ```
 
 用法见 [Memory broker](../components/memory/index.md) 组件：Broker 本身及其 prelude、可供重放的

@@ -31,7 +31,7 @@ With froodi's `async` feature, `AsyncContainerLayer` holds a container whose fac
 ```toml title="Cargo.toml"
 [dependencies]
 froodi = { version = "1.0.0-beta.19", features = ["ruststream"] }
-ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -108,7 +108,7 @@ pub fn app() -> impl App {
 ```toml title="Cargo.toml"
 [dependencies]
 froodi = { version = "1.0.0-beta.19", features = ["ruststream"] }
-ruststream = { version = "0.7", default-features = false, features = ["memory", "json"] }
+ruststream = { version = "0.8", default-features = false, features = ["memory", "json"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 ```
