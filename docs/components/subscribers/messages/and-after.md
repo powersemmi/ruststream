@@ -17,6 +17,7 @@ On a batch each element carries its own continuation, so only the elements that 
 Post-settle work is at most once: the delivery is already settled, so a lost or panicking continuation never brings it back.
 Work whose loss must redeliver the message belongs in the body, before the settlement.
 A graceful shutdown waits for running continuations within the app's `shutdown_timeout`.
+The continuation's future is `Send`. On tokio it runs on a task of its own; on embassy the app's one task polls it, and it costs one allocation, the box the outcome made.
 A test waits for them with [`drain`](../../application/testing/driving/drain.md).
 A [hook](./hooks.md) on the context runs after the settlement too, gated by which settlement it was.
 

@@ -268,6 +268,8 @@ impl HandlerOutcome {
     /// must not gate the settlement decision or affect redelivery: a notification, slow
     /// follow-up work, a cache warm-up. The continuation runs after *any* settle, so
     /// `drop().and_after(..)` is valid. Attaching a second continuation replaces the first.
+    /// The future is `Send`. The multi-thread runner spawns it on a tracked task; the embedded
+    /// runner's one task polls it, in the one box this call made.
     ///
     /// # Cancel safety
     ///

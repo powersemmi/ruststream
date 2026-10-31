@@ -35,7 +35,7 @@ The embassy runner polls every handler on its one task and asks nothing of the f
 ## What each runner offers
 
 The tokio runner offers `workers(n)`, `threads(n)`, the signals, metrics, OpenTelemetry and the CLI.
-The embassy runner offers constant-count workers (`.pool::<N>()` and `.keyed::<N>()`), a retry store with a capacity declared at the mount site (`.retry_capacity::<CAP>()`), and shutdown and health through `Control` and `Health`.
+The embassy runner offers constant-count workers (`.pool::<N>()` and `.keyed::<N>()`), a retry store with a capacity declared at the mount site (`.retry_capacity::<CAP>()`), continuations after the settlement, and shutdown and health through `Control` and `Health`.
 An item one runner does not offer is a compile error on the other.
 
 When a delayed retry finds the embassy store full, the mount site chooses what happens.
