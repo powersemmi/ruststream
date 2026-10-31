@@ -74,3 +74,34 @@ fn a_kept_copy_is_redelivered_once_its_delay_has_passed() -> Result<(), Box<dyn 
         Ok(())
     })
 }
+
+#[test]
+fn a_full_store_holds_the_next_failure_until_a_record_is_free() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        for job in [b"one", b"two"] {
+            tb.broker::<Bus>()
+                .message(&Sent(job))
+                .to("jobs")
+                .publish()
+                .await?;
+        }
+
+        // The second failure finds the one record taken: it waits, and is not delivered again.
+        tb.advance(ALMOST).await?;
+        tb.broker::<Bus>().subscriber("jobs").assert_called(2);
+
+        // The first copy leaves, the second failure takes its record, and the first copy is
+        // handled.
+        tb.advance(Duration::from_secs(1)).await?;
+        tb.broker::<Bus>().subscriber("jobs").assert_called(3);
+
+        // The second copy waits its own delay in full.
+        tb.advance(ALMOST).await?;
+        tb.broker::<Bus>().subscriber("jobs").assert_called(3);
+        tb.advance(Duration::from_secs(1)).await?;
+        tb.broker::<Bus>().subscriber("jobs").assert_called(4);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}

@@ -565,13 +565,17 @@ impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept>
 /// body at once.
 ///
 /// The body fills a record before it settles the delivery the record copies, so a store with
-/// every record taken has the delivery requeued instead of dropped. A record reuses its buffer
+/// every record taken makes the delivery wait for a free one. A record reuses its buffer
 /// from one copy to the next. Machinery; never named directly.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub trait KeptCopies {
     /// Takes a free record for one copy; `None` when every record holds one.
     fn take_record(&self) -> Option<usize>;
+
+    /// Waits until a record is free and takes it: the answer to a full store, so the
+    /// subscription holds the delivery rather than requeuing it.
+    fn wait_record(&self) -> impl Future<Output = usize>;
 
     /// Writes the copy into `record`, taken by [`take_record`](Self::take_record).
     fn fill(&self, record: usize, payload: &[u8], headers: HeaderMap);
@@ -639,6 +643,10 @@ pub enum NoKept {}
 #[allow(clippy::uninhabited_references, clippy::unused_async_trait_impl)]
 impl KeptCopies for NoKept {
     fn take_record(&self) -> Option<usize> {
+        match *self {}
+    }
+
+    async fn wait_record(&self) -> usize {
         match *self {}
     }
 
