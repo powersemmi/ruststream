@@ -10,7 +10,7 @@ description: "Как подключить крейт ruststream, выбрать 
 
 ```toml
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -48,11 +48,11 @@ serde = { version = "1", features = ["derive"] }
 
 В сервисе можно включить сразу несколько кодеков (см. [Кодеки](https://docs.rs/ruststream/latest/ruststream/codec/index.html)). Чтобы убрать
 встроенный JSON-кодек (например, в адаптации библиотеки брокера, которой нужны только трейты и рантайм),
-отключите фичи по умолчанию:
+отключите фичи по умолчанию и назовите среду выполнения:
 
 ```toml
 [dependencies]
-ruststream = { version = "0.7", default-features = false }
+ruststream = { version = "0.8", default-features = false, features = ["tokio"] }
 ```
 
 ## Контракт без стандартной библиотеки
@@ -62,7 +62,7 @@ ruststream = { version = "0.7", default-features = false }
 
 ```toml
 [dependencies]
-ruststream-core = { version = "0.7", default-features = false, features = ["alloc"] }
+ruststream-core = { version = "0.8", default-features = false, features = ["alloc"] }
 ```
 
 Фича `std` включена по умолчанию, и `ruststream` её включает. Рантайму, кодекам и тестовой обвязке

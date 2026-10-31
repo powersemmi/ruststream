@@ -9,7 +9,7 @@ description: "MemoryBroker - полноценный брокер внутри п
 одному приложению. С него начинается шаблон `cargo generate` по умолчанию.
 
 ```toml
-ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
 ```
 
 Как с ним работать, описано в компонентах [Memory broker](../components/memory/index.md): сам

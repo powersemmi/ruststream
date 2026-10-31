@@ -20,8 +20,8 @@ Every broker has its own [crate](../../brokers/index.md); this chapter uses [`ru
 
 ```toml title="Cargo.toml"
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "json", "cbor", "asyncapi", "logging"] }
-ruststream-nats = { version = "0.7", features = ["asyncapi"] }
+ruststream = { version = "0.8", features = ["macros", "json", "cbor", "asyncapi", "logging"] }
+ruststream-nats = { version = "0.8", features = ["asyncapi"] }
 ```
 
 The `memory` feature is no longer needed.

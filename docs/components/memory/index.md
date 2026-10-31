@@ -33,7 +33,7 @@ After shutdown, a publish, a commit or a request through a handle taken earlier 
 The dependency line:
 
 ```toml
-ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
 ```
 
 Two subscriptions to `orders` each receive the order, and one of them replies over the same bus.

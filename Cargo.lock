@@ -1503,7 +1503,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "allocation-counter",
  "anyhow",
@@ -1544,7 +1544,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-asyncapi"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "ruststream",
  "ruststream-core",
@@ -1560,7 +1560,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-cli"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1578,7 +1578,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-conformance"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "futures",
@@ -1596,7 +1596,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-core"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "bytes-utils",
@@ -1619,7 +1619,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-macros"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1628,7 +1628,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-memory"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "bytes-utils",
@@ -1658,7 +1658,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-observability"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "arc-swap",
  "boxcar",
@@ -1681,7 +1681,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-runtime"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "allocation-counter",
  "bytes",
@@ -1710,7 +1710,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-runtime-embassy"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "critical-section",
@@ -1738,7 +1738,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-runtime-tokio"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "axum",
  "bytes",
@@ -1759,7 +1759,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-testing"
-version = "0.7.7"
+version = "0.8.0"
 dependencies = [
  "critical-section",
  "embassy-executor",

@@ -20,8 +20,8 @@ Broker crate 提供 Broker 类型和一个 prelude，其中的名字与内存 Br
 
 ```toml title="Cargo.toml"
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "json", "cbor", "asyncapi", "logging"] }
-ruststream-nats = { version = "0.7", features = ["asyncapi"] }
+ruststream = { version = "0.8", features = ["macros", "json", "cbor", "asyncapi", "logging"] }
+ruststream-nats = { version = "0.8", features = ["asyncapi"] }
 ```
 
 不再需要 `memory` feature。

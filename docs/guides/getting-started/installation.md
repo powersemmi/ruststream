@@ -10,7 +10,7 @@ It re-exports the crates RustStream is built from, so a service never names them
 
 ```toml
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -48,11 +48,11 @@ are always compiled. Everything else is an additive feature you enable when you 
 
 You can enable several codecs at once (see [Codecs](https://docs.rs/ruststream/latest/ruststream/codec/index.html)). To drop the bundled JSON
 codec (for example in a broker crate that needs only the traits and the runtime), disable the
-default features:
+default features and name the runtime:
 
 ```toml
 [dependencies]
-ruststream = { version = "0.7", default-features = false }
+ruststream = { version = "0.8", default-features = false, features = ["tokio"] }
 ```
 
 ## The contract without the standard library
@@ -62,7 +62,7 @@ and the message types. It builds with `#![no_std]` and needs an allocator:
 
 ```toml
 [dependencies]
-ruststream-core = { version = "0.7", default-features = false, features = ["alloc"] }
+ruststream-core = { version = "0.8", default-features = false, features = ["alloc"] }
 ```
 
 Its `std` feature is on by default, and `ruststream` turns it on. The runtime, the codecs and the

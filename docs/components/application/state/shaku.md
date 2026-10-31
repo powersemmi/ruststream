@@ -26,7 +26,7 @@ An interface method that awaits needs a `dyn`-compatible form, such as one retur
 
 ```toml title="Cargo.toml"
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 shaku = "0.6"
 ```
@@ -113,7 +113,7 @@ pub fn app() -> impl App {
 
 ```toml title="Cargo.toml"
 [dependencies]
-ruststream = { version = "0.7", default-features = false, features = ["memory", "json"] }
+ruststream = { version = "0.8", default-features = false, features = ["memory", "json"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 shaku = "0.6"
