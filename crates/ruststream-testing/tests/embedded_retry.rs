@@ -5,6 +5,7 @@
 #![allow(clippy::future_not_send)]
 
 use std::error::Error;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use embassy_futures::block_on;
@@ -109,16 +110,38 @@ fn a_full_store_holds_the_next_failure_until_a_record_is_free() -> Result<(), Bo
 /// A bus whose subscription holds one message, waiting or in hand.
 type TightBus = LocalMemoryBroker<1>;
 
+/// How often the handler saw each job of the tight board, by its first byte.
+#[derive(Default)]
+struct Seen(Mutex<[u32; 3]>);
+
+/// Fails the first delivery of a job and acks the next; job `a` fails its first two.
+#[subscriber(LocalMemorySource::new("jobs"))]
+async fn on_tight_job(job: &Job<'_>, ctx: &mut Context<'_, (), Seen>) -> HandlerOutcome {
+    let index = usize::from(job.0[0] - b'a');
+    let seen = ctx.state();
+    let mut counts = seen.0.lock().expect("the handler never panics");
+    counts[index] += 1;
+    let failures = if index == 0 { 2 } else { 1 };
+    if counts[index] <= failures {
+        HandlerOutcome::retry_after(LATER)
+    } else {
+        HandlerOutcome::ack()
+    }
+}
+
 #[ruststream::app]
-fn tight_app(bus: TightBus) -> EmbeddedApp<impl Mounts> {
-    EmbeddedApp::new().with_broker(bus, |b| b.include(on_job).retry_capacity::<1>())
+fn tight_app(bus: TightBus) -> EmbeddedApp<impl Mounts<State = Seen>> {
+    EmbeddedApp::new()
+        .with_state(Seen::default())
+        .with_broker(bus, |b| b.include(on_tight_job).retry_capacity::<1>())
 }
 
 #[test]
-fn a_copy_due_while_a_failure_holds_the_only_slot_is_not_lost() -> Result<(), Box<dyn Error>> {
+fn a_failure_holding_the_only_slot_goes_back_to_the_broker_when_a_copy_needs_it()
+-> Result<(), Box<dyn Error>> {
     block_on(async {
-        let tb = TestApp::start(tight_app(TightBus::new())).await?;
-        for job in [b"one", b"two"] {
+        let tb = TestApp::with_state(tight_app(TightBus::new()), |_| Seen::default()).await?;
+        for job in [b"a", b"b"] {
             tb.broker::<TightBus>()
                 .message(&Sent(job))
                 .to("jobs")
@@ -126,17 +149,31 @@ fn a_copy_due_while_a_failure_holds_the_only_slot_is_not_lost() -> Result<(), Bo
                 .await?;
         }
 
-        // The second failure holds the bus's one slot while it waits for the first copy's record,
-        // so the first copy cannot be published when it is due. It stays kept, and the second
-        // failure gives its slot up for its own copy.
+        // `b` holds the bus's one slot while it waits for `a`'s record, so `a`'s copy is refused
+        // when it falls due. `b` goes back to the broker and is handled again, and `a`'s copy
+        // follows once the slot is free.
         tb.advance(LATER).await?;
-        tb.broker::<TightBus>().subscriber("jobs").assert_called(2);
-
-        // The first copy is published once the slot is free, and the second leaves after it.
-        tb.advance(Duration::from_millis(100)).await?;
         tb.broker::<TightBus>().subscriber("jobs").assert_called(3);
-        tb.advance(LATER).await?;
+        tb.advance(Duration::from_millis(100)).await?;
         tb.broker::<TightBus>().subscriber("jobs").assert_called(4);
+
+        // `a` fails again and takes the record; `c` fails behind it and gives the slot up the same
+        // way, and `a` is handled to its end.
+        tb.broker::<TightBus>()
+            .message(&Sent(b"c"))
+            .to("jobs")
+            .publish()
+            .await?;
+        tb.advance(LATER).await?;
+        tb.broker::<TightBus>().subscriber("jobs").assert_called(6);
+        tb.advance(Duration::from_millis(100)).await?;
+        let jobs = tb.broker::<TightBus>();
+        let calls = jobs.subscriber("jobs").assert_called(7);
+        assert_eq!(
+            calls.outcomes().last(),
+            Some(&Outcome::Ack),
+            "the third delivery of `a` is its last"
+        );
         tb.shutdown().await?;
         Ok(())
     })
