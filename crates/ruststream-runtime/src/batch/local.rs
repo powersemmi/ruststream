@@ -10,7 +10,8 @@ use alloc::vec::Vec;
 
 use crate::context::Context;
 use crate::handle::Deserialized;
-use crate::host::{Detach, HostDetach, PrepareKept};
+use crate::host::{HostDetach, PrepareKept, SendHost};
+use crate::redelivery::RetryCopies;
 use crate::{BuildBatchContext, LocalIncomingMessage};
 
 use super::{BatchHandler, DeserializedBatch, LocalSliceHandler, TakenBatch};
@@ -50,7 +51,7 @@ pub trait LocalBatchHandler<Batch, Host, C = (), S = ()> {
 impl<Batch, Host, C, S, H> LocalBatchHandler<Batch, Host, C, S> for Arc<H>
 where
     H: BatchHandler<Batch, C, S>,
-    Host: Detach,
+    Host: SendHost<C>,
 {
     type Scratch = H::Scratch;
     type Taken = H::Taken;
@@ -81,7 +82,7 @@ pub struct LocalBatch<Adapter>(pub(crate) Adapter);
 impl<Batch, Host, M, F, Inner, C, S> LocalBatchHandler<Batch, Host, C, S>
     for LocalBatch<DeserializedBatch<M, F, Inner>>
 where
-    Host: HostDetach<Kept: PrepareKept<C>>,
+    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
     Batch: IntoIterator<Item = M>,
     M: LocalIncomingMessage,
     F: Deserialized,

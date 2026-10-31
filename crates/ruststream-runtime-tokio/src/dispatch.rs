@@ -15,11 +15,11 @@ use tracing::error;
 
 use ruststream_runtime::DeliverySlot as Slot;
 use ruststream_runtime::{
-    BatchHandler, DispatchFailure, Handler, HeadersOnDemand, Placement, Turn, Workers, dispatch,
-    placed, run_batch, run_sequential,
+    BatchHandler, DispatchFailure, Handler, HeadersOnDemand, Placement, RetryCopies, Turn, Workers,
+    dispatch, placed, run_batch, run_sequential,
 };
 
-pub(crate) use crate::detach::Hosted;
+pub(crate) use crate::detach::{Hosted, on_thread};
 use crate::shutdown::Shutdown;
 use crate::{BatchSubscriber, IncomingMessage, Subscriber};
 pub(crate) use threads::StartThreadError;
@@ -27,16 +27,17 @@ use threads::Threads;
 
 /// Spawns a task that drives `subscriber` through `handler` until `shutdown` is triggered or the
 /// stream terminates: [`run_sequential`] on the app's runtime, counted as consuming while it runs.
-pub(crate) fn spawn_dispatch<S, H, C, St>(
+pub(crate) fn spawn_dispatch<S, H, C, St, Retry>(
     subscriber: S,
     handler: Arc<H>,
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
-    hosted: Arc<Hosted<C>>,
+    hosted: Arc<Hosted<C, Retry>>,
     failure: DispatchFailure<Shutdown>,
 ) -> JoinHandle<()>
 where
+    Retry: RetryCopies<C>,
     S: Subscriber + Send + 'static,
     H: Handler<S::Message, C, St> + 'static,
     C: crate::BuildContext<S::Message> + Send + Sync + 'static,
@@ -92,17 +93,18 @@ where
 // The parts are independent and each spawn site passes its own; bundling them into a struct
 // would hide that.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_dispatch_workers<S, H, C, St>(
+pub(crate) fn spawn_dispatch_workers<S, H, C, St, Retry>(
     subscriber: S,
     handler: Arc<H>,
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
-    hosted: Arc<Hosted<C>>,
+    hosted: Arc<Hosted<C, Retry>>,
     failure: DispatchFailure<Shutdown>,
     workers: Workers,
 ) -> Result<JoinHandle<()>, StartThreadError>
 where
+    Retry: RetryCopies<C>,
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
     H: Handler<S::Message, C, St> + 'static,
@@ -129,17 +131,18 @@ where
 /// runtime (see [`threads`]).
 // See `spawn_dispatch_workers`: each part is the registration's own.
 #[allow(clippy::too_many_arguments)]
-fn spawn_dispatch_threads<S, H, C, St>(
+fn spawn_dispatch_threads<S, H, C, St, Retry>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
-    hosted: Arc<Hosted<C>>,
+    hosted: Arc<Hosted<C, Retry>>,
     failure: DispatchFailure<Shutdown>,
     workers: Workers,
 ) -> Result<JoinHandle<()>, StartThreadError>
 where
+    Retry: RetryCopies<C>,
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
     H: Handler<S::Message, C, St> + 'static,
@@ -160,7 +163,7 @@ where
         |own| {
             let shared = Arc::clone(&shared);
             let delivery = shared.hosted.delivery.on_thread();
-            let host = shared.hosted.host.on_thread(own);
+            let host = on_thread(&shared.hosted.host, own);
             // One encode buffer per thread, for the reason the sequential loop has one.
             let mut encode = BytesMut::new();
             async move |msg: S::Message| {
@@ -223,18 +226,19 @@ pub(super) fn log_worker_exit<Done>(joined: Result<Done, JoinError>) -> Option<D
 /// each in its own task; keyed lanes do not apply at batch granularity (the macro rejects
 /// `by_key` on batch forms), so a keyed policy degrades to the plain pool.
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
+pub(crate) fn spawn_batch_dispatch<S, H, C, St, Retry>(
     subscriber: S,
     handler: Arc<H>,
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
-    hosted: Arc<Hosted<C>>,
+    hosted: Arc<Hosted<C, Retry>>,
     failure: DispatchFailure<Shutdown>,
     workers: Workers,
     batch_size: NonZeroUsize,
 ) -> Result<JoinHandle<()>, StartThreadError>
 where
+    Retry: RetryCopies<C>,
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
     S::Batch: 'static,
@@ -264,13 +268,14 @@ where
 
 /// The loop of a batch subscription on the app's runtime: one batch at a time where the policy
 /// is sequential, up to `workers.count()` at once on a pool of workers otherwise.
-async fn batch_loop<S, H, C, St>(
+async fn batch_loop<S, H, C, St, Retry>(
     mut subscriber: S,
-    shared: &pool::Shared<H, St, C>,
+    shared: &pool::Shared<H, St, C, Retry>,
     shutdown: &Shutdown,
     workers: Workers,
     batch_size: NonZeroUsize,
 ) where
+    Retry: RetryCopies<C>,
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
     S::Batch: 'static,
@@ -332,7 +337,7 @@ async fn batch_loop<S, H, C, St>(
             }
             Turn::Delivery(Ok(batch)) => {
                 let buffers = spare.pop().unwrap_or_default();
-                tasks.spawn(pooled_batch::<_, _, C, _>(shared, batch, buffers));
+                tasks.spawn(pooled_batch::<_, _, C, _, _>(shared, batch, buffers));
             }
             Turn::Delivery(Err(err)) => {
                 error!(
@@ -355,12 +360,13 @@ async fn batch_loop<S, H, C, St>(
 
 /// One batch of a pooled subscription, run on a worker of its own with the buffers it was lent,
 /// which it hands back for the next batch.
-fn pooled_batch<H, Batch, C, St>(
-    shared: &pool::Shared<H, St, C>,
+fn pooled_batch<H, Batch, C, St, Retry>(
+    shared: &pool::Shared<H, St, C, Retry>,
     batch: Batch,
     (mut scratch, mut encode): (H::Scratch, BytesMut),
-) -> impl Future<Output = (H::Scratch, BytesMut)> + use<H, Batch, C, St>
+) -> impl Future<Output = (H::Scratch, BytesMut)> + use<H, Batch, C, St, Retry>
 where
+    Retry: RetryCopies<C>,
     H: BatchHandler<Batch, C, St>,
     C: Send + Sync + 'static,
     St: Send + Sync,
@@ -391,18 +397,19 @@ where
 /// ring, with a decode and an encode buffer of its own. Keyed lanes do not apply to batches, so a
 /// keyed policy spreads batches as the plain one does.
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-fn spawn_batch_threads<S, H, C, St>(
+fn spawn_batch_threads<S, H, C, St, Retry>(
     mut subscriber: S,
     handler: Arc<H>,
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
-    hosted: Arc<Hosted<C>>,
+    hosted: Arc<Hosted<C, Retry>>,
     failure: DispatchFailure<Shutdown>,
     workers: Workers,
     batch_size: NonZeroUsize,
 ) -> Result<JoinHandle<()>, StartThreadError>
 where
+    Retry: RetryCopies<C>,
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
     S::Batch: 'static,
@@ -420,7 +427,7 @@ where
     let threads = Threads::start(&shared.name, workers.count().get(), false, |own| {
         let shared = Arc::clone(&shared);
         let delivery = shared.hosted.delivery.on_thread();
-        let host = shared.hosted.host.on_thread(own);
+        let host = on_thread(&shared.hosted.host, own);
         let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
         let mut encode = BytesMut::new();
         async move |batch: S::Batch| {
