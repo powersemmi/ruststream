@@ -82,6 +82,14 @@ fn server() -> RustStream {
     })
 }
 
+/// The server's app with the handler that holds an `Rc`: rejected where tokio mounts it. Built
+/// with `--cfg proto_rejected` to show the error.
+#[cfg(proto_rejected)]
+fn server_with_local() -> RustStream {
+    RustStream::new(AppInfo::new("levels", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(on_local))
+}
+
 /// The device's app, on embassy: the same handlers, and one that only a device runs.
 #[ruststream::app(runtime = embassy)]
 fn device(bus: Bus) -> EmbeddedApp<impl Mounts> {
@@ -109,7 +117,7 @@ async fn the_server_runs_the_shared_handlers() -> Result<(), Box<dyn Error>> {
         .assert_called(1)
         .settled(HandlerOutcome::ack());
     broker.subscriber("audit").assert_called(1);
-    broker.published::<()>("alerts").assert_called(1);
+    broker.published::<()>("alerts").assert_called(2);
     Ok(())
 }
 
@@ -129,7 +137,7 @@ fn the_device_runs_the_same_handlers() -> Result<(), Box<dyn Error>> {
         bus.subscriber("local")
             .assert_called(1)
             .settled(HandlerOutcome::ack());
-        bus.published::<()>("alerts").assert_called(1);
+        bus.published::<()>("alerts").assert_called(2);
         tb.shutdown().await?;
         Ok(())
     })
