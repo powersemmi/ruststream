@@ -1,6 +1,9 @@
 //! The subscription sources the core ships: a bare name, a kind left unnamed until the mount
 //! site names it, and a start position wrapped around another source.
 
+// The cold path of the contract carries no Send; the tokio runner asks for it where it spawns.
+#![allow(clippy::future_not_send)]
+
 use alloc::borrow::Cow;
 use core::{fmt, future::ready, marker::PhantomData};
 

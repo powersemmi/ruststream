@@ -4,6 +4,9 @@
 //!
 //! The in-memory broker's map is built before the delivery leaves it, so the count is what these
 //! suites assert rather than the time: a delivery of its own counts the calls the runtime makes.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "memory",
     feature = "json",

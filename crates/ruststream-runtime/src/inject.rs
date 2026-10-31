@@ -8,6 +8,9 @@
 //! element-by-element against a matching extra tuple, and a single handler adapter serves
 //! every combination - fully monomorphized, nothing to check on the hot path.
 
+// The shared body serves the local contract, whose futures carry no Send.
+#![allow(clippy::future_not_send)]
+
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;

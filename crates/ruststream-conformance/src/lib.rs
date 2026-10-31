@@ -5,6 +5,9 @@
 //! [`ruststream::conformance`](https://docs.rs/ruststream/latest/ruststream/conformance/), whose
 //! overview teaches it.
 
+// The conformance suites drive a broker's cold path, whose futures carry no Send.
+#![allow(clippy::future_not_send)]
+
 pub mod capabilities;
 pub mod harness;
 pub mod helpers;

@@ -5,6 +5,9 @@
 //! The broker half is identical on both paths - it is ordinary trait impls either way - and so
 //! are the steps: a body bounds the entry's wired value with the options type it needs and calls
 //! the step on the same builder every publish uses.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "memory",
     feature = "json",

@@ -1,5 +1,8 @@
 //! Running the service: startup sequence, signal handling and graceful shutdown.
 
+// The start and stop path runs on the task that awaits it and is never spawned.
+#![allow(clippy::future_not_send)]
+
 use std::{fmt, sync::Arc, time::Duration};
 
 #[cfg(unix)]

@@ -1254,9 +1254,6 @@ suspicious = { level = "deny", priority = -1 }
 perf = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
-# The cold path of the contract (connect, subscribe, pair, start) carries no `Send`; the tokio
-# runner asks for it where it spawns a subscription loop.
-future_not_send = "allow"
 cargo = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 missing_const_for_fn = "allow"

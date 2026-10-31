@@ -18,6 +18,9 @@
 //!
 //! How a device service is built is taught on the site's embedded runtime page.
 //!
+
+// The embedded runner runs on one thread; its futures are never sent.
+#![allow(clippy::future_not_send)]
 #![no_std]
 
 extern crate alloc;

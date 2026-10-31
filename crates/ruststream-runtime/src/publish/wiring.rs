@@ -7,6 +7,9 @@
 //! whole value stays pure declaration - it pairs with the connected broker at startup, like any
 //! other [`PublishPolicy`].
 
+// The shared body serves the local contract, whose futures carry no Send.
+#![allow(clippy::future_not_send)]
+
 use core::fmt;
 use core::marker::PhantomData;
 

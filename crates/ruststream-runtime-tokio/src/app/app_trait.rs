@@ -1,6 +1,9 @@
 //! The sealed [`App`] trait: the functional surface a built service exposes, so a builder can
 //! return `impl App` instead of spelling the full `RustStream<Layers, State, Pipeline>` type.
 
+// The start and stop path runs on the task that awaits it and is never spawned.
+#![allow(clippy::future_not_send)]
+
 use std::collections::BTreeMap;
 
 use crate::HandlerMetadata;

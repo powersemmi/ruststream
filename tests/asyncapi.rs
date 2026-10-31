@@ -1,4 +1,7 @@
 //! Integration test for `AsyncAPI` document generation.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(feature = "asyncapi", feature = "memory", feature = "macros"))]
 
 use std::convert::Infallible;

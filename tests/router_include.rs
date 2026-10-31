@@ -1,5 +1,8 @@
 //! Integration tests for the `Router` include family (subscribe and batch forms). Also covers
 //! `merge`, the router's own `layer` stack, and `handlers()` metadata collection.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "macros",
     feature = "memory",

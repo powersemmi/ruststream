@@ -1,6 +1,9 @@
 //! One arena entry: the wired live value of a marker with its publish path, the typed
 //! operations each publisher capability offers on it, and the [`OutEntry`] bound a body states.
 
+// The shared body serves the local contract, whose futures carry no Send.
+#![allow(clippy::future_not_send)]
+
 use alloc::boxed::Box;
 use alloc::format;
 use core::fmt;

@@ -10,6 +10,9 @@
 //! The later suites take the same subject through the chain surfaces a registration
 //! reaches it from: the guard a handler with `Out` slots gets, a `Router` chain, and the
 //! declaration steps ahead of the publisher.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "macros",
     feature = "memory",
