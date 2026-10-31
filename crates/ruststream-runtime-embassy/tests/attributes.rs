@@ -79,6 +79,16 @@ async fn on_plain(reading: &Reading<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
+/// The readings the handler named at the mount site saw.
+static NAMED: AtomicU32 = AtomicU32::new(0);
+
+/// Counts every reading of a subscription whose name the mount site writes.
+#[subscriber(LocalMemorySource)]
+async fn on_named(reading: &Reading<'_>) -> HandlerOutcome {
+    NAMED.fetch_add(u32::from(!reading.0.is_empty()), Ordering::Relaxed);
+    HandlerOutcome::ack()
+}
+
 /// The reply to a ping: the ping's bytes, as they came.
 #[derive(Outgoing, Serialized)]
 #[outgoing(name = "bus/pong")]
@@ -148,6 +158,7 @@ fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
         b.include(on_level)
             .out(Alerts, LocalMemoryPublish)
             .include(on_plain)
+            .include(on_named.name("bus/named"))
             .include(on_ping)
             .include(on_measure)
             .include(on_receipt)
@@ -236,6 +247,7 @@ async fn check_the_app(spawner: Spawner, stand: &'static Stand) {
 
     publish(&stand.bus, "bus/levels", b"high").await;
     publish(&stand.bus, "bus/plain", b"one").await;
+    publish(&stand.bus, "bus/named", b"named").await;
     publish(&stand.bus, "bus/ping", b"ping").await;
     publish(&stand.bus, "bus/measure", b"four").await;
     publish(&stand.bus, "bus/receipt", b"three").await;
@@ -277,6 +289,12 @@ async fn check_the_app(spawner: Spawner, stand: &'static Stand) {
         "readings the eager form saw"
     );
     passed("a handler without a slot runs on the embedded app");
+    assert_eq!(
+        NAMED.load(Ordering::Relaxed),
+        1,
+        "readings of the subscription the mount site named"
+    );
+    passed("a mount site names the subscription of a handler that left it open");
     assert_eq!(pong, Some(b"ping".to_vec()), "the raw reply");
     passed("a handler replies byte for byte");
     assert_eq!(
