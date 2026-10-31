@@ -221,5 +221,7 @@ The runtime is a cargo feature of the crate, and the two exclude each other. `to
 selects the tokio runner and everything above. `embassy` selects the embedded runner on embassy's
 executor and clock: its application object, `EmbeddedApp`, with the mount steps `MountSteps`, its
 shutdown and health, `Control`, `Health` and `Stopping`, and its clock, `EmbassyClock`, are
-re-exported in this module, and their reference is the documentation of
+re-exported in this module. A delayed retry waits in a store the mount sizes with
+`retry_capacity`; when the store is full the run panics, unless the mount chose
+`when_retry_full(DeadLetter)` or `when_retry_full(SkipDelay)`. Their reference is the documentation of
 [`ruststream-runtime-embassy`](https://docs.rs/ruststream-runtime-embassy).
