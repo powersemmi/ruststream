@@ -7,7 +7,6 @@
 //! site ([`Handle`] for [`FnBody`]), and a runner that polls on one thread asks nothing
 //! ([`LocalHandle`] for [`FnBody`]). The expansion itself is the same for both.
 
-use core::future::Future;
 use core::marker::PhantomData;
 
 use super::{Handle, Input, LocalHandle, Verdict};
@@ -165,7 +164,7 @@ pub struct AsBodyFn<M, I, O, X>(PhantomData<fn() -> (M, I, O, X)>);
     message = "`{Self}` is not a subscriber definition",
     note = "pass a `#[subscriber]` handler, or a definition built with `subscriber(..)`"
 )]
-pub trait IntoDeclared<Mk> {
+pub trait IntoDeclared<Mk>: Sized {
     /// The definition the value declares.
     type Decl: Declared;
     /// Converts the value.

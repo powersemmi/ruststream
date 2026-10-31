@@ -75,6 +75,9 @@ pub use axis::{
 pub use docs::{DocState, Docs, Probed, ProbedDocs};
 pub use docs::{Documentable, Documented, Undocumented};
 #[doc(hidden)]
+pub use fn_body::{AsBodyFn, BodyCall, DeclareBody, FnBody, FnDecl, Tag};
+pub use fn_body::{AsDeclared, IntoDeclared};
+#[doc(hidden)]
 pub use outs::{EntryMarkers, LocalEntryMarkers, LocalOutPos, OutPos, SelectSlot, SlotDictionary};
 pub use outs::{LocalOutEntry, LocalSlot, OutEntry, Outs, Slot};
 #[doc(hidden)]
@@ -94,9 +97,6 @@ pub use value::{
     probed_def, probed_reply_def,
 };
 pub use verdict::Verdict;
-#[doc(hidden)]
-pub use fn_body::{AsBodyFn, BodyCall, DeclareBody, FnBody, FnDecl, Tag};
-pub use fn_body::{AsDeclared, IntoDeclared};
 #[doc(hidden)]
 pub use verdict::{Batched, OneByOne, VerdictFamily};
 

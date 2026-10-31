@@ -176,6 +176,11 @@ pub use failure::DispatchFailure;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
+pub use handle::{AsBodyFn, BodyCall, DeclareBody, FnBody, FnDecl, Tag};
+#[cfg(feature = "alloc")]
+pub use handle::{AsDeclared, IntoDeclared};
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
 pub use handle::{
     Axis, AxisDocs, Batch, BatchCarried, BatchPair, Batched, BatchedAxis, DeclaredDest,
     DecodeOutcome, DocState, Docs, HandleValue, IsDocumented, NamedDest, OneByOne, Probed,
@@ -183,11 +188,6 @@ pub use handle::{
     SoloAxis, SoloCarried, SoloPair, VerdictFamily, probed_declared_reply_def, probed_def,
     probed_reply_def,
 };
-#[cfg(feature = "alloc")]
-#[doc(hidden)]
-pub use handle::{AsBodyFn, BodyCall, DeclareBody, FnBody, FnDecl, Tag};
-#[cfg(feature = "alloc")]
-pub use handle::{AsDeclared, IntoDeclared};
 #[cfg(feature = "alloc")]
 pub use handle::{
     BatchDeserialized, BatchSet, Deserialized, Documentable, Documented, EncodedReply, Handle,

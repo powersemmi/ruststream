@@ -40,8 +40,8 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 
-use crate::handle::{AsDeclared, IntoDeclared};
 use crate::codec::Codec;
+use crate::handle::{AsDeclared, IntoDeclared};
 use crate::{FromName, StartAt, Unnamed};
 
 use super::dispatch::Workers;
@@ -626,7 +626,10 @@ pub trait SubscriberSettings<Mk = AsDeclared>: IntoDeclared<Mk> {
     /// Available while the attribute left the source open (`#[subscriber]` for the by-name
     /// source, `#[subscriber(Kind)]` for a named kind); the kind is built through
     /// [`FromName`].
-    fn name(self, name: impl Into<Cow<'static, str>>) -> <<Self::Decl as Declared>::Settings as NameStep>::Out
+    fn name(
+        self,
+        name: impl Into<Cow<'static, str>>,
+    ) -> <<Self::Decl as Declared>::Settings as NameStep>::Out
     where
         <Self::Decl as Declared>::Settings: NameStep,
     {
@@ -635,44 +638,67 @@ pub trait SubscriberSettings<Mk = AsDeclared>: IntoDeclared<Mk> {
 
     /// Processes up to `count` deliveries (or batches) of this subscriber concurrently. The
     /// mount-site spelling of `workers(n)`.
-    fn workers(self, count: NonZeroUsize) -> <<Self::Decl as Declared>::Settings as WorkersStep>::Out
+    fn workers(
+        self,
+        count: NonZeroUsize,
+    ) -> <<Self::Decl as Declared>::Settings as WorkersStep>::Out
     where
         <Self::Decl as Declared>::Settings: WorkersStep,
     {
-        self.into_declared().declare().apply_workers(Workers::pool(count))
+        self.into_declared()
+            .declare()
+            .apply_workers(Workers::pool(count))
     }
 
     /// Runs `count` sequential lanes keyed by the message's partition key, preserving per-key
     /// ordering. The mount-site spelling of `workers(n, by_key)`.
-    fn workers_by_key(self, count: NonZeroUsize) -> <<Self::Decl as Declared>::Settings as WorkersStep>::Out
+    fn workers_by_key(
+        self,
+        count: NonZeroUsize,
+    ) -> <<Self::Decl as Declared>::Settings as WorkersStep>::Out
     where
         <Self::Decl as Declared>::Settings: WorkersStep,
     {
-        self.into_declared().declare().apply_workers(Workers::keyed(count))
+        self.into_declared()
+            .declare()
+            .apply_workers(Workers::keyed(count))
     }
 
     /// Handles the deliveries (or batches) of this subscriber on `count` dedicated threads of its
     /// own, for a handler that computes. The mount-site spelling of `threads(n)`; it fills the
     /// same position as [`workers`](Self::workers), so a subscription names one of the two.
-    fn threads(self, count: NonZeroUsize) -> <<Self::Decl as Declared>::Settings as WorkersStep>::Out
+    fn threads(
+        self,
+        count: NonZeroUsize,
+    ) -> <<Self::Decl as Declared>::Settings as WorkersStep>::Out
     where
         <Self::Decl as Declared>::Settings: WorkersStep,
     {
-        self.into_declared().declare().apply_workers(Workers::threads(count))
+        self.into_declared()
+            .declare()
+            .apply_workers(Workers::threads(count))
     }
 
     /// Runs `count` dedicated threads as sequential lanes keyed by the message's partition key,
     /// preserving per-key ordering. The mount-site spelling of `threads(n, by_key)`.
-    fn threads_by_key(self, count: NonZeroUsize) -> <<Self::Decl as Declared>::Settings as WorkersStep>::Out
+    fn threads_by_key(
+        self,
+        count: NonZeroUsize,
+    ) -> <<Self::Decl as Declared>::Settings as WorkersStep>::Out
     where
         <Self::Decl as Declared>::Settings: WorkersStep,
     {
-        self.into_declared().declare().apply_workers(Workers::threads_keyed(count))
+        self.into_declared()
+            .declare()
+            .apply_workers(Workers::threads_keyed(count))
     }
 
     /// Sets the policies applied to a handler panic and to a delivery that fails to
     /// materialize. The mount-site spelling of `on_failure(panic = .., decode = ..)`.
-    fn on_failure(self, policies: FailurePolicies) -> <<Self::Decl as Declared>::Settings as FailureStep>::Out
+    fn on_failure(
+        self,
+        policies: FailurePolicies,
+    ) -> <<Self::Decl as Declared>::Settings as FailureStep>::Out
     where
         <Self::Decl as Declared>::Settings: FailureStep,
     {
