@@ -194,11 +194,10 @@ pub(super) fn collect_extractors(
     let start = if ctx_present { 2 } else { 1 };
     let mut extractors = Vec::new();
     for arg in func.sig.inputs.iter().skip(start) {
+        // syn parses `self` only as the first parameter, the message's place, which
+        // `message_param` refuses it in.
         let FnArg::Typed(PatType { pat, ty, .. }) = arg else {
-            return Err(Error::new_spanned(
-                arg,
-                "a #[subscriber] handler cannot take `self`",
-            ));
+            continue;
         };
         if is_context_param(ty) {
             return Err(Error::new_spanned(
