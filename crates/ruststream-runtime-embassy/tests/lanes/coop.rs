@@ -9,13 +9,14 @@
 #![allow(clippy::future_not_send)]
 
 use core::cell::Cell;
+use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bytes::BytesMut;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
-use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts};
+use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, SubscriberSettings};
 use ruststream::{Broker, Deserialized, LocalPublisher, OutgoingMessage, subscriber};
 use static_cell::StaticCell;
 
@@ -62,6 +63,20 @@ async fn kept(raw: &Raw<'_>) -> HandlerOutcome {
 /// How often the handler with room for retry copies ran.
 static KEPT: AtomicU32 = AtomicU32::new(0);
 
+/// Asks for an immediate retry of every batch, so the same readings come back at once.
+#[subscriber(LocalMemorySource::new("bus/batch"))]
+async fn batch(readings: &[Raw<'_>]) -> HandlerOutcome {
+    let _ = readings.len();
+    BATCHES.fetch_add(1, Ordering::Relaxed);
+    HandlerOutcome::retry()
+}
+
+/// How often the batch handler ran.
+static BATCHES: AtomicU32 = AtomicU32::new(0);
+
+/// The size the batch subscription reads its batches at.
+const BATCH: NonZeroUsize = NonZeroUsize::new(2).expect("two is not zero");
+
 #[ruststream::app]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
@@ -69,6 +84,7 @@ fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
             .include(kept)
             .retry_capacity::<1>()
             .include(calm)
+            .include(batch.batch(BATCH))
     })
 }
 
@@ -113,6 +129,12 @@ async fn check_cooperation(spawner: Spawner, stand: &'static Stand) {
     publish(&stand.bus, "bus/calm").await;
     settle().await;
     let calmed_again = CALMS.load(Ordering::Relaxed);
+    publish(&stand.bus, "bus/batch").await;
+    settle().await;
+    let batch_spins = BATCHES.load(Ordering::Relaxed);
+    publish(&stand.bus, "bus/calm").await;
+    settle().await;
+    let calmed_last = CALMS.load(Ordering::Relaxed);
 
     app::CONTROL.stop();
     settle().await;
@@ -124,6 +146,8 @@ async fn check_cooperation(spawner: Spawner, stand: &'static Stand) {
         "deliveries of the kept-copies message: {kept_spins}"
     );
     assert_eq!(calmed_again, 2, "deliveries once that message spins too");
+    assert!(batch_spins > 1, "runs of the batch handler: {batch_spins}");
+    assert_eq!(calmed_last, 3, "deliveries once the batch spins too");
     println!("test a spinning subscription does not starve the executor ... ok");
 }
 
