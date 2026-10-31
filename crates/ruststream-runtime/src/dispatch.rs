@@ -431,7 +431,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
         if let Some(after) = s.take_after() {
-            host.detach(after);
+            host.detach_boxed(after);
         }
     } else {
         // A fail-fast left the delivery unsettled: it is released here, as it always was at the
@@ -443,7 +443,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     // covers both - the harness's `drain` and the shutdown's alike.
     if let Some(continuations) = continuations {
         for fut in continuations {
-            host.detach(fut);
+            host.detach_boxed(fut);
         }
     }
     // The hooks a test registered on this subscription run once the call is settled, inside the
@@ -599,7 +599,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
             // As on the single-message path: a batch that registered no hook pays the branch.
             if ctx.has_hooks() {
                 for fut in ctx.take_settle_hooks() {
-                    host.detach(fut);
+                    host.detach_boxed(fut);
                 }
             }
         }

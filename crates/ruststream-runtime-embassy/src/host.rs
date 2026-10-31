@@ -121,6 +121,11 @@ impl<Timers: Clock<Sleep: 'static> + 'static> LocalDetach for Detached<Timers> {
         self.hand(Box::pin(work));
     }
 
+    // The box the delivery made is the one the driver polls.
+    fn detach_boxed(&self, work: Pin<Box<dyn Future<Output = ()>>>) {
+        self.hand(work);
+    }
+
     // Reached only after a reservation, which this host refuses; the work still runs after its
     // delay, on the task's own timer.
     fn detach_after<Work>(&self, delay: Duration, work: Work)
