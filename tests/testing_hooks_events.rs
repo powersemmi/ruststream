@@ -4,6 +4,9 @@
 //! Two deliveries of one subscription run at once here (`workers(2)`), and each scenario orders
 //! them with notifications, so the interleaving that tells a right answer from a wrong one is the
 //! only one that can happen.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "testing",
     feature = "memory",

@@ -99,6 +99,8 @@ mod publish;
 #[cfg(feature = "alloc")]
 mod publishing;
 #[cfg(feature = "alloc")]
+// The redelivery path serves the local contract, whose futures carry no Send.
+#[allow(clippy::future_not_send)]
 mod redelivery;
 #[cfg(feature = "alloc")]
 mod retry;

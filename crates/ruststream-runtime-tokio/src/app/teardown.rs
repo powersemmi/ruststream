@@ -1,6 +1,9 @@
 //! The graceful teardown of a started service, shared by [`RunningApp`](super::RunningApp) and the
 //! `TestApp` harness so the two shut a service down the same way.
 
+// The start and stop path runs on the task that awaits it and is never spawned.
+#![allow(clippy::future_not_send)]
+
 use std::{sync::Arc, time::Duration};
 
 use tokio::task::JoinHandle;

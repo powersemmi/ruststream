@@ -5,6 +5,9 @@
 //! every subscription runs on the test's runtime), so these tests start the app on a runtime
 //! whose threads carry a name of their own and read what the handler reports through the broker:
 //! each handler replies with the names of the threads its steps ran on.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 
 use crate::common;

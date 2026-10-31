@@ -3,6 +3,9 @@
 //! The subject is the exporter's output, so the assertions stay on the exported text; the handler
 //! side rides the harness, whose injection settles the whole dispatch - the metric recording
 //! included - before it returns.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "metrics",
     feature = "memory",

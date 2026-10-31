@@ -1,6 +1,8 @@
 //! Pattern subscriptions on the in-memory broker, and the routing rule that decides who receives a
 //! publish when an exact name and a pattern both match it.
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "testing",
     feature = "memory",

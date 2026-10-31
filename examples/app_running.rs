@@ -5,6 +5,8 @@
 //! cargo test --example app_running --features testing,macros,memory,json
 //! ```
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 // A plain build compiles the services; the tests that use them exist only in the test build.
 #![cfg_attr(not(test), allow(dead_code, unused_imports))]
 

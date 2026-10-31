@@ -5,6 +5,9 @@
 //! [`ruststream::testing`](https://docs.rs/ruststream/latest/ruststream/testing/), whose overview
 //! teaches it.
 
+// The harness polls the app on the test's own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
+
 #[cfg(feature = "embassy")]
 pub mod embedded;
 #[cfg(feature = "tokio")]

@@ -5,6 +5,9 @@
 //! with the service loses the message. The subject is the shutdown sequence, which the test
 //! harness does not run, so the app is started and shut down for real over `MemoryBroker`, and
 //! the copy is read off the broker.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 
 use crate::common;

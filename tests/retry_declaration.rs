@@ -8,6 +8,9 @@
 //! The last suites drop the shape and mount on the in-memory broker itself, which holds a
 //! delivery back for the delay and counts what it has delivered, as `JetStream`, SQS and Pub/Sub
 //! do.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "macros",
     feature = "memory",

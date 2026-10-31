@@ -1,6 +1,9 @@
 //! The arena itself: the entries a body declared, picked by marker, and the marker tuple an
 //! entry tuple stands for.
 
+// The shared body serves the local contract, whose futures carry no Send.
+#![allow(clippy::future_not_send)]
+
 use alloc::vec::Vec;
 use core::fmt;
 

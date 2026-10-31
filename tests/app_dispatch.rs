@@ -2,6 +2,9 @@
 //!
 //! What a handler saw rides the harness; the suite whose subject IS the running app, the shutdown
 //! drain, keeps `run_until` and says so.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
 use std::{

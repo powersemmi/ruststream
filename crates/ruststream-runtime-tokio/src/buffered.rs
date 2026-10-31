@@ -11,6 +11,9 @@
 //! [`BatchSubscriber::batches`]; what stays the adapter's own is the deadline that closes a
 //! partial batch.
 
+// A subscriber wrapper generic over a subscriber that need not be Send.
+#![allow(clippy::future_not_send)]
+
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
