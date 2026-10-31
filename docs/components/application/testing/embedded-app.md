@@ -16,6 +16,9 @@ The app runs inside the test's own future, so a test is a plain `#[test]` that b
 The harness is the test build's embassy-time driver: the clock starts at zero and moves only when the test moves it.
 embassy-time's own `mock-driver` is a second driver of the same clock, and a build links only one of the two.
 
+With the `testing` feature on, every broker an embedded app registers implements the in-process mode, `InProcess`.
+An app that registers a broker without it does not build in a test build.
+
 `embedded::TestApp::start` returns once the app is running.
 A broker that waits on the clock to connect, or a subscription that waits to open, is waited for: the clock moves from one armed deadline to the next, and a startup nothing wakes returns `TestError::Stalled`.
 

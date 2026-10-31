@@ -42,3 +42,4 @@ ruststream = { version = "0.8", default-features = false, features = ["tokio"] }
 
 `TestApp` запускает приложение на tokio, а `testing::embedded::TestApp` запускает встроенное приложение на хосте с поддельными часами embassy-time.
 Оба лежат в фасаде рядом, когда включена возможность `testing`.
+Когда включена возможность `testing`, каждый брокер встроенного приложения реализует внутрипроцессный режим, `InProcess`.

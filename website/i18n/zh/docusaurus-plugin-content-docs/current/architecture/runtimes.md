@@ -42,3 +42,4 @@ embassy 运行器提供固定数量的 worker（`.pool::<N>()` 和 `.keyed::<N>(
 
 `TestApp` 运行 tokio 应用，`testing::embedded::TestApp` 在主机上用 embassy-time 的模拟时钟运行嵌入式应用。
 启用 `testing` 时，两者同时位于门面中。
+启用 `testing` 时，嵌入式应用注册的每个 broker 都实现进程内模式 `InProcess`。
