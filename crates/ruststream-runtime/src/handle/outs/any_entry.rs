@@ -22,11 +22,11 @@ use super::local_entry::{LocalSlot, SlotEncoding};
 /// An arena entry of either runner, as a runtime-neutral body publishes through it.
 pub trait SlotEntry<M, Body = ()>: Deref<Target = Self::Wire> {
     /// The live publisher the slot's policy paired.
-    type Wire;
+    type Wire: LocalPublisher;
     /// The codec typed publishes through the slot encode with.
     type Enc: SlotEncoding;
     /// The sink a publish through the slot travels.
-    type Sink<'a>: LocalPublishSink
+    type Sink<'a>: LocalPublishSink<Options = <Self::Wire as LocalPublisher>::Options>
     where
         Self: 'a;
 

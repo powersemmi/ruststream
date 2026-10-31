@@ -1,8 +1,6 @@
 //! The runtime the generated code targets, chosen once per crate by the facade's runtime feature,
 //! and the spellings that differ between the two.
 
-use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
 use syn::punctuated::Punctuated;
 use syn::{Path, PathSegment, Token, TypeParamBound};
 
