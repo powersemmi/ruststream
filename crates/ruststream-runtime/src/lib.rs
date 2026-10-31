@@ -176,7 +176,7 @@ pub use failure::DispatchFailure;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use handle::{AnyOutPos, SelectEntry, SlotEntry};
+pub use handle::{AnyOutPos, SelectEntry, SlotEntry, SlotTransactions};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use handle::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};

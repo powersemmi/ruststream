@@ -78,7 +78,7 @@ pub use docs::{Documentable, Documented, Undocumented};
 pub use fn_body::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
 pub use fn_body::{AsDeclared, IntoDeclared};
 #[doc(hidden)]
-pub use outs::{AnyOutPos, SelectEntry, SlotEntry};
+pub use outs::{AnyOutPos, SelectEntry, SlotEntry, SlotTransactions};
 #[doc(hidden)]
 pub use outs::{EntryMarkers, LocalEntryMarkers, LocalOutPos, OutPos, SelectSlot, SlotDictionary};
 pub use outs::{LocalOutEntry, LocalSlot, OutEntry, Outs, Slot};

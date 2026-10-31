@@ -12,15 +12,19 @@ use crate::codec::Codec;
 use crate::publish::{
     HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, OutPipeline, PublishBuilder,
 };
-use crate::slot::{ContainsMessage, OutSlot, PublishedThrough};
-use crate::{LocalPublisher, OutgoingDestination, Publisher};
+use crate::publish::{TransactionScope, TypedTransaction};
+use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
+use crate::{
+    HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, OwnedTransactions, Publisher,
+    TransactionalPublisher,
+};
 
 use super::arena::Outs;
 use super::entry::Slot;
 use super::local_entry::{LocalSlot, SlotEncoding};
 
 /// An arena entry of either runner, as a runtime-neutral body publishes through it.
-pub trait SlotEntry<M, Body = ()>: Deref<Target = Self::Wire> {
+pub trait SlotEntry<M, Body = ()>: Deref<Target = Self::Wire> + LocalPublisher {
     /// The live publisher the slot's policy paired.
     type Wire: LocalPublisher;
     /// The codec typed publishes through the slot encode with.
@@ -149,5 +153,88 @@ impl<E> Outs<E> {
     {
         let _ = marker;
         self.entries().pick_entry()
+    }
+}
+
+// The slot publishes through its own path, so a direct `publish` keeps the slot's attribution,
+// as the multi-thread runner's slot does.
+#[allow(clippy::future_not_send)]
+impl<M, W, E, Pipe, Body> LocalPublisher for LocalSlot<M, W, E, Pipe, Body>
+where
+    M: OutSlot,
+    W: LocalPublisher,
+    Pipe: LocalOutPipeline<W>,
+{
+    type Payload = W::Payload;
+    type Error = W::Error;
+    type Options = W::Options;
+
+    async fn publish(
+        &self,
+        msg: OutgoingFor<'_, Self::Payload>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
+        let mut sink = self;
+        LocalPublishSink::send(&mut sink, msg, options).await
+    }
+
+    fn base_headers(&self) -> Option<&HeaderMap> {
+        (**self).base_headers()
+    }
+}
+
+/// The transaction openers of a slot whose wire is transactional: the multi-thread runner's.
+#[doc(hidden)]
+pub trait SlotTransactions<M, Body = ()>: SlotEntry<M, Body> {
+    /// Opens a broker-side transaction scope over the slot's wire.
+    fn begin(
+        &self,
+    ) -> impl Future<
+        Output = Result<
+            TransactionScope<'_, SlotPublisher<Self::Wire, M>, &'_ Self::Enc, Self>,
+            <Self::Wire as Publisher>::Error,
+        >,
+    >
+    where
+        Self: Sized,
+        Self::Wire: TransactionalPublisher;
+
+    /// Opens an owned transaction over the slot's wire, typed by the slot's dictionary.
+    fn transaction(
+        &self,
+    ) -> impl Future<
+        Output = Result<
+            TypedTransaction<<Self::Wire as OwnedTransactions>::Transaction, &'_ Self::Enc, Self>,
+            <Self::Wire as Publisher>::Error,
+        >,
+    >
+    where
+        Self: Sized,
+        Self::Wire: OwnedTransactions;
+}
+
+impl<M, W, E, Pipe, Body> SlotTransactions<M, Body> for Slot<M, W, E, Pipe, Body>
+where
+    M: OutSlot,
+    W: Publisher,
+    E: Codec + Send + Sync,
+    Pipe: OutPipeline<W>,
+{
+    fn begin(
+        &self,
+    ) -> impl Future<Output = Result<TransactionScope<'_, SlotPublisher<W, M>, &'_ E, Self>, W::Error>>
+    where
+        W: TransactionalPublisher,
+    {
+        Self::begin(self)
+    }
+
+    fn transaction(
+        &self,
+    ) -> impl Future<Output = Result<TypedTransaction<W::Transaction, &'_ E, Self>, W::Error>>
+    where
+        W: OwnedTransactions,
+    {
+        Self::transaction(self)
     }
 }

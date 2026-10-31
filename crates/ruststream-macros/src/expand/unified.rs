@@ -675,6 +675,26 @@ impl NeutralArena {
             bounds.push(quote! {
                 #entry: ::ruststream::runtime::SlotEntry<#marker, #body, Wire: #capability>
             });
+            // A transactional or request capability also sits on the entry itself, which
+            // forwards it through the slot, with the slot's typed openers; the multi-thread
+            // runner's entries are the ones that implement them.
+            let on_entry: Vec<&syn::TypeParamBound> = out
+                .bounds
+                .iter()
+                .filter(|bound| {
+                    capability_named(bound, &["TransactionalPublisher", "RequestReply"])
+                })
+                .collect();
+            if !on_entry.is_empty() {
+                bounds.push(quote!(#entry: #(#on_entry)+*));
+            }
+            if out.bounds.iter().any(|bound| {
+                capability_named(bound, &["TransactionalPublisher", "OwnedTransactions"])
+            }) {
+                bounds.push(quote! {
+                    #entry: ::ruststream::runtime::SlotTransactions<#marker, #body>
+                });
+            }
             bindings.push(arena_binding(out.pat, marker));
             params.push(entry);
         }
@@ -685,6 +705,18 @@ impl NeutralArena {
             bindings,
         }
     }
+}
+
+/// Whether a capability bound names one of `names` by its last path segment.
+fn capability_named(bound: &syn::TypeParamBound, names: &[&str]) -> bool {
+    let syn::TypeParamBound::Trait(written) = bound else {
+        return false;
+    };
+    written
+        .path
+        .segments
+        .last()
+        .is_some_and(|last| names.iter().any(|name| last.ident == name))
 }
 
 /// The body binding of one slot, unwrapping the user's `Out(..)` pattern.
