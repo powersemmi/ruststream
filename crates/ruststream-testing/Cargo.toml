@@ -16,9 +16,8 @@ readme = "../../README.md"
 all-features = true
 
 [features]
-# The runtime whose apps the harness drives, as the facade selects it: the two exclude each other
-# there. Each also selects the facade the tests and doc examples build against, as a service of
-# that runtime depends on it.
+# The runtimes whose apps the harness drives; they add up. Each also enables its facade feature,
+# which the tests and doc examples build against, as a service of that runtime depends on it.
 # `TestApp` over the tokio runner's app.
 tokio = [
     "dep:ruststream-runtime-tokio",

@@ -9,14 +9,14 @@ import TabItem from '@theme/TabItem';
 
 # Testing an embedded app
 
-On the `embassy` runtime, `TestApp` runs a device service's `EmbeddedApp` on the host, with every broker connected in process and the clock the app reads in the test's hands.
+`testing::embedded::TestApp` runs a device service's `EmbeddedApp` on the host, with every broker connected in process and the clock the app reads in the test's hands.
 The test hands the app function its brokers, as the device's task does, and drives the app with the same calls a tokio test makes: [`broker`](./driving/broker.md), [`settle`](./driving/settle.md), [`advance`](./driving/advance.md) and `shutdown`.
 The app runs inside the test's own future, so a test is a plain `#[test]` that blocks on one future, and one `TestApp` runs at a time in a process.
 
 The harness is the test build's embassy-time driver: the clock starts at zero and moves only when the test moves it.
 embassy-time's own `mock-driver` is a second driver of the same clock, and a build links only one of the two.
 
-`TestApp::start` returns once the app is running.
+`embedded::TestApp::start` returns once the app is running.
 A broker that waits on the clock to connect, or a subscription that waits to open, is waited for: the clock moves from one armed deadline to the next, and a startup nothing wakes returns `TestError::Stalled`.
 
 `shutdown` lets the work the app holds run to its end: the clock moves from one armed deadline to the next until the app has stopped.
