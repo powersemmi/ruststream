@@ -20,7 +20,7 @@ use std::sync::Arc;
 use bytes::BytesMut;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
-use ruststream_core::{LocalBroker, LocalPublisher, OutgoingMessage};
+use ruststream_core::{LocalBroker, LocalConnectedBroker, LocalPublisher, OutgoingMessage};
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream_runtime::{
     Context, Deserialized, FailurePolicies, FailurePolicy, HandlerOutcome, Input, LocalHandle,
@@ -101,6 +101,8 @@ struct Stand {
     failing: Control,
     seen_failing: AtomicU32,
     hooked: Control,
+    ending_bus: Bus,
+    ending: Control,
     calls: RefCell<Vec<&'static str>>,
     health: RefCell<Vec<Health>>,
     outcome: RefCell<Option<Result<(), RunError>>>,
@@ -171,6 +173,21 @@ fn hooked(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
         })
 }
 
+/// An app with one subscription on a bus of its own, which the scenario shuts down under it.
+fn ending(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(stand.ending_bus.clone(), |b| {
+        b.include(
+            local_subscriber(
+                LocalMemorySource::new("bus/ending"),
+                Count {
+                    seen: &stand.seen_bus,
+                },
+            )
+            .build(),
+        )
+    })
+}
+
 // A device holds the app's future in its static task and awaits it in place, as this task does:
 // nothing moves it. Two brokers' loops make it larger than the lint's limit on some targets.
 #[allow(clippy::large_futures)]
@@ -192,8 +209,14 @@ async fn run_hooked(stand: &'static Stand) {
     *stand.outcome.borrow_mut() = Some(outcome);
 }
 
+#[embassy_executor::task]
+async fn run_ending(stand: &'static Stand) {
+    let outcome = ending(stand).run(&stand.ending).await;
+    *stand.outcome.borrow_mut() = Some(outcome);
+}
+
 /// Records every health the control moves through until it stops or fails.
-#[embassy_executor::task(pool_size = 3)]
+#[embassy_executor::task(pool_size = 4)]
 async fn watch(control: &'static Control, stand: &'static Stand) {
     // Read when the watcher is spawned, before the app's task first runs.
     let mut seen = Health::Starting;
@@ -334,11 +357,48 @@ async fn check_hooks(spawner: Spawner, stand: &'static Stand) {
     passed("the hooks run in the order of the app's life, with its state");
 }
 
+async fn check_stream_end(spawner: Spawner, stand: &'static Stand) {
+    stand.health.borrow_mut().push(stand.ending.health());
+    spawner.spawn(watch(&stand.ending, stand).expect("a watcher task is free"));
+    spawner.spawn(run_ending(stand).expect("the app task is free"));
+    settle().await;
+    let ended_while_running = stand.ending.stream_ended();
+    let connected = stand
+        .ending_bus
+        .clone()
+        .connect()
+        .await
+        .expect("the bus connects");
+    connected.shutdown().await.expect("the bus shuts down");
+    settle().await;
+    let health = stand.health.borrow_mut().drain(..).collect::<Vec<_>>();
+
+    assert!(
+        !ended_while_running,
+        "a stream reported ended while the bus ran"
+    );
+    assert!(
+        stand.ending.stream_ended(),
+        "the control reports the stream that ended"
+    );
+    assert_eq!(
+        health,
+        [Health::Starting, Health::Running, Health::Stopped],
+        "the health of the app whose stream ended"
+    );
+    assert!(
+        outcome(stand).is_ok(),
+        "an app whose streams ended returns Ok"
+    );
+    passed("an app whose every stream ended stops on its own and says so");
+}
+
 #[embassy_executor::task]
 async fn drive(spawner: Spawner, stand: &'static Stand) {
     check_two_brokers(spawner, stand).await;
     check_fail_fast(spawner, stand).await;
     check_hooks(spawner, stand).await;
+    check_stream_end(spawner, stand).await;
     stand.done.set(true);
 }
 
@@ -356,6 +416,8 @@ fn main() {
         failing: Control::new(),
         seen_failing: AtomicU32::new(0),
         hooked: Control::new(),
+        ending_bus: Bus::new(),
+        ending: Control::new(),
         calls: RefCell::new(Vec::new()),
         health: RefCell::new(Vec::new()),
         outcome: RefCell::new(None),
