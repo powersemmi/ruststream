@@ -5,7 +5,6 @@
 #![allow(clippy::future_not_send)]
 
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::array;
 use core::cell::{Cell, RefCell};
 use core::future::poll_fn;
@@ -15,6 +14,7 @@ use core::task::{Poll, Waker};
 use core::time::Duration;
 
 use bytes::BytesMut;
+use embassy_sync::waitqueue::WakerRegistration;
 use ruststream_core::{HeaderMap, LocalSettle};
 use ruststream_runtime::{
     BoxError, Clock, CopyPublisher, KeptCopies, KeptDelivery, PrepareCopy, PrepareKept,
@@ -62,9 +62,9 @@ pub(crate) struct CopyStore<Path: CopyPublisher, const CAP: usize, Timers: Clock
     /// Set once the registration's lanes stopped: the driver ends with the last copy sent.
     closed: Cell<bool>,
     waker: RefCell<Option<Waker>>,
-    /// Deliveries waiting for a free record; woken when one frees. Grows only when the store was
-    /// full, and keeps its room from then on.
-    waiting: RefCell<Vec<Waker>>,
+    /// The app task's waker, registered by every delivery waiting for a free record: the lanes
+    /// are children of one task and are polled with its waker, so one slot serves them all.
+    waiting: RefCell<WakerRegistration>,
     clock: Timers,
 }
 
@@ -90,7 +90,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             armed: Cell::new(false),
             closed: Cell::new(false),
             waker: RefCell::new(None),
-            waiting: RefCell::new(Vec::new()),
+            waiting: RefCell::new(WakerRegistration::new()),
             clock,
         }
     }
@@ -200,9 +200,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
         records[record].payload = payload;
         records[record].held = Held::Free;
         drop(records);
-        for waiting in self.waiting.borrow_mut().drain(..) {
-            waiting.wake();
-        }
+        self.waiting.borrow_mut().wake();
         self.wake();
     }
 
@@ -230,10 +228,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
             if let Some(record) = self.take_record() {
                 return Poll::Ready(record);
             }
-            let mut waiting = self.waiting.borrow_mut();
-            if !waiting.iter().any(|known| known.will_wake(cx.waker())) {
-                waiting.push(cx.waker().clone());
-            }
+            self.waiting.borrow_mut().register(cx.waker());
             Poll::Pending
         })
     }
@@ -524,6 +519,34 @@ mod tests {
             "woken once, however often polled"
         );
         assert_eq!(waiting.as_mut().poll(&mut cx), Poll::Ready(taken));
+    }
+
+    #[test]
+    fn lanes_waiting_on_one_store_each_get_a_record_as_they_free() {
+        let sent = Recorded::default();
+        let store = CopyStore::<_, 2, _>::on_clock(&sent, Arc::from("jobs"), Probe::default());
+        let taken = [(); 2].map(|()| store.take_record().expect("a free record"));
+        // Two lanes of one task: both are polled with the task's one waker.
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut first = pin!(store.wait_record());
+        let mut second = pin!(store.wait_record());
+        assert_eq!(first.as_mut().poll(&mut cx), Poll::Pending);
+        assert_eq!(second.as_mut().poll(&mut cx), Poll::Pending);
+
+        store.free(taken[0]);
+        let got = first.as_mut().poll(&mut cx);
+        assert_eq!(
+            got,
+            Poll::Ready(taken[0]),
+            "the first lane takes the freed record"
+        );
+        assert_eq!(
+            second.as_mut().poll(&mut cx),
+            Poll::Pending,
+            "no record is left"
+        );
+        store.free(taken[1]);
+        assert_eq!(second.as_mut().poll(&mut cx), Poll::Ready(taken[1]));
     }
 
     #[test]
