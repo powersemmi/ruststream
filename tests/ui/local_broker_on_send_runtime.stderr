@@ -12,7 +12,7 @@ help: the trait `ruststream::Broker` is not implemented for `RcBroker`
  9 | struct RcBroker {
    | ^^^^^^^^^^^^^^^
    = note: this runtime moves a broker, its deliveries and their futures across threads, so it runs brokers whose types are `Send` and implement `Broker`
-   = note: a broker whose client holds `Rc` or `RefCell` implements `LocalBroker` alone; to run here, keep the client's shared state in `Arc` and `Mutex` and implement `Broker`
+   = note: a broker whose client holds `Rc` or `RefCell` implements `Broker` alone; to run here, keep the client's shared state in `Arc` and `Mutex` and implement `Broker`
 help: the following other types implement trait `ruststream::Broker`
   --> crates/ruststream-conformance/src/harness.rs
    |

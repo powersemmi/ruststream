@@ -25,8 +25,8 @@ use ruststream::memory::local::{
 };
 use ruststream::runtime::{Control, EmbeddedApp, HandlerOutcome, IntoSource, Mounts, RunError};
 use ruststream::{
-    BrokerMoves, Deserialized, LocalBroker, LocalConnectedBroker, LocalPublisher,
-    LocalSubscriptionSource, OutgoingMessage, subscriber,
+    Broker, BrokerMoves, ConnectedBroker, Deserialized, LocalPublisher, OutgoingMessage,
+    SubscriptionSource, subscriber,
 };
 use static_cell::StaticCell;
 
@@ -218,7 +218,7 @@ struct Recorded {
     connected: ConnectedLocalMemoryBroker<4>,
 }
 
-impl LocalBroker for Recorder {
+impl Broker for Recorder {
     type Error = Refused;
     type Connected = Recorded;
 
@@ -236,7 +236,7 @@ impl LocalBroker for Recorder {
     }
 }
 
-impl LocalConnectedBroker for Recorded {
+impl ConnectedBroker for Recorded {
     type Error = Refused;
     type Closed = ();
 
@@ -277,7 +277,7 @@ impl IntoSource for Logged {
     }
 }
 
-impl LocalSubscriptionSource<Recorded> for Logged {
+impl SubscriptionSource<Recorded> for Logged {
     type Subscriber = LocalMemorySubscriber<4>;
     type Copies = BrokerMoves;
 

@@ -9,8 +9,8 @@ use crate::harness::{expect_next, expect_no_more, on_foreign_runtime};
 use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
-    Broker, Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, OwnedTransactions,
-    Subscriber, SubscriptionSource, Transaction, TransactionalPublisher,
+    Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, OwnedTransactions, SendBroker,
+    SendSource, Settle, Subscriber, Transaction, TransactionalPublisher,
 };
 
 /// Verifies the [`TransactionalPublisher`] contract.
@@ -52,9 +52,9 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_source: MkSrc,
     make_publisher: MkPub,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: TransactionalPublisher + 'static,
@@ -144,7 +144,7 @@ async fn transaction_misuse<Pub, S, M, E>(publisher: &Pub, stream: &mut S, subje
 where
     Pub: TransactionalPublisher,
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     assert!(
@@ -203,7 +203,7 @@ async fn transaction_commit_on_foreign_runtime<Pub, S, M, E>(
 where
     Pub: TransactionalPublisher + 'static,
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     // The way a handler on a dedicated thread commits.
@@ -324,9 +324,9 @@ pub async fn owned_transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_source: MkSrc,
     make_publisher: MkPub,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: OwnedTransactions + 'static,
@@ -381,7 +381,7 @@ async fn owned_commit_on_foreign_runtime<Pub, S, M, E>(
 where
     Pub: OwnedTransactions + 'static,
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let destination = subject.to_owned();
@@ -478,7 +478,7 @@ async fn owned_settlement<Pub, S, M, E>(publisher: &Pub, stream: &mut S, subject
 where
     Pub: OwnedTransactions,
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let mut committed = within(
@@ -534,7 +534,7 @@ async fn owned_concurrent_settlements<Pub, S, M, E>(publisher: &Pub, stream: &mu
 where
     Pub: OwnedTransactions,
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let mut kept = within(
@@ -595,7 +595,7 @@ async fn owned_concurrent_commits<Pub, S, M, E>(publisher: &Pub, stream: &mut S,
 where
     Pub: OwnedTransactions,
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let mut left = within(
@@ -659,7 +659,7 @@ async fn owned_direct_publish<Pub, S, M, E>(publisher: &Pub, stream: &mut S, sub
 where
     Pub: OwnedTransactions,
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let mut open = within(

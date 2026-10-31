@@ -131,59 +131,67 @@ impl BlanketLayer for CountLayer {
 // spawned form can show.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn graceful_shutdown_drains_post_settle_continuations() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
+    // The run is not `Send`, so it is driven on a local set of the test.
+    tokio::task::LocalSet::new()
+        .run_until(async move {
+            let broker = MemoryBroker::new();
+            let publisher = broker.publisher();
 
-    // The continuation signals `parked` once it is running, then blocks on `release` until the
-    // test lets it proceed, and finally marks `drained`. The drain on shutdown must wait for it.
-    let parked = Arc::new(Notify::new());
-    let release = Arc::new(Notify::new());
-    let drained = Arc::new(AtomicU32::new(0));
+            // The continuation signals `parked` once it is running, then blocks on `release` until the
+            // test lets it proceed, and finally marks `drained`. The drain on shutdown must wait for it.
+            let parked = Arc::new(Notify::new());
+            let release = Arc::new(Notify::new());
+            let drained = Arc::new(AtomicU32::new(0));
 
-    let on_parked = Arc::clone(&parked);
-    let gate = Arc::clone(&release);
-    let flag = Arc::clone(&drained);
-    let handler = move |_msg: &_, _ctx: &mut Context| {
-        let on_parked = Arc::clone(&on_parked);
-        let gate = Arc::clone(&gate);
-        let flag = Arc::clone(&flag);
-        async move {
-            HandlerOutcome::ack().and_after(async move {
-                // Signal once the continuation is in flight, then block: the drain must await it.
-                on_parked.notify_one();
-                gate.notified().await;
-                flag.store(1, Ordering::SeqCst);
-            })
-        }
-    };
+            let on_parked = Arc::clone(&parked);
+            let gate = Arc::clone(&release);
+            let flag = Arc::clone(&drained);
+            let handler = move |_msg: &_, _ctx: &mut Context| {
+                let on_parked = Arc::clone(&on_parked);
+                let gate = Arc::clone(&gate);
+                let flag = Arc::clone(&flag);
+                async move {
+                    HandlerOutcome::ack().and_after(async move {
+                        // Signal once the continuation is in flight, then block: the drain must await it.
+                        on_parked.notify_one();
+                        gate.notified().await;
+                        flag.store(1, Ordering::SeqCst);
+                    })
+                }
+            };
 
-    let app = RustStream::new(AppInfo::new("drain", "0.1.0")).with_broker(broker.clone(), |b| {
-        let subscriber = broker.subscribe("work");
-        b.handle(subscriber, handler, HandlerMetadata::raw("work"))
-    });
+            let app =
+                RustStream::new(AppInfo::new("drain", "0.1.0")).with_broker(broker.clone(), |b| {
+                    let subscriber = broker.subscribe("work");
+                    b.handle(subscriber, handler, HandlerMetadata::raw("work"))
+                });
 
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
+            let shutdown = Arc::new(Notify::new());
+            let shutdown_signal = Arc::clone(&shutdown);
+            let run = tokio::task::spawn_local(
+                app.run_until(async move { shutdown_signal.notified().await }),
+            );
 
-    publisher
-        .message(&Wire(b"go"))
-        .to("work")
-        .publish()
+            publisher
+                .message(&Wire(b"go"))
+                .to("work")
+                .publish()
+                .await
+                .unwrap();
+
+            // Wait until the continuation is spawned and blocked (the message is already acked).
+            parked.notified().await;
+
+            // Begin shutdown while the continuation is still in flight, then release it: the drain holds
+            // run() open until the continuation completes.
+            shutdown.notify_one();
+            release.notify_one();
+            run.await.unwrap().unwrap();
+
+            // run() returned only after the in-flight continuation finished.
+            assert_eq!(drained.load(Ordering::SeqCst), 1);
+        })
         .await
-        .unwrap();
-
-    // Wait until the continuation is spawned and blocked (the message is already acked).
-    parked.notified().await;
-
-    // Begin shutdown while the continuation is still in flight, then release it: the drain holds
-    // run() open until the continuation completes.
-    shutdown.notify_one();
-    release.notify_one();
-    run.await.unwrap().unwrap();
-
-    // run() returned only after the in-flight continuation finished.
-    assert_eq!(drained.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

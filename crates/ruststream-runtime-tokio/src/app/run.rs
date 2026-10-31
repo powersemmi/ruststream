@@ -14,7 +14,7 @@ use tracing::{debug, info, warn};
 use crate::HandlerMetadata;
 use crate::bindable::Bound;
 use crate::shutdown::Shutdown;
-use crate::{Broker, Connected, PairError, PublishPolicy};
+use crate::{Connected, PairError, PublishPolicy, SendBroker};
 
 use super::health::{HealthProbe, HealthState};
 use super::service::RegisteredBroker;
@@ -54,7 +54,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
     /// dispatch task panics, or a broker fails to shut down.
     pub async fn run_until<F>(self, shutdown: F) -> Result<(), RustStreamError>
     where
-        F: Future<Output = ()> + Send,
+        F: Future<Output = ()>,
     {
         let running = self.start().await?;
         tokio::select! {
@@ -304,10 +304,10 @@ impl RunningApp {
     pub fn publisher<B2, S>(
         &self,
         token: Bound<B2, S>,
-    ) -> impl Future<Output = Result<S::Live, PairError>> + Send
+    ) -> impl Future<Output = Result<S::Live, PairError>>
     where
-        B2: Broker + 'static,
-        S: PublishPolicy<Connected<B2>> + Send,
+        B2: SendBroker,
+        S: PublishPolicy<Connected<B2>>,
     {
         token.live()
     }

@@ -9,7 +9,7 @@ use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
 use crate::shutdown::Shutdown;
-use crate::{BoxError, BoxFuture, Clock, ConnectedLifecycle, Tokio};
+use crate::{BoxError, Clock, ConnectedLifecycle, LocalBoxFuture, Tokio};
 
 use super::{LifecycleHook, RustStreamError};
 
@@ -26,7 +26,8 @@ pub struct ConnectedEntry {
 }
 
 /// A lifecycle hook with the state already bound, so the teardown stays non-generic.
-pub(crate) type BoundHook = Box<dyn FnOnce() -> BoxFuture<'static, Result<(), BoxError>> + Send>;
+pub(crate) type BoundHook =
+    Box<dyn FnOnce() -> LocalBoxFuture<'static, Result<(), BoxError>> + Send>;
 
 /// The app's shutdown hooks, with the state bound in.
 // Machinery the harness crate drives, hidden from the docs; it holds erased closures and

@@ -18,7 +18,7 @@ use serde::Serialize;
 use crate::codec::Codec;
 use crate::{
     BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, PublishPolicy, Publisher,
-    SubscriptionSource,
+    SendSource, Settle, SubscriptionSource,
 };
 
 use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
@@ -214,12 +214,12 @@ where
     B: Broker + 'static,
     // The subscription side: the source opens against the connected form, and the definition's
     // handler runs over the messages it yields.
-    Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source: SendSource<Connected<B>> + Send + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     RetryPipeline: Clone,
     Source::Subscriber: Sync + Send + 'static,
-    SourceMessage<B, Source>: Send + Sync + 'static,
+    SourceMessage<B, Source>: Settle + 'static,
     State: Send + Sync + 'static,
     Def: PublishingCall<State> + 'static,
     Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
@@ -331,12 +331,12 @@ impl<B, Source, Def, DecodeCodec, ReplySource, Extra, State, Live, RetryPipeline
     for RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>
 where
     B: Broker + 'static,
-    Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source: SendSource<Connected<B>> + Send + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     RetryPipeline: Clone,
     Source::Subscriber: Sync + Send + 'static,
-    SourceMessage<B, Source>: Send + Sync + 'static,
+    SourceMessage<B, Source>: Settle + 'static,
     State: Send + Sync + 'static,
     Def: PublishingCall<State> + 'static,
     Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
@@ -438,12 +438,12 @@ impl<B, Source, Def, DecodeCodec, ReplySource, Extra, BatchReply, State, RetryPi
 where
     B: Broker + 'static,
     // The subscription side: batches open against the connected form.
-    Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source: SendSource<Connected<B>> + Send + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     RetryPipeline: Clone,
     Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
-    SourceMessage<B, Source>: Send + 'static,
+    SourceMessage<B, Source>: Settle + 'static,
     State: Send + Sync + 'static,
     Def: BatchPublishingCall<State> + 'static,
     Def::Input: DecodeWith<DecodeCodec>,

@@ -20,7 +20,7 @@ use crate::lifecycle::BoxError;
 #[cfg(feature = "alloc")]
 use crate::redelivery::{NoRetry, RetryCopies, RetryRoute};
 #[cfg(feature = "alloc")]
-use crate::{HeaderMap, LocalIncomingMessage};
+use crate::{HeaderMap, LocalSettle};
 
 /// A runtime's clock: the time it reads and the timers it arms.
 ///
@@ -619,7 +619,7 @@ pub struct KeptDelivery<'a, M, Cx> {
 pub trait PrepareKept<Cx>: KeptCopies {
     /// Prepares the copy in `record`, filled by [`fill`](KeptCopies::fill), bound for
     /// `destination` or, without one, for the subscription.
-    fn prepare<M: LocalIncomingMessage>(
+    fn prepare<M: LocalSettle>(
         &self,
         record: usize,
         destination: Option<&str>,
@@ -662,7 +662,7 @@ impl KeptCopies for NoKept {
 #[cfg(feature = "alloc")]
 #[allow(clippy::uninhabited_references)]
 impl<Cx> PrepareKept<Cx> for NoKept {
-    fn prepare<M: LocalIncomingMessage>(
+    fn prepare<M: LocalSettle>(
         &self,
         _record: usize,
         _destination: Option<&str>,

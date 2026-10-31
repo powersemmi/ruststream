@@ -9,9 +9,9 @@ use crate::detach::Hosted;
 use crate::dispatch::{spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers};
 use crate::shutdown::Shutdown;
 use crate::{
-    BatchHandler, BatchSubscriber, BlanketLayer, BoxError, BoxFuture, Broker, BuildContext,
-    Connected, DispatchFailure, FailurePolicies, Handler, HandlerMetadata, MountSink, NoRetry,
-    Opened, OpenedSubscription, RetryCopies, ScopeDelivery, Subscriber, Workers,
+    BatchHandler, BatchSubscriber, BlanketLayer, BoxError, Broker, BuildContext, Connected,
+    DispatchFailure, FailurePolicies, Handler, HandlerMetadata, LocalBoxFuture, MountSink, NoRetry,
+    Opened, OpenedSubscription, RetryCopies, ScopeDelivery, SendBroker, Subscriber, Workers,
     open_mounted_subscriber,
 };
 
@@ -27,7 +27,7 @@ pub(crate) type BoundStarter<B, State> = Box<
             Arc<ScopeDelivery>,
             TaskTracker,
             Shutdown,
-        ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
+        ) -> LocalBoxFuture<'static, Result<JoinHandle<()>, BoxError>>
         + Send,
 >;
 
@@ -52,7 +52,7 @@ impl<B: Broker, State> fmt::Debug for RouterSink<B, State> {
     }
 }
 
-impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
+impl<B: SendBroker, State: Send + Sync + 'static> RouterSink<B, State> {
     pub(crate) fn new() -> Self {
         Self {
             starters: Vec::new(),
@@ -65,9 +65,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
     }
 }
 
-impl<B: Broker + 'static, State: Send + Sync + 'static> MountSink<B, State>
-    for RouterSink<B, State>
-{
+impl<B: SendBroker, State: Send + Sync + 'static> MountSink<B, State> for RouterSink<B, State> {
     fn push_handle<Sub, Body, Cx>(
         &mut self,
         subscriber: Sub,
@@ -112,7 +110,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> MountSink<B, State>
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>> + Send,
+        Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>>,
         Sub: Subscriber + Send + 'static,
         Sub::Message: Send + Sync + 'static,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
@@ -157,7 +155,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> MountSink<B, State>
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>> + Send,
+        Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>>,
         Sub: BatchSubscriber + Send + 'static,
         Sub::Message: Send + 'static,
         Sub::Batch: 'static,
@@ -202,7 +200,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> MountSink<B, State>
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>> + Send,
+        Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>>,
         Sub: Subscriber + Send + 'static,
         Sub::Message: Send + Sync + 'static,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
@@ -247,7 +245,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> MountSink<B, State>
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>> + Send,
+        Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>>,
         Sub: BatchSubscriber + Send + 'static,
         Sub::Message: Send + 'static,
         Sub::Batch: 'static,

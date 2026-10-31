@@ -5,12 +5,12 @@ use core::error::Error as StdError;
 
 use thiserror::Error;
 
-/// Errors returned by [`IncomingMessage::ack`] and [`IncomingMessage::nack`].
+/// Errors returned by [`Settle::ack`] and [`Settle::nack`].
 ///
 /// Implementations should map broker-specific failure modes to one of these variants.
 ///
-/// [`IncomingMessage::ack`]: crate::IncomingMessage::ack
-/// [`IncomingMessage::nack`]: crate::IncomingMessage::nack
+/// [`Settle::ack`]: crate::Settle::ack
+/// [`Settle::nack`]: crate::Settle::nack
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum AckError {

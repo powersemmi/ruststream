@@ -14,10 +14,7 @@ use core::fmt;
 use core::future::ready;
 use core::marker::PhantomData;
 
-use crate::{
-    Broker, Connected, IncomingMessage, LocalBroker, LocalConnected, LocalIncomingMessage,
-    PairError,
-};
+use crate::{Broker, Connected, LocalSettle, PairError, Settle};
 
 use super::context::Context;
 use super::dispatch::Workers;
@@ -169,7 +166,7 @@ pub(crate) trait FromStartup<B: Broker, Sub, Extra>: Sized {
         extra: Extra,
         connected: &Connected<B>,
         subscriber: &Sub,
-    ) -> impl Future<Output = Result<Self, PairError>> + Send;
+    ) -> impl Future<Output = Result<Self, PairError>>;
 }
 
 /// A definition with no injected parameters still resolves: to nothing.
@@ -185,7 +182,7 @@ impl<B: Broker, Sub: Sync, Extra: Send> FromStartup<B, Sub, Extra> for () {
 
 /// A handler parameter resolved once per subscription at startup, on a broker of the local
 /// family: the [`FromStartup`] a runner that hosts the app on one thread resolves.
-pub(crate) trait LocalFromStartup<B: LocalBroker, Sub, Extra>: Sized {
+pub(crate) trait LocalFromStartup<B: Broker, Sub, Extra>: Sized {
     /// Resolves the injected value. See [`FromStartup::resolve`].
     ///
     /// # Errors
@@ -193,16 +190,16 @@ pub(crate) trait LocalFromStartup<B: LocalBroker, Sub, Extra>: Sized {
     /// See [`FromStartup::resolve`].
     fn resolve_local(
         extra: Extra,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         subscriber: &Sub,
     ) -> impl Future<Output = Result<Self, PairError>>;
 }
 
 /// A definition with no injected parameters resolves to nothing on either family.
-impl<B: LocalBroker, Sub, Extra> LocalFromStartup<B, Sub, Extra> for () {
+impl<B: Broker, Sub, Extra> LocalFromStartup<B, Sub, Extra> for () {
     fn resolve_local(
         _extra: Extra,
-        _connected: &LocalConnected<B>,
+        _connected: &Connected<B>,
         _subscriber: &Sub,
     ) -> impl Future<Output = Result<Self, PairError>> {
         ready(Ok(()))
@@ -243,12 +240,12 @@ macro_rules! impl_local_from_startup_for_tuples {
         #[allow(clippy::future_not_send)]
         impl<B, Sub, $($name, $extra),+> LocalFromStartup<B, Sub, ($($extra,)+)> for ($($name,)+)
         where
-            B: LocalBroker,
+            B: Broker,
             $($name: LocalFromStartup<B, Sub, $extra>,)+
         {
             async fn resolve_local(
                 extra: ($($extra,)+),
-                connected: &LocalConnected<B>,
+                connected: &Connected<B>,
                 subscriber: &Sub,
             ) -> Result<Self, PairError> {
                 #[allow(non_snake_case)]
@@ -398,7 +395,7 @@ impl<Def: InjectDef, DecodeCodec> fmt::Debug for InjectHandler<Def, DecodeCodec>
 impl<Msg, Def, DecodeCodec, State> Handler<Msg, Def::Context, State>
     for InjectHandler<Def, DecodeCodec>
 where
-    Msg: IncomingMessage,
+    Msg: Settle,
     Def: InjectCall<State>,
     Def::Input: Materialize<DecodeCodec, Msg>,
     Def::Context: Send + Sync,
@@ -448,7 +445,7 @@ pub struct LocalInject<Inject>(pub(crate) Inject);
 impl<Msg, Def, DecodeCodec, State> LocalHandler<Msg, Def::Context, State>
     for LocalInject<InjectHandler<Def, DecodeCodec>>
 where
-    Msg: LocalIncomingMessage,
+    Msg: LocalSettle,
     Def: LocalInjectCall<State>,
     Def::Input: Materialize<DecodeCodec, Msg>,
 {

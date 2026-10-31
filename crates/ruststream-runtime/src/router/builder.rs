@@ -9,8 +9,7 @@ use alloc::borrow::Cow;
 use core::num::NonZeroU32;
 
 use crate::{
-    Broker, BrokerMoves, Connected, LocalBroker, PublishPolicy, Publisher, RetryDeclaration,
-    Subscriber,
+    Broker, BrokerMoves, Connected, PublishPolicy, Publisher, RetryDeclaration, Subscriber,
 };
 
 use crate::dispatch::Workers;
@@ -131,7 +130,7 @@ impl<B: Broker + 'static> Router<B, ()> {
     }
 }
 
-impl<B: LocalBroker + 'static, RouteCodec, RouteLayers, RoutePipe>
+impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
     Router<B, (), RouteCodec, RouteLayers, RoutePipe>
 {
     /// Adds a router-scope middleware layer, wrapping every handler in this router when the
@@ -158,9 +157,7 @@ impl<B: LocalBroker + 'static, RouteCodec, RouteLayers, RoutePipe>
     }
 }
 
-impl<B: LocalBroker + 'static, RouteCodec, RoutePipe>
-    Router<B, (), RouteCodec, Identity, RoutePipe>
-{
+impl<B: Broker + 'static, RouteCodec, RoutePipe> Router<B, (), RouteCodec, Identity, RoutePipe> {
     /// The empty chain a [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) drives one registration
     /// through: the scope's codec and its publish pipeline, with no router-scope layers of its
     /// own (the app's stack wraps at the drain, as it does for any router).
@@ -176,7 +173,7 @@ impl<B: LocalBroker + 'static, RouteCodec, RoutePipe>
     }
 }
 
-impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
+impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Sets the codec that subsequent `include` calls decode with, replacing the default.
@@ -594,10 +591,10 @@ impl<B: Broker + 'static, Routes: RouterHandlers, C, Layers, Pipe>
 #[doc(hidden)]
 pub trait RouterBroker {
     /// The broker every registration of this router mounts on, of either family.
-    type Broker: LocalBroker + 'static;
+    type Broker: Broker + 'static;
 }
 
-impl<B: LocalBroker + 'static, Routes, C, Layers, Pipe> RouterBroker
+impl<B: Broker + 'static, Routes, C, Layers, Pipe> RouterBroker
     for Router<B, Routes, C, Layers, Pipe>
 {
     type Broker = B;
@@ -809,7 +806,7 @@ where
 }
 
 // A whole router answers when its registrations do.
-impl<B: LocalBroker, Routes: RetryDestinationsDeclared, C, Layers, Pipe> RetryDestinationsDeclared
+impl<B: Broker, Routes: RetryDestinationsDeclared, C, Layers, Pipe> RetryDestinationsDeclared
     for Router<B, Routes, C, Layers, Pipe>
 {
 }

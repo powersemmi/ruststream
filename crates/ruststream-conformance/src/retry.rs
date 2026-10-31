@@ -54,8 +54,8 @@ use tokio::time::{Instant, timeout, timeout_at};
 use super::harness::on_foreign_runtime;
 use super::helpers::unique_subject;
 use ruststream_core::{
-    AckError, Broker, BrokerMoves, Connected, ConnectedBroker, HeaderMap, IncomingMessage,
-    OutgoingMessage, Publisher, RedeliveryAddressed, RetryDeclaration, Subscriber,
+    AckError, BrokerMoves, Connected, ConnectedBroker, HeaderMap, OutgoingMessage, Publisher,
+    RedeliveryAddressed, RetryDeclaration, SendBroker, SendSource, Settle, Subscriber,
     SubscriptionSource,
 };
 use ruststream_runtime::RETRY_COUNT_HEADER;
@@ -116,7 +116,7 @@ const POISON: &[u8] = b"poison";
 /// where the delivery reports a [`redelivery_count`](IncomingMessage::redelivery_count), it
 /// continues the count the copy's header carries and grows by one on each redelivery: a broker
 /// that delays natively
-/// ([`supports_nack_after`](IncomingMessage::supports_nack_after)) counts the copy as a new
+/// ([`supports_nack_after`](Settle::supports_nack_after)) counts the copy as a new
 /// message and answers `1`, and a broker that leaves the delay to the runtime answers one more
 /// than the header holds, so a cap never meets a count that restarts on a copy. `None` is the
 /// honest answer of a transport that counts nothing, and a requeue the transport reports as [`AckError::Unsupported`] ends the cycle.
@@ -165,9 +165,9 @@ pub async fn redelivery_address<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_source: MkSrc,
     make_publisher: MkPub,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: RedeliveryAddressed<Connected<B>> + Clone + Send + Sync,
+    Src: RedeliveryAddressed<Connected<B>> + SendSource<Connected<B>> + Clone + Send + Sync,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher + 'static,
@@ -293,7 +293,7 @@ impl<M> Default for Seen<M> {
     }
 }
 
-impl<M: IncomingMessage> Seen<M> {
+impl<M: Settle> Seen<M> {
     fn control_total(&self) -> u32 {
         self.control.iter().sum()
     }
@@ -357,7 +357,7 @@ impl<M: IncomingMessage> Seen<M> {
 async fn count_across_requeues<S, M, E>(mut msg: M, readers: &mut S)
 where
     S: Stream<Item = (usize, Result<M, E>)> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     // A broker that holds a delay back itself is never handed the runtime's copies, so a copy it
@@ -396,7 +396,7 @@ where
 async fn next_copy<S, M, E>(readers: &mut S) -> M
 where
     S: Stream<Item = (usize, Result<M, E>)> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let deadline = Instant::now() + ARRIVAL_TIMEOUT;
@@ -430,7 +430,7 @@ where
 /// A delivery of the copy carries both headers it was published with. A requeue must keep them
 /// too: where a transport reports no delivery count, the retry count header is all the runtime
 /// counts attempts with.
-fn assert_copy_headers<M: IncomingMessage>(msg: &M, which: &str) {
+fn assert_copy_headers<M: Settle>(msg: &M, which: &str) {
     assert_eq!(
         msg.headers().get(COPY_HEADER),
         Some(COPY_HEADER_VALUE),
@@ -446,7 +446,7 @@ fn assert_copy_headers<M: IncomingMessage>(msg: &M, which: &str) {
 }
 
 /// Where a delivery reports how often it was delivered, it is `expected`.
-fn assert_count<M: IncomingMessage>(msg: &M, expected: u64, which: &str) {
+fn assert_count<M: Settle>(msg: &M, expected: u64, which: &str) {
     if let Some(count) = msg.redelivery_count() {
         assert_eq!(
             count, expected,
@@ -504,8 +504,8 @@ fn assert_count<M: IncomingMessage>(msg: &M, expected: u64, which: &str) {
 ///     make_source: impl Fn(&str) -> Src,
 ///     make_publisher: impl Fn(&Connected<B>) -> Pub,
 /// ) where
-///     B: Broker,
-///     Src: SubscriptionSource<Connected<B>, Copies = BrokerMoves> + Send,
+///     B: SendBroker,
+///     Src: SendSource<Connected<B>> + SubscriptionSource<Connected<B>, Copies = BrokerMoves> + Send,
 ///     Pub: Publisher,
 /// {
 ///     let attempts: NonZeroU32 = nonzero!(2u32);
@@ -524,9 +524,9 @@ pub async fn broker_moves<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_publisher: MkPub,
     attempts: NonZeroU32,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>, Copies = BrokerMoves> + Send,
+    Src: SendSource<Connected<B>> + SubscriptionSource<Connected<B>, Copies = BrokerMoves> + Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
@@ -631,7 +631,7 @@ where
 async fn moves_at_the_cap<S, M, E>(deliveries: &mut S, attempts: NonZeroU32)
 where
     S: Stream<Item = (Place, Result<M, E>)> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     for delivery in 1..=NonZeroU64::from(attempts).get() {
@@ -726,7 +726,7 @@ fn dashed(prefix: &str) -> String {
 }
 
 /// Acknowledges `msg`, accepting a transport that cannot acknowledge.
-async fn settle_ack<M: IncomingMessage>(msg: M, label: &str) {
+async fn settle_ack<M: Settle>(msg: M, label: &str) {
     match msg.ack().await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("{label}: ack must succeed or be unsupported, got: {other:?}"),

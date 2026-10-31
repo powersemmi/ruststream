@@ -8,7 +8,7 @@
 use core::any::type_name;
 use core::future::ready;
 
-use ruststream_core::{LocalBroker, LocalConnectedBroker};
+use ruststream_core::{Broker, ConnectedBroker};
 use ruststream_runtime::{
     OpenRoutes, RetryDestinationsDeclared, Router, RouterCommit, RouterWith, RunRoutes,
     ScopeDelivery,
@@ -109,7 +109,7 @@ impl<State> StartMounts<State> for () {
 
 impl<State, B, Routes> StartMounts<State> for BrokerMount<B, Routes>
 where
-    B: LocalBroker,
+    B: Broker,
     Routes: OpenRoutes<B, State>,
 {
     type Connections = (B::Connected,);
@@ -165,7 +165,7 @@ impl CloseAll for () {
     }
 }
 
-impl<Connected: LocalConnectedBroker> CloseAll for (Connected,) {
+impl<Connected: ConnectedBroker> CloseAll for (Connected,) {
     fn close_all(self) -> impl Future<Output = ()> {
         close(self.0)
     }
@@ -180,7 +180,7 @@ impl<Later: CloseAll, Earlier: CloseAll> CloseAll for (Later, Earlier) {
 }
 
 /// Shuts one broker down, logging a failure with the broker it came from.
-pub(crate) async fn close<Connected: LocalConnectedBroker>(connected: Connected) {
+pub(crate) async fn close<Connected: ConnectedBroker>(connected: Connected) {
     if let Err(err) = connected.shutdown().await {
         warn!(
             target: "ruststream::embassy",

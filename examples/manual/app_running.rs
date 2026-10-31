@@ -61,6 +61,8 @@ mod start {
     use tokio::signal::unix;
     #[cfg(unix)]
     use tokio::signal::unix::SignalKind;
+    #[cfg(unix)]
+    use tokio::task::LocalSet;
     use tokio::time::timeout;
 
     use super::{Order, Receipt};
@@ -204,51 +206,57 @@ mod start {
     }
 
     #[cfg(unix)]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn run_serves_until_a_termination_signal() -> Result<(), Box<dyn Error>> {
-        // A listener registered first replaces the default disposition, so a signal that lands
-        // before `run` installs its own handler cannot kill the test binary.
-        let _guard = unix::signal(SignalKind::terminate())?;
-        let broker = MemoryBroker::new();
-        let mut receipts = broker.subscribe("receipts");
-        let orders = broker.publisher();
+        // The run is not `Send`, so it is driven on the test's own thread.
+        LocalSet::new()
+            .run_until(async {
+                // A listener registered first replaces the default disposition, so a signal that lands
+                // before `run` installs its own handler cannot kill the test binary.
+                let _guard = unix::signal(SignalKind::terminate())?;
+                let broker = MemoryBroker::new();
+                let mut receipts = broker.subscribe("receipts");
+                let orders = broker.publisher();
 
-        let mut run = tokio::spawn(async move {
-            serve_forever(broker)
-                .await
-                .map_err(|error| error.to_string())
-        });
-        // The service answers before the signal: `run` has started it. An order published
-        // before the subscription opens reaches no one, so it is sent again until one is answered.
-        let receipt = timeout(Duration::from_secs(30), async {
-            loop {
-                orders
-                    .message(&Order { id: 7 })
-                    .to("orders")
-                    .publish()
-                    .await?;
-                let answered = timeout(Duration::from_millis(100), next_receipt(&mut receipts));
-                if let Ok(Some(receipt)) = answered.await {
-                    return Ok::<_, Box<dyn Error>>(receipt);
-                }
-            }
-        })
-        .await??;
-        assert_eq!(receipt, Receipt { order_id: 7 });
+                let mut run = tokio::task::spawn_local(async move {
+                    serve_forever(broker)
+                        .await
+                        .map_err(|error| error.to_string())
+                });
+                // The service answers before the signal: `run` has started it. An order published
+                // before the subscription opens reaches no one, so it is sent again until one is answered.
+                let receipt = timeout(Duration::from_secs(30), async {
+                    loop {
+                        orders
+                            .message(&Order { id: 7 })
+                            .to("orders")
+                            .publish()
+                            .await?;
+                        let answered =
+                            timeout(Duration::from_millis(100), next_receipt(&mut receipts));
+                        if let Ok(Some(receipt)) = answered.await {
+                            return Ok::<_, Box<dyn Error>>(receipt);
+                        }
+                    }
+                })
+                .await??;
+                assert_eq!(receipt, Receipt { order_id: 7 });
 
-        // `run` installs its signal handler after startup and nothing reports the moment, so the
-        // signal is re-sent until the run returns.
-        let stopped = timeout(Duration::from_secs(30), async {
-            loop {
-                raise_sigterm()?;
-                if let Ok(joined) = timeout(Duration::from_millis(50), &mut run).await {
-                    return Ok::<_, Box<dyn Error>>(joined?);
-                }
-            }
-        })
-        .await??;
-        assert_eq!(stopped, Ok(()), "the signalled shutdown must be graceful");
-        Ok(())
+                // `run` installs its signal handler after startup and nothing reports the moment, so the
+                // signal is re-sent until the run returns.
+                let stopped = timeout(Duration::from_secs(30), async {
+                    loop {
+                        raise_sigterm()?;
+                        if let Ok(joined) = timeout(Duration::from_millis(50), &mut run).await {
+                            return Ok::<_, Box<dyn Error>>(joined?);
+                        }
+                    }
+                })
+                .await??;
+                assert_eq!(stopped, Ok(()), "the signalled shutdown must be graceful");
+                Ok(())
+            })
+            .await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

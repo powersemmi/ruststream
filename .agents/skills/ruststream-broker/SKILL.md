@@ -109,9 +109,9 @@ async fn lifecycle() {
 
 A client that holds `Rc` or `RefCell` (a thread-per-core client, an embedded network stack) cannot
 implement `Broker`, `Subscriber` and the rest: they require `Send` and `Sync`. Its crate implements
-the twins instead: `LocalBroker`, `LocalConnectedBroker`, `LocalSubscriber`,
-`LocalIncomingMessage`, `LocalPublisher`, `LocalPublishPolicy`, `LocalSubscriptionSource`, a
-`Local*` form of each capability, and `LocalInProcess` / `LocalTestableBroker` under `testing`.
+the twins instead: `Broker`, `ConnectedBroker`, `LocalSubscriber`,
+`LocalSettle`, `LocalPublisher`, `PublishPolicy`, `SubscriptionSource`, a
+`Local*` form of each capability, and `InProcess` / `LocalTestableBroker` under `testing`.
 The items are the same, without `Send` and `Sync`; error types stay `Send + Sync + 'static`.
 Every Send implementation is already a local one through a blanket impl, so a crate implements one
 family, never both, and imports one: with both in scope a method call on its own type is ambiguous

@@ -4,7 +4,7 @@ use std::convert::Infallible;
 use std::rc::Rc;
 
 use ruststream::prelude::*;
-use ruststream::{LocalBroker, LocalConnectedBroker};
+use ruststream::{Broker, ConnectedBroker};
 
 struct RcBroker {
     client: Rc<()>,
@@ -14,7 +14,7 @@ struct RcConnected {
     client: Rc<()>,
 }
 
-impl LocalBroker for RcBroker {
+impl Broker for RcBroker {
     type Error = Infallible;
     type Connected = RcConnected;
 
@@ -23,7 +23,7 @@ impl LocalBroker for RcBroker {
     }
 }
 
-impl LocalConnectedBroker for RcConnected {
+impl ConnectedBroker for RcConnected {
     type Error = Infallible;
     type Closed = ();
 

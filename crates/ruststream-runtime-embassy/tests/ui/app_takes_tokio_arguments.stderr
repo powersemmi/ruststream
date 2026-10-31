@@ -13,5 +13,5 @@ error: `worker_threads` sizes a tokio runtime; on the embassy runtime the app ru
 error: the app's embassy task is one concrete task, so its builder takes no generic parameters; name the board's broker types
   --> tests/ui/app_takes_tokio_arguments.rs:18:11
    |
-18 | fn generic<Bus: ruststream::LocalBroker>(bus: Bus) -> EmbeddedApp<impl Mounts> {
+18 | fn generic<Bus: ruststream::Broker>(bus: Bus) -> EmbeddedApp<impl Mounts> {
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

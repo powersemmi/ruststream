@@ -24,7 +24,7 @@
 //! passes a handler's retry in a test and loses the message in production.
 //!
 //! [`lifecycle`](super::harness::lifecycle) holds the delay of
-//! [`nack_after`](IncomingMessage::nack_after) as a floor for every broker whose deliveries offer
+//! [`nack_after`](Settle::nack_after) as a floor for every broker whose deliveries offer
 //! it: the delivery comes back no sooner than the delay, which is long enough to need a real
 //! timer on a broker with whole-second granularity.
 //!
@@ -57,8 +57,8 @@ use tokio::time::{Instant, timeout, timeout_at};
 use super::harness::{InProcessBroker, on_foreign_runtime};
 use super::helpers::unique_subject;
 use ruststream_core::{
-    AckError, Broker, Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher,
-    Subscriber, SubscriptionSource,
+    AckError, Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher, SendBroker,
+    SendSource, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::testing::InProcess;
 
@@ -144,7 +144,7 @@ pub struct Answers {
     pub reject: Answer,
     /// What `nack(true)` answered.
     pub requeue: Answer,
-    /// What [`supports_nack_after`](IncomingMessage::supports_nack_after) reported.
+    /// What [`supports_nack_after`](Settle::supports_nack_after) reported.
     pub delay: bool,
 }
 
@@ -209,9 +209,9 @@ pub async fn suite<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     redelivery_timeout: Duration,
 ) -> Answers
 where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Clone + Send,
+    Src: SendSource<Connected<B>> + Clone + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,
@@ -269,9 +269,9 @@ pub async fn matches_in_process<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_publisher: MkPub,
     redelivery_timeout: Duration,
 ) where
-    B: InProcess,
+    B: InProcess + SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Clone + Send,
+    Src: SendSource<Connected<B>> + Clone + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,
@@ -333,9 +333,9 @@ struct Probes<'a, MkBroker, MkSrc, MkPub> {
 #[allow(clippy::future_not_send)]
 impl<B, MkBroker, Src, MkSrc, Pub, MkPub> Probes<'_, MkBroker, MkSrc, MkPub>
 where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Clone + Send,
+    Src: SendSource<Connected<B>> + Clone + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,
@@ -680,7 +680,7 @@ where
 async fn quiet<S, M, E>(stream: &mut S, within: Duration, label: &str, what: &str)
 where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     if let Ok(item) = timeout(within, stream.next()).await {
@@ -697,7 +697,7 @@ where
 async fn until_sentinel<S, M, E>(stream: &mut S, redelivery_timeout: Duration, label: &str)
 where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     const CAME_BACK: &str =
@@ -724,7 +724,7 @@ async fn collect_back<S, M, E>(
     label: &str,
 ) where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let deadline = Instant::now() + within;

@@ -2,9 +2,8 @@
 
 #[cfg(feature = "testing")]
 pub use ruststream_runtime::testing::{
-    Backlog, Coordinator, InProcess, LocalInProcess, LocalTestableBroker, Outcome,
-    PublishedAssertions, SubscriberAssertions, TestError, TestableBroker, TestableRegistration,
-    expect_published,
+    Backlog, Coordinator, InProcess, LocalTestableBroker, Outcome, PublishedAssertions,
+    SubscriberAssertions, TestError, TestableBroker, TestableRegistration, expect_published,
 };
 #[cfg(all(feature = "testing", feature = "embassy"))]
 pub use ruststream_testing::embedded::{BrokerHandle, InjectSink, TestApp};

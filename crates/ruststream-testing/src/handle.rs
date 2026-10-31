@@ -11,7 +11,9 @@ use ruststream_core::{Lend, OutgoingMessage, RawMessage};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use ruststream_runtime::codec::{Codec, DefaultCodec};
 use ruststream_runtime::message_of;
-use ruststream_runtime::{HeadersUnset, MessageBody, PublishBuilder, PublishSink, UnnamedCodec};
+use ruststream_runtime::{
+    HeadersUnset, LocalPublishSink, MessageBody, PublishBuilder, UnnamedCodec,
+};
 use ruststream_runtime_tokio::Shutdown;
 
 use ruststream_runtime::testing::Coordinator;
@@ -92,7 +94,7 @@ impl fmt::Debug for InjectSink<'_> {
     }
 }
 
-impl PublishSink for InjectSink<'_> {
+impl LocalPublishSink for InjectSink<'_> {
     // An injection is handed to the in-process transport by reference, which stores what it
     // keeps: see `TestableBroker::inject`.
     type Payload = Lend;

@@ -205,7 +205,7 @@ pub(crate) mod unreadable {
     use core::future::ready;
 
     use crate::codec::CodecError;
-    use crate::{AckError, HeaderMap, IncomingMessage};
+    use crate::{AckError, HeaderMap, IncomingMessage, Settle};
 
     /// What the delivery reports, as the inner error of a [`CodecError::Decode`].
     pub(crate) const REASON: &str = "the column `amount` holds text";
@@ -238,7 +238,9 @@ pub(crate) mod unreadable {
         fn decode_error(&self) -> Option<&CodecError> {
             Some(&self.error)
         }
+    }
 
+    impl Settle for Unreadable {
         fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {
             ready(Ok(()))
         }

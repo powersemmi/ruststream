@@ -58,8 +58,8 @@ use tokio::{runtime, time, time::timeout};
 use super::harness::{expect_next, expect_no_more};
 use super::helpers::unique_subject;
 use ruststream_core::{
-    AckError, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage, RawMessage, Subscribe,
-    Subscriber,
+    AckError, ConnectedBroker, HeaderMap, OutgoingMessage, RawMessage, SendBroker, SendSubscribe,
+    Settle, Subscribe, Subscriber,
 };
 use ruststream_runtime::testing::{Coordinator, InProcess, TestableBroker, TestableRegistration};
 
@@ -80,8 +80,8 @@ const SHARED: u32 = 10;
 /// Runs every in-process scenario against a fresh broker from `factory`.
 pub(crate) async fn run<B, F>(factory: F)
 where
-    B: InProcess,
-    B::Connected: Subscribe,
+    B: InProcess + SendBroker,
+    B::Connected: SendSubscribe + TestableBroker,
     F: Fn() -> B,
 {
     own_publishes_are_logged(connect_in_process(factory()).await).await;
@@ -89,7 +89,7 @@ where
     counts_balance(factory());
 }
 
-async fn connect_in_process<B: InProcess>(broker: B) -> B::Connected {
+async fn connect_in_process<B: InProcess + SendBroker>(broker: B) -> B::Connected {
     broker
         .connect_in_process()
         .await
@@ -143,7 +143,7 @@ where
 }
 
 /// Acknowledges `msg`, accepting a transport that cannot acknowledge.
-async fn settle_ack<M: IncomingMessage>(msg: M) {
+async fn settle_ack<M: Settle>(msg: M) {
     match msg.ack().await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
@@ -218,7 +218,7 @@ struct Received {
 /// Two subscriptions of one name, and one of another, receive exactly what the broker's routing
 /// answer says: `routes` is what a live `TestApp` waits on, so a transport that delivers
 /// otherwise makes it wait for a delivery that never comes, or stop before one that does.
-async fn one_name_two_subscriptions<C: TestableBroker + Subscribe>(connected: C) {
+async fn one_name_two_subscriptions<C: TestableBroker + SendSubscribe>(connected: C) {
     let coordinator = Coordinator::new(usize::MAX);
     connected.install_coordinator(coordinator.clone());
     let name = unique_subject("conformance.shared");
@@ -335,7 +335,7 @@ fn assert_received_as_routed(
 /// Reads one delivery of the two-subscription scenario and settles it.
 async fn read_shared<M, E>((position, item): (usize, Result<M, E>)) -> Received
 where
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let msg = item
@@ -356,8 +356,8 @@ where
 /// caller's runtime.
 fn counts_balance<B>(broker: B)
 where
-    B: InProcess,
-    B::Connected: Subscribe,
+    B: InProcess + SendBroker,
+    B::Connected: SendSubscribe + TestableBroker,
 {
     thread::scope(|scope| {
         let joined = thread::Builder::new()
@@ -380,8 +380,8 @@ where
 
 async fn counts<B>(broker: B)
 where
-    B: InProcess,
-    B::Connected: Subscribe,
+    B: InProcess + SendBroker,
+    B::Connected: SendSubscribe + TestableBroker,
 {
     let connected = connect_in_process(broker).await;
     let coordinator = Coordinator::new(usize::MAX);
@@ -425,7 +425,7 @@ where
 /// handler holds it, and is released once by its acknowledgement.
 async fn injected_counts<M, E, S>(coordinator: &Coordinator, stream: &mut S)
 where
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
 {
@@ -458,7 +458,7 @@ async fn own_publish_counts<C, M, E, S>(
     name: &str,
 ) where
     C: TestableBroker + 'static,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
 {
@@ -497,7 +497,7 @@ async fn unread_publish_counts<C, M, E, S>(
     name: &str,
 ) where
     C: TestableBroker + 'static,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
 {
@@ -530,7 +530,7 @@ async fn settlement_counts<M, E, S>(
     stream: &mut S,
     inject: impl Fn(&'static [u8]),
 ) where
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
 {
@@ -568,7 +568,7 @@ async fn settlement_counts<M, E, S>(
 /// A delivery nacked without requeue is released once and does not come back.
 async fn dropped_counts<M, E, S>(coordinator: &Coordinator, stream: &mut S)
 where
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
 {
@@ -588,7 +588,7 @@ where
 /// once; a transport with no requeue still releases the delivery.
 async fn requeued_counts<M, E, S>(coordinator: &Coordinator, stream: &mut S)
 where
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
 {
@@ -618,7 +618,7 @@ where
 /// due, the way `TestApp::advance` moves the clock and then fires the due timers.
 async fn delayed_redelivery<M, E, S>(msg: M, coordinator: &Coordinator, stream: &mut S)
 where
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
 {

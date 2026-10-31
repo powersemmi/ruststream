@@ -11,8 +11,8 @@ use crate::input::Materialize;
 use crate::lifecycle::BoxError;
 use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
 use crate::{
-    BuildContext, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
-    LocalSubscriptionSource, RetryDeclaration,
+    Broker, BuildContext, Connected, LocalSettle, LocalSubscriber, RetryDeclaration,
+    SubscriptionSource,
 };
 
 use super::fold_plan::{LocalRoute, OpenLocalRoute};
@@ -21,10 +21,10 @@ use super::routes_inject::InjectRoute;
 impl<B, State, Source, M, Def, DecodeCodec, Extra> OpenLocalRoute<B, State>
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 where
-    B: LocalBroker,
-    Source: LocalSubscriptionSource<LocalConnected<B>>,
+    B: Broker,
+    Source: SubscriptionSource<Connected<B>>,
     Source::Subscriber: LocalSubscriber<Message = M>,
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     Def: LocalInjectCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
     Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
@@ -42,7 +42,7 @@ where
 
     async fn open_route(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {

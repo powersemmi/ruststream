@@ -20,6 +20,7 @@ use std::{future, thread};
 
 use common::Order;
 use futures::{Stream, StreamExt};
+use ruststream::Settle;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{MemoryMessage, MemoryPublisher};
 use ruststream::{
@@ -575,7 +576,10 @@ impl CopiedSubscription {
     }
 }
 
-impl<C: Subscribe> SubscriptionSource<C> for CopiedSubscription {
+impl<C: Subscribe> SubscriptionSource<C> for CopiedSubscription
+where
+    C::Subscriber: Subscriber,
+{
     type Subscriber = UnsettledSubscriber<C::Subscriber>;
     type Copies = AddressedCopies;
 
@@ -590,11 +594,14 @@ impl<C: Subscribe> SubscriptionSource<C> for CopiedSubscription {
     }
 }
 
-impl<C: Subscribe> RedeliveryAddressed<C> for CopiedSubscription {
+impl<C: Subscribe> RedeliveryAddressed<C> for CopiedSubscription
+where
+    C::Subscriber: Subscriber,
+{
     fn redelivery_address(
         &self,
         _connected: &C,
-    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
         ready(Ok(RedeliveryAddress::new("copies")))
     }
 }
@@ -612,7 +619,7 @@ impl<S: Subscriber> Subscriber for UnsettledSubscriber<S> {
 }
 
 /// A delivery that settles like the broker's own but keeps the trait default for
-/// [`IncomingMessage::supports_nack_after`].
+/// [`Settle::supports_nack_after`].
 struct UnsettledMessage<M>(M);
 
 impl<M: IncomingMessage> IncomingMessage for UnsettledMessage<M> {
@@ -623,7 +630,9 @@ impl<M: IncomingMessage> IncomingMessage for UnsettledMessage<M> {
     fn headers(&self) -> &HeaderMap {
         self.0.headers()
     }
+}
 
+impl<M: Settle> Settle for UnsettledMessage<M> {
     async fn ack(self) -> Result<(), AckError> {
         self.0.ack().await
     }

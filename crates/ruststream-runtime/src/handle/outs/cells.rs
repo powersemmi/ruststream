@@ -10,9 +10,7 @@ use crate::inject::{InjectCall, InjectDef, LocalInjectCall};
 use crate::metadata::OutgoingMessageMetadata;
 use crate::router::IncludeDef;
 use crate::slot::{BindSlots, HasSlots, LocalBindSlots, LocalHasSlots, OutSlot};
-use crate::{
-    ConnectedBroker, LocalConnectedBroker, LocalPublishPolicy, Name, PublishPolicy, Unnamed,
-};
+use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -102,17 +100,17 @@ macro_rules! impl_local_bind_slots {
                 HandleValue<
                     A,
                     (),
-                    Outs<($(LocalSlot<$m, <$p as LocalPublishPolicy<Conn>>::Live, $e, $pipe, $b>,)+)>,
+                    Outs<($(LocalSlot<$m, <$p as PublishPolicy<Conn>>::Live, $e, $pipe, $b>,)+)>,
                     C,
                     H,
                     Doc,
                 >,
             >
         where
-            Conn: LocalConnectedBroker,
+            Conn: ConnectedBroker,
             $(
                 $m: OutSlot,
-                $p: LocalPublishPolicy<Conn>,
+                $p: PublishPolicy<Conn>,
             )+
         {
             type Bound = Self;

@@ -125,23 +125,11 @@ pub(crate) type SourceSubscriber<B, S> = <S as SubscriptionSource<Connected<B>>>
 
 /// The message that subscriber yields. See [`SourceSubscriber`].
 #[cfg(feature = "alloc")]
-pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as Subscriber>::Message;
+pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as LocalSubscriber>::Message;
 
-/// The connected form of broker `B` of either family: the same type as
-/// [`Connected`] wherever `B` is a [`Broker`].
+/// The message that subscriber yields on a broker of either family. See [`SourceSubscriber`].
 #[cfg(feature = "alloc")]
-pub(crate) type LocalConnected<B> = <B as LocalBroker>::Connected;
-
-/// The subscriber a source opens on a broker of either family: the same type as
-/// [`SourceSubscriber`] wherever both are named.
-#[cfg(feature = "alloc")]
-pub(crate) type LocalSourceSubscriber<B, S> =
-    <S as LocalSubscriptionSource<LocalConnected<B>>>::Subscriber;
-
-/// The message that subscriber yields. See [`LocalSourceSubscriber`].
-#[cfg(feature = "alloc")]
-pub(crate) type LocalSourceMessage<B, S> =
-    <LocalSourceSubscriber<B, S> as LocalSubscriber>::Message;
+pub(crate) type LocalSourceMessage<B, S> = <SourceSubscriber<B, S> as LocalSubscriber>::Message;
 
 /// The batch that subscriber yields, where it batches. See [`SourceSubscriber`].
 #[cfg(feature = "alloc")]
@@ -245,7 +233,7 @@ pub use lifecycle::BrokerCell;
 pub use lifecycle::InProcessConnect;
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use lifecycle::{BoxError, BoxFuture, BrokerLifecycle, ConnectedLifecycle};
+pub use lifecycle::{BoxError, BoxFuture, BrokerLifecycle, ConnectedLifecycle, LocalBoxFuture};
 #[cfg(feature = "alloc")]
 pub use metadata::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,

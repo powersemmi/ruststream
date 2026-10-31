@@ -210,7 +210,7 @@ mod tests {
     #[tokio::test]
     async fn next_message_returns_the_next_delivery() {
         use ruststream::memory::MemoryBroker;
-        use ruststream_core::{IncomingMessage, OutgoingMessage, Publisher};
+        use ruststream_core::{IncomingMessage, OutgoingMessage, Publisher, Settle};
 
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("conf-next");

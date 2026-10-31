@@ -4,6 +4,7 @@
 
 use futures::StreamExt;
 
+use ruststream::Settle;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, RustStream};
 use ruststream::{Broker, IncomingMessage, OutgoingMessage, Publisher, Subscriber};

@@ -20,8 +20,8 @@ use futures::{FutureExt, StreamExt};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER};
 use ruststream::{
-    Deserialized, LocalBroker, LocalIncomingMessage, LocalPublisher, LocalSubscriber,
-    LocalSubscriptionSource, Outgoing, OutgoingMessage, Serialized, subscriber,
+    Broker, Deserialized, LocalPublisher, LocalSettle, LocalSubscriber, Outgoing, OutgoingMessage,
+    Serialized, SubscriptionSource, subscriber,
 };
 use static_cell::StaticCell;
 

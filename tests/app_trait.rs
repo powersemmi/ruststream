@@ -42,12 +42,18 @@ fn metadata_is_readable_through_the_trait() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_impl_app_runs_and_shuts_down_through_the_trait() {
-    let shutdown = Arc::new(Notify::new());
-    let signal = Arc::clone(&shutdown);
-    // `run_until` is reached only through `App` here; spawning it proves the future is `Send`.
-    let run = tokio::spawn(build().run_until(async move { signal.notified().await }));
-    shutdown.notify_one();
-    run.await.expect("join").expect("run");
+    // The run is not `Send`, so it is driven on a local set of the test.
+    tokio::task::LocalSet::new()
+        .run_until(async move {
+            let shutdown = Arc::new(Notify::new());
+            let signal = Arc::clone(&shutdown);
+            // `run_until` is reached only through `App` here; spawning it proves the future is `Send`.
+            let run =
+                tokio::task::spawn_local(build().run_until(async move { signal.notified().await }));
+            shutdown.notify_one();
+            run.await.expect("join").expect("run");
+        })
+        .await
 }
 
 #[cfg(feature = "asyncapi")]

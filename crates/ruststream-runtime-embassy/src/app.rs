@@ -10,7 +10,7 @@ use core::error::Error as StdError;
 use core::pin::pin;
 
 use futures::future::{Either, join, select};
-use ruststream_core::LocalBroker;
+use ruststream_core::Broker;
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::InProcessRun;
 use ruststream_runtime::{Balance, BoxError, Identity, LocalPipeline, Router, RunRoutes};
@@ -233,7 +233,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
         >,
     >
     where
-        B: LocalBroker + 'static,
+        B: Broker + 'static,
         Mount: FnOnce(Scope<B>) -> Chain,
         Chain: MountChain,
     {
