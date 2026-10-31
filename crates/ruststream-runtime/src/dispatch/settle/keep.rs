@@ -2,6 +2,8 @@
 //! takes the copy before the delivery settles, and the store publishes it.
 
 use alloc::string::ToString;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 use core::time::Duration;
 
 use tracing::warn;
@@ -16,7 +18,9 @@ use crate::{AckError, LocalIncomingMessage, Str};
 /// once `delay` has passed otherwise.
 ///
 /// The record is taken and filled before the original is dropped, so a store with every record
-/// taken has the delivery requeued, and the broker keeps it. The copy's bytes go into the
+/// taken has the delivery requeued, and the broker keeps it. The requeue then yields once: a broker
+/// that redelivers at once would otherwise keep the subscription busy within one poll of the task,
+/// and the store's driver, the other subscriptions and the other tasks would never run. The copy's bytes go into the
 /// record's own buffer; its header map is the delivery's, carried on with the retry count in it.
 ///
 /// # Errors
@@ -42,7 +46,9 @@ where
             subscription = %name,
             "the store of retry copies is full; requeuing the delivery now",
         );
-        return slot.take().nack(true).await;
+        let requeued = slot.take().nack(true).await;
+        YieldOnce(false).await;
+        return requeued;
     };
     let msg = slot.get();
     let mut headers = msg.headers().clone();
@@ -78,6 +84,23 @@ where
         }
     }
     Ok(())
+}
+
+/// Pending once, with the task woken, then ready: hands the executor back between two deliveries
+/// of a subscription whose broker never makes it wait.
+struct YieldOnce(bool);
+
+impl Future for YieldOnce {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        if self.0 {
+            return Poll::Ready(());
+        }
+        self.0 = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    }
 }
 
 #[cfg(test)]
