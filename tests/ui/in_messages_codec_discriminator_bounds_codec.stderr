@@ -43,12 +43,12 @@ help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, 
    | |__________________________________________^
    = note: required for `ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>` to implement `ruststream_runtime::router::routes::MountRoute<ruststream::memory::MemoryBroker, (), PublishIdentity>`
    = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>, ())` to implement `RouterDef<ruststream::memory::MemoryBroker>`
-   = note: required for `Router<ruststream::memory::MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountChain<ruststream::memory::MemoryBroker>`
+   = note: required for `Router<ruststream::memory::MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountRoutes<ruststream::memory::MemoryBroker>`
 note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker`
   --> crates/ruststream-runtime-tokio/src/app/service.rs
    |
-   |     pub fn with_broker<R, F, Chain>(
+   |     pub fn with_broker<R, F, Chain, Routes>(
    |            ----------- required by a bound in this associated function
 ...
-   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+   |         Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`

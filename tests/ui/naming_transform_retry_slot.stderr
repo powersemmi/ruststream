@@ -13,12 +13,12 @@ help: the trait `ruststream::runtime::NamingOffered<By>` is implemented for `Nam
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = note: required for `Names` to implement `ruststream::runtime::FitsOffer<Reads, Reads, ruststream::prelude::Retry>`
    = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::AttachRetry<ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish, PublishTransformStack<PublishTransformIdentity, ByTenant>>, ruststream::runtime::OpenDestination>`
-   = note: required for `RouterWith<ruststream::runtime::RetryMount, Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ruststream::runtime::ChainHead<()>)>, (), ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish, PublishTransformStack<PublishTransformIdentity, ByTenant>>>, ruststream::runtime::RetryPos>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
+   = note: required for `RouterWith<ruststream::runtime::RetryMount, Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ruststream::runtime::ChainHead<()>)>, (), ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish, PublishTransformStack<PublishTransformIdentity, ByTenant>>>, ruststream::runtime::RetryPos>` to implement `MountChain`
 note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
   --> crates/ruststream-runtime-tokio/src/app/service.rs
    |
-   |     pub fn with_broker<R, F, Chain>(
+   |     pub fn with_broker<R, F, Chain, Routes>(
    |            ----------- required by a bound in this associated function
 ...
-   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+   |         Chain: MountChain<Routes = Routes>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`

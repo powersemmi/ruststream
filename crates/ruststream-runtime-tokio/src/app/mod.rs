@@ -13,7 +13,7 @@ pub use app_trait::App;
 pub(crate) use health::HealthReport;
 pub use health::{HealthProbe, HealthState, SubscriptionCount, SubscriptionEnd};
 #[doc(hidden)]
-pub use include::MountChain;
+pub use include::MountRoutes;
 pub use run::RunningApp;
 pub use scope::BrokerScope;
 #[doc(hidden)]

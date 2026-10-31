@@ -55,6 +55,7 @@ pub use in_process::StartInProcess;
 pub use lanes::MountSteps;
 #[doc(hidden)]
 pub use lanes::{EmbeddedPlan, Keyed, Lanes, NoRoom, OneLane, Pool, Room, SoFar};
+pub use mounts::Registration;
 #[doc(hidden)]
 pub use mounts::{BrokerMount, CloseAll, ConnectSlot, NoSlot, SharedConnection, StartMounts};
-pub use mounts::{MountChain, Registration};
+pub use ruststream_runtime::MountChain;

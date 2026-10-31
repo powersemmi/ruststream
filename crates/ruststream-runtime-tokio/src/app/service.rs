@@ -13,6 +13,7 @@ use ruststream_runtime::codec::Codec;
 use tokio_util::task::TaskTracker;
 
 use crate::HandlerMetadata;
+use crate::MountChain;
 #[cfg(feature = "poll-diagnostics")]
 use crate::PollDiagnostics;
 use crate::ScopeDelivery;
@@ -25,7 +26,7 @@ use crate::{Identity, Stack};
 use crate::{PublishIdentity, PublishLayer, PublishStack};
 
 use super::health::SubscriptionEnd;
-use super::include::MountChain;
+use super::include::MountRoutes;
 use super::scope::BrokerScope;
 use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 
@@ -651,7 +652,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// and the publish pipeline are fixed from here on, so a configuration call that could not
     /// apply to this broker's handlers does not compile.
     #[must_use]
-    pub fn with_broker<R, F, Chain>(
+    pub fn with_broker<R, F, Chain, Routes>(
         self,
         broker: R,
         build: F,
@@ -662,7 +663,8 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         Pipeline: Clone,
         State: Send + Sync + 'static,
         F: FnOnce(BrokerScope<R::Broker, Layers, (), State, Pipeline>) -> Chain,
-        Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+        Chain: MountChain<Routes = Routes>,
+        Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
     {
         let mut this = self.into_phase::<Wired>();
         let (broker, slot) = broker.into_parts();
@@ -712,7 +714,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// # fn main() {}
     /// ```
     #[must_use]
-    pub fn with_broker_codec<R, C, F, Chain>(
+    pub fn with_broker_codec<R, C, F, Chain, Routes>(
         self,
         broker: R,
         codec: C,
@@ -725,7 +727,8 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         Pipeline: Clone,
         State: Send + Sync + 'static,
         F: FnOnce(BrokerScope<R::Broker, Layers, C, State, Pipeline>) -> Chain,
-        Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+        Chain: MountChain<Routes = Routes>,
+        Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
     {
         let mut this = self.into_phase::<Wired>();
         let (broker, slot) = broker.into_parts();
@@ -775,7 +778,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// # }
     /// ```
     #[must_use]
-    pub fn with_broker_labeled<R, F, Chain>(
+    pub fn with_broker_labeled<R, F, Chain, Routes>(
         self,
         label: impl Into<String>,
         broker: R,
@@ -788,7 +791,8 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         Pipeline: Clone,
         State: Send + Sync + 'static,
         F: FnOnce(BrokerScope<R::Broker, Layers, (), State, Pipeline>) -> Chain,
-        Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+        Chain: MountChain<Routes = Routes>,
+        Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
     {
         let mut this = self.into_phase::<Wired>();
         let (broker, slot) = broker.into_parts();
@@ -804,7 +808,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// [`with_broker_codec`](Self::with_broker_codec) (the scope's macro handlers decode with
     /// `codec`).
     #[must_use]
-    pub fn with_broker_labeled_codec<R, C, F, Chain>(
+    pub fn with_broker_labeled_codec<R, C, F, Chain, Routes>(
         self,
         label: impl Into<String>,
         broker: R,
@@ -819,7 +823,8 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         Pipeline: Clone,
         State: Send + Sync + 'static,
         F: FnOnce(BrokerScope<R::Broker, Layers, C, State, Pipeline>) -> Chain,
-        Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+        Chain: MountChain<Routes = Routes>,
+        Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
     {
         let mut this = self.into_phase::<Wired>();
         let (broker, slot) = broker.into_parts();
@@ -840,7 +845,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
 
     /// Runs `build` over a scope bound to `broker` and `codec`, mounts the chain it returns, and
     /// drains what the scope collected into the app.
-    fn mount_scope<B, C, F, Chain>(
+    fn mount_scope<B, C, F, Chain, Routes>(
         &mut self,
         broker: B,
         slot: ConnectedSlot<B>,
@@ -853,7 +858,8 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         Pipeline: Clone,
         State: Send + Sync + 'static,
         F: FnOnce(BrokerScope<B, Layers, C, State, Pipeline>) -> Chain,
-        Chain: MountChain<B, Layers, State, Pipeline>,
+        Chain: MountChain<Routes = Routes>,
+        Routes: MountRoutes<B, Layers, State, Pipeline>,
     {
         let chain = build(BrokerScope {
             slot: Arc::clone(&slot),
@@ -866,7 +872,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         let mut startup_hooks = Vec::new();
         // The chain registers in the order the closure wrote it: the scope's own steps first,
         // then the mounts its `include` opened.
-        chain.mount_chain(
+        chain.finish().mount_routes(
             &self.global,
             &self.publish_pipeline,
             &mut sink,
