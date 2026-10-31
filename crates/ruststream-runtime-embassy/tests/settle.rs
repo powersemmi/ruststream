@@ -17,11 +17,12 @@ use bytes::BytesMut;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use futures::{FutureExt, StreamExt};
+use ruststream::IncomingMessage;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER};
 use ruststream::{
-    Broker, Deserialized, LocalPublisher, LocalSettle, LocalSubscriber, Outgoing, OutgoingMessage,
-    Serialized, SubscriptionSource, subscriber,
+    Broker, Deserialized, LocalPublisher, LocalSubscriber, Outgoing, OutgoingMessage, Serialized,
+    SubscriptionSource, subscriber,
 };
 use static_cell::StaticCell;
 

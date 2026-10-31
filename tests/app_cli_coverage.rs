@@ -44,6 +44,7 @@ use tokio::signal::unix;
 #[cfg(unix)]
 use tokio::signal::unix::SignalKind;
 use tokio::sync::Notify;
+use tokio::task::{LocalSet, spawn_local};
 use tokio::time;
 use tokio::time::timeout;
 
@@ -125,7 +126,7 @@ async fn explodes(order: &Order) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_until_returns_when_the_service_tears_itself_down() {
     // The run is not `Send`, so it is driven on a local set of the test.
-    tokio::task::LocalSet::new()
+    LocalSet::new()
         .run_until(async move {
             let broker = MemoryBroker::new();
             let publisher = broker.publisher();
@@ -137,7 +138,7 @@ async fn run_until_returns_when_the_service_tears_itself_down() {
                 })
                 .with_broker(broker, |b| b.include(explodes));
 
-            let run = tokio::task::spawn_local(app.run_until(pending()));
+            let run = spawn_local(app.run_until(pending()));
             FAIL_FAST_READY.notified().await;
             publisher
                 .message(&Order { id: 1 })
@@ -153,7 +154,7 @@ async fn run_until_returns_when_the_service_tears_itself_down() {
             let err = outcome.expect_err("the fail-fast reason must surface");
             assert!(matches!(err, RustStreamError::Dispatch(_)), "got: {err:?}");
         })
-        .await
+        .await;
 }
 
 static SIGNAL_READY: Notify = Notify::const_new();
@@ -180,7 +181,7 @@ fn raise_sigterm() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_shuts_down_gracefully_on_a_termination_signal() {
     // The run is not `Send`, so it is driven on a local set of the test.
-    tokio::task::LocalSet::new()
+    LocalSet::new()
         .run_until(async move {
             // Registering a listener up front replaces the process-wide default disposition, so a signal
             // that lands before `run` has installed its own handler cannot kill the test binary.
@@ -194,7 +195,7 @@ async fn run_shuts_down_gracefully_on_a_termination_signal() {
                 })
                 .with_broker(MemoryBroker::new(), |b| b.include(signalled));
 
-            let mut run = tokio::task::spawn_local(app.run());
+            let mut run = spawn_local(app.run());
             SIGNAL_READY.notified().await;
 
             // The startup hook resolves just before the signal handlers are installed, and a signal
@@ -213,7 +214,7 @@ async fn run_shuts_down_gracefully_on_a_termination_signal() {
             .expect("join failed");
             outcome.expect("the signalled shutdown must be graceful");
         })
-        .await
+        .await;
 }
 
 // Startup and teardown failures.

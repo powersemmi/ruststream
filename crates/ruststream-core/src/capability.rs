@@ -684,7 +684,7 @@ pub trait Subscribe: ConnectedBroker {
     /// dead-letter policy needs the limit and the address together.
     ///
     /// The default accepts a registration that declared nothing, and accepts any declaration
-    /// where `Copies`(Self::Copies) says this process publishes the copies: the runtime
+    /// where [`Copies`](Self::Copies) says this process publishes the copies: the runtime
     /// applies the cap and the destination there. On a [`BrokerMoves`](crate::BrokerMoves)
     /// broker it refuses a non-empty one, because nothing in this process would apply it and a
     /// bare name carries nowhere else to declare it.

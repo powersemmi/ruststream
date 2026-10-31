@@ -21,7 +21,7 @@ use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream_core::Broker;
-use ruststream_core::LocalSettle;
+use ruststream_core::IncomingMessage;
 use ruststream_core::{
     BytesMut, CallerName, LocalPublisher, MessageHeaders, NoHeaders, OutgoingDestination,
 };
