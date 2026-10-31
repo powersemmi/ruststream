@@ -574,7 +574,9 @@ pub trait KeptCopies {
     fn take_record(&self) -> Option<usize>;
 
     /// Waits until a record is free and takes it: the answer to a full store, so the
-    /// subscription holds the delivery rather than requeuing it.
+    /// subscription holds the delivery rather than requeuing it. A store whose due copy is
+    /// refused for want of the room this delivery holds may hand it a record of its own to
+    /// settle with; the delivery fills and settles it as any other.
     fn wait_record(&self) -> impl Future<Output = usize>;
 
     /// Writes the copy into `record`, taken by [`take_record`](Self::take_record).
