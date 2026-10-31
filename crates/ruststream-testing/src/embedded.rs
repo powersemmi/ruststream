@@ -1,6 +1,6 @@
 //! The [`TestApp`] harness of the embedded runtime: it runs a device service's production
-//! [`EmbeddedApp`] on the host, every broker connected in process, and moves embassy-time's mock
-//! clock.
+//! [`EmbeddedApp`] on the host, every broker connected in process, and moves the clock the app
+//! reads through embassy-time.
 //!
 //! The facade re-exports it as `ruststream::testing::TestApp` when the build selects the
 //! `embassy` runtime.
@@ -45,12 +45,15 @@ type AppRun = Pin<Box<dyn Future<Output = Result<(), RunError>>>>;
 ///
 /// The app runs inside the test's own future: each step (a publish, [`settle`](Self::settle),
 /// [`advance`](Self::advance)) polls it until it has nothing left to do without the clock
-/// moving. A handler that waits on embassy-time's clock waits until the test advances it.
+/// moving. A handler that waits on embassy-time's clock waits until the test advances it, or
+/// until [`shutdown`](Self::shutdown) lets it run to its end.
 ///
-/// The clock is embassy-time's mock driver, one per process, so the harness holds it from
-/// `start` until it is dropped: tests that build a `TestApp` run one at a time in a process,
-/// and one test runs one `TestApp` at a time. The test build gets embassy-time's mock driver and
-/// its generic timer queue through the harness; a device build keeps the driver of its board.
+/// The harness is the test build's embassy-time driver: the clock starts at zero and moves only
+/// when the test moves it. A process has one driver, so the harness holds the clock from `start`
+/// until it is dropped: tests that build a `TestApp` run one at a time in a process, and one test
+/// runs one `TestApp` at a time. embassy-time's own `mock-driver` is another driver of the same
+/// clock, and a test build links only one of the two; a device build keeps the driver of its
+/// board.
 ///
 /// # Examples
 ///
@@ -148,7 +151,7 @@ impl TestApp {
     ///
     /// # Panics
     ///
-    /// Panics if another `TestApp` is alive on this thread: the mock clock is one per process.
+    /// Panics if another `TestApp` is alive on this thread: the clock is one per process.
     ///
     /// # Examples
     ///
@@ -273,20 +276,40 @@ impl TestApp {
     /// Stops the app the way its control stops it on a device: every subscription finishes what
     /// it holds, the shutdown hooks run, and every broker shuts down.
     ///
+    /// Work the app holds that waits on the clock runs to its end: the clock moves from one
+    /// armed deadline to the next until the app has stopped, as time would pass on the board.
+    ///
     /// # Errors
     ///
-    /// Returns the app's own [`RunError`] if it stopped on one before or during the shutdown: a
-    /// subscription failed under a fail-fast policy, say.
+    /// Returns [`TestError::Failed`] with the app's own [`RunError`] if it stopped on one before
+    /// or during the shutdown (a subscription failed under a fail-fast policy, say),
+    /// [`TestError::Stalled`] if work it holds waits on something that neither the app nor the
+    /// clock wakes, or [`TestError::NotQuiescent`] if it keeps waking itself.
     ///
     /// # Examples
     ///
     /// See [`TestApp`].
-    pub async fn shutdown(self) -> Result<(), RunError> {
+    pub async fn shutdown(self) -> Result<(), TestError> {
         self.control.stop();
-        // A step that ends with work still waiting on the clock leaves the stop pending; the
-        // driver's limit ends a stop that never comes.
-        let _ = self.drive().await;
-        self.ended.take().unwrap_or(Ok(()))
+        // Each round lets the app run until it waits on the clock, then moves the clock to the
+        // deadline it waits for; the round limit ends a stop that a periodic timer never lets
+        // come.
+        for _ in 0..MAX_POLLS {
+            self.drive().await?;
+            if self.run.borrow().is_none() {
+                return self
+                    .ended
+                    .take()
+                    .unwrap_or(Ok(()))
+                    .map_err(|err| TestError::Failed(Box::new(err)));
+            }
+            if !self.clock.advance_to_next() {
+                return Err(TestError::Stalled);
+            }
+        }
+        Err(TestError::NotQuiescent {
+            processed: MAX_POLLS,
+        })
     }
 
     /// Addresses the broker of type `B`, the production type the app was built with.

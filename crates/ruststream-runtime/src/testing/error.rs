@@ -89,6 +89,17 @@ pub enum TestError {
          `TestApp::start`"
     )]
     PausedClock,
+    /// The app stopped on an error of its own while the harness ran it: a subscription failed
+    /// under a fail-fast policy, say.
+    #[error("the app stopped on an error: {0}")]
+    Failed(#[source] Box<dyn error::Error + Send + Sync>),
+    /// The app did not finish its shutdown: work it holds waits on something that neither the
+    /// app nor the clock wakes.
+    #[error(
+        "the app did not finish its shutdown: work it holds waits on something that neither the \
+         app nor the clock wakes"
+    )]
+    Stalled,
     /// The message failed to encode for publishing.
     #[error("failed to encode the message: {0}")]
     Encode(String),

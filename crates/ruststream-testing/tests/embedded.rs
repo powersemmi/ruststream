@@ -6,14 +6,18 @@
 #![allow(clippy::future_not_send)]
 
 use std::error::Error;
+use std::future::pending;
 use std::io;
 use std::rc::Rc;
 use std::time::Duration;
 
 use embassy_futures::{block_on, yield_now};
 use embassy_time::Timer;
+use ruststream::memory::local::prelude::{
+    BytesMut, LocalBroker, LocalMemoryError, LocalMemoryPublisher, LocalPublisher, OutgoingMessage,
+};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
-use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out};
+use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out, PublishError};
 use ruststream::testing::{TestApp, TestError};
 use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 
@@ -65,6 +69,47 @@ async fn on_open(open: &Frame<'_>) -> HandlerOutcome {
     let _ = open.0;
     Timer::after_secs(10).await;
     HandlerOutcome::ack()
+}
+
+/// Waits on a signal no part of the board ever sends.
+#[subscriber(LocalMemorySource::new("valve/stuck"))]
+async fn on_stuck(open: &Frame<'_>) -> HandlerOutcome {
+    let _ = open.0;
+    pending::<()>().await;
+    HandlerOutcome::ack()
+}
+
+/// Samples the valve's position every second until it reports closed, which this valve never
+/// does.
+#[subscriber(LocalMemorySource::new("valve/watch"))]
+async fn on_watch(open: &Frame<'_>) -> HandlerOutcome {
+    let _ = open.0;
+    loop {
+        Timer::after_secs(1).await;
+    }
+}
+
+/// Spins on the valve without ever waiting on the clock.
+#[subscriber(LocalMemorySource::new("valve/spin"))]
+async fn on_spin(open: &Frame<'_>) -> HandlerOutcome {
+    let _ = open.0;
+    loop {
+        yield_now().await;
+    }
+}
+
+/// The board's bus, and a publisher on it that another task of the firmware holds: whether it
+/// may still publish tells whether the bus was shut down.
+async fn bus_and_sensor() -> Result<(Bus, LocalMemoryPublisher<4>), LocalMemoryError> {
+    let bus = Bus::new();
+    let sensor = bus.clone().connect().await?.publisher();
+    Ok((bus, sensor))
+}
+
+/// Whether the bus refuses the sensor's publish because it was shut down.
+async fn bus_is_shut_down(sensor: &LocalMemoryPublisher<4>) -> bool {
+    let reading = OutgoingMessage::produced("sensors/temp", BytesMut::from("21"));
+    sensor.publish(reading, None).await == Err(LocalMemoryError::ShutDown)
 }
 
 #[ruststream::app]
@@ -136,6 +181,97 @@ fn a_handler_waiting_on_the_clock_finishes_once_it_is_advanced() -> Result<(), B
             .assert_called_once()
             .settled(HandlerOutcome::ack());
         tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_shutdown_lets_a_handler_waiting_on_the_clock_finish_and_shuts_the_bus_down()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let (bus, sensor) = bus_and_sensor().await?;
+        let tb = TestApp::start(app(bus)).await?;
+        tb.broker::<Bus>()
+            .message(&Sent(b"valve"))
+            .to("valve/open")
+            .publish()
+            .await?;
+
+        tb.shutdown().await?;
+        assert!(
+            bus_is_shut_down(&sensor).await,
+            "the shutdown ended before the app shut its bus down"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_shutdown_that_waits_on_nothing_the_clock_wakes_fails() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb =
+            TestApp::start(EmbeddedApp::new().with_broker(Bus::new(), |b| b.include(on_stuck)))
+                .await?;
+        tb.broker::<Bus>()
+            .message(&Sent(b"valve"))
+            .to("valve/stuck")
+            .publish()
+            .await?;
+
+        let stopped = tb.shutdown().await;
+        assert!(
+            matches!(stopped, Err(TestError::Stalled)),
+            "a handler that never finishes keeps the app from stopping: {stopped:?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_shutdown_of_a_handler_that_waits_on_the_clock_forever_fails() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb =
+            TestApp::start(EmbeddedApp::new().with_broker(Bus::new(), |b| b.include(on_watch)))
+                .await?;
+        tb.broker::<Bus>()
+            .message(&Sent(b"valve"))
+            .to("valve/watch")
+            .publish()
+            .await?;
+
+        let stopped = tb.shutdown().await;
+        assert!(
+            matches!(stopped, Err(TestError::NotQuiescent { .. })),
+            "a handler that re-arms its timer forever keeps the app from stopping: {stopped:?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_shutdown_of_a_handler_that_keeps_waking_itself_fails() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(EmbeddedApp::new().with_broker(Bus::new(), |b| b.include(on_spin)))
+            .await?;
+        let published = tb
+            .broker::<Bus>()
+            .message(&Sent(b"valve"))
+            .to("valve/spin")
+            .publish()
+            .await;
+        assert!(
+            matches!(
+                published,
+                Err(PublishError::Publish(TestError::NotQuiescent { .. }))
+            ),
+            "the spinning handler keeps the publish from settling: {published:?}"
+        );
+
+        let stopped = tb.shutdown().await;
+        assert!(
+            matches!(stopped, Err(TestError::NotQuiescent { .. })),
+            "the spinning handler keeps the app from stopping: {stopped:?}"
+        );
         Ok(())
     })
 }

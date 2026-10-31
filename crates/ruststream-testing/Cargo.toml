@@ -28,12 +28,15 @@ tokio = [
     "tokio/test-util",
     "ruststream/tokio",
 ]
-# `TestApp` over the embedded runner's app, on the host: embassy-time's mock clock, and the generic
-# timer queue that serves any waker, since the harness polls the app inside its own future.
+# `TestApp` over the embedded runner's app, on the host: the harness is the test build's time
+# driver, over the generic timer queue that serves any waker, since the harness polls the app
+# inside its own future.
 embassy = [
     "dep:ruststream-runtime-embassy",
     "ruststream-runtime-embassy/testing",
     "dep:embassy-time",
+    "dep:embassy-time-driver",
+    "dep:embassy-time-queue-utils",
     "dep:critical-section",
     "ruststream/embassy",
 ]
@@ -52,10 +55,13 @@ serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std", "attributes"] }
 tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
-# The clock a host test moves: one mock driver per process, and a timer queue of 64 entries that
-# keeps a timer per waker (the app's timers share the harness's one waker).
-embassy-time = { workspace = true, optional = true, features = ["mock-driver", "generic-queue-64"] }
-# The mock driver locks through a critical section; on the host it is a process-wide mutex.
+# The clock a host test moves: the harness is the test build's one time driver, at embassy-time's
+# microsecond tick, so it knows the deadline of every timer the app armed. Its timer queue holds
+# 64 entries and keeps a timer per waker (the app's timers share the harness's one waker).
+embassy-time = { workspace = true, optional = true, features = ["tick-hz-1_000_000"] }
+embassy-time-driver = { version = "0.2.2", optional = true }
+embassy-time-queue-utils = { version = "0.3.2", optional = true, features = ["generic-queue-64"] }
+# The driver locks through a critical section; on the host it is a process-wide mutex.
 critical-section = { version = "1.1", optional = true, features = ["std"] }
 
 [dev-dependencies]
