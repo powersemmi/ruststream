@@ -155,10 +155,6 @@ pub use ruststream_runtime_tokio::{
 #[cfg(feature = "tokio")]
 pub mod cli;
 
-// The embedded runner's chain trait, beside the multi-thread runner's own.
-#[cfg(feature = "embassy")]
-pub use ruststream_runtime_embassy::MountChain as EmbeddedMountChain;
-
 // The embedded runner's cross-broker tokens, beside the multi-thread runner's `Bindable` and
 // `Bound`: a publish policy bound to another broker of the same app.
 #[cfg(feature = "embassy")]

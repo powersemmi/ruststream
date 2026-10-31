@@ -9,11 +9,21 @@ help: the trait `DefaultPublish` is not implemented for `ConnectedBus`
    |
 29 | struct ConnectedBus;
    | ^^^^^^^^^^^^^^^^^^^
-help: the trait `DefaultPublish` is implemented for `ConnectedMemoryBroker<Log>`
+help: the following other types implement trait `DefaultPublish`
   --> crates/ruststream-memory/src/broker.rs
    |
    | impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ConnectedMemoryBroker<Log>`
+   |
+  ::: crates/ruststream-memory/src/local/broker.rs
+   |
+   | impl<const CAP: usize> DefaultPublish for ConnectedLocalMemoryBroker<CAP> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ConnectedLocalMemoryBroker<CAP>`
+   |
+  ::: crates/ruststream-runtime-embassy/src/frames.rs
+   |
+   | impl DefaultPublish for FrameConnected {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime_embassy::frames::FrameConnected`
    = note: required for `AddressedCopies` to implement `ruststream::runtime::CopyPathPairing<Bus, (), PublishIdentity>`
    = note: required for `ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<BusMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), FnBody<reconcile, for<'a, 'b, 'c, 'd> fn(BodyTag<reconcile>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d>) -> impl futures::Future<Output = Result<(), HandlerOutcome>> {reconcile::<()>}>>>>` to implement `ruststream_runtime::router::routes::MountRoute<Bus, (), PublishIdentity>`
    = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<BusMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), FnBody<reconcile, for<'a, 'b, 'c, 'd> fn(BodyTag<reconcile>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d>) -> impl futures::Future<Output = Result<(), HandlerOutcome>> {reconcile::<()>}>>>>, ())` to implement `RouterDef<Bus>`
