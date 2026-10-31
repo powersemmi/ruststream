@@ -567,14 +567,22 @@ pub mod layers {
             }
         }
 
+        impl LocalHandler<(), (), ()> for Fixed {
+            fn handle(
+                &self,
+                _msg: &(),
+                _ctx: &mut Context<'_, (), ()>,
+            ) -> impl Future<Output = HandlerOutcome> {
+                core::future::ready(HandlerOutcome::from(self.0))
+            }
+        }
+
         async fn traced(layer: &TracingLayer, outcome: HandlerResult) -> HandlerResult {
             let state = ();
             let delivery = Delivery::empty();
             let headers = HeaderMap::new();
             let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
-            layer
-                .layer(Fixed(outcome))
-                .handle(&(), &mut ctx)
+            Handler::handle(&layer.layer(Fixed(outcome)), &(), &mut ctx)
                 .await
                 .outcome()
         }
@@ -596,6 +604,21 @@ pub mod layers {
         async fn a_target_scoped_layer_wraps_the_same_way() {
             let layer = TracingLayer::with_target("my_service::orders");
             assert_eq!(traced(&layer, HandlerResult::Ack).await, HandlerResult::Ack);
+        }
+
+        #[tokio::test]
+        async fn the_local_twin_passes_the_outcome_through() {
+            let state = ();
+            let delivery = Delivery::empty();
+            let headers = HeaderMap::new();
+            let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+            let delayed = HandlerResult::retry_after(Duration::from_secs(3));
+            let layer = TracingLayer::default();
+            let handler = LocalBlanketLayer::apply::<(), (), (), _>(&layer, Fixed(delayed));
+
+            let settled = LocalHandler::handle(&handler, &(), &mut ctx).await;
+
+            assert_eq!(settled.outcome(), delayed);
         }
     }
 }
