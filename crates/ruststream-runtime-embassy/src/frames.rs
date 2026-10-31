@@ -470,3 +470,59 @@ impl LocalPublisher for FramePublisher {
         ready(sent)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::boxed::Box;
+    use alloc::string::ToString;
+
+    use embassy_futures::block_on;
+    use ruststream_core::{LocalBroker, LocalPublishPolicy, LocalPublisher, OutgoingMessage};
+
+    // The channels lock through embassy-sync, which the executor's critical section serves.
+    use embassy_executor as _;
+
+    use super::{
+        DEPTH, FrameBroker, FramePublish, FramePublishError, Frames, PAYLOAD, Settlements,
+    };
+
+    #[test]
+    fn a_reply_the_frames_cannot_hold_is_refused_with_the_reason() {
+        block_on(async {
+            // A device keeps the channels in statics; the test leaks them to the same lifetime.
+            let frames: &'static Frames = Box::leak(Box::new(Frames::new()));
+            let replies_channel: &'static Frames = Box::leak(Box::new(Frames::new()));
+            let settled: &'static Settlements = Box::leak(Box::new(Settlements::new()));
+            let broker = FrameBroker::new(frames, settled).with_replies(replies_channel);
+            let connected = broker.connect().await.expect("the stand-in connects");
+            let replies = FramePublish
+                .pair(&connected)
+                .await
+                .expect("the policy pairs");
+            let too_long = [0_u8; PAYLOAD + 1];
+
+            let refused = replies
+                .publish(OutgoingMessage::new("replies", too_long.as_slice()), None)
+                .await;
+            assert_eq!(refused, Err(FramePublishError::TooLong));
+            assert_eq!(
+                FramePublishError::TooLong.to_string(),
+                "the payload is longer than 64 bytes"
+            );
+            for _ in 0..DEPTH {
+                replies
+                    .publish(OutgoingMessage::new("replies", b"ok".as_slice()), None)
+                    .await
+                    .expect("the channel has room");
+            }
+            let full = replies
+                .publish(OutgoingMessage::new("replies", b"ok".as_slice()), None)
+                .await;
+            assert_eq!(full, Err(FramePublishError::Full));
+            assert_eq!(
+                FramePublishError::Full.to_string(),
+                "the reply channel holds 4 frames"
+            );
+        });
+    }
+}
