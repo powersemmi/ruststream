@@ -201,3 +201,90 @@ fn publishes_dictionary(attrs: &[Attribute]) -> syn::Result<Vec<Type>> {
     }
     Ok(dictionary)
 }
+
+#[cfg(test)]
+mod tests {
+    use syn::parse_quote;
+
+    use super::*;
+
+    fn refusal(expanded: syn::Result<TokenStream2>) -> String {
+        match expanded {
+            Ok(_) => panic!("this declaration is refused"),
+            Err(err) => err.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_slot_marker_is_a_plain_unit_struct() {
+        let enumeration: DeriveInput = parse_quote!(
+            enum Alerts {
+                Raised,
+            }
+        );
+        let with_data: DeriveInput = parse_quote!(
+            struct Alerts(u32);
+        );
+        let generic: DeriveInput = parse_quote!(
+            struct Alerts<T>;
+        );
+
+        assert_eq!(
+            refusal(expand_out_slot(&enumeration)),
+            "OutSlot is derived on a unit struct"
+        );
+        assert_eq!(
+            refusal(expand_out_slot(&with_data)),
+            "an OutSlot marker is a unit struct: it identifies the slot and carries no data"
+        );
+        assert_eq!(
+            refusal(expand_out_slot(&generic)),
+            "an OutSlot marker takes no generic parameters"
+        );
+    }
+
+    #[test]
+    fn a_message_set_is_a_plain_enum_of_distinct_models() {
+        let structure: DeriveInput = parse_quote!(
+            struct Sent;
+        );
+        let generic: DeriveInput = parse_quote!(
+            enum Sent<T> {
+                Done(T),
+            }
+        );
+        let named: DeriveInput = parse_quote!(
+            enum Sent {
+                Done { done: OrderDone },
+            }
+        );
+        let pair: DeriveInput = parse_quote!(
+            enum Sent {
+                Done(OrderDone, Progress),
+            }
+        );
+        let twice: DeriveInput = parse_quote!(
+            enum Sent {
+                Done(OrderDone),
+                Again(OrderDone),
+            }
+        );
+        let one_model = "an OutMessages variant wraps exactly one message model: `Variant(Model)`";
+
+        assert_eq!(
+            refusal(expand_out_messages(&structure)),
+            "OutMessages is derived on an enum whose variants each wrap one message model"
+        );
+        assert_eq!(
+            refusal(expand_out_messages(&generic)),
+            "an OutMessages set takes no generic parameters"
+        );
+        assert_eq!(refusal(expand_out_messages(&named)), one_model);
+        assert_eq!(refusal(expand_out_messages(&pair)), one_model);
+        assert_eq!(
+            refusal(expand_out_messages(&twice)),
+            "this model is already in the set: a duplicate would make the membership index \
+             inference ambiguous"
+        );
+    }
+}

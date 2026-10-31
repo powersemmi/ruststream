@@ -57,3 +57,47 @@ fn message_headers_contract(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
     }
     Ok(found)
 }
+
+#[cfg(test)]
+mod tests {
+    use syn::parse_quote;
+
+    use super::*;
+
+    fn refusal(input: &DeriveInput) -> String {
+        match expand(input) {
+            Ok(_) => panic!("this declaration is refused"),
+            Err(err) => err.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_message_declares_one_header_contract_as_headers_of_a_type() {
+        let not_a_list: DeriveInput = parse_quote!(
+            #[message(headers = OrderMeta)]
+            struct Order;
+        );
+        let other_key: DeriveInput = parse_quote!(
+            #[message(contract(OrderMeta))]
+            struct Order;
+        );
+        let twice: DeriveInput = parse_quote!(
+            #[message(headers(OrderMeta))]
+            #[message(headers(InvoiceMeta))]
+            struct Order;
+        );
+
+        assert_eq!(
+            refusal(&not_a_list),
+            "expected `headers(<Type>)` inside #[message(..)]"
+        );
+        assert_eq!(
+            refusal(&other_key),
+            "expected `headers(<Type>)` inside #[message(..)]"
+        );
+        assert_eq!(
+            refusal(&twice),
+            "duplicate `headers(..)`: a message declares one header contract"
+        );
+    }
+}
