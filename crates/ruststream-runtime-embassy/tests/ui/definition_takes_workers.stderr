@@ -22,8 +22,8 @@ note: the method call chain might not have had the expected associated types
 note: required by a bound in `ruststream_runtime::router::include::<impl Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>>::include`
   --> $WORKSPACE/crates/ruststream-runtime/src/router/include.rs
    |
-   |     pub fn include<D>(self, def: D) -> <D::Form as RouterMount<Self, D::Settings>>::Out
+   |     pub fn include<D, Mk>(
    |            ------- required by a bound in this associated function
 ...
-   |         D::Settings: PoolFits<RoutePipe>,
-   |                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `ruststream_runtime::router::include::<impl Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>>::include`
+   |         <D::Decl as Declared>::Settings: PoolFits<RoutePipe>,
+   |                                          ^^^^^^^^^^^^^^^^^^^ required by this bound in `ruststream_runtime::router::include::<impl Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>>::include`
