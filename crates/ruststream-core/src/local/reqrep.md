@@ -16,7 +16,7 @@ Every [`RequestReply`] is a `LocalRequestReply` through a blanket impl.
 # use std::time::Duration;
 #
 use ruststream::{HeaderMap, LocalRequestReply, OutgoingFor, Take};
-# use ruststream::{AckError, LocalIncomingMessage, LocalPublisher};
+# use ruststream::{AckError, IncomingMessage, LocalSettle, LocalPublisher};
 # /// The client's state: shared by `Rc`, so nothing built on it is `Send`.
 # #[derive(Default)]
 # struct Client {
@@ -29,7 +29,7 @@ use ruststream::{HeaderMap, LocalRequestReply, OutgoingFor, Take};
 #     client: Rc<Client>,
 # }
 #
-# impl LocalIncomingMessage for Delivery {
+# impl IncomingMessage for Delivery {
 #     fn payload(&self) -> &[u8] {
 #         &self.payload
 #     }
@@ -37,7 +37,9 @@ use ruststream::{HeaderMap, LocalRequestReply, OutgoingFor, Take};
 #     fn headers(&self) -> &HeaderMap {
 #         &self.headers
 #     }
+# }
 #
+# impl LocalSettle for Delivery {
 #     async fn ack(self) -> Result<(), AckError> {
 #         self.client.acked.set(self.client.acked.get() + 1);
 #         Ok(())
