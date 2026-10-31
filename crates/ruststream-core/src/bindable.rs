@@ -7,6 +7,9 @@
 //! cannot provide, and the registration order stops mattering (a bidirectional bridge binds
 //! both directions up front).
 
+// The cold path of the contract carries no Send; the tokio runner asks for it where it spawns.
+#![allow(clippy::future_not_send)]
+
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::fmt;
@@ -16,7 +19,7 @@ use std::sync::Mutex;
 use crate::bindings::Bindings;
 #[cfg(feature = "testing")]
 use crate::pairing::pairs_against;
-use crate::{Broker, Connected, ConnectedBroker, PairError, PublishPolicy};
+use crate::{Broker, Connected, ConnectedBroker, PairError, PublishPolicy, SendBroker};
 
 /// The channel between the erased `connect` and the typed starters: `connect` stores the typed
 /// connected broker here, starters clone it out to open their subscriptions. The teardown takes
@@ -143,20 +146,20 @@ impl<B: Broker + 'static> Bindable<B> {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a broker this runtime runs",
     label = "not a `Broker`",
-    note = "this runtime moves a broker, its deliveries and their futures across threads, so it \
-            runs brokers whose types are `Send` and implement `Broker`",
-    note = "a broker whose client holds `Rc` or `RefCell` implements `LocalBroker` alone; to run \
-            here, keep the client's shared state in `Arc` and `Mutex` and implement `Broker`"
+    note = "this runtime moves a broker and its connected form across threads, so it runs \
+            brokers whose types are `Send + Sync + 'static` and implement `Broker`",
+    note = "a broker whose client holds `Rc` or `RefCell` runs on the embedded runner; to run \
+            here, keep the client's shared state in `Arc` and `Mutex`"
 )]
 pub trait BrokerRegistration {
     /// The broker being registered.
-    type Broker: Broker + 'static;
+    type Broker: SendBroker;
 
     #[doc(hidden)]
     fn into_parts(self) -> (Self::Broker, ConnectedSlot<Self::Broker>);
 }
 
-impl<B: Broker + 'static> BrokerRegistration for B {
+impl<B: SendBroker> BrokerRegistration for B {
     type Broker = B;
 
     fn into_parts(self) -> (B, ConnectedSlot<B>) {
@@ -164,7 +167,7 @@ impl<B: Broker + 'static> BrokerRegistration for B {
     }
 }
 
-impl<B: Broker + 'static> BrokerRegistration for Bindable<B> {
+impl<B: SendBroker> BrokerRegistration for Bindable<B> {
     type Broker = B;
 
     fn into_parts(self) -> (B, ConnectedSlot<B>) {
@@ -289,7 +292,7 @@ impl<C, B2, S> PublishPolicy<C> for Bound<B2, S>
 where
     C: ConnectedBroker,
     B2: Broker + 'static,
-    S: PublishPolicy<Connected<B2>> + Send,
+    S: PublishPolicy<Connected<B2>>,
 {
     type Live = S::Live;
 

@@ -3,6 +3,9 @@
 //! The pool tests inject their deliveries together rather than one at a time: a pool only has
 //! something to spread over its workers while more than one delivery is in flight, and the
 //! harness settles the whole reaction before the injections resolve.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "macros",
     feature = "memory",

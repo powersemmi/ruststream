@@ -119,7 +119,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 ## Broker authors
 
 - [Writing a broker](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html): the `Broker` trait is the hub of the contract a broker crate implements, linking every trait, the lazy-startup ladder and the in-process mode
-- [Brokers whose types are not Send](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html#brokers-whose-types-are-not-send): the `Local*` twins of the contract traits a broker over an `Rc` or `RefCell` client implements
+- [Brokers whose types are not Send](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html#brokers-whose-types-are-not-send): the lifecycle traits without `Send`, and the `Local*` twins of the per-message traits, for a broker over an `Rc` or `RefCell` client
 - [Conformance](https://docs.rs/ruststream/latest/ruststream/conformance/index.html): the suites that check a broker against the contract
 - [Templates](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html#templates-a-broker-crate-ships): the `cargo generate` template a broker crate ships
 - [A worked broker crate](https://docs.rs/ruststream-nats/latest/ruststream_nats/): the NATS broker, a complete implementation of the contract

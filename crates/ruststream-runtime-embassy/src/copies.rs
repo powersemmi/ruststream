@@ -14,7 +14,7 @@ use core::task::{Poll, Waker};
 use core::time::Duration;
 
 use bytes::BytesMut;
-use ruststream_core::{HeaderMap, LocalIncomingMessage};
+use ruststream_core::{HeaderMap, LocalSettle};
 use ruststream_runtime::{
     BoxError, Clock, CopyPublisher, KeptCopies, KeptDelivery, PrepareCopy, PrepareKept,
 };
@@ -249,7 +249,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
 impl<Cx, Path: PrepareCopy<Cx>, const CAP: usize, Timers: Schedule> PrepareKept<Cx>
     for CopyStore<Path, CAP, Timers>
 {
-    fn prepare<M: LocalIncomingMessage>(
+    fn prepare<M: LocalSettle>(
         &self,
         record: usize,
         destination: Option<&str>,

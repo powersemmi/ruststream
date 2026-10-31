@@ -16,7 +16,7 @@ Every [`BatchSubscriber`] is a `LocalBatchSubscriber` through a blanket impl.
 # use std::num::NonZeroUsize;
 #
 use ruststream::{HeaderMap, LocalBatchSubscriber};
-# use ruststream::{AckError, LocalIncomingMessage, LocalSubscriber};
+# use ruststream::{AckError, IncomingMessage, LocalSettle, LocalSubscriber};
 # /// The client's state: shared by `Rc`, so nothing built on it is `Send`.
 # #[derive(Default)]
 # struct Client {
@@ -29,7 +29,7 @@ use ruststream::{HeaderMap, LocalBatchSubscriber};
 #     client: Rc<Client>,
 # }
 #
-# impl LocalIncomingMessage for Delivery {
+# impl IncomingMessage for Delivery {
 #     fn payload(&self) -> &[u8] {
 #         &self.payload
 #     }
@@ -37,7 +37,9 @@ use ruststream::{HeaderMap, LocalBatchSubscriber};
 #     fn headers(&self) -> &HeaderMap {
 #         &self.headers
 #     }
+# }
 #
+# impl LocalSettle for Delivery {
 #     async fn ack(self) -> Result<(), AckError> {
 #         self.client.acked.set(self.client.acked.get() + 1);
 #         Ok(())

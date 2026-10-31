@@ -15,7 +15,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use crate::{ConnectedBroker, LocalConnectedBroker};
+use crate::ConnectedBroker;
 
 use super::SubscriberBuilder;
 use crate::batch::{BatchDef, BatchResult};
@@ -337,7 +337,7 @@ impl<Def: DeclaresReply, Src, State, DC> DeclaresReply for SubscriberBuilder<Def
 impl<Def, Src, State, DC, C, Sources> LocalBindSlots<C, Sources>
     for SubscriberBuilder<Def, Src, State, DC>
 where
-    C: LocalConnectedBroker,
+    C: ConnectedBroker,
     Def: LocalBindSlots<C, Sources>,
 {
     type Bound = SubscriberBuilder<Def::Bound, Src, State, DC>;

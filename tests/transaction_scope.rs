@@ -8,6 +8,7 @@
 use std::pin::pin;
 
 use futures::{FutureExt, StreamExt};
+use ruststream::Settle;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::PublishExt;
 use ruststream::{IncomingMessage, Outgoing, Subscriber};

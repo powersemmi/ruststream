@@ -34,7 +34,7 @@ help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, 
    | / impl<M, Input, DecodeCodec, Inner, Cx, St> Handler<M, Cx, St>
    | |     for Typed<M, Input, DecodeCodec, Inner>
    | | where
-   | |     M: IncomingMessage,
+   | |     M: Settle,
    | |     Input: Materialize<DecodeCodec, M>,
    | |            --------------------------- unsatisfied requirement introduced here: `ruststream_runtime::input::Decoded<OrderEvent>: ruststream_runtime::input::Materialize<JsonCodec, MemoryMessage>`
 ...  |

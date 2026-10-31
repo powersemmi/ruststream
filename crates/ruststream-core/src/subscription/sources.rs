@@ -1,10 +1,13 @@
 //! The subscription sources the core ships: a bare name, a kind left unnamed until the mount
 //! site names it, and a start position wrapped around another source.
 
+// The cold path of the contract carries no Send; the tokio runner asks for it where it spawns.
+#![allow(clippy::future_not_send)]
+
 use alloc::borrow::Cow;
 use core::{fmt, future::ready, marker::PhantomData};
 
-use crate::{ConnectedBroker, DeclareRetryError, Seekable, Seeker, Subscribe};
+use crate::{ConnectedBroker, DeclareRetryError, LocalSeekable, LocalSeeker, Subscribe};
 
 use super::{
     AddressedCopies, RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, SubscriptionSource,
@@ -220,7 +223,7 @@ impl<C: Subscribe<Copies = AddressedCopies>> RedeliveryAddressed<C> for Name {
     fn redelivery_address(
         &self,
         _connected: &C,
-    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
         ready(Ok(RedeliveryAddress::new(self.0.clone())))
     }
 }
@@ -228,13 +231,13 @@ impl<C: Subscribe<Copies = AddressedCopies>> RedeliveryAddressed<C> for Name {
 /// A source decorator opening the subscription at a chosen position instead of the broker's
 /// default.
 ///
-/// Wraps any [`SubscriptionSource`] whose subscriber is [`Seekable`] and seeks to `position`
+/// Wraps any [`SubscriptionSource`] whose subscriber is [`Seekable`](crate::Seekable) and seeks to `position`
 /// before the first delivery, so the handler never sees a message from before the chosen
 /// point. The position is the broker's own type (its latest / earliest constructors, a
 /// sequence number, a captured [`Positioned`](crate::Positioned) value), which makes "start
 /// from the latest on deploy" or "replay the whole log into a fresh subscription" a
 /// declaration at the mount site rather than an operational action afterwards. On a broker
-/// without the [`Seekable`] capability the wrapped source does not implement
+/// without the [`Seekable`](crate::Seekable) capability the wrapped source does not implement
 /// [`SubscriptionSource`], so the mount fails to compile.
 ///
 /// This is a forced position: it applies on every startup. A conditional default (only when
@@ -384,14 +387,11 @@ impl<S, P> fmt::Debug for StartAt<S, P> {
 impl<C, S, P> SubscriptionSource<C> for StartAt<S, P>
 where
     C: ConnectedBroker,
-    // `Send` on the pieces keeps the returned future `Send`, as the trait's RPITIT promises;
-    // `Sync` on the wrapped source is what lets the redelivery address be asked for by reference.
-    S: SubscriptionSource<C> + Send + Sync,
-    S::Subscriber: Seekable,
+    S: SubscriptionSource<C>,
+    S::Subscriber: LocalSeekable,
     // A rejected reposition surfaces as this source's subscribe error, so the seeker must
     // report the connected broker's error type (broker crates use one error type for both).
-    <S::Subscriber as Seekable>::Seeker: Seeker<Position = P, Error = C::Error>,
-    P: Send,
+    <S::Subscriber as LocalSeekable>::Seeker: LocalSeeker<Position = P, Error = C::Error>,
 {
     type Subscriber = S::Subscriber;
     type Copies = S::Copies;
@@ -429,12 +429,12 @@ impl<C, S, P> RedeliveryAddressed<C> for StartAt<S, P>
 where
     Self: SubscriptionSource<C, Copies = AddressedCopies>,
     C: ConnectedBroker,
-    S: RedeliveryAddressed<C> + Send + Sync,
+    S: RedeliveryAddressed<C>,
 {
     fn redelivery_address(
         &self,
         connected: &C,
-    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
         self.inner.redelivery_address(connected)
     }
 }

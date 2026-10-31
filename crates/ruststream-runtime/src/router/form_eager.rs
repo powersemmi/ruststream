@@ -5,7 +5,7 @@
 //! [`codec`](crate::SubscriberBuilder::codec) override wins, else the chain's codec or
 //! the default applies).
 
-use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, Connected, SendSource, SubscriptionSource};
 
 use crate::batch::{BatchDef, SourceCarriesBatch};
 use crate::input::{Carried, DecodeWith, Materialize, Provided};
@@ -68,7 +68,7 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
 where
     B: Broker + 'static,
     Def: SubscriberDef + MountsWith<<Def as SubscriberDef>::Input, RouteCodec, Connected<B>>,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Def::Source: SendSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: Send + 'static,
     Def::Input: Materialize<SoloDecoder<Def, B, RouteCodec>, SourceMessage<B, Def::Source>>,
     Def::Handler: 'static,
@@ -98,7 +98,7 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, F>
 where
     B: Broker + 'static,
     Def: SubscriberDef<Input = Provided<F>>,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Def::Source: SendSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: Send + 'static,
     Def::Handler: 'static,
     F: Send + Sync + 'static,
@@ -122,7 +122,7 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
 where
     B: Broker + 'static,
     Def: BatchDef + BatchSized + MountsWith<<Def as BatchDef>::Input, RouteCodec, Connected<B>>,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Def::Source: SendSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
     Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchDef>::Input, RouteCodec, Connected<B>>>,
     Def::Handler: 'static,
@@ -150,7 +150,7 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, F>
 where
     B: Broker + 'static,
     Def: BatchDef<Input = Provided<F>> + BatchSized,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Def::Source: SendSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
     Def::Handler: 'static,
     F: Send + Sync + 'static,
@@ -176,8 +176,7 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, T>
 where
     B: Broker + 'static,
     Def: BatchDef<Input = Carried<T>> + BatchSized,
-    Def::Source:
-        SubscriptionSource<Connected<B>> + SourceCarriesBatch<T, Connected<B>> + Send + 'static,
+    Def::Source: SendSource<Connected<B>> + SourceCarriesBatch<T, Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
     Def::Handler: 'static,
     T: Clone + Send + Sync + 'static,

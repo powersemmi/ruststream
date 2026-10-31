@@ -21,8 +21,8 @@ use ruststream::memory::{
 };
 use ruststream_core::{
     AckError, AddressedCopies, BytesMut, HeaderMap, IncomingMessage, Name, OutgoingMessage,
-    Publisher, RedeliveryAddress, RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
-    Take,
+    Publisher, RedeliveryAddress, RedeliveryAddressed, Settle, Subscribe, Subscriber,
+    SubscriptionSource, Take,
 };
 use ruststream_runtime::RETRY_COUNT_HEADER;
 
@@ -480,7 +480,7 @@ impl RedeliveryAddressed<ConnectedMemoryBroker> for Probe {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
         let address = if self.misaddressed {
             format!("{}.elsewhere", self.name)
         } else if self.reading == Reading::SharedWithCopiesToAll {
@@ -572,7 +572,9 @@ impl IncomingMessage for ProbeMessage {
             Counting::Silent => None,
         }
     }
+}
 
+impl Settle for ProbeMessage {
     async fn ack(self) -> Result<(), AckError> {
         if self.settling == Settling::AckFails {
             return Err(AckError::Broker("the ack was lost".into()));

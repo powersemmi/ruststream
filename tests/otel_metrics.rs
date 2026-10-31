@@ -1,6 +1,9 @@
 //! Integration tests for the `otel` feature's dispatch metrics, collected through an in-memory
 //! exporter (no collector, no network): the consume layer's per-delivery instruments and the
 //! publish layer's per-publish instruments, both labeled per handler.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(feature = "otel", feature = "testing", feature = "macros"))]
 
 mod common;

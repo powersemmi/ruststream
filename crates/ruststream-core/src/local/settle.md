@@ -1,8 +1,8 @@
-The local form of [`IncomingMessage`]: one delivery and its settlement, with futures that are not
-`Send`.
+The local form of [`Settle`]: the settlement of a delivery whose futures are not `Send`.
 
-The items are those of [`IncomingMessage`] without the `Send` and `Sync` bounds, the defaulted
-methods included. Every [`IncomingMessage`] is a `LocalIncomingMessage` through a blanket impl.
+The items are those of [`Settle`], the defaulted methods included, without `Send` on the futures.
+Every [`Settle`] is a `LocalSettle` through a blanket impl. What the delivery carries is
+[`IncomingMessage`], which both forms share.
 
 # Examples
 
@@ -10,7 +10,7 @@ methods included. Every [`IncomingMessage`] is a `LocalIncomingMessage` through 
 use std::cell::Cell;
 use std::rc::Rc;
 
-use ruststream::{AckError, HeaderMap, LocalIncomingMessage};
+use ruststream::{AckError, HeaderMap, IncomingMessage, LocalSettle};
 
 /// The client's settlement counters, shared by every delivery through `Rc`.
 #[derive(Default)]
@@ -26,7 +26,7 @@ pub struct Delivery {
     client: Rc<Client>,
 }
 
-impl LocalIncomingMessage for Delivery {
+impl IncomingMessage for Delivery {
     fn payload(&self) -> &[u8] {
         &self.payload
     }
@@ -38,7 +38,9 @@ impl LocalIncomingMessage for Delivery {
     fn redelivery_count(&self) -> Option<u64> {
         Some(self.attempt)
     }
+}
 
+impl LocalSettle for Delivery {
     async fn ack(self) -> Result<(), AckError> {
         self.client.acked.set(self.client.acked.get() + 1);
         Ok(())

@@ -559,9 +559,9 @@ impl MemoryState {
 #[cfg(feature = "std")]
 mod tests {
     use futures::{FutureExt, StreamExt};
+    use ruststream_core::Settle;
     use ruststream_core::{
-        Broker, ConnectedBroker, IncomingMessage, Publisher, Subscribe, Subscriber,
-        SubscriptionSource,
+        Broker, ConnectedBroker, Publisher, Subscribe, Subscriber, SubscriptionSource,
     };
 
     use super::*;

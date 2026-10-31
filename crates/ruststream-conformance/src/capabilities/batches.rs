@@ -13,8 +13,8 @@ use crate::harness::on_foreign_runtime;
 use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
-    BatchSubscriber, Broker, Connected, IncomingMessage, OutgoingMessage, Positioned, Publisher,
-    Seekable, Seeker, SubscriptionSource,
+    BatchSubscriber, Connected, IncomingMessage, OutgoingMessage, Positioned, Publisher, Seekable,
+    Seeker, SendBroker, SendSource, Settle,
 };
 
 /// Verifies the [`BatchSubscriber`] contract.
@@ -56,9 +56,9 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_source: MkSrc,
     make_publisher: MkPub,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: BatchSubscriber + Send,
     SubscriberMessage<Src::Subscriber>: 'static,
     MkSrc: Fn(&str) -> Src,
@@ -147,7 +147,7 @@ async fn batch_settles_per_element<Pub, S, Batch, M, E>(
     Pub: Publisher,
     S: Stream<Item = Result<Batch, E>> + Unpin,
     Batch: IntoIterator<Item = M>,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     const LABEL: &str = "batches: one batch settled element by element";
@@ -229,7 +229,7 @@ async fn batch_settles_on_foreign_runtime<Pub, S, Batch, M, E>(
     Pub: Publisher,
     S: Stream<Item = Result<Batch, E>> + Unpin,
     Batch: IntoIterator<Item = M>,
-    M: IncomingMessage + 'static,
+    M: Settle + 'static,
     E: fmt::Debug,
 {
     const LABEL: &str = "batches: a batch settled from a runtime that has since stopped";
@@ -313,9 +313,9 @@ pub async fn batch_seeking<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_source: MkSrc,
     make_publisher: MkPub,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: BatchSubscriber + Seekable + Send,
     SubscriberMessage<Src::Subscriber>: Positioned<Position = SeekPosition<Src::Subscriber>>,
     MkSrc: Fn(&str) -> Src,

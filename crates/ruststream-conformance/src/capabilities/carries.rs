@@ -18,9 +18,8 @@ use super::{
 use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
-    AckError, AddressedCopies, BatchSubscriber, Broker, BrokerMoves, Carries, CarriesBatch,
-    Connected, IncomingMessage, NamedCopies, OutgoingMessage, Publisher, Subscriber,
-    SubscriptionSource,
+    AckError, AddressedCopies, BatchSubscriber, BrokerMoves, Carries, CarriesBatch, Connected,
+    NamedCopies, OutgoingMessage, Publisher, SendBroker, SendSource, Settle, Subscriber,
 };
 
 /// How many rounds the batch suite gives the broker to put two waiting values in one batch.
@@ -93,7 +92,7 @@ impl CopyPathCheck for BrokerMoves {
 /// # use std::future::Future;
 /// # use futures::{Stream, StreamExt};
 /// # use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryMessage, MemorySubscriber};
-/// # use ruststream::{AckError, Carries, HeaderMap, IncomingMessage, NamedCopies, Subscribe};
+/// # use ruststream::{AckError, Carries, HeaderMap, IncomingMessage, NamedCopies, Settle, Subscribe};
 /// # use ruststream::{Subscriber, SubscriptionSource};
 /// # #[derive(Debug, Clone, PartialEq)]
 /// # pub struct Row(pub String);
@@ -125,6 +124,9 @@ impl CopyPathCheck for BrokerMoves {
 /// # impl IncomingMessage for RowDelivery {
 /// #     fn payload(&self) -> &[u8] { self.0.payload() }
 /// #     fn headers(&self) -> &HeaderMap { self.0.headers() }
+/// # }
+/// #
+/// # impl Settle for RowDelivery {
 /// #     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send { self.0.ack() }
 /// #     fn nack(self, r: bool) -> impl Future<Output = Result<(), AckError>> + Send {
 /// #         self.0.nack(r)
@@ -181,9 +183,9 @@ pub async fn carries<
     publish_without_value: Gone,
     values: &[Value],
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     Src::Copies: CopyPathCheck,
     SubscriberMessage<Src::Subscriber>: Carries<Value>,
@@ -314,7 +316,7 @@ pub async fn carries<
 /// # use std::num::NonZeroUsize;
 /// # use futures::{Stream, StreamExt};
 /// # use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryMessage, MemorySubscriber};
-/// # use ruststream::{AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage};
+/// # use ruststream::{AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, Settle};
 /// # use ruststream::{NamedCopies, Subscribe, Subscriber, SubscriptionSource};
 /// # #[derive(Debug, Clone, PartialEq)]
 /// # pub struct Row(pub String);
@@ -413,9 +415,9 @@ pub async fn carries_batch<
     publish_without_value: Gone,
     values: &[Value],
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: BatchSubscriber + Send,
     Src::Copies: CopyPathCheck,
     <Src::Subscriber as BatchSubscriber>::Batch: CarriesBatch<Value>,
@@ -523,7 +525,7 @@ async fn a_copy_lends_the_value<Conn, Value, Pub, MkPub, Publish, PublishError, 
     Publish: AsyncFn(&Conn, &str, &Value) -> Result<(), PublishError>,
     PublishError: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage + Carries<Value>,
+    M: Settle + Carries<Value>,
     E: fmt::Debug,
     Value: PartialEq + fmt::Debug,
 {
@@ -583,7 +585,7 @@ async fn a_batch_copy_lends_the_value<
     PublishError: fmt::Debug,
     S: Stream<Item = Result<Batch, E>> + Unpin,
     Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
     Value: PartialEq + Clone + fmt::Debug,
 {
@@ -621,7 +623,7 @@ async fn a_batch_copy_lends_the_value<
 }
 
 /// Publishes a copy of `msg` to `subject` the way the runtime does: its payload and its headers.
-async fn publish_copy<Pub: Publisher, M: IncomingMessage>(
+async fn publish_copy<Pub: Publisher, M: Settle>(
     publisher: &Pub,
     subject: &str,
     msg: &M,
@@ -655,7 +657,7 @@ async fn pages_keep_their_order<Conn, Value, Publish, PublishError, S, Batch, M,
     PublishError: fmt::Debug,
     S: Stream<Item = Result<Batch, E>> + Unpin,
     Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
     Value: PartialEq + Clone + fmt::Debug,
 {
@@ -760,7 +762,7 @@ async fn values_go_before_deliveries_without_one<
     GoneError: fmt::Debug,
     S: Stream<Item = Result<Batch, E>> + Unpin,
     Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
     Value: PartialEq + Clone + fmt::Debug,
 {
@@ -912,7 +914,7 @@ fn take_published<Value: PartialEq + fmt::Debug>(
 
 /// Drops a delivery its handler never saw, the way the runtime's default decode policy settles
 /// it, accepting a transport that has no settlement.
-async fn drop_unread<M: IncomingMessage>(msg: M, label: &str) {
+async fn drop_unread<M: Settle>(msg: M, label: &str) {
     match within(msg.nack(false), &format!("{label}: a nack")).await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("{label}: nack must succeed or be unsupported, got: {other:?}"),

@@ -12,7 +12,7 @@ use ruststream::memory::{
 };
 use ruststream_core::{
     AckError, BrokerMoves, DeclareRetryError, HeaderMap, IncomingMessage, OutgoingMessage,
-    Publisher, RetryDeclaration, Subscribe, Subscriber, SubscriptionSource, nonzero,
+    Publisher, RetryDeclaration, Settle, Subscribe, Subscriber, SubscriptionSource, nonzero,
 };
 
 // The factories stay closures throughout: their bounds are higher-ranked, which a method path
@@ -331,7 +331,9 @@ impl IncomingMessage for MovesMessage {
             count
         }
     }
+}
 
+impl Settle for MovesMessage {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {
         self.inner.ack()
     }

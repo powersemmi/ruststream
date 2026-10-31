@@ -20,7 +20,7 @@ use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER};
 use ruststream::{
-    Deserialized, HeaderMap, LocalBroker, LocalPublisher, OutgoingMessage, Str, subscriber,
+    Broker, Deserialized, HeaderMap, LocalPublisher, OutgoingMessage, Str, subscriber,
 };
 use static_cell::StaticCell;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};

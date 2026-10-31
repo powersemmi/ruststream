@@ -15,7 +15,7 @@ fn sized(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
 }
 
 #[ruststream::app]
-fn generic<Bus: ruststream::LocalBroker>(bus: Bus) -> EmbeddedApp<impl Mounts> {
+fn generic<Bus: ruststream::Broker>(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| b)
 }
 

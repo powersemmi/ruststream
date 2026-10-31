@@ -213,6 +213,7 @@ impl OwnedTransactions for MemoryPublisher {
 #[cfg(test)]
 mod tests {
     use futures::StreamExt;
+    use ruststream_core::Settle;
 
     use super::*;
     use crate::MemoryBroker;

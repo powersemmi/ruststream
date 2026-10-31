@@ -11,6 +11,7 @@
 
 #![cfg(all(feature = "conformance", feature = "memory", feature = "testing"))]
 
+use ruststream_core::Settle;
 use std::{future::ready, marker::PhantomData};
 
 use futures::{Stream, StreamExt};
@@ -98,9 +99,7 @@ impl<S: Settlement> Broker for Standin<S> {
 /// The stand-in has no server either, so the transition the suite connects through is its
 /// ordinary `connect`.
 impl<S: Settlement> InProcess for Standin<S> {
-    fn connect_in_process(
-        self,
-    ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect_in_process(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.connect()
     }
 }
@@ -115,7 +114,7 @@ impl<S: Settlement> ConnectedBroker for ConnectedStandin<S> {
     type Error = MemoryError;
     type Closed = ClosedMemoryBroker;
 
-    fn shutdown(self) -> impl Future<Output = Result<Self::Closed, Self::Error>> + Send {
+    fn shutdown(self) -> impl Future<Output = Result<Self::Closed, Self::Error>> {
         self.inner.shutdown()
     }
 }
@@ -139,10 +138,7 @@ impl<S: Settlement> Subscribe for ConnectedStandin<S> {
     type Copies = AddressedCopies;
     type Subscriber = StandinSubscriber<S>;
 
-    fn subscribe(
-        &self,
-        name: &str,
-    ) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> + Send {
+    fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
         let opened = Subscribe::subscribe(&self.inner, name);
         async move {
             opened.await.map(|inner| StandinSubscriber {
@@ -187,7 +183,9 @@ impl<S: Settlement> IncomingMessage for StandinMessage<S> {
     fn headers(&self) -> &HeaderMap {
         self.inner.headers()
     }
+}
 
+impl<S: Settlement> Settle for StandinMessage<S> {
     /// Taking the wrapped delivery apart here releases it without requeueing, which is what a
     /// transport that settles nothing does with every message it hands over.
     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {

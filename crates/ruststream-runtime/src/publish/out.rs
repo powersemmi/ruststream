@@ -17,6 +17,9 @@
 //! [`PublishLayer`](super::PublishLayer) is generic over the publisher it runs for, so it cannot
 //! name an options type.
 
+// The shared body serves the local contract, whose futures carry no Send.
+#![allow(clippy::future_not_send)]
+
 use alloc::boxed::Box;
 use core::error::Error as StdError;
 

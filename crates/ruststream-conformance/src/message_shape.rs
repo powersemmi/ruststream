@@ -37,8 +37,8 @@ use ruststream_core::ConnectedBroker;
 #[cfg(feature = "asyncapi")]
 use ruststream_core::DescribeServer;
 use ruststream_core::{
-    AckError, Broker, Connected, HeaderMap, IncomingMessage, OutgoingFor, OutgoingMessage,
-    PublishPolicy, Publisher, Subscriber, SubscriptionSource,
+    AckError, Connected, HeaderMap, IncomingMessage, OutgoingFor, OutgoingMessage, PublishPolicy,
+    Publisher, SendBroker, SendSource, Settle, Subscriber,
 };
 use ruststream_runtime::RETRY_COUNT_HEADER;
 #[cfg(feature = "asyncapi")]
@@ -90,9 +90,9 @@ pub(crate) async fn publisher_carries<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_publisher: MkPub,
 ) -> (MkBroker, MkSrc, MkPub)
 where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
@@ -229,7 +229,7 @@ async fn publish_every_shape<Pub: Publisher>(publisher: &Pub, subject: &str) -> 
 async fn receive_every_shape<S, M, E>(stream: &mut S, sent: &[Sent])
 where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let mut arrived = vec![false; sent.len()];
@@ -357,9 +357,9 @@ pub async fn keyed_order<B, MkBroker, Src, MkSrc, Pub, MkPub, KeyWith>(
     make_publisher: MkPub,
     key_with: KeyWith,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
@@ -620,9 +620,9 @@ pub async fn publish_options<B, MkBroker, Src, MkSrc, Policy, Observed, Observe>
     cases: OptionCases<<Policy::Live as Publisher>::Options, Observed>,
     observe: Observe,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Policy: PublishPolicy<Connected<B>>,
@@ -912,7 +912,7 @@ async fn publish_within<Pub: Publisher>(
 async fn expect_delivery<S, M, E>(stream: &mut S, label: &str) -> M
 where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     next_delivery(stream, Instant::now() + DELIVERY_TIMEOUT, label)
@@ -925,7 +925,7 @@ where
 async fn next_delivery<S, M, E>(stream: &mut S, deadline: Instant, label: &str) -> Option<M>
 where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let item = timeout_at(deadline, stream.next()).await.ok()?;
@@ -943,7 +943,7 @@ where
 async fn nothing_refused_arrives<S, M, E, Refused>(stream: &mut S, check: &str, refused: Refused)
 where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
     Refused: Fn(&[u8]) -> Option<String>,
 {
@@ -957,7 +957,7 @@ where
 }
 
 /// Acknowledges `msg`, accepting a transport that cannot acknowledge.
-async fn settle<M: IncomingMessage>(msg: M, label: &str) {
+async fn settle<M: Settle>(msg: M, label: &str) {
     match msg.ack().await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("{label}: ack must succeed or be unsupported, got: {other:?}"),

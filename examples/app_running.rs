@@ -5,6 +5,8 @@
 //! cargo test --example app_running --features testing,macros,memory,json
 //! ```
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 // A plain build compiles the services; the tests that use them exist only in the test build.
 #![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
@@ -40,6 +42,8 @@ mod start {
     use tokio::signal::unix;
     #[cfg(unix)]
     use tokio::signal::unix::SignalKind;
+    #[cfg(unix)]
+    use tokio::task::{LocalSet, spawn_local};
     use tokio::time::timeout;
 
     use super::{Order, Receipt};
@@ -172,8 +176,14 @@ mod start {
     }
 
     #[cfg(unix)]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn run_serves_until_a_termination_signal() -> Result<(), Box<dyn Error>> {
+        // The run is not `Send`, so it is driven on the test's own thread.
+        LocalSet::new().run_until(drive_until_signalled()).await
+    }
+
+    #[cfg(unix)]
+    async fn drive_until_signalled() -> Result<(), Box<dyn Error>> {
         // A listener registered first replaces the default disposition, so a signal that lands
         // before `run` installs its own handler cannot kill the test binary.
         let _guard = unix::signal(SignalKind::terminate())?;
@@ -181,7 +191,7 @@ mod start {
         let mut receipts = broker.subscribe("receipts");
         let orders = broker.publisher();
 
-        let mut run = tokio::spawn(async move {
+        let mut run = spawn_local(async move {
             serve_forever(broker)
                 .await
                 .map_err(|error| error.to_string())
@@ -202,7 +212,11 @@ mod start {
             }
         })
         .await??;
-        assert_eq!(receipt, Receipt { order_id: 7 });
+        assert_eq!(
+            receipt,
+            Receipt { order_id: 7 },
+            "the order is answered before the signal"
+        );
 
         // `run` installs its signal handler after startup and nothing reports the moment, so the
         // signal is re-sent until the run returns.

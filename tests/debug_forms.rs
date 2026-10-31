@@ -18,6 +18,7 @@ use opentelemetry_sdk::metrics::{Instrument, SdkMeterProvider};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 #[cfg(feature = "metrics")]
 use prometheus::Registry;
+use ruststream::Settle;
 use ruststream::memory::prelude::*;
 #[cfg(feature = "metrics")]
 use ruststream::metrics::Metrics;

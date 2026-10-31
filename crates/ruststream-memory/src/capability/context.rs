@@ -229,9 +229,10 @@ impl ruststream_core::Field<MemoryContext> for SeekHandle {
 #[cfg(test)]
 mod tests {
     use futures::StreamExt;
+    use ruststream_core::Settle;
 
     use crate::capability::tests::replaying;
-    use ruststream_core::{IncomingMessage, OutgoingMessage, Positioned, Publisher, Subscriber};
+    use ruststream_core::{OutgoingMessage, Positioned, Publisher, Subscriber};
 
     #[tokio::test]
     async fn position_is_stable_across_a_requeue() {

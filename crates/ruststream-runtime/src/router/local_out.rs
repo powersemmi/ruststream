@@ -15,9 +15,7 @@ use crate::slot::{
     InitSlots, IntoSlotSource, LocalBindSlots, LocalHasSlots, NoReply, OutAttachment, OutSlot,
     SlotCodec, SlotPolicy, WithSource,
 };
-use crate::{
-    LocalBroker, LocalConnected, LocalPublishPolicy, LocalSourceMessage, LocalSubscriptionSource,
-};
+use crate::{Broker, Connected, LocalSourceMessage, PublishPolicy, SubscriptionSource};
 
 use super::builder::Router;
 use super::builders::{RouterCommit, RouterOut, RouterWith};
@@ -28,7 +26,7 @@ use super::{InjectedRouter, forms};
 impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def> for forms::Out
 where
-    B: LocalBroker + 'static,
+    B: Broker + 'static,
     Def: LocalHasSlots,
     Def::Markers: InitSlots,
 {
@@ -89,11 +87,10 @@ impl SlotSurface for () {
 type SlotPipeline<Layers, Pipe> = <Layers as LowerOutTransforms<Pipe>>::Out;
 
 /// The live publisher of the local family one slot's policy pairs into.
-type SlotLive<Policy, B> = <Policy as LocalPublishPolicy<LocalConnected<B>>>::Live;
+type SlotLive<Policy, B> = <Policy as PublishPolicy<Connected<B>>>::Live;
 
 /// What the bound definition's input decodes with on a local router of broker `B`.
-type BoundDecoder<Def, Input, RouteCodec, B> =
-    DefMountCodec<Def, Input, RouteCodec, LocalConnected<B>>;
+type BoundDecoder<Def, Input, RouteCodec, B> = DefMountCodec<Def, Input, RouteCodec, Connected<B>>;
 
 /// The bound-source tuple element of one slot, as on the multi-thread chain.
 macro_rules! local_slot_source {
@@ -120,28 +117,28 @@ macro_rules! local_inject_out_commit {
             >
             for (NoReply, ($(WithSource<OutAttachment<$marker, $attach, $layers, $enc>>,)+))
         where
-            B: LocalBroker + 'static,
+            B: Broker + 'static,
             RouteCodec: SlotSurface,
             Pipe: Clone,
             $(
                 $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
-                $attach: LocalPublishPolicy<LocalConnected<B>>,
+                $attach: PublishPolicy<Connected<B>>,
                 $layers: LowerOutTransforms<LocalPipeline<Pipe>>
                     + SlotStackUse<SlotLive<$attach, B>>,
                 <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
             )+
             Def: LocalBindSlots<
-                LocalConnected<B>,
+                Connected<B>,
                 ($(local_slot_source!(
                     $attach, $layers, $enc, RouteCodec::Codec, LocalPipeline<Pipe>
                 ),)+),
                 Bound = Bound,
                 Extra = Extra,
             >,
-            Def: MountsWith<<Bound as InjectDef>::Input, RouteCodec, LocalConnected<B>>,
+            Def: MountsWith<<Bound as InjectDef>::Input, RouteCodec, Connected<B>>,
             Bound: InjectDef + 'static,
-            Bound::Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
+            Bound::Source: SubscriptionSource<Connected<B>> + 'static,
             Bound::Input: Materialize<
                 BoundDecoder<Def, <Bound as InjectDef>::Input, RouteCodec, B>,
                 LocalSourceMessage<B, Bound::Source>,

@@ -72,7 +72,7 @@ use crate::slot::{
 /// dead-letter destination, and neither is this position's to name.
 ///
 /// Brokers with native delayed redelivery do not need the position: the runtime uses their
-/// [`nack_after`](crate::IncomingMessage::nack_after) instead, and no copy is published there.
+/// [`nack_after`](crate::Settle::nack_after) instead, and no copy is published there.
 ///
 /// # Cancel safety
 ///

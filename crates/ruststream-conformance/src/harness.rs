@@ -5,7 +5,7 @@
 //! [`run_suite`] against their production broker: each scenario starts from a fresh broker
 //! produced by the caller-supplied factory, connects it through its
 //! [`InProcess`] transition and drives the connected form through the broker's own
-//! [`Subscribe`] / [`TestableBroker::inject`] surface - no server.
+//! [`Subscribe`](ruststream_core::Subscribe) / [`TestableBroker::inject`] surface - no server.
 //!
 //! # Examples
 //!
@@ -31,11 +31,11 @@ use ruststream_core::DescribeServer;
 #[cfg(doc)]
 use ruststream_core::{AckError, IncomingMessage};
 use ruststream_core::{
-    Broker, Connected, LocalIncomingMessage, Publisher, Subscribe, Subscriber, SubscriptionSource,
+    Broker, Connected, LocalSettle, Publisher, SendBroker, SendSource, SendSubscribe, Subscriber,
 };
-use ruststream_runtime::testing::InProcess;
 #[cfg(doc)]
-use ruststream_runtime::testing::{Backlog, TestableBroker};
+use ruststream_runtime::testing::Backlog;
+use ruststream_runtime::testing::{InProcess, TestableBroker};
 #[cfg(feature = "asyncapi")]
 use ruststream_runtime_tokio::{AppInfo, RustStream};
 use tokio::{runtime, sync::oneshot, time::timeout};
@@ -63,7 +63,7 @@ type SubscriberMessage<S> = <S as Subscriber>::Message;
 /// `factory` is invoked once per scenario to obtain a fresh broker, so tests cannot leak state
 /// between each other. It builds the production broker, the one a service builds its app on;
 /// each scenario connects it through its [`InProcess`] transition and drives the connected form
-/// through the broker's own [`Subscribe`] / [`TestableBroker::inject`] surface.
+/// through the broker's own [`Subscribe`](ruststream_core::Subscribe) / [`TestableBroker::inject`] surface.
 ///
 /// This is the routing contract and nothing else. A capability
 /// ([`BatchSubscriber`](ruststream_core::BatchSubscriber),
@@ -120,8 +120,8 @@ type SubscriberMessage<S> = <S as Subscriber>::Message;
 /// Panics if any scenario fails an assertion. The panic message identifies the scenario.
 pub async fn run_suite<B, F>(factory: F)
 where
-    B: InProcess,
-    B::Connected: Subscribe,
+    B: InProcess + SendBroker,
+    B::Connected: SendSubscribe + TestableBroker,
     F: Fn() -> B,
 {
     let connect = async move |broker: B| {
@@ -201,7 +201,7 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
     type Error = B::Error;
     type Connected = B::Connected;
 
-    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.0.connect_in_process()
     }
 }
@@ -210,7 +210,7 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 /// reaches it from.
 ///
 /// The steps are: synchronous construction, then the consuming `connect` producing the typed
-/// connected form, a subscription opened through the broker's own [`SubscriptionSource`], publishes
+/// connected form, a subscription opened through the broker's own [`SubscriptionSource`](ruststream_core::SubscriptionSource), publishes
 /// the subscription receives and settles, then the consuming `shutdown` producing the terminal
 /// witness. Owner-side misuse after shutdown is a compile error under the ladder, so what remains
 /// checkable at runtime is the aliased-handle contract.
@@ -227,7 +227,7 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 ///   again, from the broker's runtime and from a new runtime, and both messages must arrive (a
 ///   connection attached lazily on the first caller's runtime dies with it). `nack(requeue =
 ///   true)` answering `Ok` must bring the message back, `nack(requeue = false)` must not.
-/// * **The delay.** Where the delivery offers [`nack_after`](IncomingMessage::nack_after), it is
+/// * **The delay.** Where the delivery offers [`nack_after`](ruststream_core::Settle::nack_after), it is
 ///   settled with a delay of 1.5 s and must come back no sooner than that and within ten seconds
 ///   after it: a broker that ignores the delay, rounds it down or runs its timer on the settling
 ///   caller's runtime fails.
@@ -292,9 +292,9 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_source: MkSrc,
     make_publisher: MkPub,
 ) where
-    B: Broker + Send + 'static,
+    B: SendBroker,
     MkBroker: Fn() -> B + Send + Sync + 'static,
-    Src: SubscriptionSource<Connected<B>> + Clone + Send + 'static,
+    Src: SendSource<Connected<B>> + Clone + Send + 'static,
     Src::Subscriber: Send + 'static,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,
@@ -341,7 +341,7 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 pub fn describes_without_credentials<B, Src>(broker: &B, source: &Src, secret: &str)
 where
     B: DescribeServer,
-    Src: SubscriptionSource<Connected<B>>,
+    Src: SendSource<Connected<B>>,
 {
     assert!(
         !secret.is_empty(),
@@ -418,7 +418,7 @@ where
 pub(crate) async fn expect_next<S, M, E>(stream: &mut S, label: &str) -> M
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     E: fmt::Debug,
 {
     let item = timeout(DEFAULT_TIMEOUT, stream.next())
@@ -431,7 +431,7 @@ where
 pub(crate) async fn expect_no_more<S, M, E>(stream: &mut S, label: &str)
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     E: fmt::Debug,
 {
     let result = timeout(NEGATIVE_WAIT, stream.next()).await;

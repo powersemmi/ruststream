@@ -20,7 +20,7 @@ use std::sync::Arc;
 use bytes::BytesMut;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
-use ruststream_core::{LocalBroker, LocalConnectedBroker, LocalPublisher, OutgoingMessage};
+use ruststream_core::{Broker, ConnectedBroker, LocalPublisher, OutgoingMessage};
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream_runtime::{
     Context, Deserialized, FailurePolicies, FailurePolicy, HandlerOutcome, Input, LocalHandle,

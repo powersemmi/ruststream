@@ -15,7 +15,7 @@ use ruststream::memory::{
 use ruststream::runtime::{Input, IntoSource, SoloCarried};
 use ruststream::{
     AckError, AddressedCopies, Carries, HeaderMap, IncomingMessage, RedeliveryAddress,
-    RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
+    RedeliveryAddressed, Settle, Subscribe, Subscriber, SubscriptionSource,
 };
 
 /// The value a delivery carries: the service's own struct, with no serde model.
@@ -90,7 +90,7 @@ impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for Rows {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker<Log>,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
         ready(Ok(RedeliveryAddress::new(self.name.clone())))
     }
 }
@@ -136,7 +136,9 @@ impl<Log: LogMode> IncomingMessage for RowDelivery<Log> {
     fn redelivery_count(&self) -> Option<u64> {
         self.inner.redelivery_count()
     }
+}
 
+impl<Log: LogMode> Settle for RowDelivery<Log> {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {
         self.inner.ack()
     }

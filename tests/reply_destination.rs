@@ -6,6 +6,9 @@
 //! log through one process-wide subscriber that writes into the capture the test's own thread
 //! installed, so they run on the current-thread runtime, where the harness starts every
 //! registration on that thread.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "testing",
     feature = "macros",

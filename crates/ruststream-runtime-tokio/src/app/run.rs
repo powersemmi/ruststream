@@ -1,5 +1,8 @@
 //! Running the service: startup sequence, signal handling and graceful shutdown.
 
+// The start and stop path runs on the task that awaits it and is never spawned.
+#![allow(clippy::future_not_send)]
+
 use std::{fmt, sync::Arc, time::Duration};
 
 #[cfg(unix)]
@@ -14,7 +17,7 @@ use tracing::{debug, info, warn};
 use crate::HandlerMetadata;
 use crate::bindable::Bound;
 use crate::shutdown::Shutdown;
-use crate::{Broker, Connected, PairError, PublishPolicy};
+use crate::{Connected, PairError, PublishPolicy, SendBroker};
 
 use super::health::{HealthProbe, HealthState};
 use super::service::RegisteredBroker;
@@ -23,22 +26,90 @@ use super::teardown::{
 };
 use super::{LifecycleHook, RustStream, RustStreamError, Starter, StateInit};
 
-// `run`/`run_until` are routinely driven from a multi-thread runtime (`tokio::spawn`, the CLI's
-// `block_on`), so their futures must be `Send`: the shared state is held as `Arc<State>` across the
-// startup awaits (needs `State: Sync`) and the global stack `Layers` is carried in `self` (needs `Layers: Send`).
-// `State: 'static` is what every constructible app already satisfies (the `on_startup` producer
-// returns the state from a `'static` boxed future); naming it here lets `start` box the shutdown
-// hooks with the state bound in.
+// `start` pairs and opens on the task that awaits it, so `run` and `run_until` are not `Send`:
+// they are driven from `main` or from a `LocalSet` task. The handle `start` returns is `Send`, and
+// so is every subscription loop it spawns. The shared state is held as `Arc<State>` across the
+// startup awaits (needs `State: Sync`) and the global stack `Layers` is carried in `self` (needs
+// `Layers: Send`). `State: 'static` is what every constructible app already satisfies (the
+// `on_startup` producer returns the state from a `'static` boxed future); naming it here lets
+// `start` box the shutdown hooks with the state bound in.
 impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
     RustStream<Layers, State, Pipeline, Phase>
 {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`) is received, then shuts down
     /// gracefully.
     ///
+    /// The run starts and stops the app on the task that awaits it, so the future is not `Send`:
+    /// await it from `main`, or from a task on a [`LocalSet`](tokio::task::LocalSet). A running
+    /// app that other tasks hold is [`start`](Self::start)'s handle.
+    ///
     /// # Errors
     ///
     /// Returns [`RustStreamError`] if a broker fails to connect, a subscription fails to open, a
     /// dispatch task panics, or a broker fails to shut down.
+    ///
+    /// # Examples
+    ///
+    /// From `main`:
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn handle(order: &Order) {
+    ///     let _ = order.id;
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), ruststream::runtime::RustStreamError> {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .with_broker(MemoryBroker::new(), |b| b.include(handle))
+    ///         .run()
+    ///         .await
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    ///
+    /// From a task of a `LocalSet`:
+    ///
+    /// ```no_run
+    /// use ruststream::memory::prelude::*;
+    /// use tokio::task::LocalSet;
+    ///
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// LocalSet::new()
+    ///     .run_until(async {
+    ///         let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///             .with_broker(MemoryBroker::new(), |b| b);
+    ///         tokio::task::spawn_local(app.run()).await??;
+    ///         Ok(())
+    ///     })
+    ///     .await
+    /// # }
+    /// # fn main() {}
+    /// ```
+    ///
+    /// The future is not `Send`, so `tokio::spawn` refuses it:
+    ///
+    /// ```compile_fail
+    /// use ruststream::memory::prelude::*;
+    ///
+    /// # async fn run() {
+    /// let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///     .with_broker(MemoryBroker::new(), |b| b);
+    /// tokio::spawn(app.run());
+    /// # }
+    /// # fn main() {}
+    /// ```
     pub async fn run(self) -> Result<(), RustStreamError> {
         self.run_until(wait_for_signal()).await
     }
@@ -54,7 +125,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
     /// dispatch task panics, or a broker fails to shut down.
     pub async fn run_until<F>(self, shutdown: F) -> Result<(), RustStreamError>
     where
-        F: Future<Output = ()> + Send,
+        F: Future<Output = ()>,
     {
         let running = self.start().await?;
         tokio::select! {
@@ -304,10 +375,10 @@ impl RunningApp {
     pub fn publisher<B2, S>(
         &self,
         token: Bound<B2, S>,
-    ) -> impl Future<Output = Result<S::Live, PairError>> + Send
+    ) -> impl Future<Output = Result<S::Live, PairError>>
     where
-        B2: Broker + 'static,
-        S: PublishPolicy<Connected<B2>> + Send,
+        B2: SendBroker,
+        S: PublishPolicy<Connected<B2>>,
     {
         token.live()
     }
