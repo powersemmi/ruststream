@@ -18,7 +18,7 @@ mod parity_tests;
 use crate::SendBroker;
 use crate::{BlanketLayer, Broker, Declared, IntoDeclared, PublishIdentity, PublishPipeline};
 use crate::{BodyFits, ChainHead, Identity, PoolFits, SplitHead};
-use crate::{MountChain, Router, RouterDef, RouterMount};
+use crate::{MountChain, Poisoned, Router, RouterDef, RouterMount};
 
 use super::LifecycleHook;
 use super::scope::{BrokerScope, ScopeRegistrations};
@@ -150,9 +150,11 @@ impl<B: SendBroker, Layers, C, State, Pipeline, Pre>
     pub fn include<D, Mk>(
         self,
         def: D,
-    ) -> <<D::Decl as Declared>::Form as RouterMount<
-        ScopeRouter<B, C, Pipeline, Pre>,
-        <D::Decl as Declared>::Settings,
+    ) -> <<D as BodyFits<Pipeline, Mk>>::Fits as Poisoned<
+        <<D::Decl as Declared>::Form as RouterMount<
+            ScopeRouter<B, C, Pipeline, Pre>,
+            <D::Decl as Declared>::Settings,
+        >>::Out,
     >>::Out
     where
         D: IntoDeclared<Mk> + BodyFits<Pipeline, Mk>,

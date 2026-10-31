@@ -11,12 +11,12 @@ use core::marker::PhantomData;
 
 use super::reply::DeclaresReply;
 use super::{Handle, Input, LocalHandle, Verdict};
+use crate::ConnectedBroker;
 use crate::context::Context;
 use crate::settings::{CapsBatches, Declared};
 use crate::slot::{
     BindSlots, BindSlotsBody, HasSlots, LocalBindSlots, LocalBindSlotsBody, LocalHasSlots,
 };
-use crate::ConnectedBroker;
 
 /// The first argument of a `#[subscriber]` body: names the declaration that goes with the body.
 ///

@@ -11,6 +11,7 @@ help: the trait `ruststream::runtime::CapsBatches` is not implemented for `handl
    | ^^^^^^^^^^^^^^^^^^^^^^^
    = note: the batch size belongs to a batch body (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`); a single-message body takes no batch, and how many of those are in flight at once is `workers(n)` instead
    = help: the following other types implement trait `ruststream::runtime::CapsBatches`:
+             FnBody<M, F>
              HandleValue<BatchCarried<T>, R, O, C, H, Doc>
              HandleValue<BatchDeserialized<F>, R, O, C, H, Doc>
              HandleValue<BatchPair<Hd, P>, R, O, C, H, Doc>
@@ -18,5 +19,6 @@ help: the trait `ruststream::runtime::CapsBatches` is not implemented for `handl
              HandleValue<ruststream::runtime::Batch<T>, R, O, C, H, Doc>
              ReplyValue<V, Dest>
              Sealed<V>
-   = note: required for `SubscriberBuilder<handle, Name, (Open, Open, Open, Open)>` to implement `BatchStep`
+   = note: required for `FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Order, &'b Outs<(_,)>, &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), ruststream::prelude::HandlerOutcome>> {handle::<_, _>}>` to implement `ruststream::runtime::CapsBatches`
+   = note: required for `SubscriberBuilder<FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Order, &'b Outs<(_,)>, &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), ruststream::prelude::HandlerOutcome>> {handle::<_, _>}>, Name, (Open, Open, Open, Open)>` to implement `BatchStep`
    = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)

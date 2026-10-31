@@ -4,7 +4,7 @@ error[E0277]: this subscriber has no batches to size
 19 |     let _capped = handle.batch(nonzero!(64));
    |                          ^^^^^ `batch(..)` sizes the batches a batch body is handed
    |
-   = help: the trait `ruststream::runtime::CapsBatches` is not implemented for `HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>`
+   = help: the trait `ruststream::runtime::CapsBatches` is not implemented for `HandleValue<Solo<Order>, (), (), (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {handle::<_>}>, ruststream::runtime::Probed>`
    = note: the batch size belongs to a batch body (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`); a single-message body takes no batch, and how many of those are in flight at once is `workers(n)` instead
    = help: the following other types implement trait `ruststream::runtime::CapsBatches`:
              HandleValue<BatchCarried<T>, R, O, C, H, Doc>
@@ -12,5 +12,5 @@ error[E0277]: this subscriber has no batches to size
              HandleValue<BatchPair<Hd, P>, R, O, C, H, Doc>
              HandleValue<BatchSet<S>, R, O, C, H, Doc>
              HandleValue<ruststream::runtime::Batch<T>, R, O, C, H, Doc>
-   = note: required for `Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>` to implement `ruststream::runtime::CapsBatches`
-   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `BatchStep`
+   = note: required for `Sealed<HandleValue<Solo<Order>, (), (), (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {handle::<_>}>, ruststream::runtime::Probed>>` to implement `ruststream::runtime::CapsBatches`
+   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {handle::<_>}>, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `BatchStep`
