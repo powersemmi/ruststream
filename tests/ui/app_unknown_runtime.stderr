@@ -1,0 +1,5 @@
+error: expected `runtime = tokio` or `runtime = embassy`
+ --> tests/ui/app_unknown_runtime.rs:8:17
+  |
+8 | #[app(runtime = smol)]
+  |                 ^^^^
