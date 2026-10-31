@@ -87,7 +87,7 @@ pub struct Outgoing<'a> {
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("answers", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(answer).out_reply(Publish).transform(PerTenant);
+///         b.include(answer).out_reply(Publish).transform(PerTenant)
 ///     })
 /// }
 /// # }
@@ -326,7 +326,7 @@ impl<'a> Outgoing<'a> {
     ///     RustStream::new(AppInfo::new("answers", "0.1.0")).with_broker(
     ///         MemoryBroker::new(),
     ///         |b| {
-    ///             b.include(answer).out_reply(Publish).transform(ToInbox);
+    ///             b.include(answer).out_reply(Publish).transform(ToInbox)
     ///         },
     ///     )
     /// }

@@ -55,9 +55,9 @@ async fn respond(ping: &Ping, Out(events): Out<impl Publisher, Events, Progress>
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn clause_values_come_from_constants_and_statics() {
-    let app =
-        RustStream::new(AppInfo::new("params", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(respond).out(Events, Publish).build();
+    let app = RustStream::new(AppInfo::new("params", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(respond).out(Events, Publish)
         });
     let tb = TestApp::start(app).await.expect("start");
     let broker = tb.broker::<MemoryBroker>();

@@ -104,9 +104,10 @@ async fn broker_contributed_field_reaches_handler_by_key() {
     let seen: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
     let seen_clone = Arc::clone(&seen);
 
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    let bus = MemoryBroker::new();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(bus.clone(), |b| {
         let subscriber = TaggedSubscriber {
-            inner: b.broker().subscribe("orders"),
+            inner: bus.subscribe("orders"),
             next_tag: 0,
         };
         b.handle(
@@ -121,7 +122,7 @@ async fn broker_contributed_field_reaches_handler_by_key() {
                 }
             },
             HandlerMetadata::raw("orders"),
-        );
+        )
     });
 
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -221,8 +222,9 @@ async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated()
     let seen_clone = Arc::clone(&seen);
     let counter = Arc::new(AtomicU32::new(0));
 
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        let subscriber = b.broker().subscribe("orders");
+    let bus1 = MemoryBroker::new();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(bus1.clone(), |b| {
+        let subscriber = bus1.subscribe("orders");
         let handler = {
             let layer = StampLayer {
                 counter: Arc::clone(&counter),
@@ -239,7 +241,7 @@ async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated()
             })
             .with(layer)
         };
-        b.handle(subscriber, handler, HandlerMetadata::raw("orders"));
+        b.handle(subscriber, handler, HandlerMetadata::raw("orders"))
     });
 
     let tb = TestApp::start(app).await.expect("startup failed");

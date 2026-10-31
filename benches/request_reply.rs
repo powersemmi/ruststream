@@ -76,7 +76,7 @@ fn app(messages: usize) -> Requests {
     let runtime = common::runtime();
     let broker = MemoryBroker::new();
     let app = RustStream::new(AppInfo::new("bench", "0.0.0")).with_broker(broker.clone(), |b| {
-        b.include(answer).out_reply(Publish).transform(ReplyTo);
+        b.include(answer).out_reply(Publish).transform(ReplyTo)
     });
     Requests {
         runtime,

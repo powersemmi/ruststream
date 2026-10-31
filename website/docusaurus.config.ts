@@ -60,7 +60,7 @@ const redirects: Record<string, string> = archive
   : guideRedirects(version.docsRs);
 
 // API links on the pages resolve against the rustdoc of the checkout being built, which is the
-// rustdoc docs.rs renders for that version (`cargo doc --all-features --no-deps`).
+// rustdoc docs.rs renders for that version (`just doc`).
 const rustdocDir = process.env.DOCS_RUSTDOC_DIR ?? path.join(contentRoot, 'target', 'doc');
 
 // The navbar opens each category of the documentation. The API is the crate's rustdoc of the

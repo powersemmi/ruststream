@@ -22,10 +22,10 @@ pub(crate) fn shop(
         .layer(TracingLayer::default())
         .layer(SlowHandlers::over(Duration::from_millis(250)))
         .with_broker(broker, |b| {
-            b.include_router(orders::routes());
-            b.include_router(payments::routes());
-            b.include_router(shipping::routes());
-            b.include_router(notifications::routes());
+            b.include_router(orders::routes())
+                .include_router(payments::routes())
+                .include_router(shipping::routes())
+                .include_router(notifications::routes())
         })
 }
 // --8<-- [end:shop]

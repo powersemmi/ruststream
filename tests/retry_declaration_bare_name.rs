@@ -210,7 +210,7 @@ async fn a_declaration_a_bare_name_carries_nowhere_refuses_to_start() {
         |b| {
             b.include(moved)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("orders.dead");
+                .dead_letter("orders.dead")
         },
     );
 
@@ -248,7 +248,7 @@ async fn a_broker_that_maps_a_bare_name_takes_both_halves() {
         |b| {
             b.include(moved)
                 .max_attempts(nonzero!(5u32))
-                .dead_letter("orders.dead");
+                .dead_letter("orders.dead")
         },
     );
     let _tb = TestApp::start(app).await.expect("startup failed");
@@ -265,12 +265,10 @@ async fn a_broker_that_maps_a_bare_name_takes_both_halves() {
 #[tokio::test]
 async fn a_broker_that_refuses_half_a_declaration_refuses_to_start() {
     let declared = Declared::default();
-    let app = RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(
-        Bus::<Mapped>::new(&declared),
-        |b| {
-            b.include(moved).max_attempts(nonzero!(5u32));
-        },
-    );
+    let app = RustStream::new(AppInfo::new("declared", "0.1.0"))
+        .with_broker(Bus::<Mapped>::new(&declared), |b| {
+            b.include(moved).max_attempts(nonzero!(5u32))
+        });
 
     let failed = TestApp::start(app)
         .await
@@ -295,7 +293,7 @@ async fn a_bare_name_on_an_unaddressed_broker_declares_with_a_named_destination(
                 .max_attempts(nonzero!(3u32))
                 .dead_letter("orders.dead")
                 .out_retry(BusPublish)
-                .to("orders.retry");
+                .to("orders.retry")
         },
     );
     let _tb = TestApp::start(app).await.expect("startup failed");
@@ -312,11 +310,7 @@ async fn a_bare_name_on_an_unaddressed_broker_declares_with_a_named_destination(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_bare_name_that_declares_nothing_opens_where_the_broker_moves_deliveries() {
     let declared = Declared::default();
-    let app = RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(
-        Bus::<Moved>::new(&declared),
-        |b| {
-            b.include(moved);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("declared", "0.1.0"))
+        .with_broker(Bus::<Moved>::new(&declared), |b| b.include(moved));
     let _tb = TestApp::start(app).await.expect("startup failed");
 }

@@ -70,7 +70,7 @@ mod on_call {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 
@@ -126,7 +126,7 @@ mod on_publish {
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", Confirm).reply().build())
-                .out_reply(Publish);
+                .out_reply(Publish)
         })
     }
 

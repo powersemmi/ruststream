@@ -147,7 +147,6 @@ mod handler {
         RustStream::new(AppInfo::new("transcoder", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("chunks", Convert).build())
                 .out(Events, Publish)
-                .build();
         })
     }
 
@@ -207,7 +206,7 @@ mod message {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("store", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("chunks", Store).build());
+            b.include(subscriber("chunks", Store).build())
         })
     }
 
@@ -304,7 +303,6 @@ mod stamp {
             b.include(subscriber("chunks", Convert).build())
                 .out(Events, Publish)
                 .transform(Stamp(origin))
-                .build();
         })
     }
     // --8<-- [end:stamp]

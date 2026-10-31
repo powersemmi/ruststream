@@ -31,9 +31,7 @@ async fn record(entry: &Entry) -> HandlerOutcome {
 }
 
 fn app(broker: MemoryBroker<Retaining>) -> impl App {
-    RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-        b.include(record);
-    })
+    RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| b.include(record))
 }
 // --8<-- [end:app]
 

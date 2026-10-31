@@ -110,7 +110,7 @@ mod app_wide {
             // Every handler the app mounts below runs inside the layer.
             .layer(RequireTenant)
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Log).build());
+                b.include(subscriber("orders", Log).build())
             })
     }
     // --8<-- [end:app]
@@ -150,14 +150,14 @@ mod scopes {
                 Router::new()
                     .layer(RequireTenant)
                     .include(subscriber("refunds", Log).build()),
-            );
+            )
             // After an `include`: that registration alone; `audit` runs unwrapped.
-            b.include_router(
+            .include_router(
                 Router::new()
                     .include(subscriber("invoices", Log).build())
                     .layer(RequireTenant)
                     .include(subscriber("audit", Log).build()),
-            );
+            )
         })
     }
     // --8<-- [end:scopes]

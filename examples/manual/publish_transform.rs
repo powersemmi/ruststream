@@ -152,11 +152,10 @@ fn app() -> impl App {
         // A transform follows the position it belongs to.
         b.include(subscriber("orders", Confirm).reply().to("receipts").build())
             .out_reply(Publish)
-            .transform(Correlate);
-        b.include(subscriber("payments", AuditPayment).build())
+            .transform(Correlate)
+            .include(subscriber("payments", AuditPayment).build())
             .out(Trail, Publish)
             .transform(SchemaVersion("2"))
-            .build();
     })
 }
 // --8<-- [end:app]

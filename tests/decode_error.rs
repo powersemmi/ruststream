@@ -29,7 +29,7 @@ use ruststream::memory::prelude::*;
 use ruststream::memory::{
     ConnectedMemoryBroker, LogMode, MemoryMessage, MemorySeeker, MemorySubscriber,
 };
-use ruststream::runtime::BrokerScope;
+use ruststream::runtime::{BrokerScope, MountChain};
 use ruststream::testing::TestApp;
 use ruststream::{
     AckError, AddressedCopies, BatchSubscriber, RedeliveryAddress, RedeliveryAddressed, Seekable,
@@ -207,7 +207,9 @@ fn stopped_for_the_reported_error(tb: &TestApp<()>) {
 }
 
 /// An app with one broker, the in-memory bus of every test that publishes as it goes.
-fn app(mount: impl FnOnce(&mut BrokerScope<MemoryBroker>)) -> RustStream {
+fn app<Chain: MountChain<MemoryBroker>>(
+    mount: impl FnOnce(BrokerScope<MemoryBroker>) -> Chain,
+) -> RustStream {
     RustStream::new(AppInfo::new("claims", "0.1.0")).with_broker(MemoryBroker::new(), mount)
 }
 
@@ -228,9 +230,9 @@ async fn holding(name: &str, payloads: &[&str]) -> Result<MemoryBroker<Retaining
 }
 
 /// An app over a retaining bus, its batch subscription opened at the start of the log.
-fn replaying(
+fn replaying<Chain: MountChain<MemoryBroker<Retaining>>>(
     broker: MemoryBroker<Retaining>,
-    mount: impl FnOnce(&mut BrokerScope<MemoryBroker<Retaining>>),
+    mount: impl FnOnce(BrokerScope<MemoryBroker<Retaining>>) -> Chain,
 ) -> RustStream {
     RustStream::new(AppInfo::new("claims", "0.1.0")).with_broker(broker, mount)
 }
@@ -243,10 +245,7 @@ async fn accept(order: &Order) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_decoded_input_is_refused_before_the_codec_runs() -> Result<(), Box<dyn Error>> {
-    let tb = TestApp::start(app(|b| {
-        b.include(accept);
-    }))
-    .await?;
+    let tb = TestApp::start(app(|b| b.include(accept))).await?;
     tb.broker::<MemoryBroker>()
         .message(&Wire::of(UNREADABLE_ORDER))
         .to("orders")
@@ -271,10 +270,7 @@ async fn measure(frame: &Frame<'_>) -> Size {
 /// answered.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_self_deserializing_input_is_refused_before_it_is_built() -> Result<(), Box<dyn Error>> {
-    let tb = TestApp::start(app(|b| {
-        b.include(measure).out_reply(Publish);
-    }))
-    .await?;
+    let tb = TestApp::start(app(|b| b.include(measure).out_reply(Publish))).await?;
     tb.broker::<MemoryBroker>()
         .message(&Wire::of(UNREADABLE_FRAME))
         .to("frames")
@@ -313,10 +309,7 @@ async fn audit(
 /// report still keeps the body from running, so nothing leaves through the slot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_pair_input_is_refused_before_either_half_decodes() -> Result<(), Box<dyn Error>> {
-    let tb = TestApp::start(app(|b| {
-        b.include(audit).out(Audit, Publish).build();
-    }))
-    .await?;
+    let tb = TestApp::start(app(|b| b.include(audit).out(Audit, Publish))).await?;
     tb.broker::<MemoryBroker>()
         .message(&Wire::of(UNREADABLE_ORDER))
         .with_headers(acme()?)
@@ -343,10 +336,7 @@ async fn greet(row: &Row) -> HandlerOutcome {
 /// The carried lane: the delivery still lends the row it read, and the runtime never asks for it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_carried_input_is_refused_before_the_value_is_lent() -> Result<(), Box<dyn Error>> {
-    let tb = TestApp::start(app(|b| {
-        b.include(greet);
-    }))
-    .await?;
+    let tb = TestApp::start(app(|b| b.include(greet))).await?;
     tb.broker::<MemoryBroker>()
         .message(&Wire::of(Row::new(2, "unreadable").payload()))
         .to("rows")
@@ -372,7 +362,7 @@ async fn tally(orders: &[Order]) -> HandlerOutcome {
 async fn a_decoded_batch_leaves_the_refused_delivery_out() -> Result<(), Box<dyn Error>> {
     let broker = holding("orders", &[r#"{"id":1}"#, UNREADABLE_ORDER, r#"{"id":3}"#]).await?;
     let tb = TestApp::start(replaying(broker, |b| {
-        b.include(tally.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+        b.include(tally.batch(nonzero!(8)).start_at(MemoryPosition::start()))
     }))
     .await?;
     tb.settle().await?;
@@ -401,7 +391,7 @@ async fn a_self_deserializing_batch_leaves_the_refused_delivery_out() -> Result<
 {
     let broker = holding("frames", &["first", UNREADABLE_FRAME, "third"]).await?;
     let tb = TestApp::start(replaying(broker, |b| {
-        b.include(weigh.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+        b.include(weigh.batch(nonzero!(8)).start_at(MemoryPosition::start()))
     }))
     .await?;
     tb.settle().await?;
@@ -430,7 +420,7 @@ async fn a_pair_batch_leaves_the_refused_delivery_out() -> Result<(), Box<dyn Er
             tally_tenants
                 .batch(nonzero!(8))
                 .start_at(MemoryPosition::start()),
-        );
+        )
     }))
     .await?;
     tb.settle().await?;
@@ -465,7 +455,7 @@ async fn a_carried_batch_settles_the_refused_delivery_for_its_reported_error()
             tally_rows
                 .batch(nonzero!(8))
                 .start_at(MemoryPosition::start()),
-        );
+        )
     }))
     .await?;
     tb.settle().await?;

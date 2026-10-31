@@ -10,7 +10,7 @@ import {visit} from 'unist-util-visit';
  * A page writes `[RustStream](api:ruststream::runtime::RustStream)`: an item, a module
  * (`api:ruststream::runtime`), a member of a type (`api:ruststream::runtime::RustStream::run`),
  * or a section of a page (`api:ruststream::runtime#subscribers`). The link resolves against the
- * rustdoc of the checkout being built, `cargo doc --all-features --no-deps`, which is what
+ * rustdoc of the checkout being built, `just doc`, which is what
  * docs.rs renders for that version; a path or a section that rustdoc does not have fails the
  * build with the page and the path. The rustdoc is read on the first such link, so a build
  * whose pages have none (an archive) needs none.
@@ -72,7 +72,7 @@ class Rustdoc {
       if (!fs.existsSync(list)) {
         throw new Error(
           `API links resolve against the rustdoc of this checkout, and ${list} is missing: ` +
-            'run `cargo doc --all-features --no-deps` in the repository first',
+            'run `just doc` in the repository first',
         );
       }
       items = new Map(

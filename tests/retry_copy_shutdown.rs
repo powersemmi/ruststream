@@ -116,9 +116,7 @@ async fn a_copy_pending_at_shutdown_is_published() {
     let state = Arc::clone(&deferred);
     let app = RustStream::new(AppInfo::new("retry", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(state))
-        .with_broker(broker.clone(), |b| {
-            b.include(retried).out_retry(Publish);
-        });
+        .with_broker(broker.clone(), |b| b.include(retried).out_retry(Publish));
     let running = app.start().await.expect("startup");
     broker
         .publisher()

@@ -143,12 +143,10 @@ fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber("ingress", Forward).build())
             .out(DefaultSlot, Publish)
-            .build();
-        // Each marker binds its own policy, in any order.
-        b.include(subscriber("orders.incoming", Confirm).build())
+            // Each marker binds its own policy, in any order.
+            .include(subscriber("orders.incoming", Confirm).build())
             .out(Orders, Publish)
             .out(Trail, Publish)
-            .build();
     })
 }
 // --8<-- [end:app]

@@ -64,7 +64,7 @@ mod pool {
     /// Up to four orders are charged at once; the next one waits for a free worker.
     fn app() -> impl App {
         RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Bill).workers(nonzero!(4)).build());
+            b.include(subscriber("orders", Bill).workers(nonzero!(4)).build())
         })
     }
     // --8<-- [end:workers]
@@ -118,7 +118,7 @@ mod by_key {
                 subscriber("orders", Bill)
                     .workers_by_key(nonzero!(4))
                     .build(),
-            );
+            )
         })
     }
     // --8<-- [end:workers_by_key]

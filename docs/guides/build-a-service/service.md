@@ -63,6 +63,7 @@ The manual form is a named type with an [`impl Handle<Order>`](api:ruststream::r
 ## The app
 
 [`RustStream`](api:ruststream::runtime::RustStream) is the app; [`with_broker`](api:ruststream::runtime::RustStream::with_broker) registers a broker and mounts subscribers on it with `include`.
+The closure returns the chain `include` opens, and each further subscriber is one more `.include(..)` on it.
 The builder only records what it is given: the broker connects when the service starts.
 The [`#[ruststream::app]`](../../components/application/app-macro.md) attribute turns the builder into `main`, with the `run` and `asyncapi gen` commands.
 The manual form writes that `main` by hand: [`run_main`](api:ruststream::runtime::cli::run_main) over the builder.

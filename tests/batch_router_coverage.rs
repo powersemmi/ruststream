@@ -52,9 +52,8 @@ async fn handle_route_dispatches_through_a_prebuilt_subscriber() {
         HandlerMetadata::raw("brc-handle"),
     );
 
-    let app = RustStream::new(AppInfo::new("brc", "0.1.0")).with_broker(broker, |b| {
-        b.include_router(router);
-    });
+    let app = RustStream::new(AppInfo::new("brc", "0.1.0"))
+        .with_broker(broker, |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Wire::of(b"ping"))
@@ -201,10 +200,8 @@ async fn publishing_route_reports_a_refused_reply_publisher() {
         .out(Reply, RefusedPublish)
         .build();
 
-    let app =
-        RustStream::new(AppInfo::new("brc-pair", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include_router(router);
-        });
+    let app = RustStream::new(AppInfo::new("brc-pair", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
 
     assert_subscribe_error(app.start().await, "the reply publisher was refused");
 }
@@ -218,12 +215,8 @@ async fn batch_publishing_route_reports_a_refused_reply_publisher() {
         .out(Reply, RefusedPublish)
         .build();
 
-    let app = RustStream::new(AppInfo::new("brc-batch-pair", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include_router(router);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("brc-batch-pair", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
 
     assert_subscribe_error(app.start().await, "the reply publisher was refused");
 }
@@ -237,12 +230,8 @@ async fn publishing_route_reports_a_source_that_never_opens() {
         .out(Reply, Publish)
         .build();
 
-    let app = RustStream::new(AppInfo::new("brc-source", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include_router(router);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("brc-source", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
 
     assert_subscribe_error(app.start().await, "the memory broker is shut down");
 }

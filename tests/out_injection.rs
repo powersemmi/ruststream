@@ -31,9 +31,9 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn decode_failures_are_recorded_for_out_handlers() {
-    let app =
-        RustStream::new(AppInfo::new("egress", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(forward).out(DefaultSlot, Publish).build();
+    let app = RustStream::new(AppInfo::new("egress", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(forward).out(DefaultSlot, Publish)
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -77,7 +77,6 @@ async fn a_batch_handler_composes_with_an_out_parameter() {
         RustStream::new(AppInfo::new("out-batch", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(forward_batch.batch(nonzero!(8)))
                 .out(DefaultSlot, Publish)
-                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 

@@ -12,7 +12,7 @@ import TabItem from '@theme/TabItem';
 [`TransactionalPublisher`](api:ruststream::TransactionalPublisher) puts several publishes in one broker transaction: every reply of a batch, or a scope a handler opens on its slot.
 
 Messages published inside a transaction become visible together on commit, or not at all.
-A [batch handler](../../batches.md) whose reply chain ends with [`.transactional()`](api:ruststream::runtime::Mounting::transactional) publishes every reply of the batch in one transaction, and acks the batch after the commit.
+A [batch handler](../../batches.md) whose reply chain ends with [`.transactional()`](api:ruststream::runtime::RouterWith::transactional) publishes every reply of the batch in one transaction, and acks the batch after the commit.
 A policy whose live publisher has no transactions does not compile there.
 A broker's prelude names its transactional policy `TransactionalPublish`.
 

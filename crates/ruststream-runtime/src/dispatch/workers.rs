@@ -89,7 +89,7 @@ pub struct Workers {
 ///     // Four threads, two connections each: eight of the database's sixteen.
 ///     let mounted = scan.pools(2, 16)?;
 ///     Ok(RustStream::new(AppInfo::new("scans", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(mounted);
+///         b.include(mounted)
 ///     }))
 /// }
 /// # }
@@ -170,7 +170,7 @@ impl Workers {
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include_router(images());
+    ///         b.include_router(images())
     ///     })
     /// }
     /// # }
@@ -218,7 +218,7 @@ impl Workers {
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include_router(images());
+    ///         b.include_router(images())
     ///     })
     /// }
     /// # }
@@ -279,7 +279,7 @@ impl Workers {
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
     ///         // The step sees the eight workers named before it: a window of 80.
-    ///         b.include(audit.name("orders").workers(nonzero!(8)).prefetch(10));
+    ///         b.include(audit.name("orders").workers(nonzero!(8)).prefetch(10))
     ///     })
     /// }
     /// # }
@@ -337,7 +337,7 @@ impl Workers {
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(audit.log_ordering());
+    ///         b.include(audit.log_ordering())
     ///     })
     /// }
     /// # }
@@ -393,7 +393,7 @@ impl Workers {
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(resize.sessions());
+    ///         b.include(resize.sessions())
     ///     })
     /// }
     /// # }

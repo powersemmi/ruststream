@@ -70,9 +70,7 @@ async fn replay_digest(
 async fn a_replying_batch_repositions_through_the_batch_context() {
     let app = RustStream::new(AppInfo::new("replay", "0.1.0")).with_broker(
         MemoryBroker::retaining(Retention::Messages(nonzero!(32))),
-        |b| {
-            b.include(replay_digest.batch(nonzero!(8)));
-        },
+        |b| b.include(replay_digest.batch(nonzero!(8))),
     );
     let tb = TestApp::start(app).await.expect("harness start");
 

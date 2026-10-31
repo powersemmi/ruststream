@@ -1,5 +1,8 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ContextKind, HandlerOutcome, Names, Out, Outgoing as OutgoingMessage, PublishTransform, RustStream};
+use ruststream::runtime::{
+    AppInfo, ContextKind, HandlerOutcome, Names, Out, Outgoing as OutgoingMessage,
+    PublishTransform, RustStream,
+};
 use ruststream::{OutSlot, Outgoing, TransactionalPublisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +64,5 @@ fn main() {
         b.include(settle)
             .out(Audit, MemoryPublish)
             .transform(ByTenant)
-            .build();
     });
 }

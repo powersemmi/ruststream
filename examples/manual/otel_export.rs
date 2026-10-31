@@ -90,7 +90,7 @@ fn app(otel: &Otel) -> impl App + use<> {
             })
         })
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
 }
 // --8<-- [end:app]

@@ -162,7 +162,6 @@ impl HeaderMap {
     ///         b.include(accept)
     ///             .out(Events, Publish)
     ///             .transform(Region("eu-west"))
-    ///             .build();
     ///     })
     /// }
     /// # }
@@ -259,7 +258,7 @@ impl HeaderMap {
     ///     RustStream::new(AppInfo::new("answers", "0.1.0")).with_broker(
     ///         MemoryBroker::new(),
     ///         |b| {
-    ///             b.include(answer).out_reply(Publish).transform(ToInbox);
+    ///             b.include(answer).out_reply(Publish).transform(ToInbox)
     ///         },
     ///     )
     /// }

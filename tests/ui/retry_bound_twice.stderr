@@ -1,7 +1,7 @@
 error[E0277]: this registration has no unbound publish position marked `ruststream::prelude::Retry`
   --> tests/ui/retry_bound_twice.rs:23:14
    |
-23 |             .out(Retry, MemoryPublish);
+23 |             .out(Retry, MemoryPublish)
    |              ^^^ `.out(ruststream::prelude::Retry, ..)` has no position to bind here
    |
    = help: the trait `ruststream::runtime::BindAt<ruststream::runtime::RetryMount, ruststream::prelude::Retry, _, _>` is not implemented for `ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish>>`

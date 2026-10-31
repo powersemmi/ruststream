@@ -90,7 +90,7 @@ mod retry_after {
         RustStream::new(AppInfo::new("payments", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Ledger::default())))
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("payments", Reconcile).build());
+                b.include(subscriber("payments", Reconcile).build())
             })
     }
 
@@ -161,7 +161,7 @@ mod batch_retry_after {
                         .batch(nonzero!(2))
                         .start_at(MemoryPosition::start())
                         .build(),
-                );
+                )
             })
     }
     // --8<-- [end:batch_retry_after]
@@ -220,7 +220,7 @@ mod declaration {
             // Three deliveries, then the payment goes to the dead-letter subject.
             b.include(subscriber("payments", Charge).build())
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("payments.dead");
+                .dead_letter("payments.dead")
         })
     }
     // --8<-- [end:declaration]

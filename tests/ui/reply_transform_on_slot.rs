@@ -1,5 +1,8 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ForReply, HandlerOutcome, Out, Outgoing as OutgoingMessage, PublishContext, PublishTransform, Reads, RustStream};
+use ruststream::runtime::{
+    AppInfo, ForReply, HandlerOutcome, Out, Outgoing as OutgoingMessage, PublishContext,
+    PublishTransform, Reads, RustStream,
+};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +56,5 @@ fn main() {
         b.include(mirror)
             .out(Audit, MemoryPublish)
             .transform(StampSource)
-            .build();
     });
 }

@@ -22,7 +22,7 @@ use crate::RetryDeclaration;
 use crate::router::{AttachDeclaration, RouterCommit};
 use crate::slot::{
     AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NoReply, Reply, ReplyLast,
-    SlotPos, TransactionalLast, TransformLast,
+    SlotPos, TransactionalLast, TransformLast, TransformPosition,
 };
 
 use super::{Retried, RetryOpen};
@@ -315,6 +315,14 @@ macro_rules! forward_steps {
         where
             Under: AdmitsAt<N, $index, Mount, Def, B>,
         {
+        }
+
+        impl<Under, Cap, Dead, Def, B, $($extra)*> TransformPosition<$index, Def, B>
+            for Declaring<Under, Cap, Dead>
+        where
+            Under: TransformPosition<$index, Def, B>,
+        {
+            type Probe = Under::Probe;
         }
 
         impl<N, Under, Cap, Dead, $($extra)*> BatchTransformLast<N, $index>

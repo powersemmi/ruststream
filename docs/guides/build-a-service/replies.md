@@ -81,8 +81,8 @@ In the manual form the slot is an entry of [`Outs`](api:ruststream::runtime::Out
 ## The router
 
 A [`Router`](api:ruststream::runtime::Router) collects one module's subscribers with the settings of their positions.
-[`out_reply`](api:ruststream::runtime::Mounting::out_reply) binds the reply to a policy, and `.codec(INTERNAL)` encodes it as CBOR.
-[`out`](api:ruststream::runtime::Mounting::out) binds the slot; it keeps the router's codec, which is JSON here.
+[`out_reply`](api:ruststream::runtime::RouterWith::out_reply) binds the reply to a policy, and `.codec(INTERNAL)` encodes it as CBOR.
+[`out`](api:ruststream::runtime::RouterWith::out) binds the slot; it keeps the router's codec, which is JSON here.
 The router names the broker and the app's state type in [`RouterDef<MemoryBroker, Shop>`](api:ruststream::runtime::RouterDef); chapter 7 introduces `Shop`.
 
 <Tabs groupId="api">

@@ -102,7 +102,7 @@ mod service {
                 Router::new()
                     .include(subscriber("orders", Accept).build())
                     .layer(stack),
-            );
+            )
         })
     }
     // --8<-- [end:app]

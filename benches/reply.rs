@@ -42,9 +42,7 @@ async fn confirm(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Confirmatio
 }
 
 fn app(messages: usize) -> Pending {
-    common::pending(messages, 0, |b| {
-        b.include(confirm);
-    })
+    common::pending(messages, 0, |b| b.include(confirm))
 }
 
 #[library_benchmark(config = common::config(2, 28))]

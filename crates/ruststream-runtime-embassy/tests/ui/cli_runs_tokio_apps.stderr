@@ -1,9 +1,10 @@
-error[E0277]: the trait bound `EmbeddedApp<impl Mounts>: ruststream_runtime_tokio::app::app_trait::App` is not satisfied
+error[E0277]: `EmbeddedApp<impl Mounts>` is not a tokio app
  --> tests/ui/cli_runs_tokio_apps.rs:9:13
   |
 9 |     let _ = ruststream_cli::run_main(app);
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `ruststream_runtime_tokio::app::app_trait::App` is not implemented for `EmbeddedApp<impl Mounts>`
   |
+  = note: an EmbeddedApp runs on embassy: await `EmbeddedApp::run(&CONTROL)` in an embassy task; the CLI, MainRuntime, metrics and OTel run on the tokio runtime
 help: the trait `ruststream_runtime_tokio::app::app_trait::App` is implemented for `ruststream_runtime_tokio::app::service::RustStream<Layers, State, Pipeline, Phase>`
  --> $WORKSPACE/crates/ruststream-runtime-tokio/src/app/app_trait.rs
   |

@@ -23,6 +23,7 @@ use crate::retry::DestinationDeclared;
 use crate::retry::RetryOpen;
 use crate::{CopyPath, RetryDeclaration};
 
+use super::head::{Plain, PoisonAt};
 use super::mount_sink::MountSink;
 use super::{SourceBatch, SourceMessage};
 
@@ -116,10 +117,8 @@ pub trait RouteSubscription<B: Broker> {
 /// Every registration of this router says where its retry copies go.
 ///
 /// A route says so unless it bound the deferred-retry position on a descriptor that addresses
-/// nothing and then named no destination. `.build()` asks for it; a scope's guard does not,
-/// because it commits when the statement ends and the chain has no state to fail on before the
-/// `.to(name)` is written - there the startup refusal reports it instead. Machinery; never named
-/// directly.
+/// nothing and then named no destination. The chain asks for it where it commits, at `.build()`
+/// or at the next `.include(..)`. Machinery; never named directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "this registration does not say where its retry copies go",
@@ -533,7 +532,9 @@ where
 /// own down to its registrations, and the parameter defaults to
 /// [`PublishIdentity`](crate::PublishIdentity), which is the path of a router built
 /// without publish middleware - so `RouterDef<B>` names what a builder function returns.
-pub trait RouterDef<B: Broker, State = (), RetryPipeline = PublishIdentity> {
+pub trait RouterDef<B: Broker, State = (), RetryPipeline = PublishIdentity>:
+    PoisonAt<Mode = Plain> + RetryDestinationsDeclared
+{
     /// Applies `global` to every registration and pushes it into `sink`. Called by `include_router`.
     #[doc(hidden)]
     fn mount<G, PP, Sink>(
@@ -580,7 +581,7 @@ impl RouterHandlers for () {
 impl<B, Head, Tail, State, RetryPipeline> RouterDef<B, State, RetryPipeline> for (Head, Tail)
 where
     B: Broker + 'static,
-    Head: MountRoute<B, State, RetryPipeline>,
+    Head: MountRoute<B, State, RetryPipeline> + RetryDestinationsDeclared,
     Tail: RouterDef<B, State, RetryPipeline>,
 {
     fn mount<G, PP, Sink>(

@@ -33,13 +33,9 @@ impl LocalConnectedBroker for RcConnected {
     }
 }
 
-fn app() -> RustStream {
+fn main() {
     let broker = RcBroker {
         client: Rc::new(()),
     };
-    RustStream::new(AppInfo::new("local", "0.1.0")).with_broker(broker, |_b| {})
-}
-
-fn main() {
-    let _ = app;
+    let _app = RustStream::new(AppInfo::new("local", "0.1.0")).register_broker(broker);
 }

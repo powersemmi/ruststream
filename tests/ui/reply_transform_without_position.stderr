@@ -1,18 +1,18 @@
 error[E0277]: this step has no publish position to apply to
-  --> tests/ui/reply_transform_without_position.rs:39:38
+  --> tests/ui/reply_transform_without_position.rs:34:76
    |
-39 |         b.include(confirm).transform(Stamp);
-   |                            --------- ^^^^^ no `.out(marker, policy)` call precedes it in this chain
-   |                            |
-   |                            required by a bound introduced by this call
+34 |         .with_broker(MemoryBroker::new(), |b| b.include(confirm).transform(Stamp));
+   |                                                                  --------- ^^^^^ no `.out(marker, policy)` call precedes it in this chain
+   |                                                                  |
+   |                                                                  required by a bound introduced by this call
    |
    = help: the trait `ruststream::runtime::NamedStep` is not implemented for `ruststream::runtime::NoOutBound`
    = note: a step rides the position named right before it: `.out(Reply, Policy).transform(..)` for a reply, `.out(Marker, Policy).transform(..)` for a slot
-note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`
-  --> crates/ruststream-runtime-tokio/src/app/include/guard.rs
+note: required by a bound in `RouterWith::<Mount, R, Def, Attach, Last>::transform`
+  --> crates/ruststream-runtime/src/router/builders.rs
    |
    |     pub fn transform<N>(
    |            --------- required by a bound in this associated function
 ...
-   |         Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def, B>,
-   |                                              ^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`
+   |         Attach: TransformLast<N, Last, Step: NamedStep>
+   |                                              ^^^^^^^^^ required by this bound in `RouterWith::<Mount, R, Def, Attach, Last>::transform`

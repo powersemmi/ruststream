@@ -315,9 +315,9 @@ crate::__contract_twin! {
         ///     let egress = MemoryBroker::new().bindable();
         ///     let to_egress = egress.bind(Publish);
         ///     RustStream::new(AppInfo::new("bridge", "0.1.0"))
-        ///         .with_broker_labeled("egress", egress, |_b| {})
+        ///         .with_broker_labeled("egress", egress, |b| b)
         ///         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
-        ///             b.include(accept).out_reply(to_egress);
+        ///             b.include(accept).out_reply(to_egress)
         ///         })
         /// }
         /// # }

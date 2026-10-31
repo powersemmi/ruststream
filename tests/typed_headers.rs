@@ -129,9 +129,9 @@ async fn convert(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn from_headers_extracts_and_declared_messages_publish() {
-    let app =
-        RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(convert).out(Events, Publish).build();
+    let app = RustStream::new(AppInfo::new("chunks", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(convert).out(Events, Publish)
         });
     let tb = TestApp::start(app).await.expect("start");
 
@@ -234,7 +234,6 @@ async fn typed_out_composes_with_transactional_capability() {
         RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(transactional_convert)
                 .out(Events, TransactionalPublish)
-                .build();
         });
     let tb = TestApp::start(app).await.expect("start");
     let broker = tb.broker::<MemoryBroker>();
@@ -278,11 +277,8 @@ async fn lenient(_chunk: &Chunk, Headers(meta): Headers<ChunkMeta>) -> HandlerOu
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn header_contract_violation_follows_decode_policy() {
-    let app =
-        RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(strict);
-            b.include(lenient);
-        });
+    let app = RustStream::new(AppInfo::new("chunks", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(strict).include(lenient));
     let tb = TestApp::start(app).await.expect("start");
     let broker = tb.broker::<MemoryBroker>();
 
@@ -324,10 +320,8 @@ async fn frame(payload: &RawFrame<'_>, Headers(meta): Headers<ChunkMeta>) -> Han
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_input_composes_with_from_headers() {
-    let app =
-        RustStream::new(AppInfo::new("frames", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(frame);
-        });
+    let app = RustStream::new(AppInfo::new("frames", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(frame));
     let tb = TestApp::start(app).await.expect("start");
     let broker = tb.broker::<MemoryBroker>();
 
@@ -376,9 +370,9 @@ async fn unrestricted(chunk: &Chunk, Out(events): Out<impl Publisher, Events>) -
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unrestricted_slot_publishes_any_listed_type() {
-    let app =
-        RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(unrestricted).out(Events, Publish).build();
+    let app = RustStream::new(AppInfo::new("chunks", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(unrestricted).out(Events, Publish)
         });
     let tb = TestApp::start(app).await.expect("start");
     let broker = tb.broker::<MemoryBroker>();
@@ -471,12 +465,8 @@ async fn bulk(chunks: &[Message<ChunkMeta, Chunk>]) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_handler_reads_one_header_contract_per_element() {
-    let app = RustStream::new(AppInfo::new("typed-headers-batch", "1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(bulk.batch(nonzero!(2)));
-        },
-    );
+    let app = RustStream::new(AppInfo::new("typed-headers-batch", "1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(bulk.batch(nonzero!(2))));
     let tb = TestApp::start(app).await.expect("start");
 
     // The second delivery carries no contract at all, so it is the one the decode policy drops
@@ -531,12 +521,8 @@ async fn the_router_path_carries_the_batch_header_contract() {
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
         .include(routed.batch(nonzero!(2)));
-    let app = RustStream::new(AppInfo::new("typed-headers-router", "1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include_router(router);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("typed-headers-router", "1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("start");
 
     publish_chunk(&tb, "chunks.routed", 5).await;
@@ -557,12 +543,8 @@ async fn paired(chunk: &Message<ChunkMeta, Chunk>) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_single_message_handler_takes_the_message_pair_input() {
-    let app = RustStream::new(AppInfo::new("typed-headers-pair", "1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(paired);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("typed-headers-pair", "1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(paired));
     let tb = TestApp::start(app).await.expect("start");
 
     publish_chunk(&tb, "chunks.paired", 3).await;

@@ -45,12 +45,10 @@ async fn confirm(order: &Order) -> Message<ReceiptMeta, Receipt> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_pair_reply_carries_its_contract_into_the_outgoing_headers() {
-    let app = RustStream::new(AppInfo::new("pair-reply", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(confirm).out(Reply, Publish);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("pair-reply", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(confirm).out(Reply, Publish)
+        });
     let tb = TestApp::start(app).await.expect("start");
 
     // The single-broker convenience: the app registers one broker, so the publish needs no

@@ -354,6 +354,7 @@ pub async fn carries<
 /// #     }
 /// # }
 /// # impl CarriesBatch<Row> for Page {
+/// #     type Item = Row;
 /// #     fn carried(&self) -> &[Row] { &self.rows }
 /// # }
 /// # impl IntoIterator for Page {

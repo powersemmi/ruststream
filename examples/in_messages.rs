@@ -180,10 +180,10 @@ async fn on_change(change: &OrderChange) -> HandlerOutcome {
 // --8<-- [start:app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(on_event);
-        b.include(on_update);
-        b.include(on_change);
-        b.include_router(Router::new().with_codec(Registry).include(on_record));
+        b.include_router(Router::new().with_codec(Registry).include(on_record))
+            .include(on_event)
+            .include(on_update)
+            .include(on_change)
     })
 }
 // --8<-- [end:app]

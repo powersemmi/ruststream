@@ -96,7 +96,7 @@ use crate::{
 /// /// A service that only routes messages keeps none of them.
 /// fn router() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(accept);
+///         b.include(accept)
 ///     })
 /// }
 ///
@@ -104,7 +104,7 @@ use crate::{
 /// fn projection() -> RustStream {
 ///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(128)));
 ///     RustStream::new(AppInfo::new("projection", "0.1.0")).with_broker(broker, |b| {
-///         b.include(rebuild);
+///         b.include(rebuild)
 ///     })
 /// }
 /// # }
@@ -176,7 +176,7 @@ impl MemoryBroker<Retaining> {
     /// fn app() -> RustStream {
     ///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
     ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-    ///         b.include(rebuild);
+    ///         b.include(rebuild)
     ///     })
     /// }
     /// # }
@@ -222,8 +222,8 @@ impl<Log: LogMode> MemoryBroker<Log> {
     /// fn app() -> RustStream {
     ///     let broker = MemoryBroker::new().routing(Routing::MostSpecific);
     ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-    ///         b.include(europe);
-    ///         b.include(elsewhere);
+    ///         b.include(europe)
+    ///         .include(elsewhere)
     ///     })
     /// }
     /// # }
@@ -439,7 +439,7 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
 ///         // The prelude also names this policy `Publish`.
-///         b.include(confirm).out_reply(MemoryPublish);
+///         b.include(confirm).out_reply(MemoryPublish)
 ///     })
 /// }
 /// # }
@@ -515,7 +515,7 @@ impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(price).out(Pricing, Request).build();
+///         b.include(price).out(Pricing, Request)
 ///     })
 /// }
 /// # }

@@ -74,17 +74,11 @@ async fn confirm(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Confirmatio
 // The wall-clock harness times the closure it is handed, so the service is started and the queue
 // filled here, outside the timing, rather than inside it as the instruction counts do it.
 fn consuming() -> Ready {
-    common::pending(MESSAGES, 0, |b| {
-        b.include(consume);
-    })
-    .ready()
+    common::pending(MESSAGES, 0, |b| b.include(consume)).ready()
 }
 
 fn replying() -> Ready {
-    common::pending(MESSAGES, 0, |b| {
-        b.include(confirm);
-    })
-    .ready()
+    common::pending(MESSAGES, 0, |b| b.include(confirm)).ready()
 }
 
 // The same consume on a runtime with worker threads, publishing inside the timing: what a
@@ -93,7 +87,7 @@ fn replying() -> Ready {
 // to callgrind whether the cache line is its own core's or another's.
 fn consuming_across_threads() -> Started {
     common::pending_on(common::worker_runtime(), MESSAGES, 0, |b| {
-        b.include(consume);
+        b.include(consume)
     })
     .started()
 }
@@ -101,17 +95,14 @@ fn consuming_across_threads() -> Started {
 // The pool of four on a runtime with worker threads: the workers are tasks of that runtime, and
 // every delivery is handed from the loop to one of them, wherever each happens to run.
 fn pooled_across_threads() -> Started {
-    common::pending_on(common::worker_runtime(), MESSAGES, 0, |b| {
-        b.include(pooled);
-    })
-    .started()
+    common::pending_on(common::worker_runtime(), MESSAGES, 0, |b| b.include(pooled)).started()
 }
 
 // Four dedicated threads beside a runtime with worker threads: the loop runs on the runtime and
 // hands every delivery to a thread's ring.
 fn threaded_across_threads() -> Started {
     common::pending_on(common::worker_runtime(), MESSAGES, 0, |b| {
-        b.include(threaded);
+        b.include(threaded)
     })
     .started()
 }
@@ -120,7 +111,7 @@ fn threaded_across_threads() -> Started {
 // fills it, so what this shows is the cost of a thread that keeps running out of work.
 fn threaded_one_across_threads() -> Started {
     common::pending_on(common::worker_runtime(), MESSAGES, 0, |b| {
-        b.include(threaded_one);
+        b.include(threaded_one)
     })
     .started()
 }

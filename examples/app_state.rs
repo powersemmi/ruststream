@@ -61,9 +61,7 @@ mod any_struct {
                     prices: Prices { per_item: 25 },
                 })
             })
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(price).out_reply(Publish);
-            })
+            .with_broker(MemoryBroker::new(), |b| b.include(price).out_reply(Publish))
     }
     // --8<-- [end:state]
 

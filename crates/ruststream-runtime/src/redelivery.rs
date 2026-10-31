@@ -625,10 +625,10 @@ impl ScopeDelivery {
 /// A registration whose descriptor addresses no retry copies, and whose mount site named no
 /// destination either.
 ///
-/// Raised at startup, before the subscription opens, and only for that registration. The mount
-/// chain refuses the same mistake at compile time wherever it can - a router chain, a
-/// slot-carrying form - but a scope's guard commits when the statement ends, so the chain there
-/// has no uncommittable state to fail on and this is where the refusal lands.
+/// Raised at startup, before the subscription opens, and only for that registration. A mount chain
+/// that bound the retry position and named no destination does not compile; this is the
+/// registration that bound nothing, whose broker's default publisher still has no address to
+/// send its copies to.
 // The field is named away from `source` so `thiserror` does not read it as the error's cause.
 #[derive(Debug, Error)]
 #[error(
@@ -735,9 +735,8 @@ where
             };
             // A descriptor that addresses its own copies answers here; one that does not leaves
             // the mount site to name them, statically or per delivery. Nothing left is a
-            // registration whose copies would go nowhere. A `Router` chain refuses that at
-            // `.build()`; a scope's guard cannot, because it commits when the statement ends and
-            // `.to(name)` is written after the publisher, so the refusal lands here.
+            // registration whose copies would go nowhere: the chain refuses one that bound the
+            // retry position at compile time, and one that bound nothing lands here.
             if destination.is_none() && !named_per_delivery {
                 return Err(Box::new(RetryDestinationError {
                     subscription: subscription.to_owned(),

@@ -17,8 +17,8 @@
 //! A [`Router`](super::Router) is a consuming builder, so the chain commits through an explicit
 //! terminal, [`build`](RouterWith::build): `Drop` cannot return the router the registration grew
 //! into. A chain left unfinished never becomes a router, so a forgotten `.build()` is a compile
-//! error at the next use. A [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) drives the same chain
-//! through a guard that commits when the statement ends.
+//! error at the next use. A [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) opens the same chain,
+//! and the app commits it through the same terminal once the `with_broker` closure returns it.
 
 use alloc::borrow::Cow;
 use core::fmt;
@@ -30,10 +30,12 @@ use crate::retry::{
 };
 use crate::slot::{
     AdmitsAt, BatchTransformLast, CodecLast, MapPolicyLast, NamedStep, NoOutBound, OutPosition,
-    Reply, ReplyLast, ReplyStep, TransactionalLast, TransformLast,
+    Reply, ReplyLast, ReplyStep, TransactionalLast, TransformLast, TransformPosition,
+    TransformProbe,
 };
 
 use super::builder::RouterBroker;
+use super::head::{PoisonAt, ScopeOut};
 use super::local::{PoolFits, RouterPipe};
 use super::mount::RouterMount;
 use super::routes::RetryDestinationsDeclared;
@@ -54,6 +56,11 @@ pub trait RouterCommit<Mount, R, Def>: Sized {
 
     fn commit(self, def: Def, router: R) -> Self::Out;
 }
+
+/// What a transform declares about the destination at the position a chain named last: the
+/// witness the `.transform(..)` step reads its output through.
+type TransformWitness<Attach, N, Last, Def, B> =
+    <<Attach as TransformPosition<Last, Def, B>>::Probe as TransformProbe<N>>::Witness;
 
 /// A mount chain over one registration's attachment.
 ///
@@ -162,7 +169,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("receipts", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(issue).out_reply(Publish);
+    ///         b.include(issue).out_reply(Publish)
     ///     })
     /// }
     /// # }
@@ -342,9 +349,8 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// owes. The other way is a transform that names the destination per delivery, and the two
     /// are mutually exclusive, as a declared reply and a naming transform are.
     ///
-    /// A `Router` chain refuses a registration that names neither at `.build()`. A scope's
-    /// registration commits when the statement ends, so there the refusal is the subscription's
-    /// at startup.
+    /// The chain refuses a registration that names neither where it commits, at `.build()` or
+    /// at the next `.include(..)`, on a router and on a broker scope alike.
     ///
     /// A name given here is a channel the registration sends to, and the generated `AsyncAPI`
     /// document reports it with a `send` operation. The address a descriptor takes its own
@@ -428,12 +434,25 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     pub fn transform<N>(
         self,
         transform: N,
-    ) -> RouterWith<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>
+    ) -> ScopeOut<
+        R,
+        TransformWitness<Attach, N, Last, Def, R::Broker>,
+        RouterWith<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>,
+    >
     where
-        R: RouterBroker,
-        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def, R::Broker>,
+        R: RouterBroker + PoisonAt,
+        Attach: TransformLast<N, Last, Step: NamedStep>
+            + AdmitsAt<N, Last, Mount, Def, R::Broker>
+            + TransformPosition<Last, Def, R::Broker>,
+        <Attach as TransformPosition<Last, Def, R::Broker>>::Probe: TransformProbe<N>,
     {
-        RouterWith::new(self.def, self.attach.transform_last(transform), self.router)
+        // Read through the transform at its position, so on a scope's chain a transform that does
+        // not fit leaves the chain with no type, and the step above is the one error.
+        R::poison(RouterWith::new(
+            self.def,
+            self.attach.transform_last(transform),
+            self.router,
+        ))
     }
 
     /// Composes a [`BatchPublishTransform`](crate::BatchPublishTransform) onto every
@@ -485,7 +504,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     where
         Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
     {
-        self.commit_chain()
+        self.attach.commit(self.def, self.router)
     }
 
     /// Commits the registration and mounts the next definition: `.build().include(def)`, so a
@@ -537,20 +556,6 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         Next::Form: RouterMount<<Attach as RouterCommit<Mount, R, Def>>::Out, Next::Settings>,
 {
         <Next::Form as RouterMount<_, Next::Settings>>::begin(def.declare(), self.build())
-    }
-
-    /// Commits the chain without asking whether every registration named a destination.
-    ///
-    /// A scope's guard commits when the statement ends, so the chain there passes through no
-    /// state that could carry the question: `.to(name)` is written after `out_retry(policy)`, and
-    /// by then the guard would already have had to be committable. That surface takes the startup
-    /// refusal instead, and this is the commit it uses.
-    #[doc(hidden)]
-    pub fn commit_chain(self) -> <Attach as RouterCommit<Mount, R, Def>>::Out
-    where
-        Attach: RouterCommit<Mount, R, Def>,
-    {
-        self.attach.commit(self.def, self.router)
     }
 }
 

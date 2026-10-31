@@ -73,7 +73,6 @@ async fn the_mount_site_names_policies_under_the_uniform_names() {
             b.include(settle)
                 .out(Journal, TransactionalPublish)
                 .out(Audit, Publish)
-                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 

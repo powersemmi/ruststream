@@ -99,7 +99,7 @@ mod any_struct {
             })
             .with_broker(MemoryBroker::new(), |b| {
                 b.include(subscriber("orders", Price).reply().build())
-                    .out_reply(Publish);
+                    .out_reply(Publish)
             })
     }
     // --8<-- [end:state]

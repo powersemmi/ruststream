@@ -72,7 +72,6 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
             b.include(transcode)
                 .out(Audit, Publish)
                 .out(Encoded, Publish)
-                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -111,12 +110,11 @@ async fn a_slot_binds_a_foreign_broker_through_a_token() {
     let to_other = other.bind(Publish);
 
     let app = RustStream::new(AppInfo::new("slots-cross", "0.1.0"))
-        .with_broker_labeled("other", other, |_b| {})
+        .with_broker_labeled("other", other, |b| b)
         .with_broker_labeled("ingress", ingress, |b| {
             b.include(transcode)
                 .out(Audit, to_other)
                 .out(Encoded, Publish)
-                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -166,9 +164,9 @@ async fn settle(event: &Event, Out(tx): Out<impl OwnedTransactions, Encoded>) ->
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_capability_refined_slot_pairs_a_transactional_publisher() {
-    let app =
-        RustStream::new(AppInfo::new("slots-txn", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle).out(Encoded, TransactionalPublish).build();
+    let app = RustStream::new(AppInfo::new("slots-txn", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(settle).out(Encoded, TransactionalPublish)
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -222,14 +220,10 @@ async fn settle_by_hand(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_raw_capability_calls_keep_the_slot_attribution() {
-    let app = RustStream::new(AppInfo::new("slots-by-hand", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(settle_by_hand)
-                .out(Encoded, TransactionalPublish)
-                .build();
-        },
-    );
+    let app = RustStream::new(AppInfo::new("slots-by-hand", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(settle_by_hand).out(Encoded, TransactionalPublish)
+        });
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Event { id: 6 })
@@ -271,7 +265,6 @@ async fn a_refused_capability_call_comes_back_as_the_entrys_error() {
         |b| {
             b.include(commit_without_begin)
                 .out(Encoded, TransactionalPublish)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -321,14 +314,10 @@ async fn settle_raw(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_raw_owned_transaction_settles_outside_the_slot() {
-    let app = RustStream::new(AppInfo::new("slots-raw-owned", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(settle_raw)
-                .out(Encoded, TransactionalPublish)
-                .build();
-        },
-    );
+    let app = RustStream::new(AppInfo::new("slots-raw-owned", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(settle_raw).out(Encoded, TransactionalPublish)
+        });
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Event { id: 5 })
@@ -418,12 +407,10 @@ async fn route_shard(event: &Event, Out(lanes): Out<impl ShardLanes>) -> Handler
 /// publish log, the documented boundary.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
-    let app = RustStream::new(AppInfo::new("slots-lanes", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(route_shard).out(DefaultSlot, LanePolicy).build();
-        },
-    );
+    let app = RustStream::new(AppInfo::new("slots-lanes", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(route_shard).out(DefaultSlot, LanePolicy)
+        });
     let tb = TestApp::start(app).await.expect("harness start");
 
     for id in [2u64, 3u64] {

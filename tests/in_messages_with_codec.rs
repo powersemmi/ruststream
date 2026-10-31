@@ -119,9 +119,7 @@ fn app() -> impl App {
     RustStream::new(AppInfo::new("rec", "0.1.0")).with_broker_codec(
         MemoryBroker::new(),
         REGISTRY,
-        |b| {
-            b.include(on_event);
-        },
+        |b| b.include(on_event),
     )
 }
 

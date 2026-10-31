@@ -50,6 +50,10 @@ pub trait SourceCarriesBatch<T, Conn> {
     /// The subscription's batch type.
     type Batch;
 
+    /// The value one batch lends, `T` itself, read through the batch's own
+    /// [`CarriesBatch::Item`]: the witness a carried mount reads its output through.
+    type Item;
+
     /// The values one batch lends.
     fn lend(batch: &Self::Batch) -> &[T];
 }
@@ -65,6 +69,7 @@ where
     <Src::Subscriber as BatchSubscriber>::Batch: CarriesBatch<T>,
 {
     type Batch = <Src::Subscriber as BatchSubscriber>::Batch;
+    type Item = <<Src::Subscriber as BatchSubscriber>::Batch as CarriesBatch<T>>::Item;
 
     fn lend(batch: &Self::Batch) -> &[T] {
         batch.carried()

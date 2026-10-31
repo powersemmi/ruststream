@@ -15,9 +15,7 @@ use crate::orders::{confirm, handle};
 
 #[ruststream::app]
 fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(handle);
-        b.include(confirm);
-    })
+    RustStream::new(AppInfo::new("orders-service", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle).include(confirm))
 }
 // --8<-- [end:reply]

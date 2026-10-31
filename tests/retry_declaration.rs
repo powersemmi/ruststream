@@ -223,7 +223,7 @@ async fn the_brokers_own_delivery_count_drives_the_cap() {
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(never_ready_counted)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("shipments.dead");
+                .dead_letter("shipments.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -250,7 +250,7 @@ async fn a_first_delivery_the_broker_counts_stays_below_the_cap() {
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(never_ready_counted)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("shipments.dead");
+                .dead_letter("shipments.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -321,7 +321,7 @@ async fn the_cap_sends_the_last_delivery_to_the_dead_letter_destination() {
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(never_ready)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("orders.dead");
+                .dead_letter("orders.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -356,9 +356,9 @@ async fn the_cap_sends_the_last_delivery_to_the_dead_letter_destination() {
 /// which leaves the broker's own dead-letter policy in play where one is configured.
 #[tokio::test(start_paused = true)]
 async fn a_cap_without_a_destination_rejects_the_last_delivery() {
-    let app =
-        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(never_ready).max_attempts(nonzero!(2u32));
+    let app = RustStream::new(AppInfo::new("declared", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready).max_attempts(nonzero!(2u32))
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -385,9 +385,9 @@ async fn a_cap_without_a_destination_rejects_the_last_delivery() {
 /// delivery away instead of sending it back.
 #[tokio::test(start_paused = true)]
 async fn a_destination_without_a_cap_redirects_every_copy() {
-    let app =
-        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(never_ready).dead_letter("orders.dead");
+    let app = RustStream::new(AppInfo::new("declared", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready).dead_letter("orders.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -416,7 +416,7 @@ async fn an_immediate_retry_counts_through_the_header() {
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(never_ready_now)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("jobs.dead");
+                .dead_letter("jobs.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -440,9 +440,9 @@ async fn an_immediate_retry_counts_through_the_header() {
 /// the runtime publishes no copy, so the message stops coming back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_immediate_retry_at_the_cap_without_a_destination_is_rejected() {
-    let app =
-        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(never_ready_now).max_attempts(nonzero!(2u32));
+    let app = RustStream::new(AppInfo::new("declared", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_now).max_attempts(nonzero!(2u32))
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -462,9 +462,9 @@ async fn an_immediate_retry_at_the_cap_without_a_destination_is_rejected() {
 /// delayed one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_destination_without_a_cap_takes_an_immediate_retry_away() {
-    let app =
-        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(never_ready_now).dead_letter("jobs.dead");
+    let app = RustStream::new(AppInfo::new("declared", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_now).dead_letter("jobs.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -494,7 +494,7 @@ async fn the_declaration_composes_with_the_named_publisher() {
                 .max_attempts(nonzero!(2u32))
                 .dead_letter("orders.dead")
                 .out_retry(MemoryPublish)
-                .transform(StampSource);
+                .transform(StampSource)
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -577,7 +577,7 @@ async fn a_broker_moved_immediate_retry_is_never_capped() {
         .with_broker(MemoryBroker::new(), |b| {
             b.include(moved_retry)
                 .max_attempts(nonzero!(1u32))
-                .dead_letter("managed.dead");
+                .dead_letter("managed.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -740,7 +740,7 @@ async fn the_cap_applies_where_a_native_delay_counts_through_the_header() {
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(never_ready_in_the_wait_queue)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("returns.dead");
+                .dead_letter("returns.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -799,7 +799,7 @@ async fn a_named_destination_overrides_an_addressed_descriptor() {
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(settle_on_the_copy)
                 .out_retry(MemoryPublish)
-                .to("invoices.retry");
+                .to("invoices.retry")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -855,7 +855,7 @@ async fn a_naming_transform_sends_each_copy_to_the_delivery_s_own_topic() {
                     .out_retry(MemoryPublish)
                     .transform(ToOriginalTopic)
                     .build(),
-            );
+            )
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -887,10 +887,8 @@ async fn a_naming_transform_sends_each_copy_to_the_delivery_s_own_topic() {
 /// is where the refusal lands there.
 #[tokio::test]
 async fn an_unnamed_destination_on_an_unaddressed_descriptor_refuses_to_start() {
-    let app =
-        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(filtered);
-        });
+    let app = RustStream::new(AppInfo::new("declared", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(filtered));
 
     let failed = TestApp::start(app)
         .await
@@ -918,7 +916,7 @@ async fn the_cap_is_spent_on_the_reference_brokers_native_redelivery() {
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(never_ready_in_memory)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("crates.dead");
+                .dead_letter("crates.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -952,7 +950,7 @@ async fn a_cap_without_a_destination_terminates_on_the_reference_broker() {
     let app =
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(never_ready_in_memory)
-                .max_attempts(nonzero!(2u32));
+                .max_attempts(nonzero!(2u32))
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -981,7 +979,7 @@ async fn a_native_count_is_the_only_count() {
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(never_ready_in_memory)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("crates.dead");
+                .dead_letter("crates.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -1020,7 +1018,7 @@ async fn an_immediate_retry_is_requeued_natively_and_still_capped() {
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(never_ready_now_in_memory)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("tarballs.dead");
+                .dead_letter("tarballs.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

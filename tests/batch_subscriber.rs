@@ -132,7 +132,7 @@ async fn a_delegating_broker_honours_the_batch_size() {
     }
 
     let app = RustStream::new(AppInfo::new("trickle", "0.1.0")).with_broker(broker, |b| {
-        b.include(sip.batch(nonzero!(2)).start_at(MemoryPosition::start()));
+        b.include(sip.batch(nonzero!(2)).start_at(MemoryPosition::start()))
     });
     let tb = TestApp::start(app).await.expect("harness start");
     tb.settle().await.expect("the replayed batches settle");
@@ -163,10 +163,8 @@ async fn sift(orders: &[Order]) -> HandlerOutcome {
 /// handler, in publish order, and the batch is not failed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undecodable_elements_never_reach_the_handler() {
-    let app =
-        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(sift.batch(nonzero!(64)));
-        });
+    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(sift.batch(nonzero!(64))));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -235,7 +233,7 @@ async fn per_element_outcomes_retry_individually() {
                 reconcile
                     .batch(nonzero!(8))
                     .start_at(MemoryPosition::start()),
-            );
+            )
         });
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle()
@@ -277,7 +275,7 @@ async fn audit(orders: &[Order]) -> Vec<Confirmation> {
 fn batch_publishing_def_records_metadata() {
     let broker = MemoryBroker::new();
     let app = RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-        b.include(audit.batch(nonzero!(64))).out_reply(Publish);
+        b.include(audit.batch(nonzero!(64))).out_reply(Publish)
     });
 
     assert_eq!(app.handlers().len(), 1);
@@ -299,9 +297,8 @@ async fn bill(orders: &[Order]) -> HandlerOutcome {
 #[test]
 fn batch_def_records_metadata() {
     let broker = MemoryBroker::new();
-    let app = RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| {
-        b.include(bill.batch(nonzero!(64)));
-    });
+    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
+        .with_broker(broker, |b| b.include(bill.batch(nonzero!(64))));
 
     assert_eq!(app.handlers().len(), 1);
     assert_eq!(app.handlers()[0].name, "orders");
@@ -336,7 +333,7 @@ async fn batch_handler_reads_typed_state() {
     let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Tally { multiplier: 10 }))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(scale.batch(nonzero!(64))).out_reply(Publish);
+            b.include(scale.batch(nonzero!(64))).out_reply(Publish)
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

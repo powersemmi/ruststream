@@ -161,7 +161,7 @@ pub trait FromRef<S>: Sized {
 ///             })
 ///         })
 ///         .with_broker(MemoryBroker::new(), |b| {
-///             b.include(price);
+///             b.include(price)
 ///         })
 /// }
 /// # }

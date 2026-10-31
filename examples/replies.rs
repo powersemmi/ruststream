@@ -55,9 +55,10 @@ async fn quote(order: &Order) -> Quote {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         // The broker's default policy, under the default codec.
-        b.include(issue_receipt);
-        // The policy the reply leaves through, named at the mount site.
-        b.include(quote).out_reply(Publish);
+        b.include(issue_receipt)
+            // The policy the reply leaves through, named at the mount site.
+            .include(quote)
+            .out_reply(Publish)
     })
 }
 // --8<-- [end:app]

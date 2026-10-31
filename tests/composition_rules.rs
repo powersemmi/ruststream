@@ -48,7 +48,7 @@ async fn transactional_replies_compose_with_a_batch_pool() {
     let app = RustStream::new(AppInfo::new("tx", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(tx_confirm.batch(nonzero!(4)))
             .out(Reply, TransactionalPublish)
-            .transactional();
+            .transactional()
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -90,7 +90,7 @@ async fn buffered_drain(orders: &[Order]) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn buffered_sources_compose_with_a_batch_pool() {
     let app = RustStream::new(AppInfo::new("buf", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(buffered_drain.batch(nonzero!(2)));
+        b.include(buffered_drain.batch(nonzero!(2)))
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -139,8 +139,7 @@ async fn pooled_check(_r: &Receipt) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publishing_replies_compose_with_a_worker_pool() {
     let app = RustStream::new(AppInfo::new("pub", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(pooled_relay);
-        b.include(pooled_check);
+        b.include(pooled_relay).include(pooled_check)
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 

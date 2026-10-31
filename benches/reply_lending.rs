@@ -42,9 +42,7 @@ async fn confirm(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Confirmatio
 }
 
 fn app(messages: usize) -> Pending {
-    common::pending(messages, 0, |b| {
-        b.include(confirm).out_reply(SinkPublish);
-    })
+    common::pending(messages, 0, |b| b.include(confirm).out_reply(SinkPublish))
 }
 
 // The framework allocates nothing per message here, so what is left in the steady state is the

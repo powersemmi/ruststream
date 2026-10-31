@@ -55,9 +55,8 @@ async fn a_seek_key_repositions_from_inside_the_handler() {
     let broker = replaying();
     let ingress = broker.publisher();
 
-    let app = RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(broker, |b| {
-        b.include(work);
-    });
+    let app =
+        RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(broker, |b| b.include(work));
     let tb = TestApp::start(app).await.expect("harness start");
 
     // The marker's seek waits for the whole run to land, then must skip the queued second
@@ -107,9 +106,8 @@ async fn a_start_position_replays_history_into_a_fresh_subscription() {
             .expect("publish");
     }
 
-    let app = RustStream::new(AppInfo::new("history", "0.1.0")).with_broker(broker, |b| {
-        b.include(replayer);
-    });
+    let app = RustStream::new(AppInfo::new("history", "0.1.0"))
+        .with_broker(broker, |b| b.include(replayer));
     let tb = TestApp::start(app).await.expect("harness start");
 
     // The publish keeps the reaction in flight until the startup replay is applied, so
@@ -173,9 +171,7 @@ async fn an_out_parameter_and_a_seek_key_combine_in_one_handler() {
     let ingress = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("combo", "0.1.0")).with_broker(broker, |b| {
-        b.include(forward_skipping)
-            .out(DefaultSlot, Publish)
-            .build();
+        b.include(forward_skipping).out(DefaultSlot, Publish)
     });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -228,9 +224,8 @@ async fn a_raw_handler_composes_with_a_seek_key() {
     let broker = replaying();
     let ingress = broker.publisher();
 
-    let app = RustStream::new(AppInfo::new("frames", "0.1.0")).with_broker(broker, |b| {
-        b.include(raw_work);
-    });
+    let app = RustStream::new(AppInfo::new("frames", "0.1.0"))
+        .with_broker(broker, |b| b.include(raw_work));
     let tb = TestApp::start(app).await.expect("harness start");
 
     for payload in [b"poison".as_slice(), b"skipped", b"kept"] {
@@ -282,9 +277,8 @@ async fn a_publishing_handler_composes_with_a_seek_key() {
     let broker = replaying();
     let ingress = broker.publisher();
 
-    let app = RustStream::new(AppInfo::new("gate", "0.1.0")).with_broker(broker, |b| {
-        b.include(gate);
-    });
+    let app =
+        RustStream::new(AppInfo::new("gate", "0.1.0")).with_broker(broker, |b| b.include(gate));
     let tb = TestApp::start(app).await.expect("harness start");
 
     // The marker's seek waits for the whole run: it skips the queued second message, and

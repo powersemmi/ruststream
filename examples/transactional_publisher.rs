@@ -89,8 +89,9 @@ fn app(broker: MemoryBroker) -> impl App {
         // One transaction per batch, committed before the batch is acked.
         b.include(confirm.batch(nonzero!(64)))
             .out_reply(TransactionalPublish)
-            .transactional();
-        b.include(book).out(Ledger, TransactionalPublish).build();
+            .transactional()
+            .include(book)
+            .out(Ledger, TransactionalPublish)
     })
 }
 // --8<-- [end:app]

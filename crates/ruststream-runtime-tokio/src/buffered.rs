@@ -83,7 +83,7 @@ const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
 ///                 .name("orders")
 ///                 .batch(nonzero!(64))
 ///                 .linger(Duration::from_millis(20)),
-///         );
+///         )
 ///     })
 /// }
 /// # }

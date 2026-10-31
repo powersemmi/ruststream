@@ -38,9 +38,8 @@ async fn a_chain_codec_decodes_the_request_and_leaves_the_reply_its_own() {
         .out(Reply, Publish)
         .build();
 
-    let app = RustStream::new(AppInfo::new("rpc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include_router(router);
-    });
+    let app = RustStream::new(AppInfo::new("rpc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -73,9 +72,8 @@ async fn a_chain_codec_decodes_a_batch_and_leaves_the_replies_their_own() {
         .out(Reply, Publish)
         .build();
 
-    let app = RustStream::new(AppInfo::new("bpc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include_router(router);
-    });
+    let app = RustStream::new(AppInfo::new("bpc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -123,9 +121,7 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
 
     let app = RustStream::new(AppInfo::new("rl", "0.1.0"))
         .publish_layer(StampApp)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include_router(router);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -156,9 +152,7 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
 
     let app = RustStream::new(AppInfo::new("bl", "0.1.0"))
         .publish_layer(StampApp)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include_router(router);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -190,9 +184,8 @@ async fn a_router_publishes_a_byte_for_byte_reply() {
         .out(Reply, Publish)
         .build();
 
-    let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include_router(router);
-    });
+    let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 4 })
@@ -263,9 +256,8 @@ async fn router_publishing_threads_typed_delivery_context() {
         .transform(PropagateCorrelation)
         .build();
 
-    let app = RustStream::new(AppInfo::new("tc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include_router(router);
-    });
+    let app = RustStream::new(AppInfo::new("tc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     let mut headers = HeaderMap::new();

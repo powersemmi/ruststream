@@ -45,6 +45,5 @@ fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber("orders", Record).build())
             .out(Journal, MemoryPublish)
-            .build();
     });
 }

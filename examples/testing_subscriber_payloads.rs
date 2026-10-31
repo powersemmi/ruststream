@@ -40,9 +40,8 @@ mod with {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:with]
@@ -78,9 +77,8 @@ mod with_raw {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:with_raw]
@@ -118,9 +116,8 @@ mod received {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:received]
@@ -159,9 +156,8 @@ mod received_raw {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("frames", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(ingest);
-        })
+        RustStream::new(AppInfo::new("frames", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(ingest))
     }
 
     // --8<-- [start:received_raw]
@@ -202,7 +198,7 @@ mod batches {
 
     fn app(broker: MemoryBroker<Retaining>) -> impl App {
         RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| {
-            b.include(bill.batch(nonzero!(2)).start_at(MemoryPosition::start()));
+            b.include(bill.batch(nonzero!(2)).start_at(MemoryPosition::start()))
         })
     }
 
@@ -252,7 +248,7 @@ mod batches_raw {
 
     fn app(broker: MemoryBroker<Retaining>) -> impl App {
         RustStream::new(AppInfo::new("frames", "0.1.0")).with_broker(broker, |b| {
-            b.include(ingest.batch(nonzero!(2)).start_at(MemoryPosition::start()));
+            b.include(ingest.batch(nonzero!(2)).start_at(MemoryPosition::start()))
         })
     }
 
@@ -299,7 +295,7 @@ mod assert_batch_sizes {
 
     fn app(broker: MemoryBroker<Retaining>) -> impl App {
         RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| {
-            b.include(bill.batch(nonzero!(2)).start_at(MemoryPosition::start()));
+            b.include(bill.batch(nonzero!(2)).start_at(MemoryPosition::start()))
         })
     }
 

@@ -72,9 +72,7 @@ mod single {
     fn app() -> impl App<State = Arc<Notifier>> {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Notifier::default())))
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(accept);
-            })
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     #[tokio::test]
@@ -125,7 +123,7 @@ mod batch {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Notifier::default())))
             .with_broker(broker, |b| {
-                b.include(accept.batch(nonzero!(3)).start_at(MemoryPosition::start()));
+                b.include(accept.batch(nonzero!(3)).start_at(MemoryPosition::start()))
             })
     }
 
@@ -179,9 +177,7 @@ mod hooks {
     fn app() -> impl App<State = Arc<Notifier>> {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Notifier::default())))
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(accept);
-            })
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     #[tokio::test]

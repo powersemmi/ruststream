@@ -490,6 +490,91 @@ where
 // named, so this one must not fail first.
 impl<N, Rep, Slots, Mount, Def, B> AdmitsAt<N, NoOutBound, Mount, Def, B> for (Rep, Slots) {}
 
+/// What the `.transform(..)` step checks a transform against at the position a chain named
+/// last: a [`TransformProbe`] that names the position's context kind and per-message options.
+///
+/// It asks nothing of the position, so the step's own check ([`AdmitsAt`]) is the one that
+/// speaks; the probe only lets the step's output be read through the transform, so a transform
+/// that does not fit its position is reported once, at the step. Machinery; never named directly.
+#[doc(hidden)]
+pub trait TransformPosition<Last, Def, B> {
+    /// The probe the transform is read through.
+    type Probe;
+}
+
+/// Reads a transform through the position a [`TransformPosition`] names. Machinery; never named
+/// directly.
+#[doc(hidden)]
+pub trait TransformProbe<N> {
+    /// What the transform declares about the destination at this position.
+    type Witness;
+}
+
+/// What a probe stands for, held by type alone.
+type ProbeOf<Parts> = PhantomData<fn() -> Parts>;
+
+/// The probe of a reply position: the definition's context, the reply's policy and the broker.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct ReplyProbe<Def, Policy, B>(ProbeOf<(Def, Policy, B)>);
+
+/// The probe of a slot position: the slot's policy and the broker.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct SlotProbe<Policy, B>(ProbeOf<(Policy, B)>);
+
+/// The probe of a position whose own step checks the transform elsewhere (the byte-for-byte
+/// reply, the retry slot, nothing named yet): every transform passes it.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct AnyTransform;
+
+impl<N, Def, Policy, B> TransformProbe<N> for ReplyProbe<Def, Policy, B>
+where
+    B: LocalBroker,
+    Def: DeclaresReply,
+    Policy: LocalPublishPolicy<LocalConnected<B>, Live: LocalPublisher>,
+    N: PublishTransform<ForReply<Def::Context>, PositionOptions<Policy, B>>,
+{
+    type Witness = N::Destination;
+}
+
+impl<N, Policy, B> TransformProbe<N> for SlotProbe<Policy, B>
+where
+    B: LocalBroker,
+    Policy: LocalPublishPolicy<LocalConnected<B>, Live: LocalPublisher>,
+    N: PublishTransform<ForSlot, PositionOptions<Policy, B>>,
+{
+    type Witness = N::Destination;
+}
+
+impl<N> TransformProbe<N> for AnyTransform {
+    type Witness = ();
+}
+
+impl<Policy, Enc, PL, BL, Tx, Slots, Def, B> TransformPosition<ReplyLast, Def, B>
+    for (WithSource<ReplyWiring<Policy, Enc, PL, BL, Tx>>, Slots)
+{
+    type Probe = ReplyProbe<Def, Policy, B>;
+}
+
+impl<Policy, Slots, Def, B> TransformPosition<ReplyLast, Def, B>
+    for (WithSource<RawReplyWiring<Policy>>, Slots)
+{
+    type Probe = AnyTransform;
+}
+
+impl<const POS: usize, Rep, Slots, Def, B> TransformPosition<SlotPos<POS>, Def, B> for (Rep, Slots)
+where
+    Slots: MapPolicyAt<SlotPos<POS>>,
+{
+    type Probe = SlotProbe<Slots::Policy, B>;
+}
+
+impl<Rep, Slots, Def, B> TransformPosition<NoOutBound, Def, B> for (Rep, Slots) {
+    type Probe = AnyTransform;
+}
+
 /// Whether the slot bound at `Index` admits the transform the `.transform(..)` step is about to
 /// compose. The positional half of [`AdmitsAt`]; machinery, never named directly.
 #[doc(hidden)]

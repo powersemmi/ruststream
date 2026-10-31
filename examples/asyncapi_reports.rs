@@ -100,13 +100,14 @@ async fn charge(payment: &Payment) -> HandlerOutcome {
 // --8<-- [start:retry]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(confirm);
-        b.include(accept).out(Tenants, Publish).build();
-        b.include(ship);
-        // The cap and the dead-letter destination reach the document with the registration.
-        b.include(charge)
+        b.include(confirm)
+            .include(accept)
+            .out(Tenants, Publish)
+            .include(ship)
+            // The cap and the dead-letter destination reach the document with the registration.
+            .include(charge)
             .max_attempts(nonzero!(3u32))
-            .dead_letter("payments.dead");
+            .dead_letter("payments.dead")
     })
 }
 // --8<-- [end:retry]

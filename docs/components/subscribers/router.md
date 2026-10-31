@@ -15,7 +15,7 @@ A router is a group of registrations bound to a broker type, not to a broker val
 `include` adds a [`#[subscriber]`](./index.md) handler to the router the same way it adds one to a broker scope, settings included.
 A router's full type names every registration in a [`RouterDef`](api:ruststream::runtime::RouterDef), so a builder function returns `impl RouterDef<B>`, or `Router<B, impl RouterDef<B>>` when the caller still merges it.
 [`merge`](api:ruststream::runtime::Router::merge) appends another router's registrations, and each router keeps its own codec and layers.
-`include_router` on a broker scope of the [application](../application/index.md) mounts the group.
+`include_router` on a broker scope of the [application](../application/index.md) mounts the group, as a step of the scope's chain before its `include`s.
 [`layer`](api:ruststream::runtime::Router::layer) adds [middleware](./middleware/index.md) and is called before the router's first `include`; after one, `.layer(..)` applies to that registration alone.
 A router's layer must be a [`BlanketLayer`](api:ruststream::runtime::BlanketLayer), because the router hides its handlers' types.
 The app's own layers wrap outside the router's layers.

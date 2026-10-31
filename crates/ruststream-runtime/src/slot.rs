@@ -34,10 +34,11 @@ use crate::{
 mod position;
 
 pub use position::{
-    AdmitsAt, AdmitsSlotAt, BatchTransformLast, BindAt, CodecAt, CodecLast, MapPolicyAt,
-    MapPolicyLast, MountOffer, NamedStep, NoOutBound, OutAttachment, OutPosition, PositionOptions,
-    ReplyLast, ReplyOffer, ReplyOpen, ReplyStep, SlotCodec, SlotPolicy, TransactionalLast,
-    TransformAt, TransformLast,
+    AdmitsAt, AdmitsSlotAt, AnyTransform, BatchTransformLast, BindAt, CodecAt, CodecLast,
+    MapPolicyAt, MapPolicyLast, MountOffer, NamedStep, NoOutBound, OutAttachment, OutPosition,
+    PositionOptions, ReplyLast, ReplyOffer, ReplyOpen, ReplyProbe, ReplyStep, SlotCodec,
+    SlotPolicy, SlotProbe, TransactionalLast, TransformAt, TransformLast, TransformPosition,
+    TransformProbe,
 };
 
 /// A slot marker: the identity of one [`Out`](super::Out) injection.
@@ -81,7 +82,7 @@ pub use position::{
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(accept).out(Audit, Publish).build();
+///         b.include(accept).out(Audit, Publish)
 ///     })
 /// }
 /// # }
@@ -169,7 +170,7 @@ pub use position::{
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("lanes", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(route).out(DefaultSlot, LanePolicy).build();
+///         b.include(route).out(DefaultSlot, LanePolicy)
 ///     })
 /// }
 /// # }
@@ -236,7 +237,7 @@ pub trait OutSlot: 'static {
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(accept).out(DefaultSlot, Publish).build();
+///         b.include(accept).out(DefaultSlot, Publish)
 ///     })
 /// }
 /// # }
@@ -282,7 +283,7 @@ impl OutSlot for DefaultSlot {
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(confirm).out(Reply, Publish);
+///         b.include(confirm).out(Reply, Publish)
 ///     })
 /// }
 /// # }
@@ -763,7 +764,7 @@ impl_contains_message! {
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("convert", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(convert).out(Events, Publish).build();
+///         b.include(convert).out(Events, Publish)
 ///     })
 /// }
 /// # }

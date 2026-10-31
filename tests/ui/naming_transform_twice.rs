@@ -1,5 +1,8 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ContextKind, ForReply, Names, Outgoing as OutgoingMessage, PublishContext, PublishTransform, Reply, RustStream};
+use ruststream::runtime::{
+    AppInfo, ContextKind, ForReply, Names, Outgoing as OutgoingMessage, PublishContext,
+    PublishTransform, Reply, RustStream,
+};
 use ruststream::{Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +57,6 @@ fn main() {
         b.include(confirm)
             .out(Reply, MemoryPublish)
             .transform(ReplyTo)
-            .transform(Inbox);
+            .transform(Inbox)
     });
 }

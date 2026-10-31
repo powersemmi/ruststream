@@ -46,7 +46,7 @@ async fn notify(shipment: &Shipment, Out(out): Out<impl Publisher>) -> HandlerOu
 
 fn app() -> impl App {
     RustStream::new(AppInfo::new("shipping", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(notify).out(DefaultSlot, Publish).build();
+        b.include(notify).out(DefaultSlot, Publish)
     })
 }
 

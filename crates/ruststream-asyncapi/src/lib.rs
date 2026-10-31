@@ -60,7 +60,7 @@ use spec::ASYNCAPI_VERSION;
 ///
 /// pub fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(accept);
+///         b.include(accept)
 ///     })
 /// }
 ///

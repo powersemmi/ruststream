@@ -41,9 +41,8 @@ mod on_call {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:on-call]
@@ -88,7 +87,7 @@ mod on_publish {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(confirm).out_reply(Publish);
+            b.include(confirm).out_reply(Publish)
         })
     }
 

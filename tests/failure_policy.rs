@@ -103,10 +103,8 @@ async fn drive_good_bad_good<S: Send + Sync + 'static>(tb: &TestApp<S>, topic: &
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handler_panic_fails_fast_and_run_returns_err() {
-    let app =
-        RustStream::new(AppInfo::new("boom", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(boom);
-        });
+    let app = RustStream::new(AppInfo::new("boom", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(boom));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -129,10 +127,8 @@ async fn handler_panic_fails_fast_and_run_returns_err() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn panic_drop_keeps_the_subscriber_consuming() {
-    let app =
-        RustStream::new(AppInfo::new("dropping", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(dropping);
-        });
+    let app = RustStream::new(AppInfo::new("dropping", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(dropping));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     // A good order, then the poison order that panics (dropped), then a good order that must
@@ -212,9 +208,7 @@ impl BlanketLayer for EagerGuard {
 async fn a_panic_before_the_handler_future_exists_is_settled_by_the_policy() {
     let app = RustStream::new(AppInfo::new("guarded", "0.1.0"))
         .layer(EagerGuard(Arc::new(AtomicU32::new(0))))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(guarded);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(guarded));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     for id in [7u32, 8, 9] {
@@ -237,10 +231,8 @@ async fn a_panic_before_the_handler_future_exists_is_settled_by_the_policy() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn decode_fail_fast_returns_err() {
-    let app =
-        RustStream::new(AppInfo::new("decodeff", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(decode_ff);
-        });
+    let app = RustStream::new(AppInfo::new("decodeff", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(decode_ff));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Wire::of(b"not json"))
@@ -263,10 +255,8 @@ async fn decode_fail_fast_returns_err() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn decode_skip_acks_past_bad_input_and_continues() {
-    let app =
-        RustStream::new(AppInfo::new("skipping", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(skipping);
-        });
+    let app = RustStream::new(AppInfo::new("skipping", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(skipping));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     drive_good_bad_good(&tb, "skipping").await;
@@ -320,9 +310,8 @@ async fn publishing_decode_failure_is_dropped_and_continues() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_decode_failure_drops_the_bad_element() {
-    let app = RustStream::new(AppInfo::new("bd", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(bd.batch(nonzero!(64)));
-    });
+    let app = RustStream::new(AppInfo::new("bd", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(bd.batch(nonzero!(64))));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     drive_good_bad_good(&tb, "bd").await;
@@ -373,9 +362,9 @@ async fn batch_publishing_decode_failure_is_dropped() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_handler_panic_fails_fast() {
-    let app =
-        RustStream::new(AppInfo::new("batchboom", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(batch_boom.batch(nonzero!(64)));
+    let app = RustStream::new(AppInfo::new("batchboom", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(batch_boom.batch(nonzero!(64)))
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -439,7 +428,7 @@ async fn a_self_deserializing_batch_is_recorded_around_a_refused_frame() {
             .expect("publish");
     }
     let app = RustStream::new(AppInfo::new("strict", "0.1.0")).with_broker(broker, |b| {
-        b.include(store.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+        b.include(store.batch(nonzero!(8)).start_at(MemoryPosition::start()))
     });
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed batch settles");
@@ -457,10 +446,8 @@ async fn a_self_deserializing_batch_is_recorded_around_a_refused_frame() {
 /// A batch that refused every frame never reached the body, so the harness records no call.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_self_deserializing_batch_of_refused_frames_records_no_call() {
-    let app =
-        RustStream::new(AppInfo::new("strict", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(store.batch(nonzero!(8)));
-        });
+    let app = RustStream::new(AppInfo::new("strict", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(store.batch(nonzero!(8))));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Wire::of(b""))

@@ -24,6 +24,7 @@ use crate::{Identity, Stack};
 use crate::{PublishIdentity, PublishLayer, PublishStack};
 
 use super::health::SubscriptionEnd;
+use super::include::MountChain;
 use super::scope::BrokerScope;
 use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 
@@ -79,7 +80,7 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
 ///         .layer(TracingLayer::default())
 ///         .with_broker(MemoryBroker::new(), |b| {
-///             b.include(accept);
+///             b.include(accept)
 ///         })
 /// }
 /// # }
@@ -308,7 +309,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
     ///         })
     ///         .shutdown_timeout(Duration::from_secs(10))
     ///         .with_broker(MemoryBroker::new(), |b| {
-    ///             b.include(handle);
+    ///             b.include(handle)
     ///         })
     /// }
     /// # }
@@ -448,7 +449,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
     ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
     ///         .poll_diagnostics(diagnostics.clone().threshold(Duration::from_micros(500)))
     ///         .with_broker(MemoryBroker::new(), |b| {
-    ///             b.include(accept);
+    ///             b.include(accept)
     ///         })
     /// }
     /// # }
@@ -586,7 +587,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
     ///         .on_subscription_end(SubscriptionEnd::FailFast)
     ///         .with_broker(MemoryBroker::new(), |b| {
-    ///             b.include(accept);
+    ///             b.include(accept)
     ///         })
     /// }
     /// # }
@@ -633,8 +634,13 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
 
     /// Registers a broker and the handlers attached to it.
     ///
-    /// `build` receives a [`BrokerScope`] typed to this broker; use it to attach handlers. The
-    /// broker is then held for lifecycle management. Call this once per broker.
+    /// `build` receives a [`BrokerScope`] typed to this broker by value and returns the mount chain
+    /// its [`include`](BrokerScope::include) opens: `|b| b.include(confirm).out_reply(Publish)
+    /// .include(audit)`. The chain carries every registration's type, and the app mounts it once
+    /// the closure returns. The scope is a chain itself: a startup publish or a whole router is a
+    /// step on it ahead of the `include`s, and a broker the service only publishes to returns it
+    /// as it is, `|b| b`. The broker is then held for lifecycle management. Call this once per
+    /// broker.
     ///
     /// The scope carries no codec of its own, so macro handlers mounted with `b.include(handle)`
     /// decode with the [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec). To decode with another codec
@@ -644,7 +650,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// and the publish pipeline are fixed from here on, so a configuration call that could not
     /// apply to this broker's handlers does not compile.
     #[must_use]
-    pub fn with_broker<R, F>(
+    pub fn with_broker<R, F, Chain>(
         self,
         broker: R,
         build: F,
@@ -654,21 +660,20 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         Layers: Clone,
         Pipeline: Clone,
         State: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<R::Broker, Layers, (), State, Pipeline>),
+        F: FnOnce(BrokerScope<R::Broker, Layers, (), State, Pipeline>) -> Chain,
+        Chain: MountChain<R::Broker, Layers, State, Pipeline>,
     {
         let mut this = self.into_phase::<Wired>();
         let (broker, slot) = broker.into_parts();
-        let mut scope = this.new_scope(broker, slot, ());
-        build(&mut scope);
-        this.collect_scope(scope, None);
+        this.mount_scope(broker, slot, (), None, build);
         this
     }
 
     /// Registers a broker with a scope-wide `codec`, replacing the
     /// [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec) a codec-less scope decodes with.
     ///
-    /// `build` receives a [`BrokerScope`] whose [`include`](BrokerScope::include) family reads
-    /// the same as on a codec-less scope (`b.include(handle)`) but decodes with `codec`. A
+    /// `build` receives a [`BrokerScope`] whose [`include`](BrokerScope::include) chain reads
+    /// the same as on a codec-less scope (`|b| b.include(handle)`) but decodes with `codec`. A
     /// [`Router`](crate::Router) mounted in the scope can name a codec of its own with
     /// [`with_codec`](crate::Router::with_codec), which wins for its handlers.
     ///
@@ -697,16 +702,16 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     ///     RustStream::new(AppInfo::new("codecs", "0.1.0"))
     ///         // per scope: every handler mounted here decodes with CBOR
     ///         .with_broker_codec(MemoryBroker::new(), CborCodec, |b| {
-    ///             b.include(handle);
     ///             // per handler: this mounting decodes with JSON
-    ///             b.include_router(Router::new().with_codec(JsonCodec).include(audit));
+    ///             b.include_router(Router::new().with_codec(JsonCodec).include(audit))
+    ///             .include(handle)
     ///         })
     /// }
     /// # }
     /// # fn main() {}
     /// ```
     #[must_use]
-    pub fn with_broker_codec<R, C, F>(
+    pub fn with_broker_codec<R, C, F, Chain>(
         self,
         broker: R,
         codec: C,
@@ -718,13 +723,12 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         Layers: Clone,
         Pipeline: Clone,
         State: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<R::Broker, Layers, C, State, Pipeline>),
+        F: FnOnce(BrokerScope<R::Broker, Layers, C, State, Pipeline>) -> Chain,
+        Chain: MountChain<R::Broker, Layers, State, Pipeline>,
     {
         let mut this = self.into_phase::<Wired>();
         let (broker, slot) = broker.into_parts();
-        let mut scope = this.new_scope(broker, slot, codec);
-        build(&mut scope);
-        this.collect_scope(scope, None);
+        this.mount_scope(broker, slot, codec, None, build);
         this
     }
 
@@ -764,13 +768,13 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// #     fn describe_server(&self) -> ServerSpec { ServerSpec::new("nats:4222", "nats") }
     /// # }
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .with_broker_labeled("ingress", NatsBroker::new("nats://localhost"), |_b| {});
+    ///     .with_broker_labeled("ingress", NatsBroker::new("nats://localhost"), |b| b);
     /// // The AsyncAPI `servers` map now carries "ingress" with the broker's host / protocol.
     /// app.run().await
     /// # }
     /// ```
     #[must_use]
-    pub fn with_broker_labeled<R, F>(
+    pub fn with_broker_labeled<R, F, Chain>(
         self,
         label: impl Into<String>,
         broker: R,
@@ -782,14 +786,13 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         Layers: Clone,
         Pipeline: Clone,
         State: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<R::Broker, Layers, (), State, Pipeline>),
+        F: FnOnce(BrokerScope<R::Broker, Layers, (), State, Pipeline>) -> Chain,
+        Chain: MountChain<R::Broker, Layers, State, Pipeline>,
     {
         let mut this = self.into_phase::<Wired>();
         let (broker, slot) = broker.into_parts();
         let label = this.record_server(label, &broker);
-        let mut scope = this.new_scope(broker, slot, ());
-        build(&mut scope);
-        this.collect_scope(scope, Some(label));
+        this.mount_scope(broker, slot, (), Some(label), build);
         this
     }
 
@@ -800,7 +803,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// [`with_broker_codec`](Self::with_broker_codec) (the scope's macro handlers decode with
     /// `codec`).
     #[must_use]
-    pub fn with_broker_labeled_codec<R, C, F>(
+    pub fn with_broker_labeled_codec<R, C, F, Chain>(
         self,
         label: impl Into<String>,
         broker: R,
@@ -814,14 +817,13 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         Layers: Clone,
         Pipeline: Clone,
         State: Send + Sync + 'static,
-        F: FnOnce(&mut BrokerScope<R::Broker, Layers, C, State, Pipeline>),
+        F: FnOnce(BrokerScope<R::Broker, Layers, C, State, Pipeline>) -> Chain,
+        Chain: MountChain<R::Broker, Layers, State, Pipeline>,
     {
         let mut this = self.into_phase::<Wired>();
         let (broker, slot) = broker.into_parts();
         let label = this.record_server(label, &broker);
-        let mut scope = this.new_scope(broker, slot, codec);
-        build(&mut scope);
-        this.collect_scope(scope, Some(label));
+        this.mount_scope(broker, slot, codec, Some(label), build);
         this
     }
 
@@ -835,51 +837,60 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         label
     }
 
-    /// Builds a fresh scope bound to `broker` carrying `codec` and the app's publishers / pipeline.
-    fn new_scope<B, C>(
-        &self,
+    /// Runs `build` over a scope bound to `broker` and `codec`, mounts the chain it returns, and
+    /// drains what the scope collected into the app.
+    fn mount_scope<B, C, F, Chain>(
+        &mut self,
         broker: B,
         slot: ConnectedSlot<B>,
         codec: C,
-    ) -> BrokerScope<B, Layers, C, State, Pipeline>
-    where
+        label: Option<String>,
+        build: F,
+    ) where
         B: Broker + 'static,
         Layers: Clone,
         Pipeline: Clone,
         State: Send + Sync + 'static,
+        F: FnOnce(BrokerScope<B, Layers, C, State, Pipeline>) -> Chain,
+        Chain: MountChain<B, Layers, State, Pipeline>,
     {
-        BrokerScope {
-            broker,
-            slot,
-            startup_hooks: Vec::new(),
-            sink: RouterSink::new(),
+        let chain = build(BrokerScope {
+            slot: Arc::clone(&slot),
+            pre: (),
             pipeline: self.publish_pipeline.clone(),
-            global: self.global.clone(),
             codec,
-        }
+            _app: PhantomData,
+        });
+        let mut sink = RouterSink::new();
+        let mut startup_hooks = Vec::new();
+        // The chain registers in the order the closure wrote it: the scope's own steps first,
+        // then the mounts its `include` opened.
+        chain.mount_chain(
+            &self.global,
+            &self.publish_pipeline,
+            &mut sink,
+            &mut startup_hooks,
+        );
+        self.collect_scope(broker, slot, startup_hooks, sink, label);
     }
 
-    /// Drains a built scope's registrations into the app and holds the broker for lifecycle,
+    /// Drains a mounted scope's registrations into the app and holds the broker for lifecycle,
     /// recording `label` as the broker's stable runtime identity (`None` when unlabeled).
     ///
     /// The broker itself is boxed into a [`BrokerCell`] whose consuming `connect` publishes the
     /// typed connected form into a shared slot; each starter reads the slot at startup, after
     /// every broker connected and before any subscription opens.
-    fn collect_scope<B, C>(
+    fn collect_scope<B>(
         &mut self,
-        scope: BrokerScope<B, Layers, C, State, Pipeline>,
+        broker: B,
+        slot: ConnectedSlot<B>,
+        startup_hooks: Vec<LifecycleHook<State>>,
+        sink: RouterSink<B, State>,
         label: Option<String>,
     ) where
         B: Broker + 'static,
         State: Send + Sync + 'static,
     {
-        let BrokerScope {
-            broker,
-            slot,
-            startup_hooks,
-            sink,
-            ..
-        } = scope;
         self.after_startup.extend(startup_hooks);
         let (starters, handlers) = sink.into_parts();
         for (bound, meta) in starters.into_iter().zip(handlers) {

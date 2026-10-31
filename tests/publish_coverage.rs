@@ -93,10 +93,8 @@ async fn flaky(order: &Order) -> Acked {
 /// `decode = fail_fast` on a publishing handler tears the service down, and the run reports it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_fail_fast_decode_failure_tears_the_service_down() {
-    let app =
-        RustStream::new(AppInfo::new("pubff", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(pubff);
-        });
+    let app = RustStream::new(AppInfo::new("pubff", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(pubff));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Wire::of(b"not json"))
@@ -122,9 +120,9 @@ async fn a_fail_fast_decode_failure_tears_the_service_down() {
 /// the redelivered message publishes it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_rejected_reply_publish_retries_the_delivery() {
-    let app =
-        RustStream::new(AppInfo::new("flaky", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(flaky).out(Reply, FailsOncePolicy);
+    let app = RustStream::new(AppInfo::new("flaky", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(flaky).out(Reply, FailsOncePolicy)
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

@@ -12,19 +12,18 @@ use ruststream::{SecurityScheme, ServerSpec};
 #[test]
 fn build_spec_describes_handlers() {
     let info = AppInfo::new("orders-svc", "1.2.3").description("Order processing");
-    let app = RustStream::new(info).with_broker(MemoryBroker::new(), |b| {
-        let orders = b.broker().subscribe("orders");
+    let bus = MemoryBroker::new();
+    let app = RustStream::new(info).with_broker(bus.clone(), |b| {
         b.handle(
-            orders,
+            bus.subscribe("orders"),
             |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             HandlerMetadata::raw("orders").with_description("Handles orders"),
-        );
-        let alerts = b.broker().subscribe("alerts");
-        b.handle(
-            alerts,
+        )
+        .handle(
+            bus.subscribe("alerts"),
             |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             HandlerMetadata::typed::<u64>("alerts"),
-        );
+        )
     });
 
     let spec = build_spec(&app);
@@ -62,14 +61,15 @@ fn build_spec_describes_handlers() {
 /// unique when several handlers share one subscription name.
 #[test]
 fn message_components_merge_and_send_ids_stay_unique() {
-    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
-        let first = b.broker().subscribe("shared");
+    let bus1 = MemoryBroker::new();
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(bus1.clone(), |b| {
+        let first = bus1.subscribe("shared");
         let mut first_meta =
             HandlerMetadata::typed::<u64>("shared").with_headers_schema("{\"title\":\"MetaA\"}");
         first_meta
             .outgoing
             .push(OutgoingMessageMetadata::new("c1", "bytes"));
-        b.handle(
+        let b = b.handle(
             first,
             |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             first_meta,
@@ -77,7 +77,7 @@ fn message_components_merge_and_send_ids_stay_unique() {
 
         // The second handler on the same subject brings the payload schema the first one
         // lacked, plus a conflicting headers schema, plus its own outgoing channel.
-        let second = b.broker().subscribe("shared");
+        let second = bus1.subscribe("shared");
         let mut second_meta = HandlerMetadata::typed::<u64>("shared")
             .with_payload_schema("{\"type\":\"integer\"}")
             .with_headers_schema("{\"title\":\"MetaB\"}");
@@ -88,7 +88,7 @@ fn message_components_merge_and_send_ids_stay_unique() {
             second,
             |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             second_meta,
-        );
+        )
     });
 
     let spec = build_spec(&app);
@@ -165,7 +165,7 @@ fn labeled_broker_populates_server_from_describe() {
     let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker_labeled(
         "ingress",
         DescribingBroker::new("nats.example.com:4222"),
-        |_b| {},
+        |b| b,
     );
 
     let spec = build_spec(&app);
@@ -180,16 +180,17 @@ fn labeled_memory_broker_is_an_in_process_server() {
     // The in-memory broker has no network address: a labeled registration still gives it a server
     // entry (its label) over the "memory" protocol, with no host. This is what lets a service mount
     // several memory brokers with disjoint routing and address each by name.
+    let bus2 = MemoryBroker::new();
     let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker_labeled(
         "local",
-        MemoryBroker::new(),
+        bus2.clone(),
         |b| {
-            let orders = b.broker().subscribe("orders");
+            let orders = bus2.subscribe("orders");
             b.handle(
                 orders,
                 |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                 HandlerMetadata::raw("orders"),
-            );
+            )
         },
     );
 
@@ -211,7 +212,7 @@ fn explicit_server_overrides_labeled_broker() {
         .with_broker_labeled(
             "ingress",
             DescribingBroker::new("nats.example.com:4222"),
-            |_b| {},
+            |b| b,
         );
 
     let spec = build_spec(&app);
@@ -257,9 +258,8 @@ fn build_spec_emits_payload_schema() {
         HandlerOutcome::ack()
     }
 
-    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(handle);
-    });
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle));
 
     let spec = build_spec(&app);
     let payload = spec.components.messages["Order"]
@@ -293,9 +293,8 @@ async fn handle_renamed(order: &RenamedOrder) -> HandlerOutcome {
 
 #[test]
 fn message_impl_names_and_describes_the_component() {
-    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(handle_renamed);
-    });
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_renamed));
 
     let spec = build_spec(&app);
 
@@ -344,9 +343,8 @@ async fn handle_shipment(shipment: &Shipment) -> HandlerOutcome {
 
 #[test]
 fn schema_doc_comment_feeds_message_metadata() {
-    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(handle_shipment);
-    });
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_shipment));
 
     let spec = build_spec(&app);
 
@@ -503,9 +501,10 @@ mod typed_headers_spec {
         let app = RustStream::new(AppInfo::new("chunks", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(convert).out(Events, Publish).build();
-                b.include(respond);
-                b.include(bulk.batch(nonzero!(8)));
+                b.include(convert)
+                    .out(Events, Publish)
+                    .include(respond)
+                    .include(bulk.batch(nonzero!(8)))
             },
         );
         let spec = build_spec(&app);
@@ -608,12 +607,10 @@ mod declared_destinations {
 
     #[test]
     fn a_templated_destination_declares_its_parameters() {
-        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(route).out(Events, Publish).build();
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(route).out(Events, Publish)
+            });
         let spec = build_spec(&app);
 
         // The fixed destination is a channel with no parameters.
@@ -650,12 +647,10 @@ mod declared_destinations {
 
     #[test]
     fn a_templated_channel_serializes_its_parameters_block() {
-        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(route).out(Events, Publish).build();
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(route).out(Events, Publish)
+            });
         let json = serde_json::to_value(build_spec(&app)).expect("the spec serializes");
         let channel = &json["channels"]["orders.{tenant}.{region}.v1"];
         assert!(
@@ -692,8 +687,7 @@ async fn bill_shared(order: &Audited) -> HandlerOutcome {
 #[test]
 fn every_handler_on_a_shared_channel_gets_its_own_receive_operation() {
     let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(audit_shared);
-        b.include(bill_shared);
+        b.include(audit_shared).include(bill_shared)
     });
 
     let spec = build_spec(&app);
@@ -745,7 +739,7 @@ mod dead_letter {
             |b| {
                 b.include(reconcile)
                     .max_attempts(nonzero!(5u32))
-                    .dead_letter("orders.dead");
+                    .dead_letter("orders.dead")
             },
         );
         let spec = build_spec(&app);
@@ -761,12 +755,10 @@ mod dead_letter {
     /// declared, not every destination it might reach.
     #[test]
     fn a_cap_without_a_destination_adds_no_channel() {
-        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(reconcile).max_attempts(nonzero!(5u32));
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(reconcile).max_attempts(nonzero!(5u32))
+            });
         let spec = build_spec(&app);
 
         assert!(!spec.channels.contains_key("orders.dead"));
@@ -777,12 +769,10 @@ mod dead_letter {
     /// the name on the receive operation's retry extension.
     #[test]
     fn a_named_retry_destination_is_a_send_operation() {
-        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(reconcile).out_retry(Publish).to("orders.retry");
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(reconcile).out_retry(Publish).to("orders.retry")
+            });
         let spec = build_spec(&app);
 
         assert_eq!(
@@ -801,12 +791,10 @@ mod dead_letter {
     /// added: that address is the subscription's channel, which the document already carries.
     #[test]
     fn copies_taken_back_at_the_subscriptions_address_add_no_channel() {
-        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(reconcile).out_retry(Publish);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(reconcile).out_retry(Publish)
+            });
         let spec = build_spec(&app);
 
         assert_eq!(spec.channels.len(), 1);
@@ -825,7 +813,7 @@ mod dead_letter {
                     .max_attempts(nonzero!(5u32))
                     .dead_letter("orders.dead")
                     .out_retry(Publish)
-                    .to("orders.retry");
+                    .to("orders.retry")
             },
         );
         let spec = build_spec(&app);
@@ -893,12 +881,8 @@ mod document_surface {
     /// reader has to pair up by name.
     #[test]
     fn a_reply_answers_the_operation_it_belongs_to() {
-        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(confirm);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(confirm));
         let spec = build_spec(&app);
 
         let reply = spec.operations["receive_orders"]
@@ -926,17 +910,16 @@ mod document_surface {
     /// stops showing every channel on every server.
     #[test]
     fn a_labeled_registration_names_the_server_of_its_channels() {
+        let bus3 = MemoryBroker::new();
         let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
-            .with_broker_labeled("local", MemoryBroker::new(), |b| {
-                b.include(confirm);
-            })
-            .with_broker_labeled("audit", MemoryBroker::new(), |b| {
-                let audit = b.broker().subscribe("audit");
+            .with_broker_labeled("local", MemoryBroker::new(), |b| b.include(confirm))
+            .with_broker_labeled("audit", bus3.clone(), |b| {
+                let audit = bus3.subscribe("audit");
                 b.handle(
                     audit,
                     |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                     HandlerMetadata::raw("audit"),
-                );
+                )
             });
         let spec = build_spec(&app);
 
@@ -960,9 +943,7 @@ mod document_surface {
     fn a_single_server_document_names_it_on_every_channel() {
         let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
             .server("nats", ServerSpec::new("nats.example.com:4222", "nats"))
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(confirm);
-            });
+            .with_broker(MemoryBroker::new(), |b| b.include(confirm));
         let spec = build_spec(&app);
 
         assert_eq!(
@@ -980,9 +961,7 @@ mod document_surface {
         let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
             .server("nats", ServerSpec::new("nats.example.com:4222", "nats"))
             .server("kafka", ServerSpec::new("kafka.example.com:9092", "kafka"))
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(confirm);
-            });
+            .with_broker(MemoryBroker::new(), |b| b.include(confirm));
         let spec = build_spec(&app);
 
         assert!(spec.channels["orders"].servers.is_empty());
@@ -993,12 +972,8 @@ mod document_surface {
     /// states it once at the root.
     #[test]
     fn the_codec_names_the_media_type_of_what_it_decodes() {
-        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(confirm);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(confirm));
         let spec = build_spec(&app);
 
         assert_eq!(
@@ -1034,12 +1009,8 @@ mod document_surface {
         }
 
         let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(confirm);
-            })
-            .with_broker_codec(MemoryBroker::new(), CborCodec, |b| {
-                b.include(audit);
-            });
+            .with_broker(MemoryBroker::new(), |b| b.include(confirm))
+            .with_broker_codec(MemoryBroker::new(), CborCodec, |b| b.include(audit));
         let spec = build_spec(&app);
 
         assert_eq!(
@@ -1070,13 +1041,8 @@ mod document_surface {
             HandlerOutcome::ack()
         }
 
-        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(confirm);
-                b.include(frames);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(confirm).include(frames));
         let spec = build_spec(&app);
 
         assert_eq!(
@@ -1097,7 +1063,7 @@ mod document_surface {
             |b| {
                 b.include(reconcile)
                     .max_attempts(nonzero!(5u32))
-                    .dead_letter("orders.dead");
+                    .dead_letter("orders.dead")
             },
         );
         let spec = build_spec(&app);
@@ -1118,12 +1084,8 @@ mod document_surface {
     /// that reads it.
     #[test]
     fn payload_schemas_are_draft_07() {
-        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(confirm);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(confirm));
         let spec = build_spec(&app);
 
         let payload = spec.components.messages["A placed order"]
@@ -1164,9 +1126,7 @@ mod document_surface {
             .license(License::new("Apache-2.0"))
             .tag(Tag::new("payments"))
             .external_docs(ExternalDocs::new("https://example.com/orders"));
-        let app = RustStream::new(info).with_broker(MemoryBroker::new(), |b| {
-            b.include(confirm);
-        });
+        let app = RustStream::new(info).with_broker(MemoryBroker::new(), |b| b.include(confirm));
         let spec = build_spec(&app);
 
         assert_eq!(
@@ -1197,12 +1157,8 @@ mod document_surface {
     /// not an object with no fields.
     #[test]
     fn an_undescribed_service_carries_no_empty_objects() {
-        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(confirm);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(confirm));
         let spec = build_spec(&app);
 
         assert!(spec.info.contact.is_none());
@@ -1235,13 +1191,10 @@ mod document_surface {
             HandlerOutcome::ack()
         }
 
-        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(confirm);
-                b.include(dispatch);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(confirm).include(dispatch)
+            });
         let spec = build_spec(&app);
 
         assert_eq!(
@@ -1372,12 +1325,8 @@ mod protocol_bindings {
 
     #[test]
     fn a_descriptor_describes_its_channel_its_operation_and_its_messages() {
-        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(confirm);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(confirm));
         let spec = build_spec(&app);
         let json = spec.to_json().expect("the document must serialize");
         let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
@@ -1407,12 +1356,8 @@ mod protocol_bindings {
             HandlerOutcome::ack()
         }
 
-        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(plain);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(plain));
         let json = build_spec(&app)
             .to_json()
             .expect("the document must serialize");
@@ -1768,7 +1713,6 @@ mod publish_bindings {
                 b.include(respond)
                     .out(Reply, ReplyToPublish)
                     .out(Events, TopicPublish)
-                    .build();
             },
         );
         let value = document(&app);
@@ -1808,7 +1752,6 @@ mod publish_bindings {
                     .out(Events, TopicPublish)
                     .dead_letter("requests.dead")
                     .out_retry(TopicPublish)
-                    .build();
             },
         );
         let value = document(&app);
@@ -1830,12 +1773,10 @@ mod publish_bindings {
     /// A policy that says nothing leaves no empty objects behind.
     #[test]
     fn a_silent_policy_changes_no_document() {
-        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(respond).out(Events, Publish).build();
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(respond).out(Events, Publish)
+            });
         let json = build_spec(&app)
             .to_json()
             .expect("the document must serialize");
@@ -1851,9 +1792,9 @@ mod publish_bindings {
         let token = other.bind(TopicPublish);
         let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(respond).out(Events, token).build();
+                b.include(respond).out(Events, token)
             })
-            .with_broker(other, |_b| {});
+            .with_broker(other, |b| b);
         let value = document(&app);
 
         assert_eq!(
@@ -1882,9 +1823,8 @@ mod publish_bindings {
                     .out(Reply, token)
                     .transform(ReplyTo)
                     .out(Events, Publish)
-                    .build();
             })
-            .with_broker(other, |_b| {});
+            .with_broker(other, |b| b);
         let value = document(&app);
 
         assert_eq!(
@@ -1902,7 +1842,7 @@ mod publish_bindings {
             |b| {
                 b.include(reconcile)
                     .dead_letter("orders.dead")
-                    .out_retry(DeadLetterPublish);
+                    .out_retry(DeadLetterPublish)
             },
         );
         let value = document(&app);
@@ -1922,12 +1862,10 @@ mod publish_bindings {
     /// channel reports the media type the subscription decodes.
     #[test]
     fn the_default_retry_publisher_describes_the_dead_letter_channel() {
-        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(reconcile).dead_letter("orders.dead");
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(reconcile).dead_letter("orders.dead")
+            });
         let value = document(&app);
         assert_eq!(value["channels"]["orders.dead"]["address"], "orders.dead");
 
@@ -1953,7 +1891,6 @@ mod publish_bindings {
                     .out(Reply, ReplyToPublish)
                     .transform(ReplyTo)
                     .out(Events, Publish)
-                    .build();
             },
         );
         let value = document(&app);
@@ -1979,7 +1916,6 @@ mod publish_bindings {
                 b.include(respond)
                     .out(Reply, ReplyToPublish)
                     .out(Events, Publish)
-                    .build();
             },
         );
         let value = document(&app);
@@ -1992,12 +1928,10 @@ mod publish_bindings {
     /// the root default stands only while every message agrees.
     #[test]
     fn an_outgoing_message_reports_the_mount_sites_media_type() {
-        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(respond).out(Events, Publish).build();
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(respond).out(Events, Publish)
+            });
         let value = document(&app);
 
         assert_eq!(
@@ -2016,12 +1950,10 @@ mod publish_bindings {
     /// looked at.
     #[test]
     fn a_serialized_slot_member_reports_no_media_type() {
-        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(export).out(Exports, TopicPublish).build();
-            },
-        );
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(export).out(Exports, TopicPublish)
+            });
         let value = document(&app);
 
         assert!(value["components"]["messages"]["RawChunk"]["contentType"].is_null());
@@ -2046,7 +1978,6 @@ mod publish_bindings {
                     .out(Reply, Publish)
                     .codec(CborCodec)
                     .out(Events, Publish)
-                    .build();
             },
         );
         let value = document(&app);

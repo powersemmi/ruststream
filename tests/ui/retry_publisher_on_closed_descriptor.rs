@@ -35,6 +35,6 @@ async fn reconcile(order: &Order) -> HandlerOutcome {
 // The broker moves the delivery itself, so there is no publisher of this process's to name.
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(reconcile).out_retry(MemoryPublish);
+        b.include(reconcile).out_retry(MemoryPublish)
     });
 }

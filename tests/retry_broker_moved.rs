@@ -202,7 +202,7 @@ async fn a_spent_delivery_is_moved_without_a_dropped_delay_warning() {
         RustStream::new(AppInfo::new("moved", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(not_ready)
                 .max_attempts(nonzero!(1u32))
-                .dead_letter("orders.dead");
+                .dead_letter("orders.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -238,7 +238,7 @@ async fn a_delivery_with_attempts_left_warns_that_its_delay_is_dropped() {
         .with_broker(MemoryBroker::new(), |b| {
             b.include(ready_on_return)
                 .max_attempts(nonzero!(2u32))
-                .dead_letter("invoices.dead");
+                .dead_letter("invoices.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

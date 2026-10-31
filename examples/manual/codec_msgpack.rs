@@ -83,9 +83,7 @@ mod service {
         RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker_codec(
             MemoryBroker::new(),
             MsgpackCodec,
-            |b| {
-                b.include(subscriber("orders", Bill).build());
-            },
+            |b| b.include(subscriber("orders", Bill).build()),
         )
     }
     // --8<-- [end:app]

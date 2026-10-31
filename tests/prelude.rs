@@ -58,8 +58,9 @@ async fn the_prelude_carries_a_canonical_service() {
     let app = RustStream::new(AppInfo::new("prelude", "1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(ledger))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(confirm).out(Reply, MemoryPublish);
-            b.include(audit.name("orders"));
+            b.include(confirm)
+                .out(Reply, MemoryPublish)
+                .include(audit.name("orders"))
         });
 
     let test = TestApp::start(app).await.expect("the app should start");

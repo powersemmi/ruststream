@@ -36,9 +36,8 @@ mod assert_called_once {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:assert_called_once]
@@ -74,9 +73,8 @@ mod assert_called {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:assert_called]
@@ -122,8 +120,7 @@ mod assert_not_called {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept).out(Rejected, Publish).build();
-            b.include(review);
+            b.include(accept).out(Rejected, Publish).include(review)
         })
     }
 
@@ -162,9 +159,8 @@ mod settled {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:settled]
@@ -204,9 +200,8 @@ mod outcomes {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:outcomes]
@@ -243,9 +238,8 @@ mod assert_outcome {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(reserve);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(reserve))
     }
 
     // --8<-- [start:assert_outcome]
@@ -283,9 +277,8 @@ mod panicked {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:panicked]
@@ -321,9 +314,8 @@ mod assert_last_failed_to_decode {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:assert_last_failed_to_decode]

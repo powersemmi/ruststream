@@ -65,9 +65,7 @@ async fn stamp(
 }
 
 fn app(messages: usize) -> Pending {
-    common::pending(messages, 0, |b| {
-        b.include(stamp).out(Stamps, Publish).build();
-    })
+    common::pending(messages, 0, |b| b.include(stamp).out(Stamps, Publish))
 }
 
 #[library_benchmark(config = common::config(5, 28))]

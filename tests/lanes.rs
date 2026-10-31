@@ -38,10 +38,8 @@ async fn measure(frame: &Frame<'_>) -> Report {
 /// The lanes are picked per end: a raw input skips the codec while its reply still rides it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_raw_input_answers_with_an_encoded_reply() {
-    let app =
-        RustStream::new(AppInfo::new("lanes", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(measure);
-        });
+    let app = RustStream::new(AppInfo::new("lanes", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(measure));
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker::<MemoryBroker>()
@@ -86,9 +84,8 @@ async fn a_serialized_out_type_is_a_dictionary_member() {
     let broker = MemoryBroker::new();
     let ingress = broker.publisher();
 
-    let app = RustStream::new(AppInfo::new("exports", "0.1.0")).with_broker(broker, |b| {
-        b.include(export).out(Exports, Publish).build();
-    });
+    let app = RustStream::new(AppInfo::new("exports", "0.1.0"))
+        .with_broker(broker, |b| b.include(export).out(Exports, Publish));
     let tb = TestApp::start(app).await.expect("harness start");
 
     ingress
@@ -120,10 +117,8 @@ async fn absorb(frame: &Frame<'_>) -> HandlerOutcome {
 /// (no `to(..)` in the call) and leaves the bytes alone (no codec between value and wire).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_test_client_injects_a_serialized_value_verbatim() {
-    let app =
-        RustStream::new(AppInfo::new("exports", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(absorb);
-        });
+    let app = RustStream::new(AppInfo::new("exports", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(absorb));
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker::<MemoryBroker>()
@@ -149,9 +144,9 @@ async fn the_test_client_injects_a_serialized_value_verbatim() {
 fn the_typed_form_keeps_the_serialized_metadata() {
     use ruststream::asyncapi::build_spec;
 
-    let app =
-        RustStream::new(AppInfo::new("exports", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(export).out(Exports, Publish).build();
+    let app = RustStream::new(AppInfo::new("exports", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(export).out(Exports, Publish)
         });
     let spec = build_spec(&app);
 

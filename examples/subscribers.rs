@@ -128,36 +128,10 @@ async fn bill(order: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-// The manual snippet below defines its handler type where the guide shows it, inside the builder
-// closure, so the item follows the `include` statements above it on purpose.
-#[allow(clippy::items_after_statements)]
 #[ruststream::app]
 fn app() -> RustStream {
     let shard = 7;
     RustStream::new(AppInfo::new("subscribers", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(handle);
-        b.include(with_context);
-        // --8<-- [start:name_mount]
-        b.include(audit.name(format!("audit-{shard}")));
-        // --8<-- [end:name_mount]
-        b.include(archive.name("archive"));
-        // --8<-- [start:batch_mount]
-        // The batch size is the one parameter a batch mount owes the broker: at most 64 orders per
-        // call, whatever the broker builds its batches out of.
-        b.include(settle.batch(nonzero!(64)));
-        // --8<-- [end:batch_mount]
-        b.include(ingest.batch(nonzero!(32)));
-        b.include(reconcile.batch(nonzero!(64)));
-        b.include(drain.name("orders").batch(nonzero!(128)));
-        // --8<-- [start:builder_settings]
-        b.include(
-            bill.name("orders")
-                .workers(nonzero!(4))
-                .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
-        );
-        // --8<-- [end:builder_settings]
-        b.include(fan_out);
-        b.include(per_customer);
         // --8<-- [start:manual]
         struct Inline;
 
@@ -172,8 +146,31 @@ fn app() -> RustStream {
                 ready(Ok(()))
             }
         }
-
-        b.include(subscriber("orders", Inline).build());
         // --8<-- [end:manual]
+
+        b.include(handle)
+            .include(with_context)
+            // --8<-- [start:name_mount]
+            .include(audit.name(format!("audit-{shard}")))
+            // --8<-- [end:name_mount]
+            .include(archive.name("archive"))
+            // --8<-- [start:batch_mount]
+            // The batch size is the one parameter a batch mount owes the broker: at most 64
+            // orders per call, whatever the broker builds its batches out of.
+            .include(settle.batch(nonzero!(64)))
+            // --8<-- [end:batch_mount]
+            .include(ingest.batch(nonzero!(32)))
+            .include(reconcile.batch(nonzero!(64)))
+            .include(drain.name("orders").batch(nonzero!(128)))
+            // --8<-- [start:builder_settings]
+            .include(
+                bill.name("orders")
+                    .workers(nonzero!(4))
+                    .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
+            )
+            // --8<-- [end:builder_settings]
+            .include(fan_out)
+            .include(per_customer)
+            .include(subscriber("orders", Inline).build())
     })
 }

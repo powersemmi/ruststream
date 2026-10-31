@@ -54,7 +54,7 @@ async fn refuse(orders: &[Order]) -> HandlerOutcome {
 async fn a_uniform_refusal_settles_every_element_of_the_batch() {
     let broker = three_orders_on("uniform-drop").await;
     let app = RustStream::new(AppInfo::new("uniform", "0.1.0")).with_broker(broker, |b| {
-        b.include(refuse.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+        b.include(refuse.batch(nonzero!(8)).start_at(MemoryPosition::start()))
     });
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed batch settles");
@@ -92,7 +92,7 @@ async fn a_uniform_ack_runs_its_attached_work_once_for_the_batch() {
             async move { Ok::<_, Infallible>(Continued(counter)) }
         })
         .with_broker(broker, |b| {
-            b.include(accept.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+            b.include(accept.batch(nonzero!(8)).start_at(MemoryPosition::start()))
         });
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed batch settles");

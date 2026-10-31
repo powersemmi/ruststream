@@ -615,7 +615,7 @@ impl<C, Options, L: PublishTransform<ForReply<C>, Options>> BatchPublishTransfor
 ///         // `Stamp` on the batch path, without a second implementation.
 ///         b.include(confirm.batch(nonzero!(8)))
 ///             .out(Reply, Publish)
-///             .batch_transform(for_batch(Stamp));
+///             .batch_transform(for_batch(Stamp))
 ///     })
 /// }
 /// # }

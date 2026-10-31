@@ -51,7 +51,7 @@ mod batch {
     fn app(broker: MemoryBroker) -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
             // At most 64 orders per call.
-            b.include(subscriber("orders", Store).batch(nonzero!(64)).build());
+            b.include(subscriber("orders", Store).batch(nonzero!(64)).build())
         })
     }
     // --8<-- [end:batch]
@@ -133,7 +133,7 @@ mod per_element {
                 subscriber("payments", Reconcile)
                     .batch(nonzero!(64))
                     .build(),
-            );
+            )
         })
     }
     // --8<-- [end:per_element]

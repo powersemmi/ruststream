@@ -60,12 +60,8 @@ async fn named(order: &Order) -> Receipt {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reply_type_that_fixes_a_name_is_published_there() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(bare);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(bare));
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 7 })
@@ -83,12 +79,10 @@ async fn a_reply_type_that_fixes_a_name_is_published_there() {
 /// The mount-site name is a default, so it does not redirect a reply type that fixes one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_mount_site_name_does_not_redirect_a_fixed_name_reply() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(contradicted).out(Reply, Publish);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(contradicted).out(Reply, Publish)
+        });
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 1 })
@@ -108,12 +102,8 @@ async fn a_mount_site_name_does_not_redirect_a_fixed_name_reply() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reply_type_declaring_no_name_takes_the_mount_site_one() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(named);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(named));
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 4 })
@@ -148,13 +138,13 @@ async fn the_chain_resolves_the_destination_the_same_way() {
     let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(subscriber("chain.bare", Confirm).reply().build());
-            b.include(
-                subscriber("chain.contradicted", Confirm)
-                    .reply()
-                    .to("chain.unused")
-                    .build(),
-            );
+            b.include(subscriber("chain.bare", Confirm).reply().build())
+                .include(
+                    subscriber("chain.contradicted", Confirm)
+                        .reply()
+                        .to("chain.unused")
+                        .build(),
+                )
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -180,12 +170,10 @@ async fn the_chain_resolves_the_destination_the_same_way() {
 #[cfg(feature = "asyncapi")]
 #[test]
 fn the_document_reports_the_resolved_destination() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(contradicted).out(Reply, Publish);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(contradicted).out(Reply, Publish)
+        });
 
     let spec = asyncapi::build_spec(&app);
 
@@ -243,12 +231,8 @@ fn assert_names(line: &str, subscription: &str, reply_type: &str, declared: &str
 /// The attribute names a subject the reply type overrides: startup says so, naming both.
 #[tokio::test]
 async fn an_attribute_name_the_type_overrides_is_reported_at_startup() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(contradicted);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(contradicted));
 
     let log = startup_log(app).await;
 
@@ -274,7 +258,7 @@ async fn a_chain_name_the_type_overrides_is_reported_at_startup() {
                     .reply()
                     .to("chain.unused")
                     .build(),
-            );
+            )
         },
     );
 
@@ -302,12 +286,10 @@ async fn confirm_all(orders: &[Order]) -> Vec<Confirmation> {
 /// A batch reply resolves per element type, so the batch form reports the same way.
 #[tokio::test]
 async fn a_batch_reply_name_the_type_overrides_is_reported_at_startup() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(confirm_all.batch(nonzero!(4)));
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(confirm_all.batch(nonzero!(4)))
+        });
 
     let log = startup_log(app).await;
 
@@ -335,12 +317,8 @@ async fn frame(order: &Order) -> Frame {
 /// A byte-for-byte reply travels its own route, which reports the same way.
 #[tokio::test]
 async fn a_serialized_reply_name_the_type_overrides_is_reported_at_startup() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(frame);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(frame));
 
     let log = startup_log(app).await;
 
@@ -367,13 +345,12 @@ async fn a_mount_site_name_equal_to_the_declared_one_is_not_reported() {
     let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(agreed);
-            b.include(
+            b.include(agreed).include(
                 subscriber("chain.agreed", Confirm)
                     .reply()
                     .to("dest.declared")
                     .build(),
-            );
+            )
         },
     );
 
@@ -388,8 +365,8 @@ async fn a_bare_publish_is_not_reported() {
     let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(bare);
-            b.include(subscriber("chain.bare", Confirm).reply().build());
+            b.include(bare)
+                .include(subscriber("chain.bare", Confirm).reply().build())
         },
     );
 
@@ -401,12 +378,8 @@ async fn a_bare_publish_is_not_reported() {
 /// A reply type declaring no destination takes the mount-site name, so nothing is ignored.
 #[tokio::test]
 async fn a_name_a_type_declaring_none_takes_is_not_reported() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(named);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(named));
 
     let log = startup_log(app).await;
 
@@ -427,12 +400,10 @@ async fn confirm_and_audit(order: &Order, Out(audit): Out<impl Publisher, Audit>
 /// the same way.
 #[tokio::test]
 async fn a_slot_carrying_handler_reports_an_overridden_name_at_startup() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(confirm_and_audit).out(Audit, Publish).build();
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(confirm_and_audit).out(Audit, Publish)
+        });
 
     let log = startup_log(app).await;
 
@@ -469,7 +440,6 @@ async fn a_slot_carrying_batch_handler_reports_an_overridden_name_at_startup() {
         |b| {
             b.include(confirm_and_audit_all.batch(nonzero!(4)))
                 .out(Audit, Publish)
-                .build();
         },
     );
 

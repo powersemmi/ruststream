@@ -31,9 +31,7 @@ async fn consume(frame: &Frame<'_>, ctx: &mut Context<'_, (), Latch>) -> Handler
 }
 
 fn app(messages: usize) -> Pending {
-    common::pending(messages, 0, |b| {
-        b.include(consume);
-    })
+    common::pending(messages, 0, |b| b.include(consume))
 }
 
 #[library_benchmark(config = common::config(0, 27))]

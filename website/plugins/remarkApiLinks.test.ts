@@ -119,7 +119,7 @@ describe('remarkApiLinks', () => {
 
   it('names the command that produces the rustdoc when it is missing', async () => {
     await expect(links('[x](api:ruststream::AppId)', '/nonexistent')).rejects.toThrow(
-      /cargo doc/,
+      /just doc/,
     );
   });
 });

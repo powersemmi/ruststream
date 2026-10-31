@@ -1,0 +1,42 @@
+error[E0277]: the `with_broker` closure must return the mount chain
+  --> tests/ui/scope_chain_dropped.rs:26:55
+   |
+26 |         RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+   |                                                       ^^^^^^^^^^^ `()` is not a mount chain
+   |
+   = help: the trait `ruststream::runtime::MountChain<MemoryBroker>` is not implemented for `()`
+   = note: return the scope or the chain its `include` opens: `|b| b.include(a).include(b)`, every `Out` slot bound with `.out(marker, policy)`; a broker that mounts nothing is `|b| b`
+help: the following other types implement trait `ruststream::runtime::MountChain<B, Layers, State, Pipeline>`
+  --> crates/ruststream-runtime-tokio/src/app/include/mod.rs
+   |
+   | / impl<B, Layers, C, State, Pipeline, Pre> MountChain<B, Layers, State, Pipeline>
+   | |     for BrokerScope<B, Layers, C, State, Pipeline, Pre>
+   | | where
+   | |     B: Broker + 'static,
+   | |     Pre: ScopeRegistrations<B, Layers, State, Pipeline>,
+   | |________________________________________________________^ `BrokerScope<B, Layers, C, State, Pipeline, Pre>`
+...
+   | / impl<B, Layers, State, Pipeline, Routes, RC, RL, RP> MountChain<B, Layers, State, Pipeline>
+   | |     for Router<B, Routes, RC, RL, RP>
+   | | where
+   | |     B: Broker + 'static,
+...  |
+   | |     Pipeline: PublishPipeline + Clone + Send + 'static,
+   | |     State: Send + Sync + 'static,
+   | |_________________________________^ `Router<B, Routes, RC, RL, RP>`
+...
+   | / impl<B, Layers, State, Pipeline, Mount, R, Def, Attach, Last> MountChain<B, Layers, State, Pipeline>
+   | |     for RouterWith<Mount, R, Def, Attach, Last>
+   | | where
+   | |     B: Broker + 'static,
+   | |     Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
+   | |     Attach::Out: MountChain<B, Layers, State, Pipeline>,
+   | |________________________________________________________^ `RouterWith<Mount, R, Def, Attach, Last>`
+note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+  --> crates/ruststream-runtime-tokio/src/app/service.rs
+   |
+   |     pub fn with_broker<R, F, Chain>(
+   |            ----------- required by a bound in this associated function
+...
+   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`

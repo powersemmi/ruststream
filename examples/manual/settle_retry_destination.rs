@@ -79,7 +79,7 @@ mod mount {
                 .dead_letter("payments.dead")
                 // Replaces the broker's default publisher for the copies of this registration.
                 .out_retry(Publish)
-                .transform(RetriedFrom);
+                .transform(RetriedFrom)
         })
     }
     // --8<-- [end:mount]
@@ -172,14 +172,14 @@ mod named {
             // The descriptor addresses nothing, so the mount site names where a copy goes.
             b.include(subscriber(PaymentFilter::new("payments.*"), Reconcile).build())
                 .out_retry(Publish)
-                .to("payments.retry");
+                .to("payments.retry")
         })
     }
 
     /// The same registration with no destination named.
     fn unnamed() -> impl App {
         RustStream::new(AppInfo::new("payments", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber(PaymentFilter::new("payments.*"), Reconcile).build());
+            b.include(subscriber(PaymentFilter::new("payments.*"), Reconcile).build())
         })
     }
     // --8<-- [end:named]

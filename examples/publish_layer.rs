@@ -62,9 +62,7 @@ mod service {
         RustStream::new(AppInfo::new("billing", "0.1.0"))
             // The replies and the `Out` slot publishes of the handlers below pass through it.
             .publish_layer(Origin { service: "billing" })
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(issue_receipt);
-            })
+            .with_broker(MemoryBroker::new(), |b| b.include(issue_receipt))
     }
     // --8<-- [end:app]
 

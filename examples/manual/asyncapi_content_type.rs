@@ -61,11 +61,11 @@ fn app() -> impl App {
     RustStream::new(AppInfo::new("plant", "0.1.0"))
         // The default codec: `Order` is `application/json`.
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
         // The scope's codec: `Reading` is `application/cbor`.
         .with_broker_codec(MemoryBroker::new(), CborCodec, |b| {
-            b.include(subscriber("readings", Record).build());
+            b.include(subscriber("readings", Record).build())
         })
 }
 // --8<-- [end:app]
@@ -73,7 +73,7 @@ fn app() -> impl App {
 /// The same service with JSON alone, so every message names one media type.
 fn json_only() -> impl App {
     RustStream::new(AppInfo::new("plant", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Accept).build());
+        b.include(subscriber("orders", Accept).build())
     })
 }
 

@@ -1,10 +1,10 @@
 error[E0277]: this registration is not ready to mount
-  --> tests/ui/subscriber_out_unbound_slot.rs:28:58
+  --> tests/ui/subscriber_out_unbound_slot.rs:27:51
    |
-28 |         b.include(transcode).out(Encoded, MemoryPublish).build();
-   |                                                          ^^^^^ the attachment `(ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Encoded, MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>))` has an unfilled position
+27 |     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+   |                                                   ^^^^^^^^^^^ the attachment `(ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Encoded, MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>))` has an unfilled position
    |
-   = help: the trait `ruststream::runtime::RouterCommit<ruststream_runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<transcode, Name, (Open, Open, Open, Open)>>` is not implemented for `(ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Encoded, MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>))`
+   = help: the trait `ruststream::runtime::RouterCommit<ruststream_runtime::router::mount::InjectMount, Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<transcode, Name, (Open, Open, Open, Open)>>` is not implemented for `(ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Encoded, MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>))`
    = note: bind every Out slot the handler declares with .out(marker, policy) before .build(); an unbound one shows as `MissingSlot<..>` naming its marker
    = help: the following other types implement trait `ruststream::runtime::RouterCommit<Mount, R, Def>`:
              `(ruststream::runtime::DefaultReply, ())` implements `ruststream::runtime::RouterCommit<ruststream::runtime::BatchPublishMount, Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>`
@@ -16,12 +16,12 @@ error[E0277]: this registration is not ready to mount
              `(ruststream::runtime::NoReply, ())` implements `ruststream::runtime::RouterCommit<ruststream::runtime::DeclareMount, R, ()>`
              `(ruststream::runtime::NoReply, ())` implements `ruststream::runtime::RouterCommit<ruststream::runtime::RetryMount, R, ()>`
            and $N others
-   = note: required for `RouterWith<ruststream_runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<transcode, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Encoded, MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>)), ruststream::runtime::SlotPos<0>>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
-note: required by a bound in `MountingSlots::<'s, B, Layers, C, State, Pipeline, Chain>::build`
-  --> crates/ruststream-runtime-tokio/src/app/include/guard.rs
+   = note: required for `RouterWith<ruststream_runtime::router::mount::InjectMount, Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<transcode, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Encoded, MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>)), ruststream::runtime::SlotPos<0>>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
+note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+  --> crates/ruststream-runtime-tokio/src/app/service.rs
    |
-   |     pub fn build(self)
-   |            ----- required by a bound in this associated function
-   |     where
-   |         Chain: ScopeCommit<B, Layers, C, State, Pipeline>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `MountingSlots::<'s, B, Layers, C, State, Pipeline, Chain>::build`
+   |     pub fn with_broker<R, F, Chain>(
+   |            ----------- required by a bound in this associated function
+...
+   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`

@@ -86,7 +86,7 @@ mod start {
             .on_subscription_end(SubscriptionEnd::FailFast)
             .with_broker(broker, |b| {
                 b.include(subscriber("orders", IssueReceipt).reply().build())
-                    .out_reply(Publish);
+                    .out_reply(Publish)
             })
     }
     // --8<-- [end:subscription_end]

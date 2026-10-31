@@ -1,10 +1,10 @@
-error[E0599]: the method `codec` exists for struct `Mounting<'_, MemoryBroker, Identity, (), (), PublishIdentity, RouterWith<ruststream::runtime::PublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Open)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryPublish, CallCodec<JsonCodec>>>, ()), ruststream::runtime::ReplyLast>>`, but its trait bounds were not satisfied
+error[E0599]: the method `codec` exists for struct `RouterWith<ruststream::runtime::PublishMount, Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Open)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryPublish, CallCodec<JsonCodec>>>, ()), ruststream::runtime::ReplyLast>`, but its trait bounds were not satisfied
   --> tests/ui/reply_codec_named_twice.rs:29:14
    |
 26 | /         b.include(confirm)
 27 | |             .out(Reply, MemoryPublish)
 28 | |             .codec(JsonCodec)
-29 | |             .codec(CborCodec);
+29 | |             .codec(CborCodec)
    | |             -^^^^^ method cannot be called due to unsatisfied trait bounds
    | |_____________|
    |

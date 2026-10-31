@@ -122,7 +122,7 @@ pub(crate) mod copy_path {
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
 ///         // The subject is the copies' address; `.to(..)` sends them to a queue of their own.
-///         b.include(reconcile).out_retry(Publish).to("orders.retry");
+///         b.include(reconcile).out_retry(Publish).to("orders.retry")
 ///     })
 /// }
 /// # }
@@ -167,7 +167,7 @@ impl CopyPath for AddressedCopies {}
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
 ///         // A pattern reads many subjects and names none, so the mount site says where copies go.
-///         b.include(reconcile).out_retry(Publish).to("orders.retry");
+///         b.include(reconcile).out_retry(Publish).to("orders.retry")
 ///     })
 /// }
 /// # }

@@ -82,10 +82,10 @@ pub type ConnectedSlot<B> = Arc<Mutex<Option<Arc<<B as Broker>::Connected>>>>;
 ///     let to_west = west.bind(Publish);
 ///     RustStream::new(AppInfo::new("bridge", "0.1.0"))
 ///         .with_broker_labeled("east", east, |b| {
-///             b.include(east_to_west).out_reply(to_west);
+///             b.include(east_to_west).out_reply(to_west)
 ///         })
 ///         .with_broker_labeled("west", west, |b| {
-///             b.include(west_to_east).out_reply(to_east);
+///             b.include(west_to_east).out_reply(to_east)
 ///         })
 /// }
 /// # }
@@ -245,7 +245,7 @@ where
     ///     let broker = MemoryBroker::new().bindable();
     ///     let announce = broker.bind(Publish);
     ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
-    ///         .with_broker(broker, |_b| {})
+    ///         .with_broker(broker, |b| b)
     ///         .after_startup(async move |_state| {
     ///             let publisher = announce.live().await?;
     ///             publisher.message(&Started { service: "orders" }).publish().await?;

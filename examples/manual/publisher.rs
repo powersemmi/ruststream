@@ -71,10 +71,6 @@ where
 // --8<-- [start:app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("archive", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        // A policy holds no connection; startup pairs it with the connected broker.
-        b.include(subscriber("orders", Archive).build())
-            .out(DefaultSlot, Publish)
-            .build();
         // A startup hook gets the live publisher of the policy it names.
         b.after_startup(Publish, async move |publisher| {
             publisher
@@ -83,7 +79,10 @@ fn app() -> impl App {
                 })
                 .publish()
                 .await
-        });
+        })
+        // A policy holds no connection; startup pairs it with the connected broker.
+        .include(subscriber("orders", Archive).build())
+        .out(DefaultSlot, Publish)
     })
 }
 // --8<-- [end:app]

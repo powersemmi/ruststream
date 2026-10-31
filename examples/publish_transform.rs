@@ -90,11 +90,12 @@ async fn audit(payment: &Payment, Out(trail): Out<impl Publisher, Trail>) -> Han
 fn app() -> impl App {
     RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         // A transform follows the position it belongs to.
-        b.include(confirm).out_reply(Publish).transform(Correlate);
-        b.include(audit)
+        b.include(confirm)
+            .out_reply(Publish)
+            .transform(Correlate)
+            .include(audit)
             .out(Trail, Publish)
             .transform(SchemaVersion("2"))
-            .build();
     })
 }
 // --8<-- [end:app]

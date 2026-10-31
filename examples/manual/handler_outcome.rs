@@ -93,7 +93,7 @@ mod outcome {
                 }))
             })
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Reserve).build());
+                b.include(subscriber("orders", Reserve).build())
             })
     }
 
@@ -140,7 +140,7 @@ mod unit {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Audit).build());
+            b.include(subscriber("orders", Audit).build())
         })
     }
 
@@ -206,7 +206,7 @@ mod result {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("pricing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Price).build());
+            b.include(subscriber("orders", Price).build())
         })
     }
 
@@ -277,7 +277,7 @@ mod result_outcome {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("shipping", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Ship).build());
+            b.include(subscriber("orders", Ship).build())
         })
     }
 

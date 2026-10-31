@@ -61,9 +61,8 @@ async fn until_failed(health: &mut HealthProbe) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn graceful_shutdown_reports_stopped() {
     let broker = MemoryBroker::new();
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(fine);
-    });
+    let app =
+        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(fine));
 
     let running = app.start().await.expect("startup failed");
     let health = running.health();
@@ -81,9 +80,8 @@ async fn graceful_shutdown_reports_stopped() {
 async fn fail_fast_flips_the_probe_without_a_shutdown_call() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(explode);
-    });
+    let app =
+        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(explode));
 
     let running = app.start().await.expect("startup failed");
     let mut health = running.health();
@@ -122,9 +120,8 @@ async fn fail_fast_flips_the_probe_without_a_shutdown_call() {
 async fn probe_taken_after_the_fail_fast_still_sees_failed() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(explode);
-    });
+    let app =
+        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(explode));
 
     let running = app.start().await.expect("startup failed");
     // Deliberately no probe yet: the transition must be stored even with zero subscribers,
@@ -159,9 +156,8 @@ async fn probe_taken_after_the_fail_fast_still_sees_failed() {
 #[tokio::test(start_paused = true)]
 async fn detached_probe_keeps_the_last_state_and_parks() {
     let broker = MemoryBroker::new();
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(fine);
-    });
+    let app =
+        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(fine));
 
     let running = app.start().await.expect("startup failed");
     let mut health = running.health();
@@ -242,10 +238,8 @@ async fn until_active(health: &mut HealthProbe, active: usize) -> SubscriptionCo
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_probe_counts_each_subscription_once_whatever_its_workers() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(fine);
-        b.include(pooled);
-    });
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(fine).include(pooled));
 
     let running = app.start().await.expect("startup failed");
     let health = running.health();
@@ -263,10 +257,8 @@ async fn the_probe_counts_each_subscription_once_whatever_its_workers() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stream_end_leaves_the_count_and_the_service_running_by_default() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(fine);
-        b.include(orphaned);
-    });
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(fine).include(orphaned));
 
     let running = app.start().await.expect("startup failed");
     let mut health = running.health();
@@ -289,10 +281,7 @@ async fn a_stream_end_leaves_the_count_and_the_service_running_by_default() {
 async fn a_stream_end_under_fail_fast_stops_the_service() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_subscription_end(SubscriptionEnd::FailFast)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(fine);
-            b.include(orphaned);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(fine).include(orphaned));
 
     // Nothing but the stream end can stop it: the caller's own shutdown never comes.
     let err = time::timeout(Duration::from_secs(5), app.run_until(pending()))
@@ -312,9 +301,7 @@ async fn a_stream_end_under_fail_fast_stops_the_service() {
 async fn a_stream_end_under_fail_fast_flips_the_probe() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_subscription_end(SubscriptionEnd::FailFast)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(orphaned);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(orphaned));
 
     let running = app.start().await.expect("startup failed");
     let mut health = running.health();
@@ -406,7 +393,7 @@ async fn a_stream_end_during_an_on_shutdown_hook_is_part_of_the_shutdown() {
             Ok::<(), Infallible>(())
         })
         .with_broker(MemoryBroker::new(), move |b| {
-            b.include(mount(source, Ignore).build());
+            b.include(mount(source, Ignore).build())
         });
 
     let running = app.start().await.expect("startup failed");

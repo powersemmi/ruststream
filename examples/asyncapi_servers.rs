@@ -71,9 +71,7 @@ fn app() -> Result<impl App, BindingError> {
         // Declared: no broker of this process describes the cluster.
         .server("production", production)
         // Described by the broker itself, under its label.
-        .with_broker_labeled("in-process", MemoryBroker::new(), |b| {
-            b.include(accept);
-        }))
+        .with_broker_labeled("in-process", MemoryBroker::new(), |b| b.include(accept)))
 }
 // --8<-- [end:app]
 

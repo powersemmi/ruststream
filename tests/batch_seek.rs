@@ -83,7 +83,7 @@ async fn a_batch_reads_its_seek_target_from_element_headers() {
     publish_entry(&broker, 2, None).await;
 
     let app = RustStream::new(AppInfo::new("replay", "0.1.0")).with_broker(broker, |b| {
-        b.include(replay.batch(nonzero!(64)).start_at(MemoryPosition::start()));
+        b.include(replay.batch(nonzero!(64)).start_at(MemoryPosition::start()))
     });
     let tb = TestApp::start(app).await.expect("startup failed");
     // Nothing is injected here: the reaction was started by the opening replay, so the harness

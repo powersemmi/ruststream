@@ -47,8 +47,8 @@ graders:
     type: llm
     focus: files
     criteria: |
-      PASS if the service builds the app synchronously with `RustStream::new(AppInfo::new(..)).with_broker(NatsBroker::new(..), |b| { .. })`,
+      PASS if the service builds the app synchronously with `RustStream::new(AppInfo::new(..)).with_broker(NatsBroker::new(..), |b| b.include(..))` returning the mount chain,
       opens the database in `on_startup` and injects it with `State<Db>` from a `#[derive(FromRef)]` state,
       takes the message as `&Order`, derives `Outgoing` on the reply with `#[outgoing(name = "receipts")]`,
-      and binds the audit slot at the mount site with `.out(Marker, Publish).build()`.
+      and binds the audit slot at the mount site with `.out(Marker, Publish)`.
       FAIL if it connects inside the builder, calls `ack()` on a message, or invents types such as `Inject`, `Retry` or `Batch`.

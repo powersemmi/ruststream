@@ -76,7 +76,7 @@ use crate::{IncomingMessage, MessageInfo};
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(on_event);
+///         b.include(on_event)
 ///     })
 /// }
 /// # }
@@ -311,7 +311,7 @@ pub trait InMessages: Sized + Send + Sync + 'static {
 ///         MemoryBroker::new(),
 ///         Registry,
 ///         |b| {
-///             b.include(on_event);
+///             b.include(on_event)
 ///         },
 ///     )
 /// }

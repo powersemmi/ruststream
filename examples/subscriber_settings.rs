@@ -43,7 +43,7 @@ mod settings {
                     .workers(nonzero!(4))
                     // A payload that does not decode is acked and skipped, not dropped.
                     .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
-            );
+            )
         })
     }
     // --8<-- [end:settings]

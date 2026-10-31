@@ -1,8 +1,8 @@
 error[E0277]: no codec is available to decode this subscriber's input
-  --> tests/ui_codec_free/mount_without_a_codec.rs:20:15
+  --> tests/ui_codec_free/mount_without_a_codec.rs:19:49
    |
-20 |             b.include(handle);
-   |               ^^^^^^^ nothing in this chain names a codec
+19 |         .with_broker(MemoryBroker::new(), |b| b.include(handle));
+   |                                                 ^^^^^^^ nothing in this chain names a codec
    |
    = help: the trait `ruststream::runtime::DefinitionInputCodec<ruststream_runtime::input::Decoded<Order>, ()>` is not implemented for `()`
    = note: enable a codec feature on `ruststream` (`json`, `cbor` or `msgpack`), name one for the scope (`with_broker_codec(broker, JsonCodec, |b| ..)`) or the registration (`.codec(JsonCodec)`), or give the input type its own decoding with `#[derive(Deserialized)]` so no codec is needed
@@ -14,5 +14,4 @@ help: the trait `ruststream::runtime::DefinitionInputCodec<Input, Surface>` is c
    |                      |
    |                      unsatisfied requirement introduced here: `(): ruststream_runtime::router::mount::InputCodec<ruststream_runtime::input::Decoded<Order>>`
    = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `ruststream::runtime::MountsWith<ruststream_runtime::input::Decoded<Order>, (), ConnectedMemoryBroker>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`

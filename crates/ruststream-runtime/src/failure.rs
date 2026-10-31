@@ -122,7 +122,7 @@ impl FailurePolicy {
 ///             ingest
 ///                 .name("ingest")
 ///                 .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Retry)),
-///         );
+///         )
 ///     })
 /// }
 /// # }

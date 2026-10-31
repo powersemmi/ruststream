@@ -118,7 +118,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
     ///     .with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(transcode).out(Encoded, MemoryPublish).build();
+    ///         b.include(transcode).out(Encoded, MemoryPublish)
     ///     });
     /// let tb = TestApp::start(app).await?;
     /// tb.broker::<MemoryBroker>()
@@ -224,7 +224,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// }
     ///
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .with_broker(MemoryBroker::new(), |b| { b.include(handle); });
+    ///     .with_broker(MemoryBroker::new(), |b| { b.include(handle) });
     /// let tb = TestApp::start(app).await?;
     ///
     /// tb.message(&Order { id: 7 }).publish().await?;

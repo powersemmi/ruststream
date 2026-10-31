@@ -136,9 +136,8 @@ async fn main() -> Result<(), Box<dyn error::Error>> {
     let broker = MemoryBroker::new().bindable();
     // A token, not a publisher: minted before registration, paired after start.
     let egress = broker.bind(Publish);
-    let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-        b.include(fulfil);
-    });
+    let app =
+        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| b.include(fulfil));
 
     // The messaging side starts in the background; a startup failure (a broker refusing to
     // connect, a subscription failing to open) surfaces here, before HTTP accepts traffic.

@@ -97,18 +97,18 @@ mod ladder {
             // Every registration of this scope decodes CBOR.
             CborCodec,
             |b| {
-                b.include(subscriber("orders", Bill).build());
-                // A registration names its own codec.
-                b.include(subscriber("audit", Audit).codec(JsonCodec).build());
-                // A reply takes the default codec, JSON, unless its position names one.
-                b.include(
-                    subscriber("checkout", Checkout)
-                        .reply()
-                        .to("receipts")
-                        .build(),
-                )
-                .out_reply(Publish)
-                .codec(CborCodec);
+                b.include(subscriber("orders", Bill).build())
+                    // A registration names its own codec.
+                    .include(subscriber("audit", Audit).codec(JsonCodec).build())
+                    // A reply takes the default codec, JSON, unless its position names one.
+                    .include(
+                        subscriber("checkout", Checkout)
+                            .reply()
+                            .to("receipts")
+                            .build(),
+                    )
+                    .out_reply(Publish)
+                    .codec(CborCodec)
             },
         )
     }

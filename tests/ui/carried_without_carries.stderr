@@ -1,44 +1,41 @@
 error[E0277]: the subscription `MemorySource` does not carry `Row`
-  --> tests/ui/carried_without_carries.rs:25:11
+  --> tests/ui/carried_without_carries.rs:25:49
    |
-25 |         b.include(handle);
-   |           ^^^^^^^ a `&Row` handler reads the value this subscription's deliveries hold
+25 |         .with_broker(MemoryBroker::new(), |b| b.include(handle));
+   |                                                 ^^^^^^^ a `&Row` handler reads the value this subscription's deliveries hold
    |
    = help: the trait `ruststream_runtime::input::SourceCarries<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
    = note: mount it on a subscription whose deliveries implement `Carries<Row>`; a `Row` that arrives as bytes derives `Deserialize` instead and rides the codec
-help: the trait `ruststream::runtime::IncludeMount<'_, B, Layers, C, State, Pipeline, Def>` is conditionally implemented for `Subscribing`
-  --> crates/ruststream-runtime-tokio/src/app/include/mod.rs
+help: `Subscribing` implements trait `ruststream::runtime::RouterMount<R, Def>`
+  --> crates/ruststream-runtime/src/router/local.rs
    |
-   | /         impl<'s, B, Layers, C, State, Pipeline, Def>
-   | |             IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
-   | |         where
-   | |             B: Broker + 'static,
+   | / impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
+   | |     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
+   | |     for forms::Subscribing
+   | | where
 ...  |
-   | |             Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
-   | |                   --------------------------------------------- unsatisfied requirement introduced here: `Subscribing: ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
-   | |             ScopeChain<Self, B, C, Pipeline, Def>: ScopeCommit<B, Layers, C, State, Pipeline>,
-   | |____________________________________________________------------------------------------------^
-   |                                                      |
-   |                                                      unsatisfied requirement introduced here: `<Subscribing as ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>>::Out: ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
-...
-   | / eager_mount! {
-   | |     forms::Subscribing,
-   | |     forms::RawSubscribing,
-   | |     forms::Batch,
-   | |     forms::RawBatch,
-   | |     forms::CarriedBatch,
-   | | }
-   | |_- in this macro invocation
+   | |     Def::Input: Materialize<SoloDecoder<Def, B, RouteCodec>, LocalSourceMessage<B, Def::Source>>,
+   | |     Def::Handler: 'static,
+   | |__________________________^ `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>`
+   |
+  ::: crates/ruststream-runtime/src/router/form_eager.rs
+   |
+   | / impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
+   | |     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for forms::Subscribing
+   | | where
+   | |     B: Broker + 'static,
+...  |
+   | |     RoutePipe: PublishPipeline,
+   | |     Routes: PoisonAt,
+   | |_____________________^ `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>`
    = note: required for `ruststream_runtime::input::Carried<Row>` to implement `ruststream_runtime::input::Materialize<ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
-   = note: this error originates in the macro `eager_mount` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
 
 error[E0277]: `Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>` cannot handle `MemoryMessage`
-  --> tests/ui/carried_without_carries.rs:25:11
+  --> tests/ui/carried_without_carries.rs:25:10
    |
-25 |         b.include(handle);
-   |           ^^^^^^^ unsatisfied trait bound
+25 |         .with_broker(MemoryBroker::new(), |b| b.include(handle));
+   |          ^^^^^^^^^^^ unsatisfied trait bound
    |
    = help: the trait `Handler<MemoryMessage>` is not implemented for `Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>`
    = note: a handler is a named type with an `impl Handler<MemoryMessage>` whose `handle` method returns the settlement, or a closure `|msg: &MemoryMessage, ctx: &mut Context| async { .. }` whose future does not borrow its arguments
@@ -57,5 +54,12 @@ help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, 
    | |__________________________________________^
    = note: required for `ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
    = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ())` to implement `RouterDef<MemoryBroker>`
-   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
+note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+  --> crates/ruststream-runtime-tokio/src/app/service.rs
+   |
+   |     pub fn with_broker<R, F, Chain>(
+   |            ----------- required by a bound in this associated function
+...
+   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`

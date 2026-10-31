@@ -79,7 +79,7 @@ impl HealthState {
 ///     let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
 ///         MemoryBroker::new(),
 ///         |b| {
-///             b.include(accept);
+///             b.include(accept)
 ///         },
 ///     );
 ///     let running = app.start().await?;
@@ -130,7 +130,7 @@ pub struct SubscriptionCount {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
 ///         .on_subscription_end(SubscriptionEnd::FailFast)
 ///         .with_broker(MemoryBroker::new(), |b| {
-///             b.include(accept);
+///             b.include(accept)
 ///         })
 /// }
 /// # }

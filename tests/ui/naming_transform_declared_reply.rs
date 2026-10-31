@@ -1,5 +1,8 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ForReply, Names, Outgoing as OutgoingMessage, PublishContext, PublishTransform, Reply, RustStream};
+use ruststream::runtime::{
+    AppInfo, ForReply, Names, Outgoing as OutgoingMessage, PublishContext, PublishTransform, Reply,
+    RustStream,
+};
 use ruststream::{Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +41,8 @@ async fn confirm(order: &Order) -> Receipt {
 
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(confirm).out(Reply, MemoryPublish).transform(ReplyTo);
+        b.include(confirm)
+            .out(Reply, MemoryPublish)
+            .transform(ReplyTo)
     });
 }

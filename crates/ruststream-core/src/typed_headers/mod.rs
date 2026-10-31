@@ -239,7 +239,6 @@ impl HeaderMap {
     ///         b.include(accept)
     ///             .out(Events, Publish)
     ///             .transform(Stamp(origin))
-    ///             .build();
     ///     })
     /// }
     /// # }

@@ -167,7 +167,6 @@ mod with_options {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", Ship).build())
                 .out(Shipments, PriorityPublish::default().priority(3))
-                .build();
         })
     }
 
@@ -242,7 +241,6 @@ mod assert_options_default {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", Ship).build())
                 .out(Shipments, PriorityPublish::default().priority(3))
-                .build();
         })
     }
 

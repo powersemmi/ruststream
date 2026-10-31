@@ -47,7 +47,7 @@ use ruststream_core::RawMessage;
 ///     // The last 1024 messages of every name stay replayable.
 ///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(1024)));
 ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-///         b.include(rebuild);
+///         b.include(rebuild)
 ///     })
 /// }
 /// # }

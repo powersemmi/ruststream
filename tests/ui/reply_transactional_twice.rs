@@ -25,6 +25,6 @@ fn main() {
         b.include(confirm.batch(nonzero!(8)))
             .out(Reply, MemoryPublish)
             .transactional()
-            .transactional();
+            .transactional()
     });
 }

@@ -79,7 +79,7 @@ mod reading {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Receive).reply().build());
+            b.include(subscriber("orders", Receive).reply().build())
         })
     }
     // --8<-- [end:handler]
@@ -162,7 +162,7 @@ mod field {
         // A retaining broker numbers its messages; its deliveries carry the position.
         let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(16)));
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-            b.include(subscriber("orders", Locate).reply().build());
+            b.include(subscriber("orders", Locate).reply().build())
         })
     }
     // --8<-- [end:ctx]

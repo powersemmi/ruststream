@@ -97,7 +97,7 @@ pub fn app() -> impl App {
             price_per_item: 25,
         })))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(price).out_reply(Publish);
+            b.include(price).out_reply(Publish)
         })
 }
 ```
@@ -209,7 +209,7 @@ pub fn app() -> impl App {
         })))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", Price).reply().build())
-                .out_reply(Publish);
+                .out_reply(Publish)
         })
 }
 ```

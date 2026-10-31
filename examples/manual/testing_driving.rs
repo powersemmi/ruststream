@@ -69,13 +69,11 @@ mod broker {
     fn app() -> impl App<State = ()> {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Accept).build());
+                b.include(subscriber("orders", Accept).build())
             })
             .with_broker(
                 MemoryBroker::retaining(Retention::Messages(nonzero!(1000))),
-                |b| {
-                    b.include(subscriber("orders", Archive).build());
-                },
+                |b| b.include(subscriber("orders", Archive).build()),
             )
     }
 
@@ -126,10 +124,10 @@ mod broker_named {
     fn app() -> impl App<State = ()> {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .with_broker_labeled("eu", MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Accept).build());
+                b.include(subscriber("orders", Accept).build())
             })
             .with_broker_labeled("us", MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Accept).build());
+                b.include(subscriber("orders", Accept).build())
             })
     }
 
@@ -208,8 +206,8 @@ mod message {
 
     fn app() -> impl App<State = ()> {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
-            b.include(subscriber("refunds", IssueRefund).build());
+            b.include(subscriber("orders", Accept).build())
+                .include(subscriber("refunds", IssueRefund).build())
         })
     }
 
@@ -294,8 +292,8 @@ mod publish {
     fn app() -> impl App<State = ()> {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", IssueReceipt).reply().build())
-                .out_reply(Publish);
-            b.include(subscriber("receipts", FileReceipt).build());
+                .out_reply(Publish)
+                .include(subscriber("receipts", FileReceipt).build())
         })
     }
 
@@ -364,8 +362,8 @@ mod publish_shortcuts {
 
     fn app() -> impl App<State = ()> {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
-            b.include(subscriber("tenant-orders", AcceptForTenant).build());
+            b.include(subscriber("orders", Accept).build())
+                .include(subscriber("tenant-orders", AcceptForTenant).build())
         })
     }
 
@@ -423,7 +421,7 @@ mod settle {
 
     fn app(broker: MemoryBroker) -> impl App<State = ()> {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-            b.include(subscriber("orders", AcceptAll).batch(nonzero!(8)).build());
+            b.include(subscriber("orders", AcceptAll).batch(nonzero!(8)).build())
         })
     }
 
@@ -493,7 +491,7 @@ mod advance {
 
     fn app() -> impl App<State = ()> {
         RustStream::new(AppInfo::new("payments", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("payments", Reconcile).build());
+            b.include(subscriber("payments", Reconcile).build())
         })
     }
 
@@ -570,7 +568,7 @@ mod drain {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Mailer::default())))
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Accept).build());
+                b.include(subscriber("orders", Accept).build())
             })
     }
 

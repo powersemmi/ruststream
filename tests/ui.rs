@@ -13,7 +13,7 @@
 //! refresh the snapshots after an intentional message change, run on stable:
 //!
 //! ```text
-//! TRYBUILD=overwrite RUN_UI_TESTS=1 cargo test --all-features --test suite ui::
+//! TRYBUILD=overwrite RUN_UI_TESTS=1 cargo test --features "$(just --evaluate tokio_set)" --test suite ui::
 //! ```
 
 #![cfg(all(feature = "macros", feature = "memory", feature = "json"))]

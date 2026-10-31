@@ -316,11 +316,12 @@ pub use retry::{
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use router::{
-    AttachDeclaration, AttachRetry, Balance, BatchPublishInjectMount, BatchPublishMount,
+    AttachDeclaration, AttachRetry, Balance, BatchPublishInjectMount, BatchPublishMount, ChainHead,
     DefaultReply, LayerFits, MountSink, OpenLayered, OpenRoutes, Opened, OpenedBatchRoute,
-    OpenedRoute, PoolFits, PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount,
-    ReplyAttachment, RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker,
-    RouterCommit, RouterMount, RouterPipe, RunRoutes, RunsBatches, TakesWorkers,
+    OpenedRoute, Plain, Poison, PoisonAt, PoisonMode, Poisoned, PoolFits, PublishInjectMount,
+    PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment, RetryDestinationsDeclared,
+    RouteMetadata, RouteSubscription, RouterBroker, RouterCommit, RouterMount, RouterPipe,
+    RunRoutes, RunsBatches, SplitHead, TakesWorkers,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
@@ -344,11 +345,12 @@ pub use settings::{CapsBatches, CloneSource, DefinitionInputCodec, MountsWith, S
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use slot::{
-    AdmitsAt, AdmitsSlotAt, BatchTransformLast, BindAt, BindSlot, Both, CodecAt, CodecLast,
-    DestinationOffer, InitSlots, IntoSlotSource, MapPolicyAt, MapPolicyLast, MissingSlot,
-    MountOffer, NamedStep, NoOutBound, NoReply, OutAttachment, OutPosition, PositionOptions,
-    ReplyLast, ReplyOffer, ReplyOpen, ReplyStep, SlotCodec, SlotPolicy, SlotPos, TransactionalLast,
-    TransformAt, TransformLast, WithSource,
+    AdmitsAt, AdmitsSlotAt, AnyTransform, BatchTransformLast, BindAt, BindSlot, Both, CodecAt,
+    CodecLast, DestinationOffer, InitSlots, IntoSlotSource, MapPolicyAt, MapPolicyLast,
+    MissingSlot, MountOffer, NamedStep, NoOutBound, NoReply, OutAttachment, OutPosition,
+    PositionOptions, ReplyLast, ReplyOffer, ReplyOpen, ReplyProbe, ReplyStep, SlotCodec,
+    SlotPolicy, SlotPos, SlotProbe, TransactionalLast, TransformAt, TransformLast,
+    TransformPosition, TransformProbe, WithSource,
 };
 #[cfg(feature = "alloc")]
 pub use slot::{

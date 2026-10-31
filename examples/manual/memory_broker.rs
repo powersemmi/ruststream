@@ -49,8 +49,8 @@ fn app() -> impl App {
                 .reply()
                 .to("confirmations")
                 .build(),
-        );
-        b.include(subscriber("orders", Audit).build());
+        )
+        .include(subscriber("orders", Audit).build())
     })
 }
 // --8<-- [end:app]

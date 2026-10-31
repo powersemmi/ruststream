@@ -88,7 +88,7 @@ fn app() -> impl App {
                 .build(),
         )
         .out_reply(Publish)
-        .transform(ToInbox);
+        .transform(ToInbox)
     })
 }
 // --8<-- [end:app]

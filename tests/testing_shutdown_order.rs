@@ -104,9 +104,7 @@ fn journaled_app(failing: bool) -> (impl App<State = Journal>, Journal) {
             journal.note("after_shutdown").await;
             Ok::<_, io::Error>(())
         })
-        .with_broker(broker, |b| {
-            b.include(take_order);
-        });
+        .with_broker(broker, |b| b.include(take_order));
     (app, journal)
 }
 

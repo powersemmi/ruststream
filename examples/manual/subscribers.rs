@@ -276,35 +276,35 @@ impl Handle<Order> for Bill {
 fn app() -> RustStream {
     let shard = 7;
     RustStream::new(AppInfo::new("subscribers", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Receive).build());
-        b.include(subscriber("orders", WithContext).build());
-        // --8<-- [start:name_mount]
-        b.include(
-            subscriber(Unnamed::<Name>::new(), Audit)
-                .name(format!("audit-{shard}"))
-                .build(),
-        );
-        // --8<-- [end:name_mount]
-        // --8<-- [start:named_kind]
-        b.include(
-            subscriber(Unnamed::<MemorySource>::new(), Archive)
-                .name("archive")
-                .build(),
-        );
-        // --8<-- [end:named_kind]
-        b.include(subscriber("frames", Ingest).batch(nonzero!(32)).build());
-        b.include(subscriber("orders", Drain).batch(nonzero!(128)).build());
-        // --8<-- [start:builder_settings]
-        b.include(
-            subscriber("orders", Bill)
-                .workers(nonzero!(4))
-                .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip))
-                .build(),
-        );
+        b.include_router(fan_out_routes())
+            .include_router(per_customer_routes())
+            .include_router(batch_routes())
+            .include(subscriber("orders", Receive).build())
+            .include(subscriber("orders", WithContext).build())
+            // --8<-- [start:name_mount]
+            .include(
+                subscriber(Unnamed::<Name>::new(), Audit)
+                    .name(format!("audit-{shard}"))
+                    .build(),
+            )
+            // --8<-- [end:name_mount]
+            // --8<-- [start:named_kind]
+            .include(
+                subscriber(Unnamed::<MemorySource>::new(), Archive)
+                    .name("archive")
+                    .build(),
+            )
+            // --8<-- [end:named_kind]
+            .include(subscriber("frames", Ingest).batch(nonzero!(32)).build())
+            .include(subscriber("orders", Drain).batch(nonzero!(128)).build())
+            // --8<-- [start:builder_settings]
+            .include(
+                subscriber("orders", Bill)
+                    .workers(nonzero!(4))
+                    .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip))
+                    .build(),
+            )
         // --8<-- [end:builder_settings]
-        b.include_router(fan_out_routes());
-        b.include_router(per_customer_routes());
-        b.include_router(batch_routes());
     })
 }
 

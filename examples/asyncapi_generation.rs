@@ -36,9 +36,8 @@ async fn accept(order: &Order) -> HandlerOutcome {
 // --8<-- [end:describe]
 
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(accept);
-    })
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(accept))
 }
 
 /// The document of the service, read from the same app value `main` runs.

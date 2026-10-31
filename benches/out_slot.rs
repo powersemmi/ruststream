@@ -76,10 +76,7 @@ async fn audit(
 
 fn app(messages: usize) -> Pending {
     common::pending(messages, 0, |b| {
-        b.include(audit)
-            .out(Audit, Publish)
-            .transform(Stamp)
-            .build();
+        b.include(audit).out(Audit, Publish).transform(Stamp)
     })
 }
 

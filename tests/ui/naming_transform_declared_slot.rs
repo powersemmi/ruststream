@@ -1,5 +1,8 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ContextKind, HandlerOutcome, Names, Out, Outgoing as OutgoingMessage, PublishTransform, RustStream};
+use ruststream::runtime::{
+    AppInfo, ContextKind, HandlerOutcome, Names, Out, Outgoing as OutgoingMessage,
+    PublishTransform, RustStream,
+};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +39,12 @@ impl<K: ContextKind, Options> PublishTransform<K, Options> for ByTenant {
 
 #[subscriber("orders")]
 async fn mirror(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> HandlerOutcome {
-    if audit.message(&Audited { id: order.id }).publish().await.is_err() {
+    if audit
+        .message(&Audited { id: order.id })
+        .publish()
+        .await
+        .is_err()
+    {
         return HandlerOutcome::retry();
     }
     HandlerOutcome::ack()
@@ -47,6 +55,5 @@ fn main() {
         b.include(mirror)
             .out(Audit, MemoryPublish)
             .transform(ByTenant)
-            .build();
     });
 }

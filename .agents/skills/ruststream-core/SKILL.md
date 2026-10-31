@@ -102,7 +102,7 @@ just brokers               # when the change touches what broker crates use
 ```
 
 The site gates run in `website/` (`npm ci && npm run typecheck && npm run test && npm run build`,
-after `cargo doc --all-features --no-deps`), with `scripts/lint_doc_fences.py`,
+after `just doc`), with `scripts/lint_doc_fences.py`,
 `scripts/check_doc_parity.py` and `scripts/check_doc_i18n.py`. Pre-1.0 a minor bump is breaking
 and a patch additive. A pull request opens as a draft and stays one until the maintainer marks it
 ready; commits are signed. Releases are the maintainer's.

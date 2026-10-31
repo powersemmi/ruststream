@@ -1,7 +1,7 @@
 error[E0277]: this position has already given the naming right away
-  --> tests/ui/naming_transform_twice.rs:57:24
+  --> tests/ui/naming_transform_twice.rs:60:24
    |
-57 |             .transform(Inbox);
+60 |             .transform(Inbox)
    |              --------- ^^^^^ an earlier transform on this position declares `Destination = Names`
    |              |
    |              required by a bound introduced by this call
@@ -15,11 +15,11 @@ help: the trait `ruststream::runtime::NamingUntaken` is implemented for `Reads`
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = note: required for `Names` to implement `ruststream::runtime::FitsOffer<Names, Names, Receipt>`
    = note: required for `(ruststream::runtime::WithSource<ReplyWiring<MemoryPublish, UnnamedCodec, PublishTransformStack<PublishTransformIdentity, ReplyTo>>>, ())` to implement `ruststream::runtime::AdmitsAt<Inbox, ruststream::runtime::ReplyLast, ruststream::runtime::PublishMount, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Open)>, MemoryBroker>`
-note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`
-  --> crates/ruststream-runtime-tokio/src/app/include/guard.rs
+note: required by a bound in `RouterWith::<Mount, R, Def, Attach, Last>::transform`
+  --> crates/ruststream-runtime/src/router/builders.rs
    |
    |     pub fn transform<N>(
    |            --------- required by a bound in this associated function
 ...
-   |         Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def, B>,
-   |                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`
+   |             + AdmitsAt<N, Last, Mount, Def, R::Broker>
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RouterWith::<Mount, R, Def, Attach, Last>::transform`

@@ -45,9 +45,8 @@ mod pool {
     // --8<-- [end:workers]
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(bill);
-        })
+        RustStream::new(AppInfo::new("billing", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(bill))
     }
 
     #[tokio::test]
@@ -101,9 +100,8 @@ mod by_key {
     // --8<-- [end:workers_by_key]
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(bill);
-        })
+        RustStream::new(AppInfo::new("billing", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(bill))
     }
 
     #[tokio::test]

@@ -19,7 +19,7 @@ use crate::orders::Receive;
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Receive).build());
+        b.include(subscriber("orders", Receive).build())
     })
 }
 

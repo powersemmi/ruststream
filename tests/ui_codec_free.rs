@@ -1,7 +1,7 @@
 //! Compile-fail snapshots for the codec surface in a build with no codec feature.
 //!
 //! "Nothing named a codec" is only an error where the build has no default to fall back to, so
-//! these cases cannot live in `tests/ui.rs` (which runs under `--all-features`, where the default
+//! these cases cannot live in `tests/ui.rs` (which runs with the tokio set, where the default
 //! codec always resolves). They are compiled only in the codec-free build:
 //!
 //! ```text

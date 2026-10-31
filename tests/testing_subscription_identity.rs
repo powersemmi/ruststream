@@ -57,8 +57,8 @@ async fn start(app: RustStream, live: bool) -> Result<TestApp<()>, Box<dyn Error
 /// One broker, two subscriptions reporting `orders`.
 fn namesakes_app() -> RustStream {
     RustStream::new(AppInfo::new("namesakes", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(take_order);
-        b.include(take_orders_in_pairs.batch(nonzero!(2)));
+        b.include(take_order)
+            .include(take_orders_in_pairs.batch(nonzero!(2)))
     })
 }
 
@@ -114,12 +114,12 @@ fn labeled_app() -> RustStream {
     let to_west = west.bind(MemoryPublish);
     RustStream::new(AppInfo::new("labeled", "0.1.0"))
         .with_broker_labeled("east", east, |b| {
-            b.include(take_orders_in_pairs.batch(nonzero!(2)));
-            b.include(relay).out(Relayed, to_west).build();
+            b.include(take_orders_in_pairs.batch(nonzero!(2)))
+                .include(relay)
+                .out(Relayed, to_west)
         })
         .with_broker_labeled("west", west, |b| {
-            b.include(take_order);
-            b.include(relay).out(Relayed, to_east).build();
+            b.include(take_order).include(relay).out(Relayed, to_east)
         })
 }
 

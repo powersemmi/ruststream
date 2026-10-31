@@ -93,7 +93,7 @@ mod router {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("shop", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include_router(orders().merge(shipping()));
+            b.include_router(orders().merge(shipping()))
         })
     }
     // --8<-- [end:router]
@@ -197,9 +197,9 @@ mod layer {
                 Router::new()
                     .layer(Count(orders_seen))
                     .include(subscriber("orders", Accept).build()),
-            );
+            )
             // Mounted on the scope, outside the router's layer.
-            b.include(subscriber("shipments", Dispatch).build());
+            .include(subscriber("shipments", Dispatch).build())
         })
     }
     // --8<-- [end:layer]
@@ -251,9 +251,8 @@ mod codec {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("shop", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include_router(orders());
-        })
+        RustStream::new(AppInfo::new("shop", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include_router(orders()))
     }
     // --8<-- [end:codec]
 

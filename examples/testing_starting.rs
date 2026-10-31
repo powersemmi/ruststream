@@ -43,9 +43,7 @@ mod start {
     fn app() -> impl App<State = Blocklist> {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(Blocklist { refused: vec![13] }))
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(screen);
-            })
+            .with_broker(MemoryBroker::new(), |b| b.include(screen))
     }
 
     // --8<-- [start:start]
@@ -84,9 +82,8 @@ mod start_live {
     }
 
     fn app() -> impl App<State = ()> {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     /// One body for every mode: only the start call differs.
@@ -190,9 +187,7 @@ mod with_state {
                 let catalog = Catalog::load("http://catalog.internal").await?;
                 Ok::<_, CatalogError>(Pricing { catalog, quotes })
             })
-            .with_broker(broker, |b| {
-                b.include(price);
-            })
+            .with_broker(broker, |b| b.include(price))
     }
 
     // --8<-- [start:with-state]
@@ -238,9 +233,8 @@ mod shutdown {
     }
 
     fn app() -> impl App<State = ()> {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(fulfil);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(fulfil))
     }
 
     // --8<-- [start:shutdown]

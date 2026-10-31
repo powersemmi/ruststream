@@ -232,15 +232,14 @@ fn app() -> impl App {
                 .reply()
                 .to("confirmations")
                 .build(),
-        );
-        b.include(subscriber("orders", Accept).build())
-            .out(Tenants, Publish)
-            .build();
-        b.include(subscriber("shipments", Ship).build());
+        )
+        .include(subscriber("orders", Accept).build())
+        .out(Tenants, Publish)
+        .include(subscriber("shipments", Ship).build())
         // The cap and the dead-letter destination reach the document with the registration.
-        b.include(subscriber("payments", Charge).build())
-            .max_attempts(nonzero!(3u32))
-            .dead_letter("payments.dead");
+        .include(subscriber("payments", Charge).build())
+        .max_attempts(nonzero!(3u32))
+        .dead_letter("payments.dead")
     })
 }
 // --8<-- [end:retry]

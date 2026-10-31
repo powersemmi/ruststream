@@ -79,7 +79,7 @@ fn app(metrics: &Metrics, broker: MemoryBroker) -> impl App {
                     .reply()
                     .to("confirmations")
                     .build(),
-            );
+            )
         })
 }
 // --8<-- [end:app]

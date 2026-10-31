@@ -55,11 +55,13 @@ mod ladder {
             // Every handler of this scope decodes CBOR.
             CborCodec,
             |b| {
-                b.include(bill);
                 // A router names the codec of the handlers it mounts.
-                b.include_router(Router::new().with_codec(JsonCodec).include(audit));
-                // A reply takes the default codec, JSON, unless its position names one.
-                b.include(checkout).out_reply(Publish).codec(CborCodec);
+                b.include_router(Router::new().with_codec(JsonCodec).include(audit))
+                    .include(bill)
+                    // A reply takes the default codec, JSON, unless its position names one.
+                    .include(checkout)
+                    .out_reply(Publish)
+                    .codec(CborCodec)
             },
         )
     }

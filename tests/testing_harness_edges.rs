@@ -96,9 +96,7 @@ impl ConnectedBroker for ConnectedOpaque {
 async fn an_app_with_a_broker_that_has_no_in_process_mode_does_not_start() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .register_broker(Opaque)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(handle_orders);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
 
     match TestApp::start(app).await {
         Err(TestError::NoTransport(broker)) => {
@@ -116,9 +114,8 @@ async fn an_app_with_a_broker_that_has_no_in_process_mode_does_not_start() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "no registered broker of type")]
 async fn addressing_an_unregistered_broker_type_names_it() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(handle_orders);
-    });
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
     let tb = TestApp::start(app).await.expect("start");
 
     let _ = tb.broker::<MemoryBroker<Retaining>>();
@@ -129,9 +126,8 @@ async fn addressing_an_unregistered_broker_type_names_it() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "no registered broker of type")]
 async fn a_mirror_state_addressing_an_unregistered_broker_type_names_it() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(handle_orders);
-    });
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
 
     let _ = TestApp::with_state(app, |brokers| {
         let _ = brokers.broker::<MemoryBroker<Retaining>>();
@@ -145,12 +141,8 @@ async fn a_mirror_state_addressing_an_unregistered_broker_type_names_it() {
 #[should_panic(expected = "more than one broker of type")]
 async fn a_mirror_state_addressing_a_duplicated_broker_type_names_it() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker_labeled("a", MemoryBroker::new(), |b| {
-            b.include(handle_orders);
-        })
-        .with_broker_labeled("b", MemoryBroker::new(), |b| {
-            b.include(ingest);
-        });
+        .with_broker_labeled("a", MemoryBroker::new(), |b| b.include(handle_orders))
+        .with_broker_labeled("b", MemoryBroker::new(), |b| b.include(ingest));
 
     let _ = TestApp::with_state(app, |brokers| {
         let _ = brokers.broker::<MemoryBroker>();
@@ -201,9 +193,7 @@ async fn drain_waits_for_a_still_pending_post_settle_continuation() {
     let state = Arc::clone(&gate);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(state))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(gated);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(gated));
     let tb = TestApp::start(app).await.expect("start");
 
     tb.publish("gated", &Order { id: 3 })
@@ -233,9 +223,7 @@ async fn a_shutdown_timeout_the_loops_stay_inside_is_not_waited_out() {
     const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .shutdown_timeout(SHUTDOWN_TIMEOUT)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(handle_orders);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
     let tb = TestApp::start(app).await.expect("start");
     tb.publish("orders", &Order { id: 1 })
         .await
@@ -255,9 +243,8 @@ async fn a_shutdown_timeout_the_loops_stay_inside_is_not_waited_out() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "expected the service to be running")]
 async fn assert_running_reports_why_the_service_stopped() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(always_panics);
-    });
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(always_panics));
     let tb = TestApp::start(app).await.expect("start");
 
     tb.publish("boom", &Order { id: 0 }).await.expect("publish");

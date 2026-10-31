@@ -22,7 +22,6 @@ async fn confirm(order: &Order) -> Confirmation {
 }
 
 fn main() {
-    let _app = RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(confirm);
-    });
+    let _app = RustStream::new(AppInfo::new("app", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(confirm));
 }

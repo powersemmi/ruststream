@@ -49,11 +49,12 @@ async fn scope_codec_include_family_dispatches() {
         MemoryBroker::new(),
         CborCodec,
         |b| {
-            b.include(plain);
-            b.include(batch.batch(nonzero!(64)));
-            b.include(relay).out(Reply, Publish);
-            b.include(batch_relay.batch(nonzero!(64)))
-                .out(Reply, Publish);
+            b.include(plain)
+                .include(batch.batch(nonzero!(64)))
+                .include(relay)
+                .out(Reply, Publish)
+                .include(batch_relay.batch(nonzero!(64)))
+                .out(Reply, Publish)
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");

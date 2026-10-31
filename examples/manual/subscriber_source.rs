@@ -57,7 +57,7 @@ mod name_at_mount {
                 subscriber(Unnamed::<Name>::new(), Audit)
                     .name(format!("audit-{shard}"))
                     .build(),
-            );
+            )
         })
     }
     // --8<-- [end:name_at_mount]
@@ -121,13 +121,13 @@ mod descriptor {
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             // The broker's descriptor, built here.
-            b.include(subscriber(MemorySource::new("orders"), Accept).build());
-            // The descriptor's kind, named at the mount site.
-            b.include(
-                subscriber(Unnamed::<MemorySource>::new(), Archive)
-                    .name("archive")
-                    .build(),
-            );
+            b.include(subscriber(MemorySource::new("orders"), Accept).build())
+                // The descriptor's kind, named at the mount site.
+                .include(
+                    subscriber(Unnamed::<MemorySource>::new(), Archive)
+                        .name("archive")
+                        .build(),
+                )
         })
     }
     // --8<-- [end:descriptor]

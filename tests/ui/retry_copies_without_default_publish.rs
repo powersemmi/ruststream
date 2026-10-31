@@ -44,7 +44,6 @@ impl Subscribe for ConnectedBus {
     fn subscribe(&self, _name: &str) -> impl Future<Output = Result<BusSubscriber, Infallible>> {
         ready(Ok(BusSubscriber))
     }
-
 }
 
 struct BusSubscriber;
@@ -87,7 +86,5 @@ async fn reconcile(order: &Order) -> HandlerOutcome {
 // The by-name descriptor publishes its retry copies here, so every registration on it owes a
 // retry publisher - and this broker names no policy to pair one from.
 fn main() {
-    RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(Bus, |b| {
-        b.include(reconcile);
-    });
+    RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(Bus, |b| b.include(reconcile));
 }

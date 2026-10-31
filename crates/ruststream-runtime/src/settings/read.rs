@@ -74,7 +74,7 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
     ///     // The step comes after `threads(4)`, so it counts four pools of two connections.
     ///     let mounted = scan.name("scans").threads(nonzero!(4)).pools(2, 16)?;
     ///     Ok(RustStream::new(AppInfo::new("scans", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(mounted);
+    ///         b.include(mounted)
     ///     }))
     /// }
     /// # }
@@ -140,7 +140,7 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
     /// fn app() -> Result<RustStream, PageTooSmall> {
     ///     let mounted = settle.name("orders").batch(nonzero!(64)).page_of(100)?;
     ///     Ok(RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(mounted);
+    ///         b.include(mounted)
     ///     }))
     /// }
     /// # }
@@ -210,7 +210,7 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
     /// fn app(tenant: &str) -> Result<RustStream, NameTooLong> {
     ///     let mounted = audit.name(format!("audit-{tenant}")).short_name()?;
     ///     Ok(RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(mounted);
+    ///         b.include(mounted)
     ///     }))
     /// }
     /// # }

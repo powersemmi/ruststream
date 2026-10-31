@@ -82,7 +82,7 @@ async fn book(
 // --8<-- [start:app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(book).out(Ledger, Publish).build();
+        b.include(book).out(Ledger, Publish)
     })
 }
 // --8<-- [end:app]

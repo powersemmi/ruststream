@@ -86,9 +86,9 @@ macro_rules! header_reads {
             name: "orders",
             reads: Arc::clone(&reads),
         };
-        let app =
-            RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber(counted, $handler).build());
+        let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(subscriber(counted, $handler).build())
             });
 
         let tb = TestApp::start(app).await.expect("startup failed");
@@ -310,7 +310,7 @@ async fn a_reply_no_transform_reads_never_asks_the_delivery_for_its_headers() {
     };
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber(counted, Confirm).reply().to("receipts").build())
-            .out_reply(MemoryPublish);
+            .out_reply(MemoryPublish)
     });
 
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -341,7 +341,7 @@ async fn a_reply_transform_that_reads_the_headers_asks_the_delivery_once() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber(counted, Confirm).reply().to("receipts").build())
             .out_reply(MemoryPublish)
-            .transform(CarryTenant);
+            .transform(CarryTenant)
     });
 
     let tb = TestApp::start(app).await.expect("startup failed");

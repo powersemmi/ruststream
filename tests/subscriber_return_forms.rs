@@ -78,9 +78,9 @@ fn ticket(label: &str) -> Ticket {
 async fn every_settling_return_form_acks_a_finished_body() {
     let app =
         RustStream::new(AppInfo::new("returns", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle_plain);
-            b.include(settle_unit);
-            b.include(settle_ok);
+            b.include(settle_plain)
+                .include(settle_unit)
+                .include(settle_ok)
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -119,7 +119,7 @@ async fn a_batch_body_settles_its_whole_batch() {
             settle_batch
                 .batch(nonzero!(8))
                 .start_at(MemoryPosition::start()),
-        );
+        )
     });
     let tb = TestApp::start(app).await.expect("harness start");
     tb.settle().await.expect("the replayed batch settles");
@@ -132,10 +132,9 @@ async fn a_batch_body_settles_its_whole_batch() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_result_returning_body_settles_by_the_arm_it_takes() {
-    let app =
-        RustStream::new(AppInfo::new("returns", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle_parsed);
-            b.include(settle_outcome);
+    let app = RustStream::new(AppInfo::new("returns", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(settle_parsed).include(settle_outcome)
         });
     let tb = TestApp::start(app).await.expect("harness start");
 

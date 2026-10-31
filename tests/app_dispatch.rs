@@ -157,9 +157,9 @@ async fn graceful_shutdown_drains_post_settle_continuations() {
         }
     };
 
-    let app = RustStream::new(AppInfo::new("drain", "0.1.0")).with_broker(broker, |b| {
-        let subscriber = b.broker().subscribe("work");
-        b.handle(subscriber, handler, HandlerMetadata::raw("work"));
+    let app = RustStream::new(AppInfo::new("drain", "0.1.0")).with_broker(broker.clone(), |b| {
+        let subscriber = broker.subscribe("work");
+        b.handle(subscriber, handler, HandlerMetadata::raw("work"))
     });
 
     let shutdown = Arc::new(Notify::new());
@@ -213,15 +213,16 @@ async fn global_layer_reaches_router_handlers() {
 async fn global_layer_wraps_handlers() {
     let layer_hits = Arc::new(AtomicU32::new(0));
 
+    let bus1 = MemoryBroker::new();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(CountLayer(Arc::clone(&layer_hits)))
-        .with_broker(MemoryBroker::new(), |b| {
-            let subscriber = b.broker().subscribe("orders");
+        .with_broker(bus1.clone(), |b| {
+            let subscriber = bus1.subscribe("orders");
             b.handle(
                 subscriber,
                 move |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                 HandlerMetadata::raw("orders"),
-            );
+            )
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -268,15 +269,15 @@ async fn cross_broker_publish_via_captured_publisher() {
 
     let app = RustStream::new(AppInfo::new("bridge", "0.1.0"))
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Bridge(egress_pub.clone())).build());
+            b.include(subscriber("orders", Bridge(egress_pub.clone())).build())
         })
-        .with_broker_labeled("egress", egress, |b| {
-            let subscriber = b.broker().subscribe("responses");
+        .with_broker_labeled("egress", egress.clone(), |b| {
+            let subscriber = egress.subscribe("responses");
             b.handle(
                 subscriber,
                 move |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                 HandlerMetadata::raw("responses"),
-            );
+            )
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

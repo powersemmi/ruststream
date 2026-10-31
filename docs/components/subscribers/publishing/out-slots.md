@@ -19,7 +19,7 @@ A handler with several slots names a marker per parameter: a unit struct that de
 Its `#[publishes(..)]` list is what may leave through the slot, and what the generated AsyncAPI document reports for it.
 An optional third position, `Out<impl Publisher, Marker, (A, B)>`, narrows what this handler publishes through the slot.
 
-The mount site binds each marker with [`.out(marker, policy)`](api:ruststream::runtime::Mounting::out), in any order, and commits the chain with `.build()`.
+The mount site binds each marker with [`.out(marker, policy)`](api:ruststream::runtime::RouterWith::out), in any order, and the chain goes on to the next `include`.
 A [transform](./transforms/publish-transform.md) written after an `.out(..)` belongs to that slot.
 A slot that is never bound, a marker the handler does not declare, and a publish of a type outside the list do not compile.
 A body publishes through the slot with the [publish builder](./publish-builder.md).

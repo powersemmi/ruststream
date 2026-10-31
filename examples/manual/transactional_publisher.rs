@@ -157,10 +157,9 @@ fn app(broker: MemoryBroker) -> impl App {
                 .build(),
         )
         .out_reply(TransactionalPublish)
-        .transactional();
-        b.include(subscriber("payments", Book).build())
-            .out(Ledger, TransactionalPublish)
-            .build();
+        .transactional()
+        .include(subscriber("payments", Book).build())
+        .out(Ledger, TransactionalPublish)
     })
 }
 // --8<-- [end:app]

@@ -44,9 +44,7 @@ mod service {
         RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker_codec(
             MemoryBroker::new(),
             CborCodec,
-            |b| {
-                b.include(bill);
-            },
+            |b| b.include(bill),
         )
     }
     // --8<-- [end:app]

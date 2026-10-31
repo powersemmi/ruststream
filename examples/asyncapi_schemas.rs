@@ -80,9 +80,7 @@ fn check_schemas(spec: &Spec) -> Result<(), String> {
 
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(accept);
-        b.include(refund);
-        b.include(record);
+        b.include(accept).include(refund).include(record)
     })
 }
 

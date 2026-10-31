@@ -29,9 +29,7 @@ async fn consume(order: &Order, ctx: &mut Context<'_, (), Latch>) -> HandlerOutc
 }
 
 fn app(messages: usize) -> Pending {
-    common::pending(messages, 0, |b| {
-        b.include(consume);
-    })
+    common::pending(messages, 0, |b| b.include(consume))
 }
 
 // Per delivery: the continuation's box and the task the runner spawns it as.

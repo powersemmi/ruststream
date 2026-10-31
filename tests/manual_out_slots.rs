@@ -151,7 +151,6 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
             b.include(subscriber("slots.in", Transcode).build())
                 .out(Audit, Publish)
                 .out(Encoded, Publish)
-                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -275,7 +274,6 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
         |b| {
             b.include(subscriber("slots.sharded", RouteShard).build())
                 .out(Lanes, LanePolicy)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");

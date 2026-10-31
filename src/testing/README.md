@@ -109,7 +109,7 @@ async fn confirm(order: &Order) -> Confirmation {
 
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(confirm).out_reply(Publish);
+        b.include(confirm).out_reply(Publish)
     })
 }
 

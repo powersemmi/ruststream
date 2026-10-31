@@ -46,9 +46,7 @@ fn app(metrics: &Metrics, broker: MemoryBroker) -> impl App {
         .layer(metrics.consume_layer())
         // Counts every publish, the replies included, by destination and outcome.
         .publish_layer(metrics.publish_layer())
-        .with_broker(broker, |b| {
-            b.include(confirm);
-        })
+        .with_broker(broker, |b| b.include(confirm))
 }
 // --8<-- [end:app]
 

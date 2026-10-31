@@ -101,8 +101,8 @@ async fn the_prelude_carries_the_hand_written_lanes() {
     let app =
         RustStream::new(AppInfo::new("lanes", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("frames", Relay).reply().to("exports").build())
-                .out(Reply, MemoryPublish);
-            b.include(subscriber("exports", Absorb).build());
+                .out(Reply, MemoryPublish)
+                .include(subscriber("exports", Absorb).build())
         });
 
     let tb = TestApp::start(app).await.expect("harness start");

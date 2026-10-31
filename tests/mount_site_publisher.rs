@@ -69,7 +69,7 @@ async fn a_batch_reply_takes_the_policy_the_include_site_names() {
         .publish_layer(AppStamp)
         .with_broker(MemoryBroker::new(), |b| {
             b.include(confirm_batch.batch(nonzero!(4)))
-                .out(Reply, Publish);
+                .out(Reply, Publish)
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -157,7 +157,7 @@ async fn a_broker_settings_trait_reaches_the_reply_policy() {
         |b| {
             b.include(confirm_batch.batch(nonzero!(4)))
                 .out(Reply, Prefixed::default())
-                .prefixed("pre.");
+                .prefixed("pre.")
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -183,7 +183,6 @@ async fn a_broker_settings_trait_reaches_a_slot_policy_on_a_scope() {
             b.include(mirror)
                 .out(Audit, Prefixed::default())
                 .prefixed("pre.")
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -208,12 +207,8 @@ async fn a_broker_settings_trait_reaches_a_slot_policy() {
         .out(Audit, Prefixed::default())
         .prefixed("pre.")
         .build();
-    let app = RustStream::new(AppInfo::new("mount-map-slot", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include_router(routes);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("mount-map-slot", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(routes));
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 6 })
@@ -245,7 +240,7 @@ async fn a_broker_settings_trait_reaches_a_byte_for_byte_reply_policy() {
         |b| {
             b.include(echo_raw)
                 .out(Reply, Prefixed::default())
-                .prefixed("pre.");
+                .prefixed("pre.")
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -274,9 +269,7 @@ async fn a_router_mounted_slot_publishes_without_the_app_pipeline() {
         .build();
     let app = RustStream::new(AppInfo::new("mount-slot-router", "0.1.0"))
         .publish_layer(AppStamp)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include_router(routes);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include_router(routes));
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 2 })

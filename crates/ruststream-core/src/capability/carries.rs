@@ -143,6 +143,8 @@ pub trait Carries<T> {
 /// }
 ///
 /// impl CarriesBatch<SendEmail> for Page {
+///     type Item = SendEmail;
+///
 ///     fn carried(&self) -> &[SendEmail] {
 ///         &self.rows
 ///     }
@@ -173,6 +175,11 @@ pub trait Carries<T> {
             deliveries carry as one slice"
 )]
 pub trait CarriesBatch<T> {
+    /// The value the batch lends, `T` itself. A mount reads the lent type through it, so a
+    /// handler mounted on a subscription whose batches lend nothing is reported once, at its
+    /// `include`.
+    type Item;
+
     /// The values the batch's deliveries carry, in the order the batch yields its deliveries.
     fn carried(&self) -> &[T];
 }

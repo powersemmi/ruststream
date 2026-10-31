@@ -78,10 +78,12 @@ fn app(broker: MemoryBroker) -> RustStream<Identity, Arc<Gates>> {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Gates::default())))
         .with_broker(broker, |b| {
-            b.include(settle).dead_letter("settling.dead");
-            b.include(call);
-            b.include(reply).out_reply(Publish);
-            b.include(watch);
+            b.include(settle)
+                .dead_letter("settling.dead")
+                .include(call)
+                .include(reply)
+                .out_reply(Publish)
+                .include(watch)
         })
 }
 

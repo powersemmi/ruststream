@@ -42,10 +42,8 @@ async fn take_order(order: &Order) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_generated_message_rides_both_lanes_with_no_codec() {
-    let app =
-        RustStream::new(AppInfo::new("codecfree", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(take_order);
-        });
+    let app = RustStream::new(AppInfo::new("codecfree", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(take_order));
     let tb = TestApp::start(app).await.expect("harness start");
 
     let order = Order {

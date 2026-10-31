@@ -57,7 +57,7 @@ mod router {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("shop", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include_router(orders().merge(shipping()));
+            b.include_router(orders().merge(shipping()))
         })
     }
     // --8<-- [end:router]
@@ -140,9 +140,9 @@ mod layer {
     fn app(orders_seen: Arc<AtomicUsize>) -> impl App {
         RustStream::new(AppInfo::new("shop", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             // The layer comes first and wraps every handler of this router.
-            b.include_router(Router::new().layer(Count(orders_seen)).include(accept));
-            // Mounted on the scope, outside the router's layer.
-            b.include(dispatch);
+            b.include_router(Router::new().layer(Count(orders_seen)).include(accept))
+                // Mounted on the scope, outside the router's layer.
+                .include(dispatch)
         })
     }
     // --8<-- [end:layer]
@@ -183,9 +183,8 @@ mod codec {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("shop", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include_router(orders());
-        })
+        RustStream::new(AppInfo::new("shop", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include_router(orders()))
     }
     // --8<-- [end:codec]
 

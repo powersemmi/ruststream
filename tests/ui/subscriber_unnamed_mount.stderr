@@ -1,8 +1,8 @@
 error[E0277]: `Unnamed<Name>` does not open a subscription on `ConnectedMemoryBroker`
-  --> tests/ui/subscriber_unnamed_mount.rs:21:11
+  --> tests/ui/subscriber_unnamed_mount.rs:21:49
    |
-21 |         b.include(handle);
-   |           ^^^^^^^ not a subscription source for this broker
+21 |         .with_broker(MemoryBroker::new(), |b| b.include(handle));
+   |                                                 ^^^^^^^ not a subscription source for this broker
    |
    = help: the trait `SubscriptionSource<ConnectedMemoryBroker>` is not implemented for `Unnamed<Name>`
    = note: a subscriber left unnamed carries `Unnamed<..>` until the mount site names it: `b.include(handle.name("orders"))`
@@ -22,5 +22,4 @@ help: the following other types implement trait `SubscriptionSource<C>`
    |
    | impl<C: Subscribe> SubscriptionSource<C> for Name {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Name` implements `SubscriptionSource<C>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`

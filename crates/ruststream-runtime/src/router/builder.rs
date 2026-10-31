@@ -237,7 +237,7 @@ impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("routing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include_router(orders().merge(shipping()));
+    ///         b.include_router(orders().merge(shipping()))
     ///     })
     /// }
     /// # }
@@ -337,7 +337,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include_router(jobs());
+    ///         b.include_router(jobs())
     ///     })
     /// }
     /// # }
@@ -396,7 +396,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include_router(jobs());
+    ///         b.include_router(jobs())
     ///     })
     /// }
     /// # }
@@ -503,7 +503,7 @@ impl<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include_router(jobs());
+    ///         b.include_router(jobs())
     ///     })
     /// }
     /// # }
@@ -665,9 +665,7 @@ where
         PublishesCopiesHere<<Head as RouteSubscription<B>>::Source> + RetryOffer<Dest>,
     // And whether the mount site still owes a destination: the offer is `Names` only where
     // nothing has declared one, and then a naming transform is what has to declare it. The answer
-    // rides the route, so `.build()` refuses a chain that says nothing while a scope's guard -
-    // which commits when the statement ends, before a `.to(name)` could be written - records the
-    // registration and lets the startup refusal report it.
+    // rides the route, so the commit refuses a chain that says nothing.
     RetryOfferOf<Head, B, Dest>: SettlesDestination<RetryUse<Transforms, Policy, B, Head>>,
     C: Clone,
     // A local chain's pipeline is not one: its registrations bind the position in `fold_retry`.

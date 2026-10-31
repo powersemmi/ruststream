@@ -81,8 +81,8 @@ import TabItem from '@theme/TabItem';
 ## 路由器
 
 [`Router`](api:ruststream::runtime::Router) 汇集一个模块的订阅者，以及它们各个发布位置的设置。
-[`out_reply`](api:ruststream::runtime::Mounting::out_reply) 把回复绑定到一个策略，`.codec(INTERNAL)` 用 CBOR 对它编码。
-[`out`](api:ruststream::runtime::Mounting::out) 绑定槽位。槽位沿用路由器的编解码器，这里是 JSON。
+[`out_reply`](api:ruststream::runtime::RouterWith::out_reply) 把回复绑定到一个策略，`.codec(INTERNAL)` 用 CBOR 对它编码。
+[`out`](api:ruststream::runtime::RouterWith::out) 绑定槽位。槽位沿用路由器的编解码器，这里是 JSON。
 路由器在 [`RouterDef<MemoryBroker, Shop>`](api:ruststream::runtime::RouterDef) 中指明 Broker 和应用的状态类型，`Shop` 在第 7 章介绍。
 
 <Tabs groupId="api">

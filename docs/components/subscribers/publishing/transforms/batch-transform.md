@@ -12,7 +12,7 @@ import TabItem from '@theme/TabItem';
 A [batch publish transform](api:ruststream::runtime::BatchPublishTransform) is a step on the replies of a batch handler: each reply passes it on its own, with the batch's context.
 
 A [batch handler](../../batches.md) with a reply returns one `Vec` of replies per batch, and those replies pass their own steps.
-[`.batch_transform(..)`](api:ruststream::runtime::Mounting::batch_transform) adds one after `.out_reply(policy)`, and a single-message mount rejects it at compile time.
+[`.batch_transform(..)`](api:ruststream::runtime::RouterWith::batch_transform) adds one after `.out_reply(policy)`, and a single-message mount rejects it at compile time.
 The per-message [publish transforms](./publish-transform.md) do not run on batch replies, and batch transforms do not run on single replies.
 [`for_batch`](api:ruststream::runtime::for_batch) lifts a per-message transform onto the batch path, so one impl serves both.
 All replies of a batch see one [`PublishContext`](api:ruststream::runtime::PublishContext), the batch's: its name is the subscription, its headers are empty, and its context fields are the broker's batch context.

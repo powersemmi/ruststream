@@ -81,7 +81,7 @@ mod service {
     fn app() -> impl App {
         // No codec named anywhere: the registration decodes with the default codec, JSON.
         RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Bill).build());
+            b.include(subscriber("orders", Bill).build())
         })
     }
     // --8<-- [end:app]

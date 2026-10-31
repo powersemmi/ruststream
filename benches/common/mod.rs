@@ -91,7 +91,7 @@ use std::convert::Infallible;
 use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
-use ruststream::runtime::{BrokerScope, Identity};
+use ruststream::runtime::{BrokerScope, Identity, MountChain, PublishIdentity};
 use ruststream::{Lend, OutgoingMessage, PairError};
 use serde::Deserialize;
 use tokio::runtime::{Builder, Runtime};
@@ -442,20 +442,29 @@ pub struct Pending {
     pub headers: &'static [(&'static str, &'static str)],
 }
 
-/// The mount a scenario passes in: what `with_broker` does with the scope.
-pub type Mount<'a> = &'a mut BrokerScope<MemoryBroker, Identity, (), Latch>;
+/// The scope a scenario's mount receives: what `with_broker` hands its closure.
+pub type Mount = BrokerScope<MemoryBroker, Identity, (), Latch>;
+
+/// The chain a scenario's mount returns.
+pub trait Mounted: MountChain<MemoryBroker, Identity, Latch, PublishIdentity> {}
+
+impl<Chain: MountChain<MemoryBroker, Identity, Latch, PublishIdentity>> Mounted for Chain {}
 
 /// Builds a one-handler service on a fresh in-memory broker, ready to be started by the body.
-pub fn pending(messages: usize, size: usize, mount: impl FnOnce(Mount<'_>)) -> Pending {
+pub fn pending<Chain: Mounted>(
+    messages: usize,
+    size: usize,
+    mount: impl FnOnce(Mount) -> Chain,
+) -> Pending {
     pending_on(runtime(), messages, size, mount)
 }
 
 /// The same on a runtime the scenario chose, for the one that needs worker threads.
-pub fn pending_on(
+pub fn pending_on<Chain: Mounted>(
     runtime: Runtime,
     messages: usize,
     size: usize,
-    mount: impl FnOnce(Mount<'_>),
+    mount: impl FnOnce(Mount) -> Chain,
 ) -> Pending {
     let latch = Latch::default();
     let broker = MemoryBroker::new();
@@ -467,10 +476,10 @@ pub fn pending_on(
 }
 
 /// The same with a header contract on every delivery, for the scenarios that read one.
-pub fn pending_with_headers(
+pub fn pending_with_headers<Chain: Mounted>(
     messages: usize,
     headers: &'static [(&'static str, &'static str)],
-    mount: impl FnOnce(Mount<'_>),
+    mount: impl FnOnce(Mount) -> Chain,
 ) -> Pending {
     Pending {
         headers,

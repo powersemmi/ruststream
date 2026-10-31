@@ -61,9 +61,7 @@ async fn undeferred(order: &Order, ctx: &mut Context<'_, (), Arc<FirstSeen>>) ->
 async fn a_zero_retry_after_delay_redelivers_without_advancing_the_clock() {
     let app = RustStream::new(AppInfo::new("undelayed", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(FirstSeen::default())))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(undeferred);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(undeferred));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -97,7 +95,7 @@ async fn batch_pool_overlaps_batches() {
     let app = RustStream::new(AppInfo::new("overlap", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Barrier::new(2))))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(overlap.batch(nonzero!(1)));
+            b.include(overlap.batch(nonzero!(1)))
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

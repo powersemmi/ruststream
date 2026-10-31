@@ -71,9 +71,7 @@ fn one(messages: usize) -> Pending {
     let app = RustStream::new(AppInfo::new("bench", "0.0.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(state))
         .layer(Passthrough)
-        .with_broker(broker.clone(), |b| {
-            b.include(consume);
-        });
+        .with_broker(broker.clone(), |b| b.include(consume));
     common::built(runtime, latch, broker, app, messages, 0)
 }
 
@@ -88,9 +86,7 @@ fn four(messages: usize) -> Pending {
         .layer(Passthrough)
         .layer(Passthrough)
         .layer(Passthrough)
-        .with_broker(broker.clone(), |b| {
-            b.include(consume);
-        });
+        .with_broker(broker.clone(), |b| b.include(consume));
     common::built(runtime, latch, broker, app, messages, 0)
 }
 

@@ -77,9 +77,7 @@ mod service {
             });
         RustStream::new(AppInfo::new("billing", "0.1.0"))
             .publish_layer(PublishDynStack::new(chain))
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(issue_receipt);
-            })
+            .with_broker(MemoryBroker::new(), |b| b.include(issue_receipt))
     }
     // --8<-- [end:app]
 

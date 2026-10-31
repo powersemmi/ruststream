@@ -93,7 +93,7 @@ impl<'p> Handle<Frame<'p>> for OnFrame {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_handler_receives_exact_bytes() {
     let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("frames", OnFrame).build());
+        b.include(subscriber("frames", OnFrame).build())
     });
 
     let tb = TestApp::start(app).await.expect("start");
@@ -183,8 +183,8 @@ async fn raw_reply_round_trips_exact_bytes() {
                 .to("relay-out")
                 .build(),
         )
-        .out_reply(Publish);
-        b.include(subscriber("relay-out", RelayCapture).build());
+        .out_reply(Publish)
+        .include(subscriber("relay-out", RelayCapture).build())
     });
 
     let tb = TestApp::start(app).await.expect("start");

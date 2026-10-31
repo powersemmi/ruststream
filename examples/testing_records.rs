@@ -40,9 +40,8 @@ mod subscriber {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:subscriber]
@@ -81,7 +80,7 @@ mod published {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(issue_receipt).out_reply(Publish);
+            b.include(issue_receipt).out_reply(Publish)
         })
     }
 
@@ -127,7 +126,7 @@ mod out {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(copy_to_audit).out(Audit, Publish).build();
+            b.include(copy_to_audit).out(Audit, Publish)
         })
     }
 

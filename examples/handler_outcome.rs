@@ -72,9 +72,7 @@ mod outcome {
                     locked: AtomicBool::new(true),
                 }))
             })
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(reserve);
-            })
+            .with_broker(MemoryBroker::new(), |b| b.include(reserve))
     }
 
     #[tokio::test]
@@ -109,9 +107,8 @@ mod unit {
     // --8<-- [end:unit]
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(audit);
-        })
+        RustStream::new(AppInfo::new("audit", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(audit))
     }
 
     #[tokio::test]
@@ -165,9 +162,8 @@ mod result {
     // --8<-- [end:result]
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("pricing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(price);
-        })
+        RustStream::new(AppInfo::new("pricing", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(price))
     }
 
     #[tokio::test]
@@ -226,9 +222,8 @@ mod result_outcome {
     // --8<-- [end:result_outcome]
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("shipping", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(ship);
-        })
+        RustStream::new(AppInfo::new("shipping", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(ship))
     }
 
     #[tokio::test]

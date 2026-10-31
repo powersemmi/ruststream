@@ -13,10 +13,11 @@ pub use app_trait::App;
 pub(crate) use health::HealthReport;
 pub use health::{HealthProbe, HealthState, SubscriptionCount, SubscriptionEnd};
 #[doc(hidden)]
-pub use include::{IncludeMount, ScopeCommit};
-pub use include::{Mounting, MountingSlots};
+pub use include::MountChain;
 pub use run::RunningApp;
 pub use scope::BrokerScope;
+#[doc(hidden)]
+pub use scope::{ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup};
 pub use service::RegisteredBroker;
 #[cfg(feature = "testing")]
 pub use service::TestParts;

@@ -62,7 +62,7 @@ async fn consume_metrics_are_recorded() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(metrics.consume_layer())
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("pings", Ping).build());
+            b.include(subscriber("pings", Ping).build())
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -93,7 +93,7 @@ async fn consume_metrics_are_recorded_through_a_router() {
             Router::new()
                 .layer(metrics.consume_layer())
                 .include(subscriber("pings", Ping).build()),
-        );
+        )
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -134,9 +134,9 @@ mod publish {
         let egress_pub = egress.bind(Publish);
         let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
             .publish_layer(metrics.publish_layer())
-            .with_broker_labeled("egress", egress, |_b| {})
+            .with_broker_labeled("egress", egress, |b| b)
             .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
-                b.include(reply).out(Reply, egress_pub);
+                b.include(reply).out(Reply, egress_pub)
             });
         let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -196,19 +196,15 @@ mod publish {
     fn the_metrics_allocate_nothing_per_message() {
         let metrics = Metrics::with_registry(prometheus::Registry::new()).unwrap();
 
-        let bare = steady_allocations(RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(reply);
-            },
-        ));
+        let bare = steady_allocations(
+            RustStream::new(AppInfo::new("svc", "0.1.0"))
+                .with_broker(MemoryBroker::new(), |b| b.include(reply)),
+        );
         let recorded = steady_allocations(
             RustStream::new(AppInfo::new("svc", "0.1.0"))
                 .layer(metrics.consume_layer())
                 .publish_layer(metrics.publish_layer())
-                .with_broker(MemoryBroker::new(), |b| {
-                    b.include(reply);
-                }),
+                .with_broker(MemoryBroker::new(), |b| b.include(reply)),
         );
         assert_eq!(
             recorded, bare,

@@ -1,10 +1,8 @@
 error[E0277]: `Urgent` is not a publish transform for `ForReply` writing `()`
-  --> tests/ui/reply_transform_other_options.rs:48:63
+  --> tests/ui/reply_transform_other_options.rs:50:14
    |
-48 |         b.include(confirm).out_reply(MemoryPublish).transform(Urgent);
-   |                                                     --------- ^^^^^^ unsatisfied trait bound
-   |                                                     |
-   |                                                     required by a bound introduced by this call
+50 |             .transform(Urgent)
+   |              ^^^^^^^^^ unsatisfied trait bound
    |
    = note: a transform states its position by the kind it implements: `PublishTransform<K>` for every `K: ContextKind` mounts anywhere, `PublishTransform<ForReply<C>>` reads the delivery and mounts on a reply, `PublishTransform<ForSlot>` mounts on an `Out` slot. A slot publish is issued by the handler body, so it has no delivery to hand on
    = note: a transform also states the broker's per-message options it writes, and mounts only over a publisher whose `Publisher::Options` is that type: `()` here. One that writes none is generic over them - `impl<K: ContextKind, Options> PublishTransform<K, Options> for ..` - and mounts anywhere
@@ -15,12 +13,4 @@ help: the trait `PublishTransform<ForReply, ()>` is not implemented for `Urgent`
 28 | impl<C> PublishTransform<ForReply<C>, Priority> for Urgent {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `Priority`, found `()`
-   = note: required for `(ruststream::runtime::WithSource<ReplyWiring<MemoryPublish>>, ())` to implement `ruststream::runtime::AdmitsAt<Urgent, ruststream::runtime::ReplyLast, ruststream::runtime::PublishMount, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Open)>, MemoryBroker>`
-note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`
-  --> crates/ruststream-runtime-tokio/src/app/include/guard.rs
-   |
-   |     pub fn transform<N>(
-   |            --------- required by a bound in this associated function
-...
-   |         Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def, B>,
-   |                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`
+   = note: required for `ruststream_runtime::slot::position::ReplyProbe<SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Open)>, MemoryPublish, MemoryBroker>` to implement `ruststream_runtime::slot::position::TransformProbe<Urgent>`

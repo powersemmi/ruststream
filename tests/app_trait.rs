@@ -27,9 +27,7 @@ async fn handle(_order: &Order) {}
 fn build() -> impl App {
     RustStream::new(AppInfo::new("svc", "0.2.0").description("demo"))
         .server("mem", ServerSpec::new("mem://local", "memory"))
-        .with_broker_codec(MemoryBroker::new(), JsonCodec, |b| {
-            b.include(handle);
-        })
+        .with_broker_codec(MemoryBroker::new(), JsonCodec, |b| b.include(handle))
 }
 
 #[test]
