@@ -58,11 +58,29 @@ use bytes_utils::Str;
 // A list rather than a hash table: an empty map allocates nothing, the first insert allocates one
 // block instead of a table, and a lookup with capitals in the name compares without lowercasing a
 // copy of it.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct HeaderMap {
     // `None` until the first insert: the drop glue of an empty map is then one branch, where an
     // empty `Vec` still calls into its element drop and its deallocation check.
     inner: Option<Vec<(Str, Bytes)>>,
+}
+
+impl Clone for HeaderMap {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+
+    // Overwriting a map writes the entries into the room it already has, so a long-lived map
+    // that is refreshed per message allocates only while it grows.
+    fn clone_from(&mut self, source: &Self) {
+        match (&mut self.inner, &source.inner) {
+            (Some(entries), Some(from)) => entries.clone_from(from),
+            (Some(entries), None) => entries.clear(),
+            (inner, from) => inner.clone_from(from),
+        }
+    }
 }
 
 impl fmt::Debug for HeaderMap {
@@ -383,6 +401,25 @@ mod tests {
     use std::vec;
 
     use super::*;
+
+    #[test]
+    fn clone_from_keeps_the_allocation_of_the_map_it_overwrites() {
+        let mut roomy = HeaderMap::with_capacity(8);
+        roomy.insert("x-old", "1");
+        let mut source = HeaderMap::new();
+        source.insert("x-new", "2");
+        roomy.clone_from(&source);
+        assert_eq!(roomy, source);
+        assert!(
+            roomy
+                .inner
+                .as_ref()
+                .is_some_and(|entries| entries.capacity() >= 8),
+            "the entries are written into the room the map already had"
+        );
+        roomy.clone_from(&HeaderMap::new());
+        assert!(roomy.is_empty());
+    }
 
     #[test]
     fn equality_ignores_insertion_order() {
