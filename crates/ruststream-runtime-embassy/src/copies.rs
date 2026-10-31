@@ -345,6 +345,24 @@ mod tests {
         }
     }
 
+    /// A copy path whose broker refuses every copy.
+    struct Refusing;
+
+    impl CopyPublisher for Refusing {
+        fn address(&self) -> &'static str {
+            "jobs"
+        }
+
+        fn publish_copy(
+            &self,
+            _destination: &str,
+            _payload: &[u8],
+            _headers: HeaderMap,
+        ) -> impl Future<Output = Result<(), BoxError>> {
+            ready(Err(BoxError::from("the subscription is full")))
+        }
+    }
+
     fn keep<Path: CopyPublisher>(store: &CopyStore<Path, 3, Probe>, payload: &[u8], delay: u64) {
         let record = store.take_record().expect("a free record");
         store.fill(record, payload, HeaderMap::new());
@@ -433,5 +451,50 @@ mod tests {
         }
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Ready(()));
         assert!(sent.0.borrow().is_empty(), "nothing published");
+    }
+
+    #[test]
+    fn a_copy_its_broker_refuses_is_lost_and_its_record_freed() {
+        let clock = Probe::default();
+        let store = CopyStore::<_, 3, _>::on_clock(Refusing, Arc::from("jobs"), clock.clone());
+        keep(&store, b"a", 5);
+        let mut driver = pin!(store.drive());
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+        clock.advance_to(5);
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+        store.close();
+
+        assert_eq!(
+            driver.as_mut().poll(&mut cx),
+            Poll::Ready(()),
+            "a closed store holds nothing once the refused copy is gone"
+        );
+        assert!(
+            [(); 3]
+                .map(|()| store.take_record())
+                .iter()
+                .all(Option::is_some),
+            "the refused copy gave its record back"
+        );
+    }
+
+    #[test]
+    fn a_closed_store_waits_for_a_record_a_settle_has_taken() {
+        let clock = Probe::default();
+        let sent = Recorded::default();
+        let store = CopyStore::<_, 3, _>::on_clock(&sent, Arc::from("jobs"), clock);
+        let taken = store.take_record().expect("a free record");
+        let mut driver = pin!(store.drive());
+        let mut cx = Context::from_waker(Waker::noop());
+        store.close();
+
+        assert_eq!(
+            driver.as_mut().poll(&mut cx),
+            Poll::Pending,
+            "the settle that took the record may still arm a copy in it"
+        );
+        store.free(taken);
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Ready(()));
     }
 }
