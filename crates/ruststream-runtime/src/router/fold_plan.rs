@@ -17,12 +17,12 @@ use core::marker::PhantomData;
 use crate::dispatch::{Delivery, HeadersAtOnce, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::LocalHandler;
-use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, ShutdownWait};
+use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, PrepareKept, ShutdownWait};
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
 use crate::middleware::LocalBlanketLayer;
 use crate::redelivery::{
-    AppliesDeclaration, CopyPublisher, DeclaredOn, NoCopies, PairCopies, Undeclared,
+    AppliesDeclaration, DeclaredOn, NoCopies, PairCopies, PrepareCopy, Undeclared,
 };
 use crate::redelivery::{ScopeDelivery, open_local_subscription};
 use crate::typed::{LocalTyped, Typed};
@@ -68,7 +68,7 @@ pub trait LocalDispatch {
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: LocalDetach,
-        Path: CopyPublisher;
+        Path: PrepareCopy<Cx>;
 }
 
 /// One opened route as a plan receives it: the subscriber, the handler with its layers applied,
@@ -102,7 +102,7 @@ impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Lent: HostDetach,
+        Lent: HostDetach<Kept: PrepareKept<Cx>>,
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
         run_sequential(
@@ -141,7 +141,7 @@ impl LocalDispatch for SequentialPlan {
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: LocalDetach,
-        Path: CopyPublisher,
+        Path: PrepareCopy<Cx>,
     {
         route
             .run_sequential(signal, state, &OnOneThread(host))
@@ -440,6 +440,7 @@ where
     Plan: LocalDispatch<
         Copies: PairCopies<B, Route::Source> + AppliesDeclaration<Route::Declaration>,
     >,
+    <Plan::Copies as PairCopies<B, Route::Source>>::Path: PrepareCopy<Route::Cx>,
 {
     type Opened<Layers: LocalBlanketLayer + Clone> = OpenedDispatch<
         Route::Sub,
@@ -480,7 +481,7 @@ where
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
     Layers: LocalBlanketLayer,
     Plan: LocalDispatch,
-    Path: CopyPublisher,
+    Path: PrepareCopy<Cx>,
 {
     async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
     where

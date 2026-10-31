@@ -15,7 +15,6 @@ use core::marker::PhantomData;
 use crate::lifecycle::BoxError;
 use crate::metadata::OutgoingKind;
 use crate::middleware::LocalBlanketLayer;
-use crate::publish::PublishTransformIdentity;
 use crate::redelivery::{
     AppliesDeclaration, LocalRetrySlot, NoCopies, PairSlot, PublishesCopiesHere, ScopeDelivery,
 };
@@ -75,21 +74,23 @@ type LocalSettled<B, Head, Dest> =
     <<LocalCopies<B, Head> as RetryOffer<Dest>>::Offer as SettlesDestination<Reads>>::Settled;
 
 /// One registration of a local chain with the deferred-retry position bound: the route, and the
-/// policy and destination its kept copies leave through.
+/// policy, destination and transforms its kept copies leave through.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct LocalRetriedRoute<Route, Policy, Settled> {
+pub struct LocalRetriedRoute<Route, Policy, Stack, Settled> {
     route: Route,
-    slot: LocalRetrySlot<Policy>,
+    slot: LocalRetrySlot<Policy, Stack>,
     _settled: PhantomData<fn() -> Settled>,
 }
 
-// The position on a local chain: the slot's policy kept typed in the route. The copy carries the
-// delivery's own bytes, so the codec the chain resolved encodes nothing and is dropped. The
-// tokio arm reads the router's `PublishPipeline`, which a `LocalPipeline` is not, so the two arms
-// are disjoint.
-impl<B, Head, Tail, C, Layers, Pipe, Policy, Enc, Dest>
-    AttachRetry<OutAttachment<Retry, Policy, PublishTransformIdentity, Enc>, Dest>
+// The position on a local chain: the slot's policy and transforms kept typed in the route. The
+// copy carries the delivery's own bytes, so the codec the chain resolved encodes nothing and is
+// dropped. The tokio arm reads the router's `PublishPipeline`, which a `LocalPipeline` is not, so
+// the two arms are disjoint. The transforms are held to the copy where the registration opens,
+// which knows the context they read, so a misfit is reported with its own diagnostic rather than
+// as a step the chain lacks.
+impl<B, Head, Tail, C, Layers, Pipe, Policy, Transforms, Enc, Dest>
+    AttachRetry<OutAttachment<Retry, Policy, Transforms, Enc>, Dest>
     for Router<B, (Head, Tail), C, Layers, LocalPipeline<Pipe>>
 where
     B: LocalBroker,
@@ -103,7 +104,7 @@ where
     type Out = Router<
         B,
         (
-            LocalRetriedRoute<Head, Policy, LocalSettled<B, Head, Dest>>,
+            LocalRetriedRoute<Head, Policy, Transforms, LocalSettled<B, Head, Dest>>,
             Tail,
         ),
         C,
@@ -113,10 +114,10 @@ where
 
     fn attach_retry(
         self,
-        slot: OutAttachment<Retry, Policy, PublishTransformIdentity, Enc>,
+        slot: OutAttachment<Retry, Policy, Transforms, Enc>,
         destination: Option<Cow<'static, str>>,
     ) -> Self::Out {
-        let (policy, _transforms, _codec) = slot.into_parts();
+        let (policy, stack, _codec) = slot.into_parts();
         let (mut head, tail) = self.routes;
         // A destination named here is a channel of the service, as on the multi-thread runner.
         if let Some(destination) = destination.clone() {
@@ -130,6 +131,7 @@ where
                     slot: LocalRetrySlot {
                         policy,
                         destination,
+                        stack,
                     },
                     _settled: PhantomData,
                 },
@@ -144,16 +146,16 @@ where
 }
 
 // The registration that bound the position said where its copies go.
-impl<Route, Policy> RetryDestinationsDeclared
-    for LocalRetriedRoute<Route, Policy, DestinationDeclared>
+impl<Route, Policy, Stack> RetryDestinationsDeclared
+    for LocalRetriedRoute<Route, Policy, Stack, DestinationDeclared>
 {
 }
 
 // A step after the position plans the registration it wraps.
-impl<Route: LocalPlanned, Policy, Settled> LocalPlanned
-    for LocalRetriedRoute<Route, Policy, Settled>
+impl<Route: LocalPlanned, Policy, Stack, Settled> LocalPlanned
+    for LocalRetriedRoute<Route, Policy, Stack, Settled>
 {
-    type Route = LocalRetriedRoute<Route::Route, Policy, Settled>;
+    type Route = LocalRetriedRoute<Route::Route, Policy, Stack, Settled>;
     type Plan = Route::Plan;
 
     fn into_planned(self) -> (Self::Route, Self::Plan) {
@@ -171,12 +173,13 @@ impl<Route: LocalPlanned, Policy, Settled> LocalPlanned
 
 // Without a plan the copies have nowhere to wait: the registration opens under the plain plan,
 // whose store is none, and the bound on its copies names the step to add.
-impl<B, State, Route, Policy, Settled> OpenLayered<B, State>
-    for LocalRetriedRoute<Route, Policy, Settled>
+impl<B, State, Route, Policy, Stack, Settled> OpenLayered<B, State>
+    for LocalRetriedRoute<Route, Policy, Stack, Settled>
 where
     B: LocalBroker,
     Route: OpenLocalRoute<B, State>,
-    NoCopies: PairSlot<B, Route::Source, Policy> + AppliesDeclaration<Route::Declaration>,
+    NoCopies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>
+        + AppliesDeclaration<Route::Declaration>,
 {
     type Opened<Layers: LocalBlanketLayer + Clone> = OpenedDispatch<
         Route::Sub,
@@ -184,7 +187,7 @@ where
         Route::Cx,
         Layers,
         SequentialPlan,
-        <NoCopies as PairSlot<B, Route::Source, Policy>>::Path,
+        <NoCopies as PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>::Path,
     >;
 
     fn open_layered<Layers: LocalBlanketLayer + Clone>(
@@ -197,13 +200,14 @@ where
     }
 }
 
-impl<B, State, Route, Policy, Settled, Plan> OpenLayered<B, State>
-    for Dispatched<LocalRetriedRoute<Route, Policy, Settled>, Plan>
+impl<B, State, Route, Policy, Stack, Settled, Plan> OpenLayered<B, State>
+    for Dispatched<LocalRetriedRoute<Route, Policy, Stack, Settled>, Plan>
 where
     B: LocalBroker,
     Route: OpenLocalRoute<B, State>,
     Plan: LocalDispatch<
-        Copies: PairSlot<B, Route::Source, Policy> + AppliesDeclaration<Route::Declaration>,
+        Copies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>
+                    + AppliesDeclaration<Route::Declaration>,
     >,
 {
     type Opened<Layers: LocalBlanketLayer + Clone> = OpenedDispatch<
@@ -212,7 +216,7 @@ where
         Route::Cx,
         Layers,
         Plan,
-        <Plan::Copies as PairSlot<B, Route::Source, Policy>>::Path,
+        <Plan::Copies as PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>::Path,
     >;
 
     fn open_layered<Layers: LocalBlanketLayer + Clone>(
@@ -232,8 +236,8 @@ where
 ///
 /// The broker's refusal to pair the policy, to say the address, or to subscribe.
 #[allow(clippy::type_complexity)] // the opened parts, named once here
-async fn open_retried<B, State, Route, Policy, Settled, Plan, Layers>(
-    retried: LocalRetriedRoute<Route, Policy, Settled>,
+async fn open_retried<B, State, Route, Policy, Stack, Settled, Plan, Layers>(
+    retried: LocalRetriedRoute<Route, Policy, Stack, Settled>,
     plan: Plan,
     connected: &LocalConnected<B>,
     layers: &Layers,
@@ -245,20 +249,20 @@ async fn open_retried<B, State, Route, Policy, Settled, Plan, Layers>(
         Route::Cx,
         Layers,
         Plan,
-        <Plan::Copies as PairSlot<B, Route::Source, Policy>>::Path,
+        <Plan::Copies as PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>::Path,
     >,
     BoxError,
 >
 where
     B: LocalBroker,
     Route: OpenLocalRoute<B, State>,
-    Plan: LocalDispatch<Copies: PairSlot<B, Route::Source, Policy>>,
+    Plan: LocalDispatch<Copies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>,
     Layers: LocalBlanketLayer + Clone,
 {
     let LocalRetriedRoute { route, slot, .. } = retried;
     // Paired before the subscription opens, so a policy the broker refuses fails the startup
     // before any delivery arrives.
-    let path = <Plan::Copies as PairSlot<B, Route::Source, Policy>>::pair_slot(
+    let path = <Plan::Copies as PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>::pair_slot(
         slot,
         route.source(),
         connected,

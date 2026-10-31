@@ -45,7 +45,8 @@ mod kept;
 
 pub use kept::{
     AddressedCopy, AppliesDeclaration, CopyPublisher, DeclaredOn, KeepCopies, KeptAddress,
-    LocalRetrySlot, NoCopies, NoCopyPath, PairCopies, PairSlot, SlotAddress, Undeclared,
+    KeptTransforms, LocalRetrySlot, NoCopies, NoCopyPath, PairCopies, PairSlot, PrepareCopy,
+    SlotAddress, Undeclared,
 };
 
 /// The plain publish policy of a broker's connected form, which is what a retry copy leaves

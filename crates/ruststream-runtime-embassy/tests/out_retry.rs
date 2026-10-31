@@ -17,7 +17,9 @@ use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
-use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts};
+use ruststream::runtime::{
+    ContextKind, EmbeddedApp, HandlerOutcome, MountSteps, Mounts, Outgoing, PublishTransform, Reads,
+};
 use ruststream::{Deserialized, LocalBroker, LocalPublisher, OutgoingMessage, subscriber};
 use static_cell::StaticCell;
 
@@ -51,11 +53,28 @@ async fn on_job(job: &Job<'_>) -> HandlerOutcome {
     HandlerOutcome::retry_after(LATER)
 }
 
-/// Counts the copies that reached the destination the mount site named.
+/// Copies that carried the retry transform's stamp.
+static STAMPED: AtomicU32 = AtomicU32::new(0);
+
+/// A transform on the retry position: stamps every copy it sees with the header `stamped`.
+struct Stamp;
+
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
+        out.headers_mut().insert("stamped", "yes");
+    }
+}
+
+/// Counts the copies that reached the destination the mount site named, and those stamped.
 #[subscriber(LocalMemorySource::new("bus/jobs.later"))]
-async fn on_copy(job: &Job<'_>) -> HandlerOutcome {
+async fn on_copy(job: &Job<'_>, ctx: &mut Context<'_>) -> HandlerOutcome {
     let _ = job.0;
     COPIES.fetch_add(1, Ordering::Relaxed);
+    if ctx.headers().get_str("stamped") == Some("yes") {
+        STAMPED.fetch_add(1, Ordering::Relaxed);
+    }
     HandlerOutcome::ack()
 }
 
@@ -66,6 +85,7 @@ fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
             .include(on_job)
             .out_retry(LocalMemoryPublish)
             .to("bus/jobs.later")
+            .transform(Stamp)
             .retry_capacity::<1>()
     })
 }
@@ -142,6 +162,12 @@ async fn check_out_retry(spawner: Spawner, stand: &'static Stand) {
         "(tries, copies) once due: the copy reaches the named destination, not the subscription"
     );
     passed("a copy through out_retry reaches its destination on the clock");
+    assert_eq!(
+        STAMPED.load(Ordering::Relaxed),
+        1,
+        "copies that carry the retry transform's header"
+    );
+    passed("a transform on out_retry stamps the kept copy");
 }
 
 #[embassy_executor::task]

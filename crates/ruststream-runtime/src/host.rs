@@ -13,9 +13,9 @@
 use core::time::Duration;
 
 #[cfg(feature = "alloc")]
-use crate::HeaderMap;
-#[cfg(feature = "alloc")]
 use crate::lifecycle::BoxError;
+#[cfg(feature = "alloc")]
+use crate::{HeaderMap, LocalIncomingMessage};
 
 /// A runtime's clock: the time it reads and the timers it arms.
 ///
@@ -420,6 +420,37 @@ pub trait KeptCopies {
     fn free(&self, record: usize);
 }
 
+/// The delivery a kept copy is made of, while it is still at hand: the subscription it came
+/// through, the message, and how the broker's context for it is built. What the transforms on a
+/// kept copy read. Machinery; never named directly.
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct KeptDelivery<'a, M, Cx> {
+    /// The subscription's name.
+    pub subscription: &'a str,
+    /// The delivery being copied.
+    pub message: &'a M,
+    /// Builds the broker's context for the delivery, which only a transform reads.
+    pub build_cx: fn(&M) -> Cx,
+}
+
+/// A store of kept copies that prepares the copy of a delivery whose broker context is `Cx`:
+/// runs the mount site's transforms over a filled record, while the delivery is still at hand.
+/// Machinery; never named directly.
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub trait PrepareKept<Cx>: KeptCopies {
+    /// Prepares the copy in `record`, filled by [`fill`](KeptCopies::fill), bound for
+    /// `destination` or, without one, for the subscription.
+    fn prepare<M: LocalIncomingMessage>(
+        &self,
+        record: usize,
+        destination: Option<&str>,
+        delivery: &KeptDelivery<'_, M, Cx>,
+    );
+}
+
 /// The store of a host that keeps no retry copy in place: there is none.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
@@ -448,6 +479,19 @@ impl KeptCopies for NoKept {
     }
 
     fn free(&self, _record: usize) {
+        match *self {}
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[allow(clippy::uninhabited_references)]
+impl<Cx> PrepareKept<Cx> for NoKept {
+    fn prepare<M: LocalIncomingMessage>(
+        &self,
+        _record: usize,
+        _destination: Option<&str>,
+        _delivery: &KeptDelivery<'_, M, Cx>,
+    ) {
         match *self {}
     }
 }

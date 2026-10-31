@@ -32,7 +32,7 @@ use crate::dispatch::{Delivery, HeadersAtOnce, Turn, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handle::Deserialized;
 use crate::handler::LocalHandler;
-use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, ShutdownWait};
+use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, PrepareKept, ShutdownWait};
 use crate::lifecycle::BoxError;
 use crate::middleware::{LocalBlanketLayer, Stack};
 use crate::redelivery::{ScopeDelivery, open_local_subscription};
@@ -519,7 +519,7 @@ pub trait RunsBatches<Batch, C, S> {
     ) -> impl Future<Output = ()>
     where
         Signal: Halt,
-        Host: HostDetach;
+        Host: HostDetach<Kept: PrepareKept<C>>;
 }
 
 impl<Batch, M, F, Inner, C, S> RunsBatches<Batch, C, S>
@@ -546,7 +546,7 @@ where
     ) -> impl Future<Output = ()>
     where
         Signal: Halt,
-        Host: HostDetach,
+        Host: HostDetach<Kept: PrepareKept<C>>,
     {
         run_batch::<Self, Batch, C, S, Signal, Host>(
             self, batch, scratch, encode, name, state, delivery, host, failure,
