@@ -721,4 +721,67 @@ mod tests {
             assert!(ended(&mut stream));
         });
     }
+
+    #[test]
+    fn a_clone_of_the_bus_its_connection_or_its_publisher_reaches_the_same_subscriptions() {
+        block_on(async {
+            let board = LocalMemoryBroker::<4>::default();
+            let connected = board.clone().connect().await.unwrap();
+            let mut subscriber = connected.clone().subscribe("temp").await.unwrap();
+            let publisher = connected.publisher();
+            publisher
+                .clone()
+                .publish(reading("temp", b"21"), None)
+                .await
+                .unwrap();
+
+            let delivery = waiting(&mut pin!(subscriber.stream())).unwrap();
+            assert_eq!(delivery.payload(), b"21");
+            delivery.ack().await.unwrap();
+        });
+    }
+
+    #[test]
+    fn the_debug_forms_name_the_capacity_and_the_subscription_not_the_bus() {
+        block_on(async {
+            let board = LocalMemoryBroker::<4>::new();
+            assert_eq!(
+                format!("{board:?}"),
+                "LocalMemoryBroker { capacity: 4, .. }"
+            );
+            let connected = board.connect().await.unwrap();
+            assert_eq!(
+                format!("{connected:?}"),
+                "ConnectedLocalMemoryBroker { capacity: 4, .. }"
+            );
+            assert_eq!(
+                format!("{:?}", connected.publisher()),
+                "LocalMemoryPublisher { capacity: 4, .. }"
+            );
+            let mut subscriber = connected.subscribe("temp").await.unwrap();
+            assert_eq!(
+                format!("{subscriber:?}"),
+                "LocalMemorySubscriber { name: \"temp\", .. }"
+            );
+            connected
+                .publisher()
+                .publish(reading("temp", b"21"), None)
+                .await
+                .unwrap();
+            let delivery = waiting(&mut pin!(subscriber.stream())).unwrap();
+            assert_eq!(
+                format!("{delivery:?}"),
+                "LocalMemoryMessage { name: \"temp\", deliveries: 1, .. }"
+            );
+            delivery.ack().await.unwrap();
+        });
+    }
+
+    #[test]
+    fn the_bus_is_described_as_a_server_in_the_process() {
+        assert_eq!(
+            LocalMemoryBroker::<4>::new().describe_server(),
+            ServerSpec::in_process("memory")
+        );
+    }
 }
