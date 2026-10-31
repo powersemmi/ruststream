@@ -584,6 +584,36 @@ fn a_destination_hook_runs_for_the_tests_own_publish() -> Result<(), Box<dyn Err
     })
 }
 
+#[test]
+fn a_shutdown_lets_a_hook_waiting_on_the_clock_finish_and_shuts_the_bus_down()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let (bus, sensor) = bus_and_sensor().await?;
+        let tb = TestApp::start(app(bus)).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .subscriber("sensors/temp")
+            .on_call(async move |_| {
+                Timer::after_secs(1).await;
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await?;
+
+        tb.shutdown().await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1, "the hook ran to its end");
+        assert!(
+            bus_is_shut_down(&sensor).await,
+            "the shutdown ended before the app shut its bus down"
+        );
+        Ok(())
+    })
+}
+
 /// What the board's handlers read: the level from which a reading is an alarm.
 struct Limits {
     alarm: u8,

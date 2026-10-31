@@ -396,7 +396,9 @@ impl<T: 'static> PublishedAssertions<T> {
     /// guard. A hook still running when the harness shuts down or is dropped is stopped where it
     /// waits, and `shutdown` returns once it is gone. On the tokio runtime a hook runs on a thread
     /// of its own inside the test's runtime, its clock included; on the embedded runtime it runs
-    /// inside the test's own future, polled beside the app by the step that drove the event. A
+    /// inside the test's own future, polled beside the app by the step that drove the event, and
+    /// its shutdown moves the clock until the app has stopped, so a hook that waits on a timer runs
+    /// to its end. A
     /// panic inside it, a failed assertion included, is raised again from the publish, `settle`
     /// or `advance` that drove the event, or else from
     /// [`TestApp::shutdown`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html#method.shutdown) or the harness being dropped.

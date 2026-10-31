@@ -9,9 +9,16 @@ import TabItem from '@theme/TabItem';
 
 # Testing an embedded app
 
-On the `embassy` runtime, `TestApp` runs a device service's `EmbeddedApp` on the host, with every broker connected in process and embassy-time's mock clock in the test's hands.
+On the `embassy` runtime, `TestApp` runs a device service's `EmbeddedApp` on the host, with every broker connected in process and the clock the app reads in the test's hands.
 The test hands the app function its brokers, as the device's task does, and drives the app with the same calls a tokio test makes: [`broker`](./driving/broker.md), [`settle`](./driving/settle.md), [`advance`](./driving/advance.md) and `shutdown`.
 The app runs inside the test's own future, so a test is a plain `#[test]` that blocks on one future, and one `TestApp` runs at a time in a process.
+
+The harness is the test build's embassy-time driver: the clock starts at zero and moves only when the test moves it.
+embassy-time's own `mock-driver` is a second driver of the same clock, and a build links only one of the two.
+
+`shutdown` lets the work the app holds run to its end: the clock moves from one armed deadline to the next until the app has stopped.
+A handler or a hook that waits on a timer finishes, the shutdown hooks run and every broker shuts down.
+Work that waits on something nothing wakes makes `shutdown` return `TestError::Stalled`, and an app that stopped on its own error returns it as `TestError::Failed`.
 
 ## Out slot records
 
@@ -38,7 +45,7 @@ A slot publish is also recorded on its destination, so [`published::<T>(name)`](
 
 [`on_call`](./hooks/on-call.md) and [`on_publish`](./hooks/on-publish.md) take the same async closures as on tokio.
 A hook runs inside the test's own future: the dispatch that recorded the event waits for it, and the step that drives the app polls it beside the app.
-A hook runs on the test's own thread, and a hook that waits on the clock finishes once the test advances it.
+A hook runs on the test's own thread, and a hook that waits on the clock finishes once the test advances it or shuts the app down.
 A hook on a destination the test itself publishes to runs in that publish.
 A panic inside a hook, a failed assertion included, fails the publish, `settle`, `advance` or `shutdown` that ran it.
 
