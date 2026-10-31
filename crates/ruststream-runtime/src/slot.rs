@@ -163,7 +163,7 @@ pub use position::{
 /// }
 ///
 /// #[subscriber("events")]
-/// async fn route(event: &Event, Out(lanes): Out<impl ShardLanes>) -> HandlerOutcome {
+/// async fn route(event: &Event, Out(lanes): Out<impl ShardLanes + Sync>) -> HandlerOutcome {
 ///     if sent(lanes, event).await { HandlerOutcome::ack() } else { HandlerOutcome::retry() }
 /// }
 ///
