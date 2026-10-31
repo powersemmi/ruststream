@@ -9,10 +9,10 @@
 use core::ops::Deref;
 
 use crate::codec::Codec;
+use crate::publish::{Admits, TransactionScope, TypedTransaction};
 use crate::publish::{
     HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, OutPipeline, PublishBuilder,
 };
-use crate::publish::{TransactionScope, TypedTransaction};
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 use crate::{
     HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, OwnedTransactions, Publisher,
@@ -191,7 +191,7 @@ pub trait SlotTransactions<M, Body = ()>: SlotEntry<M, Body> {
         &'a self,
     ) -> impl Future<
         Output = Result<
-            TransactionScope<'a, SlotPublisher<Self::Wire, M>, &'a Self::Enc, Self>,
+            TransactionScope<'a, SlotPublisher<Self::Wire, M>, &'a Self::Enc, SlotAdmit<M, Body>>,
             <Self::Wire as Publisher>::Error,
         >,
     >
@@ -206,7 +206,11 @@ pub trait SlotTransactions<M, Body = ()>: SlotEntry<M, Body> {
         &'a self,
     ) -> impl Future<
         Output = Result<
-            TypedTransaction<<Self::Wire as OwnedTransactions>::Transaction, &'a Self::Enc, Self>,
+            TypedTransaction<
+                <Self::Wire as OwnedTransactions>::Transaction,
+                &'a Self::Enc,
+                SlotAdmit<M, Body>,
+            >,
             <Self::Wire as Publisher>::Error,
         >,
     >
@@ -225,22 +229,43 @@ where
 {
     fn begin<'a>(
         &'a self,
-    ) -> impl Future<Output = Result<TransactionScope<'a, SlotPublisher<W, M>, &'a E, Self>, W::Error>>
+    ) -> impl Future<
+        Output = Result<
+            TransactionScope<'a, SlotPublisher<W, M>, &'a E, SlotAdmit<M, Body>>,
+            W::Error,
+        >,
+    >
     where
         M: 'a,
         E: 'a,
         W: TransactionalPublisher + 'a,
     {
-        Self::begin(self)
+        let (wired, codec) = self.parts();
+        TransactionScope::open(wired, codec)
     }
 
     fn transaction<'a>(
         &'a self,
-    ) -> impl Future<Output = Result<TypedTransaction<W::Transaction, &'a E, Self>, W::Error>>
+    ) -> impl Future<
+        Output = Result<TypedTransaction<W::Transaction, &'a E, SlotAdmit<M, Body>>, W::Error>,
+    >
     where
         E: 'a,
         W: OwnedTransactions,
     {
-        Self::transaction(self)
+        let (wired, codec) = self.parts();
+        TypedTransaction::open(wired, codec)
     }
+}
+
+/// What a transaction opened through [`SlotTransactions`] admits: the marker's dictionary,
+/// narrowed by the parameter's declared set, as the slot's own typed publish.
+#[doc(hidden)]
+pub struct SlotAdmit<M, Body>(core::marker::PhantomData<fn() -> (M, Body)>);
+
+impl<M, Body, T, Index> Admits<T, Index> for SlotAdmit<M, Body>
+where
+    T: PublishedThrough<M>,
+    Body: ContainsMessage<T, Index>,
+{
 }

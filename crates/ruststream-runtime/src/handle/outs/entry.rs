@@ -395,6 +395,10 @@ impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> Re
 }
 
 impl<M, W, E, Pipe, Body> Slot<M, W, E, Pipe, Body> {
+    pub(super) const fn parts(&self) -> (&SlotPublisher<W, M>, &E) {
+        (&self.wired, &self.codec)
+    }
+
     /// Builds an entry over an already-paired live value, for the crate's own unit tests.
     #[cfg(all(test, feature = "json"))]
     pub(crate) fn wired(wired: W, codec: E, pipeline: Pipe) -> Self {
