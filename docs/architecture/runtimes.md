@@ -42,3 +42,4 @@ An item one runner does not offer is a compile error on the other.
 
 `TestApp` runs a tokio app, and `testing::embedded::TestApp` runs an embedded app on the host with embassy-time's mock clock.
 Both are in the facade when `testing` is on, beside each other.
+With `testing` on, every broker an embedded app registers implements the in-process mode, `InProcess`.

@@ -73,6 +73,10 @@ type HookRun = Pin<Box<dyn Future<Output = ()>>>;
 /// clock, and a test build links only one of the two; a device build keeps the driver of its
 /// board.
 ///
+/// With the `testing` feature on, every broker an embedded app registers implements the
+/// in-process mode ([`InProcess`]): an app registering a broker without it does not build in a
+/// test build.
+///
 /// # Examples
 ///
 /// ```
