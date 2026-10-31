@@ -7,7 +7,7 @@ use bytes::Bytes;
 use tokio_util::task::TaskTracker;
 
 use crate::detach::Hosted;
-use crate::{AckError, Delivery, HeaderMap, IncomingMessage};
+use crate::{AckError, Delivery, HeaderMap, IncomingMessage, NoRetry};
 
 /// What a test delivery's transport does when asked to settle. The cases differ in kind, not
 /// degree, so they are variants rather than a flag.
@@ -62,8 +62,8 @@ pub(super) trait Unscoped {
     fn empty() -> Self;
 }
 
-impl<C> Unscoped for Hosted<C> {
+impl<C> Unscoped for Hosted<C, NoRetry> {
     fn empty() -> Self {
-        Self::new(Delivery::unscoped(), TaskTracker::new())
+        Self::new(Delivery::unscoped(), None, TaskTracker::new())
     }
 }

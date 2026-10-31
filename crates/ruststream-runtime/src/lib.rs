@@ -204,6 +204,9 @@ pub use handler::IntoOutcome;
 #[cfg(feature = "alloc")]
 pub use handler::{Handler, HandlerOutcome, LocalHandler};
 pub use host::{Clock, ShutdownWait};
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use host::{Copying, SendHost};
 #[doc(hidden)]
 pub use host::{Detach, Halt, HostDetach, LocalDetach, OnOneThread};
 #[cfg(feature = "alloc")]
@@ -298,10 +301,12 @@ pub use publishing::{LocalPublishing, PublishingHandler};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use redelivery::{
-    AddressedCopy, AppliesDeclaration, CopiesAddressed, CopyPathAddress, CopyPathPairing,
-    CopyPublisher, DeclaredOn, KeepCopies, KeptAddress, KeptTransforms, LocalRetrySlot, NoCopies,
-    NoCopyPath, PairCopies, PairSlot, PrepareCopy, PublishesCopiesHere, RetryPairing, RetrySetup,
-    ScopeDelivery, SlotAddress, Undeclared, open_mounted_subscriber,
+    AddressedCopy, AppliesDeclaration, BoundRetry, CopiesAddressed, CopyPathAddress,
+    CopyPathPairing, CopyPublisher, DeclaredOn, KeepCopies, KeptAddress, KeptTransforms,
+    LocalRetrySlot, NamedRetry, NoCopies, NoCopyPath, NoPairing, NoRetry, OpenedSubscription,
+    PairCopies, PairSlot, PrepareCopy, PublishesCopiesHere, RetryCopies, RetryLeaf, RetryParts,
+    RetryRoute, RetrySetup, RetrySlot, ScopeDelivery, SlotAddress, Undeclared, UnnamedRetry,
+    open_mounted_subscriber,
 };
 #[cfg(feature = "alloc")]
 pub use retry::Retry;

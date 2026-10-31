@@ -17,7 +17,7 @@ use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::host::Detach;
+use super::host::SendHost;
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 
@@ -151,7 +151,7 @@ where
         batch.into_iter().collect()
     }
 
-    async fn handle_batch<Host: Detach>(
+    async fn handle_batch<Host: SendHost<Def::Context>>(
         &self,
         batch: Vec<Msg>,
         values: &mut Self::Scratch,

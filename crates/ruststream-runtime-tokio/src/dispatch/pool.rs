@@ -22,15 +22,15 @@ use super::{
     DispatchFailure, Handler, HeadersOnDemand, Hosted, Shutdown, Slot, Turn, Workers, dispatch,
     lane_of, log_worker_exit,
 };
-use crate::{BuildContext, IncomingMessage, Subscriber};
+use crate::{BuildContext, IncomingMessage, RetryCopies, Subscriber};
 
 /// What the loop shares with every worker it starts, behind one reference count taken once per
 /// worker.
-pub(super) struct Shared<Body, State, Cx> {
+pub(super) struct Shared<Body, State, Cx, Retry> {
     pub(super) handler: Arc<Body>,
     pub(super) name: Arc<str>,
     pub(super) state: Arc<State>,
-    pub(super) hosted: Arc<Hosted<Cx>>,
+    pub(super) hosted: Arc<Hosted<Cx, Retry>>,
     pub(super) failure: DispatchFailure<Shutdown>,
 }
 
@@ -78,11 +78,12 @@ impl Drop for Crew {
 }
 
 /// One worker: a sequential loop over the deliveries handed to it.
-async fn work<Message, Body, Cx, State>(
-    shared: Arc<Shared<Body, State, Cx>>,
+async fn work<Message, Body, Cx, State, Retry>(
+    shared: Arc<Shared<Body, State, Cx, Retry>>,
     mut inbox: mpsc::Receiver<Message>,
     idle: Option<Idle>,
 ) where
+    Retry: RetryCopies<Cx>,
     Message: IncomingMessage,
     Body: Handler<Message, Cx, State>,
     Cx: BuildContext<Message> + Send + Sync + 'static,
@@ -126,11 +127,12 @@ struct Started<Message> {
 }
 
 /// Starts `workers.count()` workers over `shared`, reporting when free unless they are keyed lanes.
-fn start<Message, Body, Cx, State>(
-    shared: &Arc<Shared<Body, State, Cx>>,
+fn start<Message, Body, Cx, State, Retry>(
+    shared: &Arc<Shared<Body, State, Cx, Retry>>,
     workers: Workers,
 ) -> Started<Message>
 where
+    Retry: RetryCopies<Cx>,
     Message: IncomingMessage + Send + 'static,
     Body: Handler<Message, Cx, State> + 'static,
     Cx: BuildContext<Message> + Send + Sync + 'static,
@@ -172,17 +174,18 @@ where
 /// waits on a busy lane rather than reorder its key.
 // See `spawn_dispatch_workers`: each part is the registration's own.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn spawn_dispatch_pool<Sub, Body, Cx, State>(
+pub(super) fn spawn_dispatch_pool<Sub, Body, Cx, State, Retry>(
     mut subscriber: Sub,
     handler: Arc<Body>,
     shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<State>,
-    hosted: Arc<Hosted<Cx>>,
+    hosted: Arc<Hosted<Cx, Retry>>,
     failure: DispatchFailure<Shutdown>,
     workers: Workers,
 ) -> JoinHandle<()>
 where
+    Retry: RetryCopies<Cx>,
     Sub: Subscriber + Send + 'static,
     Sub::Message: Send + Sync + 'static,
     Body: Handler<Sub::Message, Cx, State> + 'static,

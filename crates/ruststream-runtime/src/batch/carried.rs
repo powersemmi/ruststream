@@ -23,7 +23,7 @@ use crate::{
 use super::super::context::Context;
 use super::super::dispatch::{Slot, settle_outcome};
 use super::super::failure::FailurePolicy;
-use super::super::host::Detach;
+use super::super::host::SendHost;
 #[cfg(feature = "otel")]
 use super::record_batch_size;
 use super::{
@@ -184,7 +184,7 @@ where
         }
     }
 
-    async fn handle_batch<Host: Detach>(
+    async fn handle_batch<Host: SendHost<C>>(
         &self,
         taken: Self::Taken,
         _scratch: &mut (),
