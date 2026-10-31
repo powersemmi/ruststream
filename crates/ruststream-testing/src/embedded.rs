@@ -572,24 +572,28 @@ impl TestApp {
         hooks.retain_mut(|hook| hook.as_mut().poll(cx).is_pending());
     }
 
+    /// Polls the app once, unless it already ended, and keeps how it ended.
+    fn poll_app(&self, cx: &mut Context<'_>) {
+        let mut slot = self.run.borrow_mut();
+        if let Some(run) = slot.as_mut()
+            && let Poll::Ready(ended) = run.as_mut().poll(cx)
+        {
+            *slot = None;
+            *self.ended.borrow_mut() = Some(ended);
+        }
+    }
+
     /// Polls the app until nothing wakes it: everything delivered is handled, and what remains
     /// waits on the clock.
     async fn drive(&self) -> Result<(), TestError> {
         let driven = poll_fn(move |_cx| {
-            let mut slot = self.run.borrow_mut();
-            let Some(run) = slot.as_mut() else {
-                return Poll::Ready(Ok(()));
-            };
             let waker = Waker::from(Arc::clone(&self.waker));
             let mut cx = Context::from_waker(&waker);
             for _ in 0..MAX_POLLS {
                 self.waker.woken.store(false, Ordering::Release);
-                if let Poll::Ready(ended) = run.as_mut().poll(&mut cx) {
-                    *slot = None;
-                    *self.ended.borrow_mut() = Some(ended);
-                    return Poll::Ready(Ok(()));
-                }
-                // A hook that finishes lets the dispatch waiting on it go on, which wakes the app.
+                self.poll_app(&mut cx);
+                // A hook that finishes lets the dispatch waiting on it go on, which wakes the app;
+                // the hooks of the test's own publish run here too, the app stopped or not.
                 self.poll_hooks(&mut cx);
                 if !self.waker.woken.load(Ordering::Acquire) {
                     return Poll::Ready(Ok(()));

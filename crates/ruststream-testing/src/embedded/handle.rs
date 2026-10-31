@@ -3,6 +3,8 @@
 
 use std::fmt;
 
+use embassy_futures::join::join;
+
 use ruststream_core::{Lend, OutgoingDestination, OutgoingMessage, RawMessage};
 use ruststream_runtime::testing::{
     PublishTarget, PublishedAssertions, RunBroker, SubscriberAssertions, TestError, attribute,
@@ -76,11 +78,13 @@ impl LocalPublishSink for InjectSink<'_> {
         // The app owns the connected form and shuts it down only while it holds the one count:
         // a stop the message sets off must find this one gone.
         drop(testable);
-        coordinator
+        let hooks = coordinator
             .record_published(self.broker.scope_id(), recorded, started)
-            .run()
-            .await;
-        self.app.settle().await
+            .run();
+        // The hooks of the test's own publish run in place, so the step that settles the publish
+        // is the one that polls them.
+        let ((), settled) = join(hooks, self.app.settle()).await;
+        settled
     }
 }
 

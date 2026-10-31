@@ -327,6 +327,37 @@ fn a_fail_fast_stop_set_off_by_the_test_shuts_the_bus_down() -> Result<(), Box<d
 }
 
 #[test]
+fn a_destination_hook_runs_for_the_tests_publish_that_stops_the_app() -> Result<(), Box<dyn Error>>
+{
+    block_on(async {
+        let tb =
+            TestApp::start(EmbeddedApp::new().with_broker(Bus::new(), |b| b.include(on_setting)))
+                .await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .published::<()>("settings")
+            .on_publish(async move |settings| {
+                settings.assert_called_once().with_raw(b"twelve");
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+
+        tb.broker::<Bus>()
+            .message(&Sent(b"twelve"))
+            .to("settings")
+            .publish()
+            .await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1);
+        let stopped = tb.shutdown().await;
+        assert!(
+            matches!(stopped, Err(TestError::Failed(_))),
+            "the app stopped on its subscription's failure: {stopped:?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn a_test_publish_after_the_app_stopped_is_refused() -> Result<(), Box<dyn Error>> {
     block_on(async {
         // An app with no route has nothing to run and ends once it started.
@@ -520,6 +551,34 @@ fn a_destination_hook_runs_for_the_apps_slot_publish() -> Result<(), Box<dyn Err
             .publish()
             .await?;
         assert_eq!(hooked.load(Ordering::SeqCst), 1);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_destination_hook_runs_for_the_tests_own_publish() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .published::<()>("sensors/temp")
+            .on_publish(async move |readings| {
+                readings.assert_called_once().with_raw(b"21");
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1);
+        tb.broker::<Bus>()
+            .subscriber("sensors/temp")
+            .assert_called_once()
+            .settled(HandlerOutcome::ack());
         tb.shutdown().await?;
         Ok(())
     })

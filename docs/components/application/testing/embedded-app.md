@@ -39,6 +39,7 @@ A slot publish is also recorded on its destination, so [`published::<T>(name)`](
 [`on_call`](./hooks/on-call.md) and [`on_publish`](./hooks/on-publish.md) take the same async closures as on tokio.
 A hook runs inside the test's own future: the dispatch that recorded the event waits for it, and the step that drives the app polls it beside the app.
 A hook runs on the test's own thread, and a hook that waits on the clock finishes once the test advances it.
+A hook on a destination the test itself publishes to runs in that publish.
 A panic inside a hook, a failed assertion included, fails the publish, `settle`, `advance` or `shutdown` that ran it.
 
 <Tabs groupId="api">
