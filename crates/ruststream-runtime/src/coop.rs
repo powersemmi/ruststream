@@ -79,6 +79,7 @@ impl<Inner: Stream> Stream for Bounded<Inner> {
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
+    use core::iter;
     use core::pin::pin;
     use core::task::{Context, Poll, Waker};
 
@@ -91,8 +92,8 @@ mod tests {
     fn readiness<S: Stream>(stream: S, count: usize) -> Vec<bool> {
         let mut stream = pin!(stream);
         let mut cx = Context::from_waker(Waker::noop());
-        (0..count)
-            .map(|_| stream.as_mut().poll_next(&mut cx).is_ready())
+        iter::repeat_with(|| stream.as_mut().poll_next(&mut cx).is_ready())
+            .take(count)
             .collect()
     }
 
@@ -108,9 +109,7 @@ mod tests {
     #[test]
     fn a_pending_from_the_stream_restarts_the_count() {
         // Two ready items, a pending of the stream's own, then ready ones.
-        let mut script = [true, true, false]
-            .into_iter()
-            .chain(core::iter::repeat(true));
+        let mut script = [true, true, false].into_iter().chain(iter::repeat(true));
         let inner = stream::poll_fn(move |_| match script.next() {
             Some(true) => Poll::Ready(Some(0)),
             _ => Poll::Pending,
