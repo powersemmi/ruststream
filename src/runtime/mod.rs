@@ -155,6 +155,10 @@ pub use ruststream_runtime_tokio::{
 #[cfg(feature = "tokio")]
 pub mod cli;
 
+// The embedded runner's chain trait, beside the multi-thread runner's own.
+#[cfg(feature = "embassy")]
+pub use ruststream_runtime_embassy::MountChain as EmbeddedMountChain;
+
 // The runner the `embassy` feature selects: every item of the embedded runner a service names is
 // re-exported here, at the path its tokio counterpart takes under `tokio`.
 #[cfg(feature = "embassy")]
@@ -165,6 +169,6 @@ pub use ruststream_runtime_embassy::{
 };
 #[cfg(feature = "embassy")]
 pub use ruststream_runtime_embassy::{
-    Control, EmbassyClock, EmbeddedApp, Health, MountChain, MountSteps, Mounts, Parts, RunError,
-    Scope, Stopping,
+    Control, EmbassyClock, EmbeddedApp, Health, MountSteps, Mounts, Parts, RunError, Scope,
+    Stopping,
 };
