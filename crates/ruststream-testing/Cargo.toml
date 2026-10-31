@@ -94,6 +94,13 @@ name = "embedded_retry"
 path = "tests/embedded_retry.rs"
 required-features = ["embassy", "json"]
 
+# A cap on delayed retries of a device service: the runtime's copies spend it, then the delivery
+# goes to the dead-letter destination, through the embedded `TestApp`.
+[[test]]
+name = "embedded_dead_letter"
+path = "tests/embedded_dead_letter.rs"
+required-features = ["embassy", "json"]
+
 # The same device service declared without the macros.
 [[test]]
 name = "embedded_manual"

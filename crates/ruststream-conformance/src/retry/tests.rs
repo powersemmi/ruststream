@@ -160,6 +160,18 @@ async fn a_count_that_does_not_grow_fails() {
     .await;
 }
 
+/// A broker that reports no count leaves it to the runtime's header, which is all the rule asks.
+#[allow(clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broker_that_reports_no_count_passes() {
+    redelivery_address(
+        MemoryBroker::new,
+        |name| Probe::new(name, Reading::Own, Counting::Silent),
+        |connected| connected.publisher(),
+    )
+    .await;
+}
+
 /// A count that restarts on the runtime's copy never reaches a registration's cap.
 #[allow(clippy::redundant_closure_for_method_calls)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -112,11 +112,6 @@ path = "tests/dead_letter.rs"
 harness = false
 
 [[test]]
-name = "dead_letter_delayed"
-path = "tests/dead_letter_delayed.rs"
-harness = false
-
-[[test]]
 name = "out_retry"
 path = "tests/out_retry.rs"
 harness = false
