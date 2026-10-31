@@ -21,7 +21,9 @@ use embassy_executor::{Executor, SpawnError, Spawner};
 use embassy_futures::yield_now;
 use futures::{FutureExt, StreamExt};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
-use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Health, Mounts, Out, SubscriberSettings};
+use ruststream::runtime::{
+    EmbeddedApp, HandlerOutcome, Health, Message, Mounts, Out, SubscriberSettings,
+};
 use ruststream::{
     Deserialized, LocalBroker, LocalIncomingMessage, LocalPublisher, LocalSubscriber,
     LocalSubscriptionSource, OutSlot, Outgoing, OutgoingMessage, Publisher, Serialized, subscriber,
@@ -105,6 +107,26 @@ async fn on_measure(reading: &Reading<'_>) -> Measured {
     Measured { bytes: *held }
 }
 
+/// The header contract a receipt leaves with.
+#[derive(Serialize)]
+struct ReceiptMeta {
+    bytes: usize,
+}
+
+/// The body of a receipt: how many bytes the reading had.
+#[derive(Outgoing, Serialize)]
+#[outgoing(name = "bus/receipts")]
+struct Receipt {
+    bytes: usize,
+}
+
+/// Answers a reading with a reply that carries its own header contract: the pair reply form.
+#[subscriber(LocalMemorySource::new("bus/receipt"), reply)]
+async fn on_receipt(reading: &Reading<'_>) -> Message<ReceiptMeta, Receipt> {
+    let bytes = reading.0.len();
+    Message::new(ReceiptMeta { bytes }, Receipt { bytes })
+}
+
 /// The readings the batch handler saw, over every batch.
 static BATCHED: AtomicU32 = AtomicU32::new(0);
 
@@ -128,6 +150,7 @@ fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
             .include(on_plain)
             .include(on_ping)
             .include(on_measure)
+            .include(on_receipt)
             .include(on_batch.batch(BATCH))
     })
 }
@@ -172,6 +195,21 @@ fn next_payload<Sub: LocalSubscriber>(subscriber: &mut Sub) -> Option<Vec<u8>> {
         .map(|message| message.payload().to_vec())
 }
 
+/// The next message `subscriber` holds, if it holds one now: its payload and `bytes` header.
+fn next_message<Sub: LocalSubscriber>(subscriber: &mut Sub) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
+    pin!(subscriber.stream())
+        .next()
+        .now_or_never()
+        .flatten()
+        .and_then(Result::ok)
+        .map(|message| {
+            (
+                message.payload().to_vec(),
+                message.headers().get("bytes").map(<[u8]>::to_vec),
+            )
+        })
+}
+
 async fn check_the_app(spawner: Spawner, stand: &'static Stand) {
     let connected = stand.bus.clone().connect().await.expect("the bus connects");
     let mut alerts = LocalMemorySource::new("bus/alerts")
@@ -186,6 +224,10 @@ async fn check_the_app(spawner: Spawner, stand: &'static Stand) {
         .subscribe(&connected)
         .await
         .expect("the measures subscribe");
+    let mut receipts = LocalMemorySource::new("bus/receipts")
+        .subscribe(&connected)
+        .await
+        .expect("the receipts subscribe");
     let starting = app::CONTROL.health();
     spawner.spawn(app::task(stand.bus.clone()).expect("the app task is free"));
     settle().await;
@@ -196,12 +238,14 @@ async fn check_the_app(spawner: Spawner, stand: &'static Stand) {
     publish(&stand.bus, "bus/plain", b"one").await;
     publish(&stand.bus, "bus/ping", b"ping").await;
     publish(&stand.bus, "bus/measure", b"four").await;
+    publish(&stand.bus, "bus/receipt", b"three").await;
     publish(&stand.bus, "bus/batches", b"a").await;
     publish(&stand.bus, "bus/batches", b"b").await;
     settle().await;
     let alert = next_payload(&mut alerts);
     let pong = next_payload(&mut pongs);
     let measure = next_payload(&mut measured);
+    let receipt = next_message(&mut receipts);
 
     app::CONTROL.stop();
     settle().await;
@@ -241,6 +285,12 @@ async fn check_the_app(spawner: Spawner, stand: &'static Stand) {
         "the reply the codec encoded"
     );
     passed("a handler replies through the codec");
+    assert_eq!(
+        receipt,
+        Some((br#"{"bytes":5}"#.to_vec(), Some(b"5".to_vec()))),
+        "the pair reply's body and its `bytes` header"
+    );
+    passed("a handler replies with a pair, its header contract in the headers");
     assert_eq!(
         BATCHED.load(Ordering::Relaxed),
         2,
