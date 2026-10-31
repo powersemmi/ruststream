@@ -23,6 +23,7 @@
 extern crate alloc;
 
 mod app;
+mod bindable;
 mod clock;
 mod control;
 mod copies;
@@ -38,16 +39,17 @@ mod mounts;
 #[doc(hidden)]
 pub use app::AppBrokers;
 pub use app::{EmbeddedApp, Mounts, Parts, RunError, Scope};
+pub use bindable::{Bindable, Bound};
 pub use clock::EmbassyClock;
 pub use control::{Control, Health, Stopping};
 #[doc(hidden)]
 pub use hooks::{HookList, Hooks, NoHooks};
 #[cfg(feature = "testing")]
 #[doc(hidden)]
-pub use in_process::{InProcessConnection, StartInProcess};
+pub use in_process::StartInProcess;
 pub use lanes::MountSteps;
 #[doc(hidden)]
 pub use lanes::{EmbeddedPlan, Keyed, Lanes, NoRoom, OneLane, Pool, Room, SoFar};
-pub use mounts::MountChain;
 #[doc(hidden)]
-pub use mounts::{BrokerMount, CloseAll, StartMounts};
+pub use mounts::{BrokerMount, CloseAll, ConnectSlot, NoSlot, SharedConnection, StartMounts};
+pub use mounts::{MountChain, Registration};
