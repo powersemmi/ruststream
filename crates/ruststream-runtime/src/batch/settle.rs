@@ -9,7 +9,7 @@ use tracing::error;
 use super::{BatchResult, uniform_batch};
 use crate::dispatch::{Delivery, Slot, settle_outcome};
 use crate::handler::{HandlerOutcome, HandlerResult};
-use crate::host::HostDetach;
+use crate::host::{HostDetach, PrepareKept};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator;
 #[cfg(feature = "testing")]
@@ -35,7 +35,7 @@ pub(super) async fn settle_split_batch<M, C, Host>(
 ) where
     M: LocalIncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<C>>,
 {
     if rejected.is_empty() {
         return settle_batch(batch, result, subscription, delivery, host).await;
@@ -107,7 +107,7 @@ pub(crate) async fn settle_batch<M, C, Host>(
 ) where
     M: LocalIncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<C>>,
 {
     settle_lent_batch(
         accepted,
@@ -178,7 +178,7 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
 ) where
     M: LocalIncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<C>>,
 {
     // Every batch form funnels its batch through here, which is the one place that knows both
     // the deliveries and the settlements they got; the harness reads the batch off it.

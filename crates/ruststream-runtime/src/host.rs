@@ -13,9 +13,9 @@
 use core::time::Duration;
 
 #[cfg(feature = "alloc")]
-use crate::HeaderMap;
-#[cfg(feature = "alloc")]
 use crate::lifecycle::BoxError;
+#[cfg(feature = "alloc")]
+use crate::{HeaderMap, LocalIncomingMessage};
 
 /// A runtime's clock: the time it reads and the timers it arms.
 ///
@@ -226,6 +226,10 @@ pub trait Detach: Send + Sync {
 /// one-thread runner takes them as they are. Machinery; never named directly.
 #[doc(hidden)]
 pub trait HostDetach {
+    /// Whether the runner keeps a mount's retry copies in a store the mount sizes itself: see
+    /// [`LocalDetach::STORES_COPIES`].
+    const STORES_COPIES: bool = false;
+
     /// Runs `work` beside the delivery that left it.
     fn detach<Work>(&self, work: Work)
     where
@@ -296,6 +300,8 @@ impl<Host: Detach> HostDetach for Host {
 pub struct OnOneThread<'host, Host>(pub &'host Host);
 
 impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
+    const STORES_COPIES: bool = Host::STORES_COPIES;
+
     #[inline]
     fn detach<Work>(&self, work: Work)
     where
@@ -342,6 +348,8 @@ pub struct Keeping<'host, Host, Kept>(pub &'host Host, pub &'host Kept);
 
 #[cfg(feature = "alloc")]
 impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept> {
+    const STORES_COPIES: bool = Host::STORES_COPIES;
+
     #[inline]
     fn detach<Work>(&self, work: Work)
     where
@@ -412,6 +420,37 @@ pub trait KeptCopies {
     fn free(&self, record: usize);
 }
 
+/// The delivery a kept copy is made of, while it is still at hand: the subscription it came
+/// through, the message, and how the broker's context for it is built. What the transforms on a
+/// kept copy read. Machinery; never named directly.
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct KeptDelivery<'a, M, Cx> {
+    /// The subscription's name.
+    pub subscription: &'a str,
+    /// The delivery being copied.
+    pub message: &'a M,
+    /// Builds the broker's context for the delivery, which only a transform reads.
+    pub build_cx: fn(&M) -> Cx,
+}
+
+/// A store of kept copies that prepares the copy of a delivery whose broker context is `Cx`:
+/// runs the mount site's transforms over a filled record, while the delivery is still at hand.
+/// Machinery; never named directly.
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub trait PrepareKept<Cx>: KeptCopies {
+    /// Prepares the copy in `record`, filled by [`fill`](KeptCopies::fill), bound for
+    /// `destination` or, without one, for the subscription.
+    fn prepare<M: LocalIncomingMessage>(
+        &self,
+        record: usize,
+        destination: Option<&str>,
+        delivery: &KeptDelivery<'_, M, Cx>,
+    );
+}
+
 /// The store of a host that keeps no retry copy in place: there is none.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
@@ -444,6 +483,19 @@ impl KeptCopies for NoKept {
     }
 }
 
+#[cfg(feature = "alloc")]
+#[allow(clippy::uninhabited_references)]
+impl<Cx> PrepareKept<Cx> for NoKept {
+    fn prepare<M: LocalIncomingMessage>(
+        &self,
+        _record: usize,
+        _destination: Option<&str>,
+        _delivery: &KeptDelivery<'_, M, Cx>,
+    ) {
+        match *self {}
+    }
+}
+
 /// Work a delivery leaves behind on a runner that polls every delivery on one thread: the
 /// [`Detach`] of the local family, whose work need not be `Send`.
 ///
@@ -454,6 +506,10 @@ impl KeptCopies for NoKept {
 /// not keep.
 #[doc(hidden)]
 pub trait LocalDetach {
+    /// Whether this runner keeps a mount's retry copies in a store the mount sizes itself, so a
+    /// delayed retry on a mount without one names the step that adds it.
+    const STORES_COPIES: bool = false;
+
     /// Runs `work` beside the delivery that left it.
     fn detach<Work>(&self, work: Work)
     where

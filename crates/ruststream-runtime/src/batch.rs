@@ -35,7 +35,7 @@ use super::dispatch::{Slot, Workers, settle_outcome};
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handle::Deserialized;
 use super::handler::{HandlerOutcome, HandlerResult, LocalCall, SendCall};
-use super::host::{Detach, HostDetach};
+use super::host::{Detach, HostDetach, PrepareKept};
 use super::input::{DecodeWith, InputKind, REPORTED};
 use super::metadata::HandlerMetadata;
 #[cfg(all(test, feature = "json"))]
@@ -614,7 +614,7 @@ impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
     /// [`LocalBatch`](local::LocalBatch).
     // `Send` exactly where the deliveries are: the `BatchHandler` impl's signature proves it there.
     #[allow(clippy::future_not_send)]
-    pub(crate) async fn handle_local<Via, C, S, Host: HostDetach>(
+    pub(crate) async fn handle_local<Via, C, S, Host: HostDetach<Kept: PrepareKept<C>>>(
         &self,
         batch: Vec<M>,
         _scratch: &mut (),
@@ -728,7 +728,7 @@ where
     DecodeCodec: Sync,
     C: BuildBatchContext<M> + Send + Sync + 'static,
     S: Send + Sync,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<C>>,
 {
     let subscription = ctx.subscription();
     // Taken before the loop: the settle below awaits, and a borrow of `ctx` held across it would

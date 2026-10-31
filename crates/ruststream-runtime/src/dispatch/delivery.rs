@@ -14,7 +14,7 @@ use crate::IncomingMessage;
 use crate::RetryDeclaration;
 #[cfg(doc)]
 use crate::context::Context;
-use crate::host::HostDetach;
+use crate::host::{HostDetach, PrepareKept};
 #[cfg(feature = "tokio")]
 use crate::main_runtime::MainRuntime;
 #[cfg(feature = "poll-diagnostics")]
@@ -266,8 +266,9 @@ impl<M> Slot<M> {
 /// held however the runner shares them with the loop's other parts.
 #[doc(hidden)]
 pub trait Lent<C> {
-    /// The runner's handle the loop hands its leftovers to.
-    type Host: HostDetach;
+    /// The runner's handle the loop hands its leftovers to, keeping copies of the subscription's
+    /// deliveries where it keeps any.
+    type Host: HostDetach<Kept: PrepareKept<C>>;
 
     /// The publish context every delivery of the subscription runs under.
     fn delivery(&self) -> &Delivery<C>;
@@ -290,7 +291,7 @@ impl<C, Shared: Lent<C>> Lent<C> for Arc<Shared> {
     }
 }
 
-impl<C, Host: HostDetach> Lent<C> for (&Delivery<C>, &Host) {
+impl<C, Host: HostDetach<Kept: PrepareKept<C>>> Lent<C> for (&Delivery<C>, &Host) {
     type Host = Host;
 
     #[inline]

@@ -6,16 +6,13 @@
 // futures are `Send` exactly where the types they run are, and nothing here spawns them.
 #![allow(clippy::future_not_send)]
 
-use alloc::boxed::Box;
-use alloc::sync::Arc;
-
 use crate::inject::{InjectHandler, LocalFromStartup, LocalInject, LocalInjectCall};
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
-use crate::redelivery::{ScopeDelivery, open_local_route};
+use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
 use crate::{
     BuildContext, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
-    LocalSubscriptionSource,
+    LocalSubscriptionSource, RetryDeclaration,
 };
 
 use super::fold_plan::{LocalRoute, OpenLocalRoute};
@@ -34,6 +31,7 @@ where
     Def::Context: BuildContext<M> + Send + Sync + 'static,
 {
     type Source = Source;
+    type Declaration = Undeclared;
     type Sub = Source::Subscriber;
     type Body = LocalInject<InjectHandler<Def, DecodeCodec>>;
     type Cx = Def::Context;
@@ -46,6 +44,7 @@ where
         self,
         connected: &LocalConnected<B>,
         scope: &ScopeDelivery,
+        declaration: RetryDeclaration,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
@@ -55,12 +54,8 @@ where
             policies,
             ..
         } = self;
-        let name: Arc<str> = Arc::from(source.name());
-        let delivery = open_local_route(scope, &name);
-        let subscriber = source
-            .subscribe(connected)
-            .await
-            .map_err(|err| -> BoxError { Box::new(err) })?;
+        let (name, subscriber, delivery) =
+            open_local_subscription::<B, _, _>(source, connected, scope, declaration).await?;
         // Resolved before the loop starts, so every slot the body reaches is live.
         let injections = Def::Injections::resolve_local(extra, connected, &subscriber)
             .await

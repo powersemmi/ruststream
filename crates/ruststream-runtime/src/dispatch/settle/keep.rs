@@ -10,7 +10,7 @@ use tracing::warn;
 
 use super::super::{RETRY_COUNT_HEADER, Slot};
 use super::{Target, current_retry_count};
-use crate::host::KeptCopies;
+use crate::host::{KeptDelivery, PrepareKept};
 use crate::{AckError, LocalIncomingMessage, Str};
 
 /// Drops the original delivery and sends a copy of it to `target` through a record of the
@@ -22,6 +22,8 @@ use crate::{AckError, LocalIncomingMessage, Str};
 /// that redelivers at once would otherwise keep the subscription busy within one poll of the task,
 /// and the store's driver, the other subscriptions and the other tasks would never run. The copy's bytes go into the
 /// record's own buffer; its header map is the delivery's, carried on with the retry count in it.
+/// The store prepares the copy there too, while the delivery is at hand: the mount site's
+/// transforms read it, and the copy leaves as they left it.
 ///
 /// # Errors
 ///
@@ -29,16 +31,17 @@ use crate::{AckError, LocalIncomingMessage, Str};
 /// freed then.
 // `Send` exactly where the runner's store is.
 #[allow(clippy::future_not_send)]
-pub(super) async fn keep_copy<M, Kept>(
+pub(super) async fn keep_copy<M, C, Kept>(
     slot: &mut Slot<M>,
     name: &str,
     target: Target<'_>,
     delay: Option<Duration>,
     kept: &Kept,
+    build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
     M: LocalIncomingMessage,
-    Kept: KeptCopies,
+    Kept: PrepareKept<C>,
 {
     let Some(record) = kept.take_record() else {
         warn!(
@@ -54,7 +57,20 @@ where
     let mut headers = msg.headers().clone();
     let next_count = current_retry_count(&headers) + 1;
     headers.insert(Str::from_static(RETRY_COUNT_HEADER), next_count.to_string());
+    let destination = match target {
+        Target::Subscription => None,
+        Target::DeadLetter(destination) => Some(destination),
+    };
     kept.fill(record, msg.payload(), headers);
+    kept.prepare(
+        record,
+        destination,
+        &KeptDelivery {
+            subscription: name,
+            message: msg,
+            build_cx,
+        },
+    );
     // As on the erased path: a transport with no settlement has nothing to drop, and any other
     // settle failure leaves the delivery with the broker.
     match slot.take().nack(false).await {
@@ -64,10 +80,6 @@ where
             return Err(err);
         }
     }
-    let destination = match target {
-        Target::Subscription => None,
-        Target::DeadLetter(destination) => Some(destination),
-    };
     // Only a copy back to the subscription carries a delay: a dead letter leaves at once.
     match delay.filter(|delay| !delay.is_zero()) {
         Some(delay) => kept.arm(record, delay),
@@ -123,9 +135,10 @@ mod tests {
     use super::super::settle_outcome;
     use crate::dispatch::{Delivery, RETRY_COUNT_HEADER, Slot};
     use crate::handler::HandlerResult;
-    use crate::host::{Keeping, KeptCopies, LocalDetach};
+    use crate::host::{Keeping, KeptCopies, KeptDelivery, LocalDetach, OnOneThread, PrepareKept};
     use crate::lifecycle::BoxError;
-    use crate::{HeaderMap, RetryDeclaration};
+    use crate::testkit::log_capture;
+    use crate::{HeaderMap, LocalIncomingMessage, RetryDeclaration};
 
     /// What the store was asked to do, in order.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,6 +208,17 @@ mod tests {
 
         fn free(&self, _record: usize) {
             self.asked.borrow_mut().push(Asked::Free);
+        }
+    }
+
+    // The settlement under test, not the transforms: a record is kept as it was filled.
+    impl<Cx> PrepareKept<Cx> for Store {
+        fn prepare<M: LocalIncomingMessage>(
+            &self,
+            _record: usize,
+            _destination: Option<&str>,
+            _delivery: &KeptDelivery<'_, M, Cx>,
+        ) {
         }
     }
 
@@ -352,6 +376,61 @@ mod tests {
         .await;
         assert_eq!(settled, 1, "the original is dropped");
         assert_eq!(store.asked(), [filled(), Asked::SendNow(None)]);
+    }
+
+    /// A one-thread runner whose copies wait in a store of the mount's own, run with none.
+    struct StoreRunner;
+
+    impl LocalDetach for StoreRunner {
+        const STORES_COPIES: bool = true;
+
+        fn detach<Work>(&self, _work: Work)
+        where
+            Work: Future<Output = ()> + 'static,
+        {
+        }
+
+        fn detach_after<Work>(&self, _delay: Duration, _work: Work)
+        where
+            Work: Future<Output = ()> + 'static,
+        {
+        }
+    }
+
+    #[tokio::test]
+    async fn a_delay_with_no_store_names_the_step_that_keeps_copies() {
+        let (events, _guard) = log_capture::start();
+        let settled = Arc::new(AtomicU8::new(0));
+        let msg = PlainMessage {
+            payload: Bytes::from_static(b"body"),
+            headers: HeaderMap::new(),
+            settled: Arc::clone(&settled),
+            settlement: Settlement::Accepted,
+        };
+        settle_outcome(
+            &mut Slot::new(msg),
+            HandlerResult::retry_after(LATER),
+            "orders",
+            &Delivery::empty(),
+            &OnOneThread(&StoreRunner),
+            unit_cx,
+        )
+        .await;
+        assert_eq!(
+            settled.load(Ordering::SeqCst),
+            2,
+            "the delivery is requeued"
+        );
+        let warned = log_capture::find(
+            &events,
+            "retry_after on a mount with no store of copies; requeuing immediately (the delay \
+             is dropped). A mount whose descriptor addresses its copies keeps them with \
+             `.retry_capacity::<CAP>()`",
+        );
+        assert_eq!(
+            warned.get("subscription").map(String::as_str),
+            Some("orders")
+        );
     }
 
     #[tokio::test]

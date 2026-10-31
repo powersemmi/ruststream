@@ -33,8 +33,9 @@ use crate::publish::{
 };
 use crate::{
     AddressedCopies, Broker, BrokerMoves, Connected, ConnectedBroker, DeclareRetryError,
-    DefaultPublish, NamedCopies, OutgoingMessage, PairError, PayloadForm, PublishPolicy, Publisher,
-    RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, SubscriptionSource,
+    DefaultPublish, LocalBroker, LocalConnected, LocalSubscriptionSource, NamedCopies,
+    OutgoingMessage, PairError, PayloadForm, PublishPolicy, Publisher, RedeliveryAddress,
+    RedeliveryAddressed, RetryDeclaration, SubscriptionSource,
 };
 
 #[cfg(feature = "testing")]
@@ -43,7 +44,9 @@ use crate::testing::coordinator::{Origin, TestHooks, paired, publishing_to};
 mod kept;
 
 pub use kept::{
-    AddressedCopy, CopyPublisher, KeepCopies, KeptAddress, NoCopies, NoCopyPath, PairCopies,
+    AddressedCopy, AppliesDeclaration, CopyPublisher, DeclaredOn, KeepCopies, KeptAddress,
+    KeptTransforms, LocalRetrySlot, NoCopies, NoCopyPath, PairCopies, PairSlot, PrepareCopy,
+    SlotAddress, Undeclared,
 };
 
 /// The plain publish policy of a broker's connected form, which is what a retry copy leaves
@@ -794,22 +797,57 @@ fn announce<Cx>(
     }
 }
 
-/// The delivery context of a route the one-task fold opens under its broker's `scope`, with no
-/// retry path: under a harness it is noted as one more subscription of that broker, so its
-/// deliveries are recorded under the broker and the name it subscribed with.
-#[cfg_attr(not(feature = "testing"), allow(unused_variables))]
-pub(crate) fn open_local_route<Cx>(scope: &ScopeDelivery, name: &str) -> Delivery<Cx> {
+/// Opens `source`'s subscription for a route the one-task fold opens under its broker's `scope`,
+/// and builds the delivery context it dispatches under; returns the name the descriptor reports
+/// beside the two.
+///
+/// The registration's `declaration` reaches the descriptor before it subscribes, as on the
+/// multi-thread runner, so a broker that applies the cap and the destination itself declares its
+/// topology with them; the delivery context carries it for the copies this process publishes.
+/// Under a harness the subscription is noted as one more of that broker, so its deliveries are
+/// recorded under the broker and the name it subscribed with.
+///
+/// # Errors
+///
+/// The broker's refusal of the declaration or of the subscription.
+// `Send` exactly where the local descriptor's subscription is: the one-task fold never sends it.
+#[allow(clippy::future_not_send)]
+pub(crate) async fn open_local_subscription<B, Source, Cx>(
+    source: Source,
+    connected: &LocalConnected<B>,
+    scope: &ScopeDelivery,
+    declaration: RetryDeclaration,
+) -> Result<(Arc<str>, Source::Subscriber, Delivery<Cx>), BoxError>
+where
+    B: LocalBroker,
+    Source: LocalSubscriptionSource<LocalConnected<B>>,
+{
+    let name: Arc<str> = Arc::from(source.name());
+    source
+        .declare_retry_on(connected, &declaration)
+        .map_err(|err| {
+            BoxError::from(RetryDeclareError {
+                subscription: name.as_ref().to_owned(),
+                source: err,
+            })
+        })?;
+    let source = source.declare_retry(&declaration);
     #[cfg(feature = "testing")]
     let routed = ScopeDelivery {
         hooks: Arc::clone(&scope.hooks),
         scope_id: scope.scope_id,
-        subscription: scope.hooks.subscribed(scope.scope_id, name),
+        subscription: scope.hooks.subscribed(scope.scope_id, &name),
         #[cfg(feature = "poll-diagnostics")]
         poll: scope.poll.clone(),
     };
     #[cfg(feature = "testing")]
     let scope = &routed;
-    open_mounted_subscriber(scope, name)
+    let delivery = Delivery::for_subscription(scope, &name, None, declaration);
+    let subscriber = source
+        .subscribe(connected)
+        .await
+        .map_err(|err| -> BoxError { Box::new(err) })?;
+    Ok((name, subscriber, delivery))
 }
 
 /// The delivery context for a subscriber mounted without a source: nothing describes where a

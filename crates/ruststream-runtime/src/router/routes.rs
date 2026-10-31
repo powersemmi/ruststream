@@ -215,8 +215,8 @@ impl<Route, B: Broker, Cx, Settled> RetriedRoute<Route, B, Cx, Settled> {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct DeclaredRoute<Route> {
-    route: Route,
-    declaration: RetryDeclaration,
+    pub(super) route: Route,
+    pub(super) declaration: RetryDeclaration,
 }
 
 impl<Route> DeclaredRoute<Route> {

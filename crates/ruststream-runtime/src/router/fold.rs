@@ -14,7 +14,6 @@
 // futures are `Send` exactly where the types they run are, and nothing here spawns them.
 #![allow(clippy::future_not_send)]
 
-use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::future::{poll_fn, ready};
 use core::num::NonZeroUsize;
@@ -27,15 +26,16 @@ use futures::future::MaybeDone;
 use pin_project_lite::pin_project;
 use tracing::error;
 
+use crate::RetryDeclaration;
 use crate::batch::{DeserializedBatch, LocalBatch, LocalSliceHandler};
 use crate::dispatch::{Delivery, HeadersAtOnce, Turn, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handle::Deserialized;
 use crate::handler::LocalHandler;
-use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, ShutdownWait};
+use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, PrepareKept, ShutdownWait};
 use crate::lifecycle::BoxError;
 use crate::middleware::{LocalBlanketLayer, Stack};
-use crate::redelivery::{ScopeDelivery, open_local_route};
+use crate::redelivery::{ScopeDelivery, open_local_subscription};
 use crate::{
     BuildBatchContext, BuildContext, LocalBatchSubscriber, LocalBroker, LocalConnected,
     LocalIncomingMessage, LocalSubscriber, LocalSubscriptionSource,
@@ -417,13 +417,13 @@ where
         _layers: &Layers,
         scope: &ScopeDelivery,
     ) -> Result<Self::Opened<Layers>, BoxError> {
-        let name: Arc<str> = Arc::from(self.source.name());
-        let delivery = open_local_route(scope, &name);
-        let subscriber = self
-            .source
-            .subscribe(connected)
-            .await
-            .map_err(|err| -> BoxError { Box::new(err) })?;
+        let (name, subscriber, delivery) = open_local_subscription::<B, _, _>(
+            self.source,
+            connected,
+            scope,
+            RetryDeclaration::new(),
+        )
+        .await?;
         Ok(OpenedBatchRoute {
             subscriber,
             handler: LocalBatch(self.handler),
@@ -519,7 +519,7 @@ pub trait RunsBatches<Batch, C, S> {
     ) -> impl Future<Output = ()>
     where
         Signal: Halt,
-        Host: HostDetach;
+        Host: HostDetach<Kept: PrepareKept<C>>;
 }
 
 impl<Batch, M, F, Inner, C, S> RunsBatches<Batch, C, S>
@@ -546,7 +546,7 @@ where
     ) -> impl Future<Output = ()>
     where
         Signal: Halt,
-        Host: HostDetach,
+        Host: HostDetach<Kept: PrepareKept<C>>,
     {
         run_batch::<Self, Batch, C, S, Signal, Host>(
             self, batch, scratch, encode, name, state, delivery, host, failure,

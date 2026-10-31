@@ -14,7 +14,7 @@ use super::{Delivery, RETRY_COUNT_HEADER, Slot};
 #[cfg(doc)]
 use crate::IncomingMessage;
 use crate::handler::HandlerResult;
-use crate::host::HostDetach;
+use crate::host::{HostDetach, PrepareKept};
 use crate::publish::PublishContext;
 use crate::redelivery::DeferredRetry;
 #[cfg(feature = "testing")]
@@ -50,7 +50,7 @@ pub(crate) async fn settle_outcome<M, C, Host>(
 ) where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<C>>,
 {
     let ack_result = match outcome {
         HandlerResult::Ack => slot.take().ack().await,
@@ -153,7 +153,7 @@ async fn settle_retry<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<C>>,
 {
     if delivery.declaration.declares_nothing() {
         return slot.take().nack(true).await;
@@ -256,7 +256,7 @@ async fn send_copy<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<C>>,
 {
     match path {
         CopyPath::Erased(retry) => {
@@ -276,7 +276,7 @@ where
             )
             .await
         }
-        CopyPath::Kept(kept) => keep_copy(slot, name, target, delay, kept).await,
+        CopyPath::Kept(kept) => keep_copy(slot, name, target, delay, kept, build_cx).await,
     }
 }
 
@@ -341,7 +341,7 @@ async fn settle_nack_after<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<C>>,
 {
     if slot.get().supports_nack_after() {
         // The cap is read before the delay reaches the broker: a native redelivery would otherwise
@@ -385,7 +385,7 @@ where
     }
 
     let Some(path) = copy_path(delivery, host) else {
-        return requeue_now(slot, name, &delivery.declaration).await;
+        return requeue_now::<M, Host>(slot, name, &delivery.declaration).await;
     };
 
     match redelivery_of(slot.get(), &delivery.declaration) {
@@ -425,12 +425,12 @@ where
 }
 
 /// Requeues a delayed retry at once, on a broker that moves the subscription's deliveries itself
-/// and cannot hold one back.
+/// and cannot hold one back, or on a runner whose copies wait in a store the mount has none of.
 ///
 /// # Errors
 ///
 /// Returns the [`AckError`] from the requeue.
-async fn requeue_now<M: LocalIncomingMessage>(
+async fn requeue_now<M: LocalIncomingMessage, Host: HostDetach>(
     slot: &mut Slot<M>,
     name: &str,
     declaration: &RetryDeclaration,
@@ -441,12 +441,23 @@ async fn requeue_now<M: LocalIncomingMessage>(
         redelivery_of(slot.get(), declaration),
         Redelivery::Subscription
     ) {
-        warn!(
-            target: "ruststream::dispatch",
-            subscription = %name,
-            "retry_after on a broker with neither native delayed redelivery nor a copy path \
-             of its own; requeuing immediately (the delay is dropped)",
-        );
+        // The runner is a type, so which warning applies is settled at compile time.
+        if Host::STORES_COPIES {
+            warn!(
+                target: "ruststream::dispatch",
+                subscription = %name,
+                "retry_after on a mount with no store of copies; requeuing immediately (the delay \
+                 is dropped). A mount whose descriptor addresses its copies keeps them with \
+                 `.retry_capacity::<CAP>()`",
+            );
+        } else {
+            warn!(
+                target: "ruststream::dispatch",
+                subscription = %name,
+                "retry_after on a broker with neither native delayed redelivery nor a copy path \
+                 of its own; requeuing immediately (the delay is dropped)",
+            );
+        }
     }
     slot.take().nack(true).await
 }
@@ -474,7 +485,7 @@ async fn dead_letter<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<C>>,
 {
     if at_cap {
         warn_at_cap(name, attempt_of(slot.get()), Some(destination));
@@ -568,7 +579,7 @@ async fn publish_copy<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<C>>,
 {
     let publisher = Arc::clone(&retry.publisher);
     let subscription: Arc<str> = Arc::from(name);

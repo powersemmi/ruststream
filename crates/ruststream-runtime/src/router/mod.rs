@@ -19,6 +19,7 @@ mod fold;
 mod fold_inject;
 mod fold_plan;
 mod fold_publish;
+mod fold_retry;
 mod form_eager;
 mod form_out;
 mod form_publish;
@@ -51,7 +52,10 @@ pub use fold::{
 #[doc(hidden)]
 pub use fold_plan::{
     Dispatched, LocalDispatch, LocalPlanned, LocalRoute, OpenedDispatch, SequentialPlan,
+    UnboundRetry,
 };
+#[doc(hidden)]
+pub use fold_retry::{LocalRetriedRoute, LocalRouteSource};
 #[doc(hidden)]
 pub use mount::DefaultReply;
 pub use mount::IncludeDef;

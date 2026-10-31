@@ -208,7 +208,7 @@ pub use host::{Clock, ShutdownWait};
 pub use host::{Detach, Halt, HostDetach, LocalDetach, OnOneThread};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use host::{Keeping, KeptCopies, NoKept};
+pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept};
 #[cfg(feature = "tokio")]
 pub use main_runtime::MainRuntime;
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
@@ -298,9 +298,10 @@ pub use publishing::{LocalPublishing, PublishingHandler};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use redelivery::{
-    AddressedCopy, CopiesAddressed, CopyPathAddress, CopyPathPairing, CopyPublisher, KeepCopies,
-    KeptAddress, NoCopies, NoCopyPath, PairCopies, PublishesCopiesHere, RetryPairing, RetrySetup,
-    ScopeDelivery, open_mounted_subscriber,
+    AddressedCopy, AppliesDeclaration, CopiesAddressed, CopyPathAddress, CopyPathPairing,
+    CopyPublisher, DeclaredOn, KeepCopies, KeptAddress, KeptTransforms, LocalRetrySlot, NoCopies,
+    NoCopyPath, PairCopies, PairSlot, PrepareCopy, PublishesCopiesHere, RetryPairing, RetrySetup,
+    ScopeDelivery, SlotAddress, Undeclared, open_mounted_subscriber,
 };
 #[cfg(feature = "alloc")]
 pub use retry::Retry;
@@ -324,7 +325,8 @@ pub use router::{
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use router::{
-    Dispatched, LocalDispatch, LocalPlanned, LocalRoute, OpenedDispatch, SequentialPlan,
+    Dispatched, LocalDispatch, LocalPlanned, LocalRetriedRoute, LocalRoute, LocalRouteSource,
+    OpenedDispatch, SequentialPlan, UnboundRetry,
 };
 #[cfg(feature = "alloc")]
 pub use router::{

@@ -33,7 +33,6 @@ pub use destination::{
     OpenDestination, RetryOffer, RetryStackUse, SettlesDestination,
 };
 
-use crate::Broker;
 use crate::publish::{CallCodec, PublishTransformStack, Reads, UnnamedCodec};
 use crate::router::{AttachRetry, Router, RouterCommit, RouterWith};
 use crate::slot::{
@@ -268,7 +267,6 @@ pub type RetryChain<Chain, Policy> = RouterWith<
 impl<B, Head, Tail, C, Layers, Pipe, Policy>
     RoutePosition<B, Router<B, (Head, Tail), C, Layers, Pipe>, Policy> for Retry
 where
-    B: Broker + 'static,
     Head: RetryOpen,
 {
     type Out = RetryChain<Router<B, (Head, Tail), C, Layers, Pipe>, Policy>;

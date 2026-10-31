@@ -14,8 +14,10 @@ use core::task::{Poll, Waker};
 use core::time::Duration;
 
 use bytes::BytesMut;
-use ruststream_core::HeaderMap;
-use ruststream_runtime::{BoxError, Clock, CopyPublisher, KeptCopies};
+use ruststream_core::{HeaderMap, LocalIncomingMessage};
+use ruststream_runtime::{
+    BoxError, Clock, CopyPublisher, KeptCopies, KeptDelivery, PrepareCopy, PrepareKept,
+};
 use tracing::warn;
 
 use crate::clock::{EmbassyClock, Schedule};
@@ -33,11 +35,13 @@ enum Held<At> {
     Sending,
 }
 
-/// One copy: its bytes in a buffer the record keeps from copy to copy, and its headers.
-struct Record<At> {
+/// One copy: its bytes in a buffer the record keeps from copy to copy, its headers, and the
+/// per-message settings the mount site's transforms wrote on it.
+struct Record<At, Options> {
     held: Held<At>,
     payload: BytesMut,
     headers: HeaderMap,
+    options: Option<Options>,
 }
 
 /// The retry copies of one registration, in `CAP` records.
@@ -47,11 +51,11 @@ struct Record<At> {
 /// registration's lanes, publishes each copy once it is due: it waits for the earliest one on a
 /// single timer, so a wake costs one timer poll however many copies wait. A record reuses its
 /// buffer, so once a buffer has grown to the largest copy, keeping one allocates nothing.
-pub(crate) struct CopyStore<Path, const CAP: usize, Timers: Clock = EmbassyClock> {
+pub(crate) struct CopyStore<Path: CopyPublisher, const CAP: usize, Timers: Clock = EmbassyClock> {
     path: Path,
     /// The subscription the copies are of, for diagnostics.
     subscription: Arc<str>,
-    records: RefCell<[Record<Timers::Instant>; CAP]>,
+    records: RefCell<[Record<Timers::Instant, Path::Options>; CAP]>,
     /// Set when a record was armed since the driver last looked.
     armed: Cell<bool>,
     /// Set once the registration's lanes stopped: the driver ends with the last copy sent.
@@ -77,6 +81,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
                 held: Held::Free,
                 payload: BytesMut::new(),
                 headers: HeaderMap::new(),
+                options: None,
             })),
             armed: Cell::new(false),
             closed: Cell::new(false),
@@ -164,14 +169,21 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
     /// Publishes the copy in `record` to `destination`, or to the subscription without one, and
     /// frees the record.
     async fn send(&self, record: usize, destination: Option<&str>) -> Result<(), BoxError> {
-        let (payload, headers) = {
+        let (payload, headers, options) = {
             let mut records = self.records.borrow_mut();
             let held = &mut records[record];
             held.held = Held::Sending;
-            (mem::take(&mut held.payload), mem::take(&mut held.headers))
+            (
+                mem::take(&mut held.payload),
+                mem::take(&mut held.headers),
+                held.options.take(),
+            )
         };
         let destination = destination.unwrap_or_else(|| self.path.address());
-        let sent = self.path.publish_copy(destination, &payload, headers).await;
+        let sent = self
+            .path
+            .publish_copy(destination, &payload, headers, options.as_ref())
+            .await;
         self.give_back(record, payload);
         sent
     }
@@ -211,6 +223,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
         held.payload.clear();
         held.payload.extend_from_slice(payload);
         held.headers = headers;
+        held.options = None;
     }
 
     fn arm(&self, record: usize, delay: Duration) {
@@ -230,6 +243,28 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
     fn free(&self, record: usize) {
         let payload = mem::take(&mut self.records.borrow_mut()[record].payload);
         self.give_back(record, payload);
+    }
+}
+
+impl<Cx, Path: PrepareCopy<Cx>, const CAP: usize, Timers: Schedule> PrepareKept<Cx>
+    for CopyStore<Path, CAP, Timers>
+{
+    fn prepare<M: LocalIncomingMessage>(
+        &self,
+        record: usize,
+        destination: Option<&str>,
+        delivery: &KeptDelivery<'_, M, Cx>,
+    ) {
+        let mut records = self.records.borrow_mut();
+        let held = &mut records[record];
+        let destination = destination.unwrap_or_else(|| self.path.address());
+        self.path.prepare(
+            &mut held.payload,
+            &mut held.headers,
+            &mut held.options,
+            destination,
+            delivery,
+        );
     }
 }
 
@@ -328,6 +363,8 @@ mod tests {
     struct Recorded(RefCell<Vec<(String, Vec<u8>)>>);
 
     impl CopyPublisher for &Recorded {
+        type Options = ();
+
         fn address(&self) -> &'static str {
             "jobs"
         }
@@ -337,6 +374,7 @@ mod tests {
             destination: &str,
             payload: &[u8],
             _headers: HeaderMap,
+            _options: Option<&()>,
         ) -> impl Future<Output = Result<(), BoxError>> {
             self.0
                 .borrow_mut()
@@ -349,6 +387,8 @@ mod tests {
     struct Refusing;
 
     impl CopyPublisher for Refusing {
+        type Options = ();
+
         fn address(&self) -> &'static str {
             "jobs"
         }
@@ -358,6 +398,7 @@ mod tests {
             _destination: &str,
             _payload: &[u8],
             _headers: HeaderMap,
+            _options: Option<&()>,
         ) -> impl Future<Output = Result<(), BoxError>> {
             ready(Err(BoxError::from("the subscription is full")))
         }

@@ -23,9 +23,9 @@ use futures::future::{Either, join, select};
 use hash32::{FnvHasher, Hasher as _};
 use ruststream_core::{BuildContext, LocalIncomingMessage, LocalSubscriber};
 use ruststream_runtime::{
-    CopyPublisher, Delivery, DeliverySlot, DispatchFailure, Dispatched, Halt, HeadersAtOnce,
-    HostDetach, KeepCopies, Keeping, LocalDetach, LocalDispatch, LocalHandler, LocalPipeline,
-    LocalPlanned, LocalRoute, NoCopies, OnOneThread, RetryDestinationsDeclared, Router,
+    Delivery, DeliverySlot, DispatchFailure, Dispatched, Halt, HeadersAtOnce, HostDetach,
+    KeepCopies, Keeping, LocalDetach, LocalDispatch, LocalHandler, LocalPipeline, LocalPlanned,
+    LocalRoute, NoCopies, OnOneThread, PrepareCopy, PrepareKept, RetryDestinationsDeclared, Router,
     RouterCommit, RouterWith, ShutdownWait, dispatch,
 };
 use tracing::error;
@@ -83,7 +83,7 @@ pub trait Lanes {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: HostDetach;
+        Host: HostDetach<Kept: PrepareKept<Cx>>;
 }
 
 impl Lanes for OneLane {
@@ -99,7 +99,7 @@ impl Lanes for OneLane {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: HostDetach,
+        Host: HostDetach<Kept: PrepareKept<Cx>>,
     {
         route.run_sequential(signal, state, host)
     }
@@ -118,7 +118,7 @@ impl<const WORKERS: usize> Lanes for Pool<WORKERS> {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: HostDetach,
+        Host: HostDetach<Kept: PrepareKept<Cx>>,
     {
         run_lanes::<WORKERS, _, _, _, _, _, _>(route, signal, state, host, false)
     }
@@ -137,7 +137,7 @@ impl<const LANES: usize> Lanes for Keyed<LANES> {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: HostDetach,
+        Host: HostDetach<Kept: PrepareKept<Cx>>,
     {
         run_lanes::<LANES, _, _, _, _, _, _>(route, signal, state, host, true)
     }
@@ -159,7 +159,7 @@ impl<L: Lanes> LocalDispatch for EmbeddedPlan<L, NoRoom> {
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: LocalDetach,
-        Path: CopyPublisher,
+        Path: PrepareCopy<Cx>,
     {
         self.lanes
             .run(route, signal, state, &OnOneThread(host))
@@ -183,7 +183,7 @@ impl<L: Lanes, const CAPACITY: usize> LocalDispatch for EmbeddedPlan<L, Room<CAP
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: LocalDetach,
-        Path: CopyPublisher,
+        Path: PrepareCopy<Cx>,
     {
         let Some(path) = path else {
             self.lanes
@@ -221,7 +221,7 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
     Body: LocalHandler<Sub::Message, Cx, State>,
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
     Signal: ShutdownWait + Halt + Clone,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<Cx>>,
 {
     let LocalRoute {
         mut subscriber,
@@ -328,7 +328,7 @@ async fn work<Message, Body, Cx, State, Signal, Host, const COUNT: usize>(
     Body: LocalHandler<Message, Cx, State>,
     Cx: BuildContext<Message> + Send + Sync + 'static,
     Signal: Halt,
-    Host: HostDetach,
+    Host: HostDetach<Kept: PrepareKept<Cx>>,
 {
     // One encode buffer per worker, as the sequential loop keeps one.
     let mut encode = BytesMut::new();
@@ -506,6 +506,10 @@ pub trait MountSteps: Sized {
     /// it, which allocates. The descriptor declares `Copies = AddressedCopies` and the broker
     /// names a default publish policy. A registration without this step keeps none, so its
     /// `retry_after` requeues.
+    ///
+    /// The `.transform(..)` steps after `.out_retry(..)` run over a copy when it is kept, while
+    /// the delivery it copies is still at hand to read, and the copy leaves as they left it,
+    /// with the publish settings they wrote. They read the destination and do not name one.
     fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP>;
 
     /// Runs up to `N` deliveries of the registration at once, each on the next free worker.

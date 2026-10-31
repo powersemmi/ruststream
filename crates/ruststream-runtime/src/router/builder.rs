@@ -461,7 +461,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     }
 }
 
-impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
+impl<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     Router<B, (Head, Tail), RouteCodec, RouteLayers, RoutePipe>
 {
     /// Names the publish policy of one position of the registration just added (the preceding
@@ -533,7 +533,12 @@ impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     {
         self.out(Retry, policy)
     }
+}
 
+// A declaration names no publisher, so it is made the same way on a router of either family.
+impl<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
+    Router<B, (Head, Tail), RouteCodec, RouteLayers, RoutePipe>
+{
     /// Caps the deliveries one message of the registration just added gets, counting the first.
     ///
     /// See [`RouterWith::max_attempts`]: the declaration is the same on every form, and this is
@@ -665,7 +670,8 @@ where
     // registration and lets the startup refusal report it.
     RetryOfferOf<Head, B, Dest>: SettlesDestination<RetryUse<Transforms, Policy, B, Head>>,
     C: Clone,
-    Pipe: Clone + OutPipeline<RetryWire<Transforms, Policy, B, Head>> + 'static,
+    // A local chain's pipeline is not one: its registrations bind the position in `fold_retry`.
+    Pipe: Clone + PublishPipeline + OutPipeline<RetryWire<Transforms, Policy, B, Head>> + 'static,
     Enc: SlotCodec<C>,
     Policy: PublishPolicy<Connected<B>>,
     Transforms: RetryStackUse<RetryLive<Policy, B>, RetryCx<Head, B>>
@@ -776,7 +782,6 @@ pub trait AttachDeclaration: Sized {
 
 impl<B, Head, Tail, C, Layers, Pipe> AttachDeclaration for Router<B, (Head, Tail), C, Layers, Pipe>
 where
-    B: Broker + 'static,
     Head: RetryOpen + RouteMetadata,
 {
     type Out = Router<B, (DeclaredRoute<Head>, Tail), C, Layers, Pipe>;
