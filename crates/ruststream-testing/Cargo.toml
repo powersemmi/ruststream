@@ -106,3 +106,9 @@ required-features = ["embassy", "json"]
 name = "embedded_manual"
 path = "tests/embedded_manual.rs"
 required-features = ["embassy", "json"]
+
+# An app that never settles, reported by the embedded `TestApp`.
+[[test]]
+name = "embedded_quiescence"
+path = "tests/embedded_quiescence.rs"
+required-features = ["embassy", "json"]

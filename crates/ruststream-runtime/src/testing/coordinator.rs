@@ -332,6 +332,16 @@ impl Coordinator {
         }
     }
 
+    /// Whether `max_steps` deliveries were dispatched and one is still in flight: the reaction
+    /// does not converge. A broker whose app runs inside the test's own future stops handing out
+    /// deliveries once this holds, so the step that polls the app returns and reports it.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn exhausted(&self) -> bool {
+        self.inner.processed.load(Ordering::SeqCst) >= self.inner.max_steps
+            && self.inner.in_flight.load(Ordering::SeqCst) > 0
+    }
+
     /// Waits until no message is in flight, or fails once `max_steps` deliveries have been
     /// dispatched without settling (a non-converging reaction).
     ///

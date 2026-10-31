@@ -97,6 +97,14 @@ impl<const CAP: usize> Subscription<CAP> {
     /// The next delivery, in publish order, or the end once the bus shut down and the queue is
     /// drained.
     pub(super) fn poll_next(&self, cx: &mut Context<'_>) -> Poll<Option<Delivery>> {
+        // A reaction that never settles would hand the app's one future a delivery on every poll,
+        // so the poll would never return to the test: hold the deliveries back instead, and the
+        // test's step reports it.
+        #[cfg(feature = "testing")]
+        if self.standing.get() == Standing::Open && self.harness.exhausted() {
+            self.closing.borrow_mut().register(cx.waker());
+            return Poll::Pending;
+        }
         match self.queue.poll_receive(cx) {
             Poll::Ready(delivery) => {
                 self.in_hand.set(self.in_hand.get() + 1);
@@ -300,6 +308,10 @@ impl Harness {
         if let Some(coordinator) = self.coordinator.get() {
             coordinator.enqueued();
         }
+    }
+
+    fn exhausted(&self) -> bool {
+        self.coordinator.get().is_some_and(Coordinator::exhausted)
     }
 
     fn consumed(&self) {

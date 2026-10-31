@@ -597,7 +597,15 @@ impl TestApp {
                 // the hooks of the test's own publish run here too, the app stopped or not.
                 self.poll_hooks(&mut cx);
                 if !self.waker.woken.load(Ordering::Acquire) {
-                    return Poll::Ready(Ok(()));
+                    // An app that stopped taking deliveries because it never settles is quiet
+                    // too, and is not done.
+                    return Poll::Ready(if self.coordinator().exhausted() {
+                        Err(TestError::NotQuiescent {
+                            processed: MAX_POLLS,
+                        })
+                    } else {
+                        Ok(())
+                    });
                 }
             }
             Poll::Ready(Err(TestError::NotQuiescent {
