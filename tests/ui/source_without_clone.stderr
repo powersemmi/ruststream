@@ -1,0 +1,20 @@
+error[E0277]: the subscription descriptor `Sensor` is not `Clone`
+  --> tests/ui/source_without_clone.rs:53:30
+   |
+53 |         b.include(subscriber(Sensor(MemorySource::new("readings")), Ingest).build())
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this definition's descriptor `Sensor` does not implement `Clone`
+   |
+help: the trait `ruststream_runtime::settings::forward::CloneSource` is not implemented for `Sensor`
+  --> tests/ui/source_without_clone.rs:8:1
+   |
+ 8 | struct Sensor(MemorySource);
+   | ^^^^^^^^^^^^^
+   = note: a definition hands each mount its own descriptor, cloned from the one it keeps: derive or implement `Clone` on `Sensor`
+note: required by a bound in `subscriber`
+  --> crates/ruststream-runtime/src/handle/value.rs
+   |
+   | pub fn subscriber<Src, In, R, O, C, S, H>(
+   |        ---------- required by a bound in this function
+...
+   |     Src: IntoSource<Source: CloneSource>,
+   |                             ^^^^^^^^^^^ required by this bound in `subscriber`

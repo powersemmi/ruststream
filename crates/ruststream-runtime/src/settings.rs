@@ -107,7 +107,7 @@ impl<T: IncludeDef> Declared for T {
 /// surface's own applies.
 pub struct SubscriberBuilder<Def, Src, State, DefCodec = ()> {
     def: Def,
-    source: Src,
+    source: Held<Src>,
     workers: Workers,
     failures: FailurePolicies,
     /// The batch size, present exactly while the state's batch slot reads [`Fixed`] - which is
@@ -115,6 +115,32 @@ pub struct SubscriberBuilder<Def, Src, State, DefCodec = ()> {
     batch_size: Option<NonZeroUsize>,
     codec: DefCodec,
     _state: PhantomData<fn() -> State>,
+}
+
+/// The descriptor a builder keeps, with the clone taken where the descriptor entered it.
+///
+/// A mount asks the builder for its own copy of the descriptor. The `Clone` that copy needs is
+/// proved once, where the descriptor is put in ([`Held::new`]), so a descriptor without `Clone`
+/// is reported at that call and the rest of the chain, the mount included, type-checks without
+/// a second error. The pointer is read at startup, never per delivery.
+struct Held<Src> {
+    value: Src,
+    clone: fn(&Src) -> Src,
+}
+
+impl<Src: CloneSource> Held<Src> {
+    fn new(value: Src) -> Self {
+        Self {
+            value,
+            clone: Src::clone,
+        }
+    }
+}
+
+impl<Src> Held<Src> {
+    fn cloned(&self) -> Src {
+        (self.clone)(&self.value)
+    }
 }
 
 // The descriptor's `Clone` is asked where the builder is made, so a descriptor without it is
@@ -128,7 +154,7 @@ impl<Def, Src: CloneSource> SubscriberBuilder<Def, Src, AllOpen> {
     pub fn new(def: Def, source: Src) -> Self {
         Self {
             def,
-            source,
+            source: Held::new(source),
             workers: Workers::sequential(),
             failures: FailurePolicies::default(),
             batch_size: None,
@@ -165,7 +191,7 @@ type Collected<DefCodec> = (Workers, FailurePolicies, Option<NonZeroUsize>, DefC
 impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
     /// The pieces a step rebuilds from: the source moves out, so a step can wrap it without
     /// demanding `Clone` of a broker's descriptor.
-    fn into_parts(self) -> (Def, Src, Collected<DefCodec>) {
+    fn into_parts(self) -> (Def, Held<Src>, Collected<DefCodec>) {
         (
             self.def,
             self.source,
@@ -177,7 +203,7 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
     /// produced.
     fn from_parts<NewSrc, NewState>(
         def: Def,
-        source: NewSrc,
+        source: Held<NewSrc>,
         (workers, failures, batch_size, codec): Collected<DefCodec>,
     ) -> SubscriberBuilder<Def, NewSrc, NewState, DefCodec> {
         SubscriberBuilder {
@@ -353,12 +379,14 @@ pub trait NameStep: Sized {
     fn apply_name(self, name: Cow<'static, str>) -> Self::Out;
 }
 
-impl<Def, S: FromName, State, DC> NameStep for SubscriberBuilder<Def, Unnamed<S>, State, DC> {
+impl<Def, S: FromName + CloneSource, State, DC> NameStep
+    for SubscriberBuilder<Def, Unnamed<S>, State, DC>
+{
     type Out = SubscriberBuilder<Def, S, State, DC>;
 
     fn apply_name(self, name: Cow<'static, str>) -> Self::Out {
         let (def, _unnamed, collected) = self.into_parts();
-        Self::from_parts(def, S::from_name(name), collected)
+        Self::from_parts(def, Held::new(S::from_name(name)), collected)
     }
 }
 
@@ -474,12 +502,19 @@ pub trait StartAtStep<P>: Sized {
     fn apply_start_at(self, position: P) -> Self::Out;
 }
 
-impl<Def, Src, W, F, P, B, DC> StartAtStep<P> for SubscriberBuilder<Def, Src, (W, F, Open, B), DC> {
+impl<Def, Src, W, F, P, B, DC> StartAtStep<P> for SubscriberBuilder<Def, Src, (W, F, Open, B), DC>
+where
+    StartAt<Src, P>: CloneSource,
+{
     type Out = SubscriberBuilder<Def, StartAt<Src, P>, (W, F, Fixed, B), DC>;
 
     fn apply_start_at(self, position: P) -> Self::Out {
         let (def, source, collected) = self.into_parts();
-        Self::from_parts(def, StartAt::new(source, position), collected)
+        Self::from_parts(
+            def,
+            Held::new(StartAt::new(source.value, position)),
+            collected,
+        )
     }
 }
 
@@ -565,12 +600,13 @@ pub trait MapSourceStep<F>: Sized {
 impl<Def, Src, State, F, NewSrc, DC> MapSourceStep<F> for SubscriberBuilder<Def, Src, State, DC>
 where
     F: FnOnce(Src) -> NewSrc,
+    NewSrc: CloneSource,
 {
     type Out = SubscriberBuilder<Def, NewSrc, State, DC>;
 
     fn apply_map_source(self, f: F) -> Self::Out {
         let (def, source, collected) = self.into_parts();
-        Self::from_parts(def, f(source), collected)
+        Self::from_parts(def, Held::new(f(source.value)), collected)
     }
 }
 
@@ -850,7 +886,7 @@ mod tests {
         assert_eq!(built.workers, Workers::pool(nonzero!(4)));
         assert_eq!(built.failures.decode, FailurePolicy::Skip);
         assert_eq!(
-            SubscriptionSource::<ConnectedMemoryBroker>::name(&built.source),
+            SubscriptionSource::<ConnectedMemoryBroker>::name(&built.source.value),
             "orders",
         );
         // The definition rides along untouched: the builder only ever adds settings.
