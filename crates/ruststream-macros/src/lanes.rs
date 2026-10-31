@@ -533,6 +533,9 @@ mod tests {
         let unit: DeriveInput = syn::parse_quote!(
             struct Export;
         );
+        let empty: DeriveInput = syn::parse_quote!(
+            struct Export {}
+        );
         let two: DeriveInput = syn::parse_quote!(
             struct Export(Vec<u8>, u32);
         );
@@ -552,13 +555,18 @@ mod tests {
         let not_bytes: DeriveInput = syn::parse_quote!(
             struct Frame<'a>(&'a [u16]);
         );
+        let not_a_slice: DeriveInput = syn::parse_quote!(
+            struct Frame<'a>(&'a str);
+        );
 
         assert!(rejection(derive_serialized(&unit)).contains("not a unit one"));
+        assert!(rejection(derive_serialized(&empty)).contains("exactly one field"));
         assert!(rejection(derive_serialized(&two)).contains("exactly one field"));
         assert!(rejection(derive_serialized(&enumeration)).contains("exactly one field"));
         assert!(rejection(derive_deserialized(&decoded)).contains("payload view"));
         assert!(rejection(derive_deserialized(&mutable)).contains("payload view"));
         assert!(rejection(derive_deserialized(&not_bytes)).contains("payload view"));
+        assert!(rejection(derive_deserialized(&not_a_slice)).contains("payload view"));
     }
 
     #[test]
