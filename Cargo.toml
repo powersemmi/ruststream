@@ -99,7 +99,7 @@ serde_json = { version = "1", default-features = false }
 rmp-serde = "1"
 # 0.2.1 is the real floor: the crate-root `into_writer`/`from_reader` re-exports the CBOR codec
 # calls arrived in that release.
-ciborium = "0.2.1"
+ciborium = { version = "0.2.1", default-features = false }
 prometheus = { version = "0.14", default-features = false }
 # The metric layers' per-destination entries: an index replaced whole on a new name, read with no
 # lock, over an append-only vector whose entries stay put while a publish holds one.
@@ -1044,8 +1044,10 @@ testing = [
 otel = ["tokio", "dep:ruststream-observability", "ruststream-observability/otel"]
 
 [dependencies]
-ruststream-core = { workspace = true, features = ["std"] }
-ruststream-runtime = { workspace = true, features = ["std"] }
+# With a heap and no more: a device build of the embassy runtime has no standard library. A target
+# that has one turns `std` on below.
+ruststream-core = { workspace = true, features = ["alloc"] }
+ruststream-runtime = { workspace = true, features = ["alloc"] }
 ruststream-runtime-tokio = { workspace = true, optional = true }
 ruststream-runtime-embassy = { workspace = true, optional = true }
 ruststream-memory = { workspace = true, optional = true }
@@ -1054,14 +1056,25 @@ ruststream-observability = { workspace = true, optional = true }
 ruststream-testing = { workspace = true, optional = true }
 ruststream-cli = { workspace = true, optional = true }
 ruststream-conformance = { workspace = true, optional = true }
-bytes = { workspace = true, features = ["std"] }
-bytes-utils = { workspace = true, features = ["std"] }
+bytes.workspace = true
+bytes-utils.workspace = true
 ruststream-macros = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
 # The log `#[ruststream::app]`'s embassy task reports an app's error to.
 tracing = { workspace = true, optional = true }
+
+# The standard library follows the target, not the runtime: every target with an operating system
+# has it, the tokio runner and the codecs that write through `std::io` need it, and an embassy
+# service on the host (its tests among them) uses it as the tokio side does. A bare-metal target
+# (`target_os = "none"`, a microcontroller) has none, so a device build stays on `core` and
+# `alloc`.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+ruststream-core = { workspace = true, features = ["std"] }
+ruststream-runtime = { workspace = true, features = ["std"] }
+bytes = { workspace = true, features = ["std"] }
+bytes-utils = { workspace = true, features = ["std"] }
 
 # One scenario per file; `benches/common` is the shared setup. `just bench` names them, so a new
 # file is added in two places and `scripts/bench_results.py` fails loudly when one of them is

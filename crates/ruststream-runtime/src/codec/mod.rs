@@ -46,8 +46,34 @@ pub type DefaultCodec = CborCodec;
 #[cfg(all(not(feature = "json"), not(feature = "cbor"), feature = "msgpack"))]
 pub type DefaultCodec = MsgpackCodec;
 
-#[cfg(any(feature = "json", feature = "msgpack", feature = "cbor"))]
+// A bare-metal target has no standard library: `serde_json` offers no writer there and
+// `rmp-serde` does not build, so these two codecs are a build error that names the way out.
+#[cfg(all(feature = "json", target_os = "none"))]
+compile_error!(
+    "the `json` codec needs the standard library: `serde_json` encodes into a buffer only through \
+     `std::io::Write`. On a target without `std`, select the `cbor` codec instead"
+);
+#[cfg(all(feature = "msgpack", target_os = "none"))]
+compile_error!(
+    "the `msgpack` codec needs the standard library: `rmp-serde` builds only with `std`. On a \
+     target without `std`, select the `cbor` codec instead"
+);
+
+// The codecs write through `std::io::Write` on every target that has it, whether or not the
+// crate's `std` feature is on: the manifest gives their serializers `std` on those targets.
+#[cfg(all(
+    not(target_os = "none"),
+    any(feature = "json", feature = "msgpack", feature = "cbor")
+))]
+extern crate std;
+#[cfg(all(
+    not(target_os = "none"),
+    any(feature = "json", feature = "msgpack", feature = "cbor")
+))]
 use std::io;
+
+#[cfg(all(feature = "cbor", target_os = "none"))]
+use core::convert::Infallible;
 
 use bytes::BytesMut;
 use serde::{Serialize, de::DeserializeOwned};
@@ -64,7 +90,10 @@ pub use ruststream_core::codec::CodecError;
 #[cfg(any(feature = "json", feature = "msgpack", feature = "cbor"))]
 pub(crate) struct BufWriter<'a>(pub(crate) &'a mut BytesMut);
 
-#[cfg(any(feature = "json", feature = "msgpack", feature = "cbor"))]
+#[cfg(all(
+    not(target_os = "none"),
+    any(feature = "json", feature = "msgpack", feature = "cbor")
+))]
 impl io::Write for BufWriter<'_> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -80,6 +109,24 @@ impl io::Write for BufWriter<'_> {
 
     #[inline]
     fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The CBOR writer on a bare-metal target: the same append, through the trait `ciborium` writes
+/// to without `std`.
+#[cfg(all(feature = "cbor", target_os = "none"))]
+impl ciborium_io::Write for BufWriter<'_> {
+    type Error = Infallible;
+
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), Infallible> {
+        self.0.extend_from_slice(buf);
+        Ok(())
+    }
+
+    #[inline]
+    fn flush(&mut self) -> Result<(), Infallible> {
         Ok(())
     }
 }

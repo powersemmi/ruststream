@@ -2,6 +2,9 @@
 
 // The surface of the runtime crate this module shows, item by item: a glob would also inline the
 // machinery the runtime exports for the other crates of the workspace.
+// The broker wrapper keeps its slot in a `std` mutex, so it stands where the target has the
+// standard library (the facade's manifest turns `std` on there).
+#[cfg(not(target_os = "none"))]
 #[doc(hidden)]
 pub use ruststream_runtime::ConnectedSlot;
 #[doc(hidden)]
@@ -73,6 +76,7 @@ pub use ruststream_runtime::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, ListOffer, OutMessages, OutSlot,
     PublishedThrough, Reply, SlotPublisher, Unrestricted,
 };
+#[cfg(not(target_os = "none"))]
 pub use ruststream_runtime::{Bindable, Bound, BrokerRegistration};
 pub use ruststream_runtime::{
     BlanketLayer, HandlerExt, Identity, Layer, LocalBlanketLayer, Stack, layers,

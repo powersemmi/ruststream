@@ -1687,6 +1687,7 @@ dependencies = [
  "bytes",
  "bytes-utils",
  "ciborium",
+ "ciborium-io",
  "futures",
  "inventory",
  "opentelemetry",

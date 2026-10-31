@@ -45,12 +45,14 @@ std = [
     "thiserror/std",
     "tracing/std",
 ]
-# The codecs write through `std::io::Write`.
-json = ["std", "dep:serde_json", "serde_json/std", "ruststream-core/json"]
-msgpack = ["std", "dep:rmp-serde"]
-cbor = ["std", "dep:ciborium"]
+# The codecs. Their writer follows the target: `std::io::Write` wherever the standard library
+# exists, whatever the features. On a bare-metal target CBOR writes through its own writer trait,
+# while JSON and MessagePack have no writer there and fail the build with a message saying so.
+json = ["alloc", "dep:serde_json", "serde_json/alloc", "ruststream-core/json"]
+msgpack = ["alloc", "dep:rmp-serde"]
+cbor = ["alloc", "dep:ciborium", "dep:ciborium-io"]
 # Payload and header schemas for the generated document, and the binding types of the contract.
-asyncapi = ["json", "dep:schemars", "ruststream-core/asyncapi"]
+asyncapi = ["std", "json", "dep:schemars", "ruststream-core/asyncapi"]
 # The handler result the Prometheus layer reads, and the poll-time diagnostics counters it exports.
 metrics = ["alloc"]
 # The decode-failure flag and the batch-size histogram the OpenTelemetry layers read.
@@ -86,11 +88,22 @@ tokio-util = { workspace = true, optional = true }
 quanta = { workspace = true, optional = true }
 pin-project-lite = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-rmp-serde = { workspace = true, optional = true }
 ciborium = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
 opentelemetry = { workspace = true, optional = true }
+
+# Every target with an operating system has the standard library, and the codecs write through it
+# there. `rmp-serde` builds only with it, so a bare-metal target leaves it out and the `msgpack`
+# feature reports why instead of failing inside it.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+serde_json = { workspace = true, optional = true, features = ["std"] }
+ciborium = { workspace = true, optional = true, features = ["std"] }
+rmp-serde = { workspace = true, optional = true }
+
+# The writer trait CBOR encodes through on a bare-metal target.
+[target.'cfg(target_os = "none")'.dependencies]
+ciborium-io = { version = "0.2.1", optional = true, default-features = false }
 
 [dev-dependencies]
 # Counts this thread's allocations, so a test reads what a batch costs.

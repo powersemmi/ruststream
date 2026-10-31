@@ -284,7 +284,7 @@ jobs:
       # The contract without `std`: a Cortex-M4F with an allocator, and a Cortex-M0+, which has no
       # compare-and-swap. There `bytes` takes `extra-platforms`, and the library build takes
       # `portable-atomic`'s single-core option in place of the one a firmware binary chooses.
-      - name: Build the contract, the body and the embedded runner for no_std targets
+      - name: Build the contract, the body, the embedded runner and the facade for no_std targets
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         env:
           CARGO_BUILD_WARNINGS: deny
@@ -304,6 +304,9 @@ jobs:
           cargo build --locked -p ruststream-runtime-embassy --target thumbv7em-none-eabihf
           cargo build --locked -p ruststream-memory --no-default-features --features embassy \
             --target thumbv7em-none-eabihf
+          # A device service's facade: the embassy set without the codecs that need `std`.
+          cargo build --locked -p ruststream --no-default-features \
+            --features cbor,embassy,macros,memory --target thumbv7em-none-eabihf
 
       # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
       # It also rewrites the manifests while it runs, which is why this is the last step and the

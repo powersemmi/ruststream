@@ -20,8 +20,11 @@
 //!   a runner implements ([`Clock`], [`ShutdownWait`]).
 //! - `std` (default): `alloc`, the standard library's side of the dependencies, the broker
 //!   wrapper [`Bindable`], and the panic policy's catching part. Without `std` a panic aborts.
-//! - `json`, `msgpack`, `cbor`, `asyncapi`, `otel`, `testing`, `tokio` and `poll-diagnostics`
-//!   turn on `std`; `metrics` turns on `alloc`.
+//! - `asyncapi`, `otel`, `testing`, `tokio` and `poll-diagnostics` turn on `std`; `metrics` turns
+//!   on `alloc`.
+//! - `json`, `msgpack` and `cbor`, the codecs, turn on `alloc` and write through `std::io::Write`
+//!   on every target with an operating system. On a bare-metal target `cbor` builds without
+//!   `std`, and `json` and `msgpack` fail the build with a message that says so.
 
 #![no_std]
 

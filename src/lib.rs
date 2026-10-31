@@ -78,7 +78,8 @@
 //!   [`ruststream-runtime-embassy`](https://docs.rs/ruststream-runtime-embassy).
 //!
 //! Codec features are mutually compatible and enable only the deserializers you need. They work
-//! on either runtime.
+//! on either runtime. On a device without the standard library only `cbor` builds; `json` and
+//! `msgpack` need `std` and report it at compile time.
 //!
 //! * `json` (default): [`codec::JsonCodec`].
 //! * `msgpack`: [`codec::MsgpackCodec`].
@@ -116,7 +117,9 @@
 //!
 //! A crate that disables the defaults (`default-features = false`) names its runtime among the
 //! features it enables: `features = ["tokio"]` or `features = ["embassy"]`. A broker crate on
-//! tokio enables `tokio`.
+//! tokio enables `tokio`. A device service on a bare-metal target picks from `embassy`, `cbor`,
+//! `macros` and `memory`. On a target with an operating system the crate uses the standard
+//! library with either runtime.
 //!
 //! # Getting the imports
 //!
@@ -125,6 +128,11 @@
 //! the codec stay explicit, since those are the choices a service makes for itself.
 
 #![forbid(unsafe_code)]
+// The embassy runtime runs on a device with a heap and no standard library; the tokio runner needs
+// it.
+#![cfg_attr(not(feature = "tokio"), no_std)]
+
+extern crate alloc;
 
 // The runtime is one choice: the generated code, the app object and the re-exports all assume one.
 #[cfg(all(feature = "tokio", feature = "embassy"))]
@@ -338,13 +346,15 @@ pub mod __private {
 
     // The standard names the macros emit, reached through the facade so that a `#![no_std]`
     // crate, which has neither `::std` nor these names in its prelude, can use the derives.
+    pub use alloc::boxed::Box;
+    pub use alloc::format;
+    pub use alloc::string::{String, ToString};
+    pub use alloc::vec;
+    pub use alloc::vec::Vec;
     pub use core::error::Error;
-    pub use std::boxed::Box;
-    pub use std::format;
+    // What the tokio `main` that `#[ruststream::app]` generates returns.
+    #[cfg(feature = "tokio")]
     pub use std::process::ExitCode;
-    pub use std::string::{String, ToString};
-    pub use std::vec;
-    pub use std::vec::Vec;
     // The log the embassy task `#[ruststream::app]` emits reports an app's error to.
     #[cfg(feature = "embassy")]
     pub use tracing;
