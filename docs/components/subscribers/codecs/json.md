@@ -18,6 +18,12 @@ The media type is `application/json`, and the generated AsyncAPI document report
 A payload that is not JSON, or JSON of another shape, is a decode failure, settled by the subscriber's [failure policy](../failure-policy.md).
 To name JSON where another codec is the scope's, mount through a router or a registration that names it, as on [Codecs](./index.md).
 
+On a device without the standard library (`target_os = "none"`) the type and the wire format are the same.
+Decoding stays `serde_json`, on the allocator, and allocates only scratch for a string with escapes.
+Encoding goes through `serde-json-slice`, which writes the bytes `serde_json` writes straight into the encode buffer, with no allocation of its own.
+The buffer grows as a `BytesMut` does, so a message is not cut at a size.
+The same service source builds with either.
+
 ## Example
 
 The example builds with JSON as the only codec:

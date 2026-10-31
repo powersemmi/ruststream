@@ -47,8 +47,15 @@ std = [
 ]
 # The codecs. Their writer follows the target: `std::io::Write` wherever the standard library
 # exists, whatever the features. On a bare-metal target CBOR writes through its own writer trait,
-# while JSON and MessagePack have no writer there and fail the build with a message saying so.
-json = ["alloc", "dep:serde_json", "serde_json/alloc", "ruststream-core/json"]
+# JSON through `serde-json-slice`'s, and MessagePack has no writer there and fails the build with a
+# message saying so.
+json = [
+    "alloc",
+    "dep:serde_json",
+    "serde_json/alloc",
+    "dep:serde-json-slice",
+    "ruststream-core/json",
+]
 msgpack = ["alloc", "dep:rmp-serde"]
 cbor = ["alloc", "dep:ciborium", "dep:ciborium-io"]
 # Payload and header schemas for the generated document, and the binding types of the contract.
@@ -101,15 +108,18 @@ serde_json = { workspace = true, optional = true, features = ["std"] }
 ciborium = { workspace = true, optional = true, features = ["std"] }
 rmp-serde = { workspace = true, optional = true }
 
-# The writer trait CBOR encodes through on a bare-metal target.
+# The writer traits CBOR and JSON encode through on a bare-metal target.
 [target.'cfg(target_os = "none")'.dependencies]
 ciborium-io = { version = "0.2.1", optional = true, default-features = false }
+serde-json-slice = { version = "0.1.0", optional = true, default-features = false }
 
 [dev-dependencies]
 # Counts this thread's allocations, so a test reads what a batch costs.
 allocation-counter = "0.8.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The bare-metal JSON encoder, built on the host so its tests run there.
+serde-json-slice = "0.1.0"
 schemars = "1"
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
 tokio-util = { version = "0.7.10", features = ["rt"] }

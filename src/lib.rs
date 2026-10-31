@@ -78,8 +78,8 @@
 //!   [`ruststream-runtime-embassy`](https://docs.rs/ruststream-runtime-embassy).
 //!
 //! Codec features are mutually compatible and enable only the deserializers you need. They work
-//! on either runtime. On a device without the standard library only `cbor` builds; `json` and
-//! `msgpack` need `std` and report it at compile time.
+//! on either runtime. On a device without the standard library `json` and `cbor` build, with the
+//! same codec types as with it; `msgpack` needs `std` and reports it at compile time.
 //!
 //! * `json` (default): [`codec::JsonCodec`].
 //! * `msgpack`: [`codec::MsgpackCodec`].
@@ -117,8 +117,8 @@
 //!
 //! A crate that disables the defaults (`default-features = false`) names its runtime among the
 //! features it enables: `features = ["tokio"]` or `features = ["embassy"]`. A broker crate on
-//! tokio enables `tokio`. A device service on a bare-metal target picks from `embassy`, `cbor`,
-//! `macros` and `memory`. On a target with an operating system the crate uses the standard
+//! tokio enables `tokio`. A device service on a bare-metal target picks from `embassy`, `json`,
+//! `cbor`, `macros` and `memory`. On a target with an operating system the crate uses the standard
 //! library with either runtime.
 //!
 //! # Getting the imports
