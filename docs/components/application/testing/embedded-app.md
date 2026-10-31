@@ -16,6 +16,9 @@ The app runs inside the test's own future, so a test is a plain `#[test]` that b
 The harness is the test build's embassy-time driver: the clock starts at zero and moves only when the test moves it.
 embassy-time's own `mock-driver` is a second driver of the same clock, and a build links only one of the two.
 
+`TestApp::start` returns once the app is running.
+A broker that waits on the clock to connect, or a subscription that waits to open, is waited for: the clock moves from one armed deadline to the next, and a startup nothing wakes returns `TestError::Stalled`.
+
 `shutdown` lets the work the app holds run to its end: the clock moves from one armed deadline to the next until the app has stopped.
 A handler or a hook that waits on a timer finishes, the shutdown hooks run and every broker shuts down.
 Work that waits on something nothing wakes makes `shutdown` return `TestError::Stalled`, and an app that stopped on its own error returns it as `TestError::Failed`.
@@ -46,7 +49,7 @@ A slot publish is also recorded on its destination, so [`published::<T>(name)`](
 [`on_call`](./hooks/on-call.md) and [`on_publish`](./hooks/on-publish.md) take the same async closures as on tokio.
 A hook runs inside the test's own future: the dispatch that recorded the event waits for it, and the step that drives the app polls it beside the app.
 A hook runs on the test's own thread, and a hook that waits on the clock finishes once the test advances it or shuts the app down.
-A hook on a destination the test itself publishes to runs in that publish.
+A hook on a destination the test itself publishes to runs in that publish, up to where it waits on the clock.
 A panic inside a hook, a failed assertion included, fails the publish, `settle`, `advance` or `shutdown` that ran it.
 
 <Tabs groupId="api">

@@ -3,7 +3,9 @@
 
 use std::fmt;
 
-use embassy_futures::join::join;
+use std::pin::pin;
+
+use embassy_futures::poll_once;
 
 use ruststream_core::{Lend, OutgoingDestination, OutgoingMessage, RawMessage};
 use ruststream_runtime::testing::{
@@ -81,10 +83,12 @@ impl LocalPublishSink for InjectSink<'_> {
         let hooks = coordinator
             .record_published(self.broker.scope_id(), recorded, started)
             .run();
-        // The hooks of the test's own publish run in place, so the step that settles the publish
-        // is the one that polls them.
-        let ((), settled) = join(hooks, self.app.settle()).await;
-        settled
+        // One poll hands the hooks of the test's own publish to the harness, which polls them
+        // beside the app in every step. A hook that waits on the clock stays queued there past
+        // this publish, as one registered on a subscriber does, and finishes when the test
+        // advances the clock or shuts the app down.
+        let _ = poll_once(pin!(hooks));
+        self.app.settle().await
     }
 }
 

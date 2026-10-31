@@ -585,6 +585,42 @@ fn a_destination_hook_runs_for_the_tests_own_publish() -> Result<(), Box<dyn Err
 }
 
 #[test]
+fn a_destination_hook_waiting_on_the_clock_leaves_the_publish_and_finishes_on_advance()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .published::<()>("sensors/temp")
+            .on_publish(async move |_readings| {
+                Timer::after_secs(1).await;
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await?;
+        assert_eq!(
+            hooked.load(Ordering::SeqCst),
+            0,
+            "the hook waits for the clock, and the publish does not wait for it"
+        );
+        tb.broker::<Bus>()
+            .subscriber("sensors/temp")
+            .assert_called_once()
+            .settled(HandlerOutcome::ack());
+
+        tb.advance(Duration::from_secs(1)).await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
 fn a_shutdown_lets_a_hook_waiting_on_the_clock_finish_and_shuts_the_bus_down()
 -> Result<(), Box<dyn Error>> {
     block_on(async {
