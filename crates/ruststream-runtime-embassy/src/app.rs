@@ -401,19 +401,24 @@ impl<M: Mounts> EmbeddedApp<M> {
     }
 
     /// Runs the app with every broker connected in process and noted in `run`: the test
-    /// harness's run of the production app.
+    /// harness's run of the production app. Once every broker is connected, `state` turns the
+    /// app's state into the one its handlers read: the app's own, or a state the test builds.
     ///
     /// # Errors
     ///
     /// As [`run`](Self::run).
     #[cfg(feature = "testing")]
     #[doc(hidden)]
-    pub fn run_in_process(
+    pub fn run_in_process<Swap>(
         self,
         control: &Control,
         run: &InProcessRun,
-    ) -> impl Future<Output = Result<(), RunError>> {
-        self.mounts.run_in_process(control, run)
+        state: Swap,
+    ) -> impl Future<Output = Result<(), RunError>>
+    where
+        Swap: FnOnce(M::State) -> M::State,
+    {
+        self.mounts.run_in_process(control, run, state)
     }
 }
 
@@ -431,6 +436,11 @@ impl<M: Mounts> EmbeddedApp<M> {
             takes the app's state as `Arc<State>`"
 )]
 pub trait Mounts {
+    /// The state the app's handlers read: the one [`EmbeddedApp::with_state`] set, `()` without
+    /// one. A function that builds the app names it as `EmbeddedApp<impl Mounts<State = ..>>`
+    /// for a test that hands the app a state of its own.
+    type State;
+
     /// Runs the app; [`EmbeddedApp::run`] is the call.
     #[doc(hidden)]
     fn run_app(self, control: &Control) -> impl Future<Output = Result<(), RunError>>;
@@ -439,11 +449,14 @@ pub trait Mounts {
     /// run of the production app.
     #[cfg(feature = "testing")]
     #[doc(hidden)]
-    fn run_in_process(
+    fn run_in_process<Swap>(
         self,
         control: &Control,
         run: &InProcessRun,
-    ) -> impl Future<Output = Result<(), RunError>>;
+        state: Swap,
+    ) -> impl Future<Output = Result<(), RunError>>
+    where
+        Swap: FnOnce(Self::State) -> Self::State;
 }
 
 /// The app's broker list, balanced: what starts it in production and, under the `testing`
@@ -475,28 +488,34 @@ where
     OnShutdown: HookList<State>,
     AfterShutdown: HookList<State>,
 {
+    type State = State;
+
     fn run_app(self, control: &Control) -> impl Future<Output = Result<(), RunError>> {
         let Self {
             state,
             brokers,
             hooks,
         } = self;
-        serve(state, hooks, control, brokers.balance().start())
+        serve(move || state, hooks, control, brokers.balance().start())
     }
 
     #[cfg(feature = "testing")]
-    fn run_in_process(
+    fn run_in_process<Swap>(
         self,
         control: &Control,
         run: &InProcessRun,
-    ) -> impl Future<Output = Result<(), RunError>> {
+        swap: Swap,
+    ) -> impl Future<Output = Result<(), RunError>>
+    where
+        Swap: FnOnce(State) -> State,
+    {
         let Self {
             state,
             brokers,
             hooks,
         } = self;
         serve(
-            state,
+            move || swap(state),
             hooks,
             control,
             brokers.balance().start_in_process(run),
@@ -506,8 +525,9 @@ where
 
 /// The app's run once its brokers start through `started`: the subscriptions joined with the
 /// detached work and the `after_startup` hooks, then the shutdown hooks and the brokers' shutdown.
+/// The state is `state`'s, made once every broker is connected.
 async fn serve<State, Connections, Opened, AfterStartup, OnShutdown, AfterShutdown>(
-    state: State,
+    state: impl FnOnce() -> State,
     hooks: Hooks<AfterStartup, OnShutdown, AfterShutdown>,
     control: &Control,
     started: impl Future<Output = Result<(Connections, Opened), RunError>>,
@@ -519,7 +539,6 @@ where
     OnShutdown: HookList<State>,
     AfterShutdown: HookList<State>,
 {
-    let state = Arc::new(state);
     let (connections, opened) = match started.await {
         Ok(started) => started,
         Err(err) => {
@@ -527,6 +546,7 @@ where
             return Err(err);
         }
     };
+    let state = Arc::new(state());
     control.running();
     let host = AppHost::new();
     let startup = async {

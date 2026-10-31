@@ -44,7 +44,7 @@ pub use coordinator::{LiveSubscription, TestHooks};
 pub use error::TestError;
 #[cfg(feature = "testing")]
 #[doc(hidden)]
-pub use hooks::{HookFailures, PublishTarget, Within};
+pub use hooks::{HookFailures, PendingHooks, PublishTarget, Within};
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 pub use in_process::{InProcessRun, RunBroker};

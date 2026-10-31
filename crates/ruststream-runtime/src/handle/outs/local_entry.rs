@@ -18,6 +18,10 @@ use crate::publish::{
 };
 use crate::router::LocalPipeline;
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough};
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::{
+    Origin, PipelinePublish, paired, publishing_to, record_slot_publish,
+};
 use crate::{
     HeaderMap, LocalBroker, LocalConnected, LocalPublishPolicy, LocalPublisher,
     OutgoingDestination, OutgoingFor, PairError,
@@ -43,6 +47,9 @@ pub struct LocalSlot<M, W, E, Pipe = LocalPipeline, Body = ()> {
     codec: E,
     pipeline: Pipe,
     _declared: LocalSlotShape<M, Body>,
+    /// The broker the slot's publisher was paired against, which its publishes go to.
+    #[cfg(feature = "testing")]
+    origin: Origin,
 }
 
 impl<M, W, E, Pipe, Body> fmt::Debug for LocalSlot<M, W, E, Pipe, Body> {
@@ -80,9 +87,12 @@ impl<M: OutSlot, W: LocalPublisher, E, Pipe, Body> LocalSlot<M, W, E, Pipe, Body
 }
 
 // The publish travels the slot's path: its transforms, then the leaf call. A slot with no transform
-// lends the leaf the message as the builder made it, with nothing rebuilt or copied.
+// lends the leaf the message as the builder made it, with nothing rebuilt or copied. Under the
+// harness, the leaf records the publish with its slot, and with the broker it went to, as the
+// multi-thread runner's slot records it.
 impl<M, W, E, Pipe, Body> LocalPublishSink for &LocalSlot<M, W, E, Pipe, Body>
 where
+    M: OutSlot,
     W: LocalPublisher,
     Pipe: LocalOutPipeline<W>,
 {
@@ -97,6 +107,14 @@ where
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
+        #[cfg(feature = "testing")]
+        let slot: &LocalSlot<M, W, E, Pipe, Body> = self;
+        #[cfg(feature = "testing")]
+        return publishing_to(slot.origin, async move {
+            let leaf = Attributed::<M, W>(&slot.wired, PhantomData);
+            slot.pipeline.send(&leaf, msg, options).await
+        });
+        #[cfg(not(feature = "testing"))]
         self.pipeline.send(&self.wired, msg, options)
     }
 
@@ -122,7 +140,12 @@ where
         connected: &LocalConnected<B>,
         _subscriber: &Sub,
     ) -> Result<Self, PairError> {
-        let live = policy.pair(connected).await.map_err(|err| {
+        let pairing = policy.pair(connected);
+        #[cfg(feature = "testing")]
+        let (live, origin) = paired(connected, pairing).await;
+        #[cfg(not(feature = "testing"))]
+        let live = pairing.await;
+        let live = live.map_err(|err| {
             PairError::from_boxed(Box::from(format!(
                 "pairing the publisher for the `{}` slot failed: {err}",
                 M::NAME,
@@ -133,7 +156,46 @@ where
             codec,
             pipeline,
             _declared: PhantomData,
+            #[cfg(feature = "testing")]
+            origin,
         })
+    }
+}
+
+/// Publishes `msg` through `wired`, recorded with the slot `M` for the harness driving the
+/// dispatch, if any: the slot's record and the destination's, and the hooks each owes.
+#[cfg(feature = "testing")]
+#[allow(clippy::future_not_send)] // as the sink's own future
+/// The slot's publisher under the harness: records each publish that leaves the slot's path,
+/// with the slot's name, then hands it on.
+#[cfg(feature = "testing")]
+struct Attributed<'a, M, W>(&'a W, PhantomData<fn() -> M>);
+
+#[cfg(feature = "testing")]
+impl<M: OutSlot, W: LocalPublisher> LocalPublisher for Attributed<'_, M, W> {
+    type Payload = W::Payload;
+    type Error = W::Error;
+    type Options = W::Options;
+
+    // The publisher's own future, which is `Send` exactly where the publisher's is.
+    #[allow(clippy::future_not_send)]
+    async fn publish(
+        &self,
+        msg: OutgoingFor<'_, Self::Payload>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
+        let recorded = PipelinePublish::capture(&msg, options);
+        let hooks = record_slot_publish(M::NAME, &msg, options);
+        let sent = self.0.publish(msg, options).await;
+        hooks.run().await;
+        if sent.is_ok() {
+            recorded.sent().await;
+        }
+        sent
+    }
+
+    fn base_headers(&self) -> Option<&HeaderMap> {
+        self.0.base_headers()
     }
 }
 
@@ -288,4 +350,38 @@ impl_local_entry_markers! {
     (M0: W0 / E0 / P0 / B0)
     (M0: W0 / E0 / P0 / B0, M1: W1 / E1 / P1 / B1)
     (M0: W0 / E0 / P0 / B0, M1: W1 / E1 / P1 / B1, M2: W2 / E2 / P2 / B2)
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::format;
+    use alloc::vec;
+
+    use super::*;
+    use crate::Reads;
+    use crate::handle::outs::Slot;
+
+    /// A marker whose dictionary declares one message, as `#[derive(OutSlot)]` with
+    /// `#[publishes(..)]` writes it.
+    struct Alerts;
+
+    impl OutSlot for Alerts {
+        const NAME: &'static str = "Alerts";
+        type Destination = Reads;
+
+        fn outgoing() -> Vec<OutgoingMessageMetadata> {
+            vec![OutgoingMessageMetadata::new("alerts", "Alert")]
+        }
+    }
+
+    /// The document a subscription contributes reads its arena's dictionaries, so a local
+    /// subscription's slots are described with the same entries as the multi-thread runner's.
+    #[test]
+    fn a_local_arena_describes_its_slots_as_the_multi_thread_arena_does() {
+        let local = <(LocalSlot<Alerts, (), (), (), ()>,) as SlotDictionary>::outgoing();
+        let threaded = <(Slot<Alerts, (), (), (), ()>,) as SlotDictionary>::outgoing();
+        assert_eq!(format!("{local:?}"), format!("{threaded:?}"));
+        assert_eq!(local.len(), 1);
+        assert_eq!(local[0].channel, "alerts");
+    }
 }

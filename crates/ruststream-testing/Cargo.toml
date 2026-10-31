@@ -38,6 +38,7 @@ embassy = [
     "dep:embassy-time-driver",
     "dep:embassy-time-queue-utils",
     "dep:critical-section",
+    "dep:embassy-futures",
     "ruststream/embassy",
 ]
 # The value-encoding entry points, which encode with the default codec these features select.
@@ -61,6 +62,8 @@ tokio-util = { workspace = true, optional = true }
 embassy-time = { workspace = true, optional = true, features = ["tick-hz-1_000_000"] }
 embassy-time-driver = { version = "0.2.2", optional = true }
 embassy-time-queue-utils = { version = "0.3.2", optional = true, features = ["generic-queue-64"] }
+# Joins the hooks of a test's own publish with the step that polls them.
+embassy-futures = { workspace = true, optional = true }
 # The driver locks through a critical section; on the host it is a process-wide mutex.
 critical-section = { version = "1.1", optional = true, features = ["std"] }
 
@@ -89,4 +92,10 @@ required-features = ["embassy", "json"]
 [[test]]
 name = "embedded_retry"
 path = "tests/embedded_retry.rs"
+required-features = ["embassy", "json"]
+
+# The same device service declared without the macros.
+[[test]]
+name = "embedded_manual"
+path = "tests/embedded_manual.rs"
 required-features = ["embassy", "json"]

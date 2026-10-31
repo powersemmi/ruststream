@@ -9,15 +9,16 @@ use std::error::Error;
 use std::future::pending;
 use std::io;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use embassy_futures::{block_on, yield_now};
 use embassy_time::Timer;
 use ruststream::memory::local::prelude::{
-    BytesMut, ConnectedLocalMemoryBroker, LocalBroker, LocalMemoryError, LocalMemoryPublisher,
-    LocalPublisher, OutgoingMessage,
+    BytesMut, ConnectedLocalMemoryBroker, LocalBroker, LocalMemoryBroker, LocalMemoryError,
+    LocalMemoryPublish, LocalMemoryPublisher, LocalMemorySource, LocalPublisher, OutgoingMessage,
 };
-use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out, PublishError};
 use ruststream::testing::LocalInProcess;
 use ruststream::testing::{TestApp, TestError};
@@ -326,6 +327,37 @@ fn a_fail_fast_stop_set_off_by_the_test_shuts_the_bus_down() -> Result<(), Box<d
 }
 
 #[test]
+fn a_destination_hook_runs_for_the_tests_publish_that_stops_the_app() -> Result<(), Box<dyn Error>>
+{
+    block_on(async {
+        let tb =
+            TestApp::start(EmbeddedApp::new().with_broker(Bus::new(), |b| b.include(on_setting)))
+                .await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .published::<()>("settings")
+            .on_publish(async move |settings| {
+                settings.assert_called_once().with_raw(b"twelve");
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+
+        tb.broker::<Bus>()
+            .message(&Sent(b"twelve"))
+            .to("settings")
+            .publish()
+            .await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1);
+        let stopped = tb.shutdown().await;
+        assert!(
+            matches!(stopped, Err(TestError::Failed(_))),
+            "the app stopped on its subscription's failure: {stopped:?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn a_test_publish_after_the_app_stopped_is_refused() -> Result<(), Box<dyn Error>> {
     block_on(async {
         // An app with no route has nothing to run and ends once it started.
@@ -366,6 +398,397 @@ fn a_second_harness_on_one_thread_is_refused() {
         let _first = TestApp::start(app(Bus::new())).await;
         let _second = TestApp::start(app(Bus::new())).await;
     });
+}
+
+// --8<-- [start:out]
+#[test]
+fn an_out_slot_publish_is_recorded_with_its_slot() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        tb.broker::<Bus>()
+            .message(&Sent(b"high"))
+            .to("sensors/level")
+            .publish()
+            .await?;
+
+        tb.out::<Alerts>().assert_called_once().with_raw(b"high");
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+// --8<-- [end:out]
+
+#[test]
+fn a_call_hook_runs_in_the_publish_that_caused_the_call() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .subscriber("sensors/temp")
+            .on_call(async move |readings| {
+                readings
+                    .assert_called(seen.fetch_add(1, Ordering::SeqCst) + 1)
+                    .settled(HandlerOutcome::ack());
+            });
+
+        for reading in [Sent(b"21"), Sent(b"22")] {
+            tb.broker::<Bus>()
+                .message(&reading)
+                .to("sensors/temp")
+                .publish()
+                .await?;
+        }
+        assert_eq!(hooked.load(Ordering::SeqCst), 2);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+// --8<-- [start:on-publish]
+#[test]
+fn a_slot_publish_hook_runs_in_the_publish_that_caused_it() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.out::<Alerts>().on_publish(async move |alerts| {
+            alerts.assert_called_once().with_raw(b"high");
+            seen.fetch_add(1, Ordering::SeqCst);
+        });
+
+        tb.broker::<Bus>()
+            .message(&Sent(b"high"))
+            .to("sensors/level")
+            .publish()
+            .await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+// --8<-- [end:on-publish]
+
+#[test]
+fn a_hook_waiting_on_the_clock_finishes_once_it_is_advanced() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .subscriber("sensors/temp")
+            .on_call(async move |_| {
+                Timer::after_secs(1).await;
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 0);
+        tb.advance(Duration::from_secs(1)).await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+#[should_panic(expected = "the reading failed its check")]
+fn a_failed_hook_fails_the_publish_that_ran_it() {
+    let _ = block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        tb.broker::<Bus>()
+            .subscriber("sensors/temp")
+            .on_call(async move |_| panic!("the reading failed its check"));
+
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await?;
+        Ok::<_, Box<dyn Error>>(tb)
+    });
+}
+
+#[test]
+#[should_panic(expected = "the alert failed its check")]
+fn a_failed_hook_fails_the_advance_that_ran_it() {
+    let _ = block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        tb.broker::<Bus>()
+            .subscriber("valve/open")
+            .on_call(async move |_| panic!("the alert failed its check"));
+        tb.broker::<Bus>()
+            .message(&Sent(b"valve"))
+            .to("valve/open")
+            .publish()
+            .await?;
+
+        tb.advance(Duration::from_secs(10)).await?;
+        Ok::<_, Box<dyn Error>>(tb)
+    });
+}
+
+#[test]
+fn a_destination_hook_runs_for_the_apps_slot_publish() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .published::<()>("alerts")
+            .on_publish(async move |alerts| {
+                alerts.assert_called_once().with_raw(b"high");
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+
+        tb.broker::<Bus>()
+            .message(&Sent(b"high"))
+            .to("sensors/level")
+            .publish()
+            .await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_destination_hook_runs_for_the_tests_own_publish() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .published::<()>("sensors/temp")
+            .on_publish(async move |readings| {
+                readings.assert_called_once().with_raw(b"21");
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1);
+        tb.broker::<Bus>()
+            .subscriber("sensors/temp")
+            .assert_called_once()
+            .settled(HandlerOutcome::ack());
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_destination_hook_waiting_on_the_clock_leaves_the_publish_and_finishes_on_advance()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .published::<()>("sensors/temp")
+            .on_publish(async move |_readings| {
+                Timer::after_secs(1).await;
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await?;
+        assert_eq!(
+            hooked.load(Ordering::SeqCst),
+            0,
+            "the hook waits for the clock, and the publish does not wait for it"
+        );
+        tb.broker::<Bus>()
+            .subscriber("sensors/temp")
+            .assert_called_once()
+            .settled(HandlerOutcome::ack());
+
+        tb.advance(Duration::from_secs(1)).await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_shutdown_runs_a_destination_hook_still_waiting_on_the_clock_to_its_end()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new())).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .published::<()>("sensors/temp")
+            .on_publish(async move |_readings| {
+                Timer::after_secs(1).await;
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await?;
+
+        tb.shutdown().await?;
+        assert_eq!(
+            hooked.load(Ordering::SeqCst),
+            1,
+            "the hook ran to its end before the shutdown returned"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_shutdown_with_a_hook_nothing_wakes_fails() {
+    block_on(async {
+        let tb = TestApp::start(app(Bus::new()))
+            .await
+            .expect("the app starts");
+        tb.broker::<Bus>()
+            .published::<()>("sensors/temp")
+            .on_publish(async move |_readings| pending::<()>().await);
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await
+            .expect("the publish returns while its hook waits");
+
+        let stopped = tb.shutdown().await;
+        assert!(
+            matches!(stopped, Err(TestError::Stalled)),
+            "a hook nothing wakes keeps the shutdown from finishing: {stopped:?}"
+        );
+    });
+}
+
+#[test]
+fn a_shutdown_lets_a_hook_waiting_on_the_clock_finish_and_shuts_the_bus_down()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let (bus, sensor) = bus_and_sensor().await?;
+        let tb = TestApp::start(app(bus)).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .subscriber("sensors/temp")
+            .on_call(async move |_| {
+                Timer::after_secs(1).await;
+                seen.fetch_add(1, Ordering::SeqCst);
+            });
+        tb.broker::<Bus>()
+            .message(&Sent(b"21"))
+            .to("sensors/temp")
+            .publish()
+            .await?;
+
+        tb.shutdown().await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1, "the hook ran to its end");
+        assert!(
+            bus_is_shut_down(&sensor).await,
+            "the shutdown ended before the app shut its bus down"
+        );
+        Ok(())
+    })
+}
+
+/// What the board's handlers read: the level from which a reading is an alarm.
+struct Limits {
+    alarm: u8,
+    /// Where the board echoes each alarm, when something listens.
+    echo: Option<LocalMemoryPublisher<4>>,
+}
+
+/// Raises an alarm for every level at or above the board's limit.
+#[subscriber(LocalMemorySource::new("tank/level"))]
+async fn on_tank(
+    level: &Frame<'_>,
+    ctx: &mut Context<'_, (), Limits>,
+    Out(alerts): Out<impl Publisher, Alerts>,
+) -> HandlerOutcome {
+    let limits = ctx.state();
+    if level.0.first().copied().unwrap_or(0) < limits.alarm {
+        return HandlerOutcome::ack();
+    }
+    if alerts
+        .message(&Alert(level.0.to_vec()))
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    if let Some(echo) = &limits.echo {
+        let echoed = OutgoingMessage::produced("tank/echo", BytesMut::from(level.0));
+        if echo.publish(echoed, None).await.is_err() {
+            return HandlerOutcome::retry();
+        }
+    }
+    HandlerOutcome::ack()
+}
+
+/// The tank's app, with the limits the board reads from its flash.
+#[ruststream::app]
+fn tank(bus: Bus) -> EmbeddedApp<impl Mounts<State = Limits>> {
+    EmbeddedApp::new()
+        .with_state(Limits {
+            alarm: 200,
+            echo: None,
+        })
+        .with_broker(bus, |b| b.include(on_tank).out(Alerts, LocalMemoryPublish))
+}
+
+// --8<-- [start:with-state]
+#[test]
+fn the_test_hands_the_app_its_state() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::with_state(tank(Bus::new()), |brokers| Limits {
+            alarm: 50,
+            echo: Some(brokers.broker::<Bus>().publisher()),
+        })
+        .await?;
+        tb.broker::<Bus>()
+            .message(&Sent(b"\x64"))
+            .to("tank/level")
+            .publish()
+            .await?;
+
+        tb.out::<Alerts>().assert_called_once().with_raw(b"\x64");
+        tb.broker::<Bus>()
+            .published::<()>("tank/echo")
+            .assert_called_once()
+            .with_raw(b"\x64");
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+// --8<-- [end:with-state]
+
+#[test]
+fn without_a_state_of_its_own_the_test_runs_the_apps() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(tank(Bus::new())).await?;
+        tb.broker::<Bus>()
+            .message(&Sent(b"\x64"))
+            .to("tank/level")
+            .publish()
+            .await?;
+
+        tb.out::<Alerts>().assert_not_called();
+        tb.shutdown().await?;
+        Ok(())
+    })
 }
 
 /// How a [`SlowBus`] ends its connect.

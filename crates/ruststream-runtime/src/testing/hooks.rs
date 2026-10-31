@@ -8,12 +8,14 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::any::Any;
 use core::marker::PhantomData;
+use core::mem;
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 
+use futures::FutureExt;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -23,7 +25,8 @@ use super::assertions::{PublishedAssertions, SubscriberAssertions};
 use super::coordinator::Coordinator;
 
 /// A hook's future. Not `Send`: stable Rust cannot require it of an `AsyncFn`'s future, which is
-/// why the harness polls it on a thread of its own rather than inside the task that saw the event.
+/// why the tokio harness polls it on a thread of its own rather than inside the task that saw the
+/// event.
 type HookFuture<'a> = Pin<Box<dyn Future<Output = ()> + 'a>>;
 
 /// An `on_call` hook with its closure type erased.
@@ -110,12 +113,26 @@ pub enum PublishTarget {
     Slot(&'static str),
 }
 
+/// Where the hooks of one coordinator run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum HookRunner {
+    /// On a thread of their own inside the test's tokio runtime: the app's tasks are `Send`,
+    /// and a hook's future is not.
+    #[default]
+    Thread,
+    /// Inside the future that recorded the event: an app that runs as one future, polled by the
+    /// test's own future, has no task a hook would block and no thread to send it to.
+    InPlace,
+}
+
 /// The hooks registered on one coordinator, and what they still owe.
 #[derive(Default)]
 // Machinery the harness crate drives, hidden from the docs; it holds erased closures and
 // futures that have no useful `Debug`.
 #[allow(missing_debug_implementations)]
 pub struct Hooks {
+    /// Where the hooks run, fixed by the harness that made the coordinator.
+    runner: HookRunner,
     /// Whether any hook was ever registered: a test that registers none pays this load alone.
     registered: AtomicBool,
     calls: Mutex<Vec<OnCall>>,
@@ -126,6 +143,34 @@ pub struct Hooks {
     running: TaskTracker,
     /// Cancelled once the test ends: every hook still running is dropped where it waits.
     stopped: CancellationToken,
+    /// The hooks of events a dispatch waits on, for the harness that polls the app to run
+    /// ([`HookRunner::InPlace`]).
+    pending: Mutex<Vec<PendingHooks>>,
+}
+
+/// The hooks of one event, handed to the harness that polls an app running as one future: the
+/// harness turns them into a future and polls it beside the app.
+// Machinery the harness crate drives, hidden from the docs; it holds an erased closure.
+#[allow(missing_debug_implementations)]
+pub struct PendingHooks {
+    run: Box<dyn for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send>,
+    done: oneshot::Sender<()>,
+}
+
+impl PendingHooks {
+    /// The hooks as a future the harness polls: it runs them against `coordinator`, keeps a panic
+    /// they raise for the test to raise again, and lets the dispatch that waits for them go on.
+    #[doc(hidden)]
+    pub fn into_future(self, coordinator: Coordinator) -> Pin<Box<dyn Future<Output = ()>>> {
+        let Self { run, done } = self;
+        Box::pin(async move {
+            let outcome = AssertUnwindSafe(run(&coordinator)).catch_unwind().await;
+            if let Err(payload) = outcome {
+                lock(&coordinator.hooks().failed).get_or_insert(payload);
+            }
+            let _ = done.send(());
+        })
+    }
 }
 
 /// An `on_call` hook, with the handle it was registered on.
@@ -172,6 +217,14 @@ impl DuePublish {
 }
 
 impl Hooks {
+    /// No hook yet, run where `runner` says.
+    pub(crate) fn new(runner: HookRunner) -> Self {
+        Self {
+            runner,
+            ..Self::default()
+        }
+    }
+
     /// Registers `hook` on the calls of the subscription `name` of the broker at `scope_id`.
     pub(crate) fn on_call<Hook>(&self, scope_id: usize, name: String, hook: Hook)
     where
@@ -254,6 +307,13 @@ impl Hooks {
         self.running.wait().await;
     }
 
+    /// Takes the hooks dispatches handed over since the last call, for the harness that polls the
+    /// app to run beside it ([`PendingHooks::into_future`]).
+    #[doc(hidden)]
+    pub fn take_pending(&self) -> Vec<PendingHooks> {
+        mem::take(&mut *lock(&self.pending))
+    }
+
     /// Raises again, in the caller's task, the first panic a hook raised.
     #[doc(hidden)]
     pub fn raise_failure(&self) {
@@ -285,7 +345,7 @@ impl Coordinator {
     /// Runs the hooks of `calls`, which the caller's dispatch recorded and has settled.
     pub(crate) async fn run_calls(&self, calls: impl IntoIterator<Item = DueCall>) {
         for call in calls {
-            on_hook_thread(self, move |coordinator| {
+            run_hooks(self, move |coordinator| {
                 Box::pin(async move {
                     for hook in &call.hooks {
                         let handle = SubscriberAssertions::within(
@@ -316,7 +376,7 @@ impl DuePublish {
         else {
             return;
         };
-        on_hook_thread(&coordinator, move |coordinator| {
+        run_hooks(&coordinator, move |coordinator| {
             Box::pin(async move {
                 for hook in &hooks {
                     hook.call(coordinator, &target, within).await;
@@ -325,6 +385,35 @@ impl DuePublish {
         })
         .await;
     }
+}
+
+/// Runs `hooks` to completion where the coordinator's harness runs them, and keeps a panic they
+/// raise for the test to raise again ([`Hooks::raise_failure`]).
+async fn run_hooks<Run>(coordinator: &Coordinator, hooks: Run)
+where
+    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send + 'static,
+{
+    match coordinator.hooks().runner {
+        HookRunner::Thread => on_hook_thread(coordinator, hooks).await,
+        HookRunner::InPlace => in_place(coordinator, hooks).await,
+    }
+}
+
+/// Hands `hooks` to the harness that polls the app, and waits until it ran them: the dispatch that
+/// recorded the event waits here, and the test's step that polls the app polls the hooks beside
+/// it ([`Hooks::take_pending`]).
+async fn in_place<Run>(coordinator: &Coordinator, hooks: Run)
+where
+    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send + 'static,
+{
+    let (done, finished) = oneshot::channel();
+    lock(&coordinator.hooks().pending).push(PendingHooks {
+        run: Box::new(hooks),
+        done,
+    });
+    // The harness answers once the hooks are done, or drops the answer with the hooks when the
+    // test ends; either way the dispatch goes on.
+    let _ = finished.await;
 }
 
 /// Runs `hooks` to completion on a thread of their own, inside the test's runtime, and waits for

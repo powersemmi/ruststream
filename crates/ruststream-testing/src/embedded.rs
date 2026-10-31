@@ -19,12 +19,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
 
-use ruststream_runtime::testing::{Coordinator, InProcessRun, LocalInProcess, TestError};
+use ruststream_runtime::OutSlot;
+use ruststream_runtime::testing::{
+    Coordinator, InProcessRun, LocalInProcess, PublishedAssertions, TestError, Within,
+};
 use ruststream_runtime_embassy::{Control, EmbeddedApp, Health, Mounts, RunError};
 
+mod brokers;
 mod clock;
 mod handle;
 
+pub use brokers::TestBrokers;
 use clock::ClockLease;
 pub use handle::{BrokerHandle, InjectSink};
 
@@ -35,6 +40,9 @@ const MAX_POLLS: usize = 10_000;
 /// The app's run, boxed: the harness holds it across the test's steps and polls it in each.
 type AppRun = Pin<Box<dyn Future<Output = Result<(), RunError>>>>;
 
+/// The hooks of one event the app recorded, which the harness polls beside the app.
+type HookRun = Pin<Box<dyn Future<Output = ()>>>;
+
 /// A test harness around a device service's production app, on the host.
 ///
 /// Takes the [`EmbeddedApp`] the device's `app` function builds, unchanged, with the brokers the
@@ -44,9 +52,19 @@ type AppRun = Pin<Box<dyn Future<Output = Result<(), RunError>>>>;
 /// production type, and reads what the handlers saw and what the app published.
 ///
 /// The app runs inside the test's own future: each step (a publish, [`settle`](Self::settle),
-/// [`advance`](Self::advance)) polls it until it has nothing left to do without the clock
-/// moving. A handler that waits on embassy-time's clock waits until the test advances it, or
-/// until [`shutdown`](Self::shutdown) lets it run to its end.
+/// [`advance`](Self::advance), [`shutdown`](Self::shutdown)) polls it until it has nothing left
+/// to do without the clock moving. A handler that waits on embassy-time's clock waits until the
+/// test advances it, or until `shutdown` lets it run to its end.
+///
+/// The hooks a test registers on its assertions
+/// ([`on_call`](ruststream_runtime::testing::SubscriberAssertions::on_call),
+/// [`on_publish`](PublishedAssertions::on_publish)) run in the same steps: the dispatch that
+/// recorded the event waits for them, and the step polls them beside the app, so a hook needs no
+/// thread and may wait on the clock. A panic inside a hook, a failed assertion included, is raised
+/// again from the step that ran it.
+///
+/// [`with_state`](Self::with_state) starts the app with a state the test builds, and
+/// [`out`](Self::out) reads what went through an `Out` slot.
 ///
 /// The harness is the test build's embassy-time driver: the clock starts at zero and moves only
 /// when the test moves it. A process has one driver, so the harness holds the clock from `start`
@@ -105,6 +123,8 @@ type AppRun = Pin<Box<dyn Future<Output = Result<(), RunError>>>>;
 /// ```
 pub struct TestApp {
     run: RefCell<Option<AppRun>>,
+    /// The hooks of events a dispatch of the app waits on, polled in the same steps as the app.
+    hooks: RefCell<Vec<HookRun>>,
     ended: RefCell<Option<Result<(), RunError>>>,
     control: Rc<Control>,
     record: Rc<InProcessRun>,
@@ -164,16 +184,122 @@ impl TestApp {
     ///
     /// See [`TestApp`].
     pub async fn start<M: Mounts + 'static>(app: EmbeddedApp<M>) -> Result<Self, TestError> {
+        Self::run(app, |state, _brokers| state).await
+    }
+
+    /// Starts the device service's `app` in process with a `state` the test builds in place of
+    /// the one the app was built with, as [`start`](Self::start) starts it otherwise.
+    ///
+    /// `build` runs once every broker is connected, before any subscription delivers, and
+    /// receives the brokers so the state can hold what it needs of them
+    /// ([`TestBrokers::broker`]). The app's own state is dropped unread: a value read from the
+    /// board's flash, a driver of its hardware, whatever the test replaces with a stand-in.
+    ///
+    /// The app function names its state in its type, `EmbeddedApp<impl Mounts<State = ..>>`,
+    /// for the test to build one.
+    ///
+    /// # Errors
+    ///
+    /// As [`start`](Self::start).
+    ///
+    /// # Panics
+    ///
+    /// As [`start`](Self::start).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
+    /// use ruststream::runtime::{Context, EmbeddedApp, HandlerOutcome, Mounts};
+    /// use ruststream::testing::TestApp;
+    /// use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
+    ///
+    /// type Bus = LocalMemoryBroker<4>;
+    ///
+    /// /// What the board's handlers read: the level from which the pump runs.
+    /// struct Limits {
+    ///     start_pump: u8,
+    /// }
+    ///
+    /// impl Limits {
+    ///     /// The limits the board keeps in its flash.
+    ///     fn from_flash() -> Self {
+    ///         Self { start_pump: 200 }
+    ///     }
+    /// }
+    ///
+    /// /// A tank's level, one byte.
+    /// #[derive(Deserialized)]
+    /// struct Level<'a>(&'a [u8]);
+    ///
+    /// /// Acknowledges a level below the limit, and leaves one at or above it to the pump's
+    /// /// subscription by dropping it here.
+    /// #[subscriber(LocalMemorySource::new("tank/level"))]
+    /// async fn watch(level: &Level<'_>, ctx: &mut Context<'_, (), Limits>) -> HandlerOutcome {
+    ///     if level.0.first().copied().unwrap_or(0) < ctx.state().start_pump {
+    ///         HandlerOutcome::ack()
+    ///     } else {
+    ///         HandlerOutcome::drop()
+    ///     }
+    /// }
+    ///
+    /// /// The app names its state in its type, for a test to hand it one.
+    /// fn app(bus: Bus) -> EmbeddedApp<impl Mounts<State = Limits>> {
+    ///     EmbeddedApp::new()
+    ///         .with_state(Limits::from_flash())
+    ///         .with_broker(bus, |b| b.include(watch))
+    /// }
+    ///
+    /// /// A level as the test's sensor sends it.
+    /// #[derive(Outgoing, Serialized)]
+    /// #[outgoing(name = "tank/level")]
+    /// struct Sent(&'static [u8]);
+    ///
+    /// async fn a_low_limit_starts_the_pump() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let tb = TestApp::with_state(app(Bus::new()), |_brokers| Limits { start_pump: 10 })
+    ///         .await?;
+    ///     tb.broker::<Bus>().message(&Sent(&[50])).publish().await?;
+    ///
+    ///     tb.broker::<Bus>()
+    ///         .subscriber("tank/level")
+    ///         .assert_called_once()
+    ///         .settled(HandlerOutcome::drop());
+    ///     tb.shutdown().await?;
+    ///     Ok(())
+    /// }
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// #     embassy_futures::block_on(a_low_limit_starts_the_pump())
+    /// # }
+    /// ```
+    pub async fn with_state<M, Build>(app: EmbeddedApp<M>, build: Build) -> Result<Self, TestError>
+    where
+        M: Mounts + 'static,
+        Build: FnOnce(&TestBrokers<'_>) -> M::State + 'static,
+    {
+        Self::run(app, move |_app_state, brokers| build(brokers)).await
+    }
+
+    /// Runs `app` in process, its state the one `state` makes of the app's own once every broker
+    /// is connected, and lets it start.
+    async fn run<M, Make>(app: EmbeddedApp<M>, state: Make) -> Result<Self, TestError>
+    where
+        M: Mounts + 'static,
+        Make: FnOnce(M::State, &TestBrokers<'_>) -> M::State + 'static,
+    {
         let clock = ClockLease::take();
-        let record = Rc::new(InProcessRun::new(Coordinator::new(MAX_POLLS)));
+        let record = Rc::new(InProcessRun::new(Coordinator::in_place(MAX_POLLS)));
         let control = Rc::new(Control::new());
         let run: AppRun = {
             let record = Rc::clone(&record);
             let control = Rc::clone(&control);
-            Box::pin(async move { app.run_in_process(&control, &record).await })
+            Box::pin(async move {
+                let swap = |own| state(own, &TestBrokers::of(&record.brokers()));
+                app.run_in_process(&control, &record, swap).await
+            })
         };
         let tb = Self {
             run: RefCell::new(Some(run)),
+            hooks: RefCell::new(Vec::new()),
             ended: RefCell::new(None),
             control,
             record,
@@ -298,12 +424,13 @@ impl TestApp {
     /// See [`TestApp`].
     pub async fn shutdown(self) -> Result<(), TestError> {
         self.control.stop();
-        // Each round lets the app run until it waits on the clock, then moves the clock to the
-        // deadline it waits for; the round limit ends a stop that a periodic timer never lets
-        // come.
+        // Each round lets the app and the queued hooks run until they wait on the clock, then
+        // moves the clock to the deadline they wait for; the round limit ends a stop that a
+        // periodic timer never lets come. A hook still waiting holds its checks, so the shutdown
+        // returns only once the app has ended and every hook has finished.
         for _ in 0..MAX_POLLS {
             self.drive().await?;
-            if self.run.borrow().is_none() {
+            if self.run.borrow().is_none() && self.hooks.borrow().is_empty() {
                 return self
                     .ended
                     .take()
@@ -360,28 +487,115 @@ impl TestApp {
         })
     }
 
+    /// Asserts on what was published through the [`Out`](ruststream_runtime::Out) slot marked
+    /// `M`: exactly the messages the handlers sent through that slot, with their destinations
+    /// and headers, across all brokers.
+    ///
+    /// A hook registered on the view with
+    /// [`on_publish`](PublishedAssertions::on_publish) runs at each publish through the slot,
+    /// inside the step that drove it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
+    /// use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out};
+    /// use ruststream::testing::TestApp;
+    /// use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
+    ///
+    /// type Bus = LocalMemoryBroker<4>;
+    ///
+    /// /// A tank's level, as the sensor sends its bytes.
+    /// #[derive(Deserialized)]
+    /// struct Level<'a>(&'a [u8]);
+    ///
+    /// /// The alarm the tank raises, carrying the level that set it off.
+    /// #[derive(Outgoing, Serialized)]
+    /// #[outgoing(name = "alarms")]
+    /// struct Alarm(Vec<u8>);
+    ///
+    /// /// The slot alarms leave through.
+    /// #[derive(OutSlot)]
+    /// #[publishes(Alarm)]
+    /// struct Alarms;
+    ///
+    /// #[subscriber(LocalMemorySource::new("tank/level"))]
+    /// async fn watch(level: &Level<'_>, Out(alarms): Out<impl Publisher, Alarms>) -> HandlerOutcome {
+    ///     match alarms.message(&Alarm(level.0.to_vec())).publish().await {
+    ///         Ok(()) => HandlerOutcome::ack(),
+    ///         Err(_) => HandlerOutcome::retry(),
+    ///     }
+    /// }
+    ///
+    /// fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    ///     EmbeddedApp::new().with_broker(bus, |b| b.include(watch).out(Alarms, LocalMemoryPublish))
+    /// }
+    ///
+    /// /// A level as the test's sensor sends it.
+    /// #[derive(Outgoing, Serialized)]
+    /// #[outgoing(name = "tank/level")]
+    /// struct Sent(&'static [u8]);
+    ///
+    /// async fn raises_the_alarm() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let tb = TestApp::start(app(Bus::new())).await?;
+    ///     tb.broker::<Bus>().message(&Sent(b"full")).publish().await?;
+    ///
+    ///     tb.out::<Alarms>().assert_called_once().with_raw(b"full");
+    ///     tb.shutdown().await?;
+    ///     Ok(())
+    /// }
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// #     embassy_futures::block_on(raises_the_alarm())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn out<M: OutSlot>(&self) -> PublishedAssertions<()> {
+        PublishedAssertions::captured(self.coordinator(), M::NAME, Within::ALL)
+    }
+
     /// The coordinator the run records into.
     pub(crate) fn coordinator(&self) -> &Coordinator {
         self.record.coordinator()
     }
 
+    /// Starts the hooks of the events the app recorded since the last poll, and polls every hook
+    /// still running.
+    fn poll_hooks(&self, cx: &mut Context<'_>) {
+        let mut hooks = self.hooks.borrow_mut();
+        let coordinator = self.coordinator();
+        hooks.extend(
+            coordinator
+                .hooks()
+                .take_pending()
+                .into_iter()
+                .map(|pending| pending.into_future(coordinator.clone())),
+        );
+        hooks.retain_mut(|hook| hook.as_mut().poll(cx).is_pending());
+    }
+
+    /// Polls the app once, unless it already ended, and keeps how it ended.
+    fn poll_app(&self, cx: &mut Context<'_>) {
+        let mut slot = self.run.borrow_mut();
+        if let Some(run) = slot.as_mut()
+            && let Poll::Ready(ended) = run.as_mut().poll(cx)
+        {
+            *slot = None;
+            *self.ended.borrow_mut() = Some(ended);
+        }
+    }
+
     /// Polls the app until nothing wakes it: everything delivered is handled, and what remains
     /// waits on the clock.
-    fn drive(&self) -> impl Future<Output = Result<(), TestError>> + '_ {
-        poll_fn(move |_cx| {
-            let mut slot = self.run.borrow_mut();
-            let Some(run) = slot.as_mut() else {
-                return Poll::Ready(Ok(()));
-            };
+    async fn drive(&self) -> Result<(), TestError> {
+        let driven = poll_fn(move |_cx| {
             let waker = Waker::from(Arc::clone(&self.waker));
             let mut cx = Context::from_waker(&waker);
             for _ in 0..MAX_POLLS {
                 self.waker.woken.store(false, Ordering::Release);
-                if let Poll::Ready(ended) = run.as_mut().poll(&mut cx) {
-                    *slot = None;
-                    *self.ended.borrow_mut() = Some(ended);
-                    return Poll::Ready(Ok(()));
-                }
+                self.poll_app(&mut cx);
+                // A hook that finishes lets the dispatch waiting on it go on, which wakes the app;
+                // the hooks of the test's own publish run here too, the app stopped or not.
+                self.poll_hooks(&mut cx);
                 if !self.waker.woken.load(Ordering::Acquire) {
                     return Poll::Ready(Ok(()));
                 }
@@ -390,6 +604,10 @@ impl TestApp {
                 processed: MAX_POLLS,
             }))
         })
+        .await;
+        // The hooks ran inside the polls above; a failure one of them left fails this step.
+        self.coordinator().hooks().raise_failure();
+        driven
     }
 }
 

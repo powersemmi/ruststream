@@ -5,14 +5,14 @@
 use alloc::rc::{Rc, Weak};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::any::{TypeId, type_name};
+use core::any::{Any, TypeId, type_name};
 use core::cell::{Ref, RefCell};
 use core::fmt;
 
 use crate::redelivery::ScopeDelivery;
 
 use super::broker::{LocalInProcess, LocalTestableBroker};
-use super::coordinator::{Coordinator, TestHooks};
+use super::coordinator::{Coordinator, Origin, TestHooks};
 
 /// The record of one in-process run of an app that runs as one future, shared by the runner,
 /// which notes each broker it connects, and the harness, which reads them.
@@ -37,6 +37,7 @@ pub struct RunBroker {
     name: &'static str,
     scope_id: usize,
     testable: Weak<dyn LocalTestableBroker>,
+    connected: Weak<dyn Any>,
 }
 
 impl RunBroker {
@@ -63,6 +64,12 @@ impl RunBroker {
     #[must_use]
     pub fn testable(&self) -> Option<Rc<dyn LocalTestableBroker>> {
         self.testable.upgrade()
+    }
+
+    /// The connected form as its own type, while the app holds it.
+    #[must_use]
+    pub fn connected(&self) -> Option<Rc<dyn Any>> {
+        self.connected.upgrade()
     }
 }
 
@@ -106,12 +113,17 @@ impl InProcessRun {
         connected.install_coordinator(self.coordinator.clone());
         let mut brokers = self.brokers.borrow_mut();
         let scope_id = brokers.len();
+        // A publisher the runtime pairs against this broker names it by this address.
+        self.coordinator
+            .locate_local(Origin::of::<B::Connected>(connected), scope_id);
         let shared: Rc<dyn LocalTestableBroker> = connected.clone();
+        let typed: Rc<dyn Any> = connected.clone();
         brokers.push(RunBroker {
             broker: TypeId::of::<B>(),
             name: type_name::<B>(),
             scope_id,
             testable: Rc::downgrade(&shared),
+            connected: Rc::downgrade(&typed),
         });
         ScopeDelivery::new().with_harness(Arc::clone(&self.hooks), scope_id, 0)
     }
