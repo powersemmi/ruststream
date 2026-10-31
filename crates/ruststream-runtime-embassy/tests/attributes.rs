@@ -20,7 +20,10 @@ use bytes::BytesMut;
 use embassy_executor::{Executor, SpawnError, Spawner};
 use embassy_futures::yield_now;
 use futures::{FutureExt, StreamExt};
-use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
+use ruststream::memory::local::{
+    ConnectedLocalMemoryBroker, LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource,
+    LocalMemorySubscriber,
+};
 use ruststream::runtime::{
     EmbeddedApp, HandlerOutcome, Health, Message, Mounts, Out, SubscriberSettings,
 };
@@ -196,6 +199,17 @@ async fn publish(bus: &Bus, subject: &'static str, payload: &[u8]) {
         .expect("the bus takes the message");
 }
 
+/// A subscription the scenario reads what the app published from.
+async fn subscribe(
+    connected: &ConnectedLocalMemoryBroker<4>,
+    subject: &'static str,
+) -> LocalMemorySubscriber<4> {
+    LocalMemorySource::new(subject)
+        .subscribe(connected)
+        .await
+        .expect("the scenario subscribes")
+}
+
 /// The payload of the next message `subscriber` holds, if it holds one now.
 fn next_payload<Sub: LocalSubscriber>(subscriber: &mut Sub) -> Option<Vec<u8>> {
     pin!(subscriber.stream())
@@ -221,24 +235,63 @@ fn next_message<Sub: LocalSubscriber>(subscriber: &mut Sub) -> Option<(Vec<u8>, 
         })
 }
 
+/// What the handlers without a reply saw, and the alert the slot published.
+fn check_handlers(alert: Option<&[u8]>) {
+    assert_eq!(
+        LEVELS.load(Ordering::Relaxed),
+        1,
+        "levels the attribute's handler saw"
+    );
+    passed("a handler the attribute made runs on the embedded app");
+    assert_eq!(
+        alert,
+        Some(b"high".as_slice()),
+        "the alert the level handler published"
+    );
+    passed("a handler publishes through its Out slot");
+    assert_eq!(
+        PLAIN.load(Ordering::Relaxed),
+        1,
+        "readings the eager form saw"
+    );
+    passed("a handler without a slot runs on the embedded app");
+    assert_eq!(
+        NAMED.load(Ordering::Relaxed),
+        1,
+        "readings of the subscription the mount site named"
+    );
+    passed("a mount site names the subscription of a handler that left it open");
+}
+
+/// What the replying handlers answered: the raw reply, the codec's, and the pair's with its
+/// `bytes` header.
+fn check_replies(
+    pong: Option<&[u8]>,
+    measure: Option<&[u8]>,
+    receipt: Option<&(Vec<u8>, Option<Vec<u8>>)>,
+) {
+    assert_eq!(pong, Some(b"ping".as_slice()), "the raw reply");
+    passed("a handler replies byte for byte");
+    assert_eq!(
+        measure,
+        Some(br#"{"bytes":4}"#.as_slice()),
+        "the reply the codec encoded"
+    );
+    passed("a handler replies through the codec");
+    assert_eq!(
+        receipt,
+        Some(&(br#"{"bytes":5}"#.to_vec(), Some(b"5".to_vec()))),
+        "the pair reply's body and its `bytes` header"
+    );
+    passed("a handler replies with a pair, its header contract in the headers");
+}
+
 async fn check_the_app(spawner: Spawner, stand: &'static Stand) {
     let connected = stand.bus.clone().connect().await.expect("the bus connects");
-    let mut alerts = LocalMemorySource::new("bus/alerts")
-        .subscribe(&connected)
-        .await
-        .expect("the alerts subscribe");
-    let mut pongs = LocalMemorySource::new("bus/pong")
-        .subscribe(&connected)
-        .await
-        .expect("the pongs subscribe");
-    let mut measured = LocalMemorySource::new("bus/measured")
-        .subscribe(&connected)
-        .await
-        .expect("the measures subscribe");
-    let mut receipts = LocalMemorySource::new("bus/receipts")
-        .subscribe(&connected)
-        .await
-        .expect("the receipts subscribe");
+    let mut alerts = subscribe(&connected, "bus/alerts").await;
+    let mut pongs = subscribe(&connected, "bus/pong").await;
+    let mut measured = subscribe(&connected, "bus/measured").await;
+    let mut receipts = subscribe(&connected, "bus/receipts").await;
     let starting = app::CONTROL.health();
     spawner.spawn(app::task(stand.bus.clone()).expect("the app task is free"));
     settle().await;
@@ -271,44 +324,8 @@ async fn check_the_app(spawner: Spawner, stand: &'static Stand) {
     );
     assert!(busy, "the app's task runs once spawned");
     passed("the app's task runs the app and reports Running");
-    assert_eq!(
-        LEVELS.load(Ordering::Relaxed),
-        1,
-        "levels the attribute's handler saw"
-    );
-    passed("a handler the attribute made runs on the embedded app");
-    assert_eq!(
-        alert,
-        Some(b"high".to_vec()),
-        "the alert the level handler published"
-    );
-    passed("a handler publishes through its Out slot");
-    assert_eq!(
-        PLAIN.load(Ordering::Relaxed),
-        1,
-        "readings the eager form saw"
-    );
-    passed("a handler without a slot runs on the embedded app");
-    assert_eq!(
-        NAMED.load(Ordering::Relaxed),
-        1,
-        "readings of the subscription the mount site named"
-    );
-    passed("a mount site names the subscription of a handler that left it open");
-    assert_eq!(pong, Some(b"ping".to_vec()), "the raw reply");
-    passed("a handler replies byte for byte");
-    assert_eq!(
-        measure,
-        Some(br#"{"bytes":4}"#.to_vec()),
-        "the reply the codec encoded"
-    );
-    passed("a handler replies through the codec");
-    assert_eq!(
-        receipt,
-        Some((br#"{"bytes":5}"#.to_vec(), Some(b"5".to_vec()))),
-        "the pair reply's body and its `bytes` header"
-    );
-    passed("a handler replies with a pair, its header contract in the headers");
+    check_handlers(alert.as_deref());
+    check_replies(pong.as_deref(), measure.as_deref(), receipt.as_ref());
     assert_eq!(
         BATCHED.load(Ordering::Relaxed),
         2,
