@@ -3,6 +3,7 @@
 
 use alloc::sync::Arc;
 use core::fmt;
+use core::marker::PhantomData;
 #[cfg(feature = "otel")]
 use std::sync::OnceLock;
 
@@ -21,9 +22,7 @@ use crate::main_runtime::MainRuntime;
 use crate::poll_diagnostics::PollDiagnostics;
 #[cfg(feature = "poll-diagnostics")]
 use crate::poll_diagnostics::PollSampler;
-#[cfg(test)]
-use crate::redelivery::ErasedRetryPublisher;
-use crate::redelivery::{DeferredRetry, ScopeDelivery};
+use crate::redelivery::{RetryCopies, ScopeDelivery};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::TestHooks;
 
@@ -33,11 +32,6 @@ use crate::testing::coordinator::TestHooks;
 /// [`Detach`](crate::host::Detach), which the loop carries beside it.
 #[doc(hidden)]
 pub struct Delivery<C = ()> {
-    /// The retry path of this subscription: the publisher a copy of a delivery leaves through,
-    /// with the destination the mount site or the descriptor named. `None` where the broker moves
-    /// the delivery itself, in which case a `NackAfter` on a transport with no native delayed
-    /// redelivery has nothing left to do but requeue.
-    pub(crate) retry: Option<DeferredRetry<C>>,
     /// What the mount site declared with `max_attempts(..)` and `dead_letter(..)`. Read only
     /// where the runtime is the one moving the delivery.
     pub(crate) declaration: RetryDeclaration,
@@ -65,6 +59,9 @@ pub struct Delivery<C = ()> {
     /// the name each time. A subscription that never batches never builds it.
     #[cfg(feature = "otel")]
     destination: OnceLock<KeyValue>,
+    /// The broker's per-delivery context this subscription's transforms read: it types the
+    /// context, and a delivery context is only ever lent with its own.
+    _context: PhantomData<fn() -> C>,
 }
 
 impl<C> Delivery<C> {
@@ -74,11 +71,9 @@ impl<C> Delivery<C> {
     pub(crate) fn for_subscription(
         scope: &ScopeDelivery,
         subscription: &str,
-        retry: Option<DeferredRetry<C>>,
         declaration: RetryDeclaration,
     ) -> Self {
         Self {
-            retry,
             declaration,
             #[cfg(feature = "tokio")]
             runtime: MainRuntime::try_current(),
@@ -92,6 +87,7 @@ impl<C> Delivery<C> {
             poll: scope.poll().register(subscription),
             #[cfg(feature = "otel")]
             destination: OnceLock::new(),
+            _context: PhantomData,
         }
     }
 
@@ -101,7 +97,6 @@ impl<C> Delivery<C> {
     #[must_use]
     pub fn unscoped() -> Self {
         Self {
-            retry: None,
             declaration: RetryDeclaration::new(),
             #[cfg(feature = "tokio")]
             runtime: MainRuntime::try_current(),
@@ -115,30 +110,8 @@ impl<C> Delivery<C> {
             poll: PollDiagnostics::new().register("detached"),
             #[cfg(feature = "otel")]
             destination: OnceLock::new(),
+            _context: PhantomData,
         }
-    }
-
-    /// A delivery context outside any scope, for tests that drive the dispatch functions
-    /// directly.
-    #[cfg(test)]
-    pub(crate) fn detached(retry: Option<DeferredRetry<C>>) -> Self {
-        Self {
-            retry,
-            ..Self::unscoped()
-        }
-    }
-
-    /// A delivery context publishing its retry copies through `publisher` at `destination`. For
-    /// tests.
-    #[cfg(test)]
-    pub(crate) fn deferring_to(
-        publisher: Arc<dyn ErasedRetryPublisher<C>>,
-        destination: &str,
-    ) -> Self {
-        Self::detached(Some(DeferredRetry {
-            publisher,
-            destination: Some(Arc::from(destination)),
-        }))
     }
 
     /// The same context with a declaration on it, as a mount site's `max_attempts(..)` and
@@ -149,10 +122,10 @@ impl<C> Delivery<C> {
         self
     }
 
-    /// An empty delivery context: no deferred retry. For tests.
+    /// An empty delivery context: no declaration. For tests.
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
-        Self::detached(None)
+        Self::unscoped()
     }
 }
 
@@ -163,10 +136,6 @@ impl<C> Delivery<C> {
     #[must_use]
     pub fn on_thread(&self) -> Self {
         Self {
-            retry: self.retry.as_ref().map(|retry| DeferredRetry {
-                publisher: Arc::clone(&retry.publisher),
-                destination: retry.destination.clone(),
-            }),
             declaration: self.declaration.clone(),
             #[cfg(feature = "tokio")]
             runtime: self.runtime.clone(),
@@ -180,6 +149,7 @@ impl<C> Delivery<C> {
             poll: self.poll.for_thread(),
             #[cfg(feature = "otel")]
             destination: self.destination.clone(),
+            _context: PhantomData,
         }
     }
 }
@@ -197,10 +167,6 @@ impl<C> Delivery<C> {
 impl<C> fmt::Debug for Delivery<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Delivery")
-            .field(
-                "retry_destination",
-                &self.retry.as_ref().map(|retry| &retry.destination),
-            )
             .field("declaration", &self.declaration)
             .finish_non_exhaustive()
     }
@@ -268,7 +234,7 @@ impl<M> Slot<M> {
 pub trait Lent<C> {
     /// The runner's handle the loop hands its leftovers to, keeping copies of the subscription's
     /// deliveries where it keeps any.
-    type Host: HostDetach<Kept: PrepareKept<C>>;
+    type Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>;
 
     /// The publish context every delivery of the subscription runs under.
     fn delivery(&self) -> &Delivery<C>;
@@ -291,7 +257,9 @@ impl<C, Shared: Lent<C>> Lent<C> for Arc<Shared> {
     }
 }
 
-impl<C, Host: HostDetach<Kept: PrepareKept<C>>> Lent<C> for (&Delivery<C>, &Host) {
+impl<C, Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>> Lent<C>
+    for (&Delivery<C>, &Host)
+{
     type Host = Host;
 
     #[inline]
@@ -312,27 +280,20 @@ mod tests {
 
     use bytes::BytesMut;
 
-    use super::super::fixtures::{PlainMessage, RejectingPublisher, Settlement};
+    use super::super::fixtures::{PlainMessage, Settlement};
     use super::super::{HeadersOnDemand, dispatch};
     use super::*;
     use crate::HeaderMap;
     use crate::context::Context;
     use crate::failure::{DispatchFailure, FailurePolicies};
     use crate::handler::HandlerOutcome;
-    use crate::redelivery::bare_retry_publisher;
     use crate::testkit::{Shutdown, Tracked};
     use tokio_util::task::TaskTracker;
 
     #[test]
-    fn the_delivery_debug_form_reports_wiring_without_leaking_the_publisher() {
+    fn the_delivery_debug_form_reports_its_declaration() {
         let empty = format!("{:?}", Delivery::<()>::empty());
-        assert!(empty.contains("retry_destination: None"), "{empty}");
-
-        let wired: Delivery = Delivery::deferring_to(
-            bare_retry_publisher(RejectingPublisher::default()),
-            "orders",
-        );
-        assert!(format!("{wired:?}").contains("retry_destination: Some(Some(\"orders\"))"));
+        assert!(empty.contains("declaration"), "{empty}");
     }
 
     /// A delivery whose size is its own: its `BULK` bytes are held inline, the way a broker's message

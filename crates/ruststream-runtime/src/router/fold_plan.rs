@@ -22,7 +22,7 @@ use crate::input::Materialize;
 use crate::lifecycle::BoxError;
 use crate::middleware::LocalBlanketLayer;
 use crate::redelivery::{
-    AppliesDeclaration, DeclaredOn, NoCopies, PairCopies, PrepareCopy, Undeclared,
+    AppliesDeclaration, DeclaredOn, NoCopies, PairCopies, PrepareCopy, RetryCopies, Undeclared,
 };
 use crate::redelivery::{ScopeDelivery, open_local_subscription};
 use crate::typed::{LocalTyped, Typed};
@@ -102,7 +102,7 @@ impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Lent: HostDetach<Kept: PrepareKept<Cx>>,
+        Lent: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
         run_sequential(

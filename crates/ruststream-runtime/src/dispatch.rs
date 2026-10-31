@@ -27,6 +27,7 @@ use futures::FutureExt;
 use futures::Stream;
 use tracing::error;
 
+use crate::redelivery::RetryCopies;
 use crate::{BuildContext, HeaderMap, LocalIncomingMessage, LocalSubscriber};
 
 use super::batch::{LocalBatchHandler, TakenBatch};
@@ -324,7 +325,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     C: BuildContext<M> + Send + Sync + 'static,
     M: LocalIncomingMessage,
     Signal: Halt,
-    Host: HostDetach<Kept: PrepareKept<C>>,
+    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
     Headers: LendHeaders<M>,
 {
     // Settling the message is what releases the harness's quiescence wait, and the post-settle
@@ -532,7 +533,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
 ) where
     H: LocalBatchHandler<Batch, Host, C, St>,
     Signal: Halt,
-    Host: HostDetach<Kept: PrepareKept<C>>,
+    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     let batch = H::take(batch);
     // A batch spans many deliveries, so its context carries only subscription-scoped data, built

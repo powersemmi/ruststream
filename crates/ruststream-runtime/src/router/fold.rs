@@ -35,7 +35,7 @@ use crate::handler::LocalHandler;
 use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, PrepareKept, ShutdownWait};
 use crate::lifecycle::BoxError;
 use crate::middleware::{LocalBlanketLayer, Stack};
-use crate::redelivery::{ScopeDelivery, open_local_subscription};
+use crate::redelivery::{RetryCopies, ScopeDelivery, open_local_subscription};
 use crate::{
     BuildBatchContext, BuildContext, LocalBatchSubscriber, LocalBroker, LocalConnected,
     LocalIncomingMessage, LocalSubscriber, LocalSubscriptionSource,
@@ -519,7 +519,7 @@ pub trait RunsBatches<Batch, C, S> {
     ) -> impl Future<Output = ()>
     where
         Signal: Halt,
-        Host: HostDetach<Kept: PrepareKept<C>>;
+        Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>;
 }
 
 impl<Batch, M, F, Inner, C, S> RunsBatches<Batch, C, S>
@@ -546,7 +546,7 @@ where
     ) -> impl Future<Output = ()>
     where
         Signal: Halt,
-        Host: HostDetach<Kept: PrepareKept<C>>,
+        Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
     {
         run_batch::<Self, Batch, C, S, Signal, Host>(
             self, batch, scratch, encode, name, state, delivery, host, failure,

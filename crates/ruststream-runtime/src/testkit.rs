@@ -15,7 +15,12 @@ use std::sync::Mutex;
 use tokio::time;
 use tokio_util::task::TaskTracker;
 
-use crate::host::{Detach, Halt};
+use alloc::sync::Arc;
+
+use crate::Publisher;
+use crate::host::{Copying, Detach, Halt};
+use crate::publish::{PublishIdentity, PublishTransformIdentity};
+use crate::redelivery::{RetryLeaf, RetryRoute, bare_retry_publisher};
 
 /// The runner a delivery built by a unit test hands its leftovers to: tasks on the test's own
 /// runtime, tracked by `0`, so a test can wait for them or count them.
@@ -38,6 +43,25 @@ impl Detach for Tracked {
             work.await;
         }));
     }
+}
+
+/// `host` carrying the retry route of a registration: copies leave through `publisher`, a bare
+/// retry slot, to `destination`.
+pub(crate) fn copying<Host, P>(
+    host: Host,
+    publisher: P,
+    destination: &str,
+) -> Copying<Host, RetryLeaf<P, PublishTransformIdentity, PublishIdentity>>
+where
+    P: Publisher + Send + Sync + 'static,
+{
+    Copying::new(
+        host,
+        Some(Arc::new(RetryRoute::to(
+            bare_retry_publisher(publisher),
+            destination,
+        ))),
+    )
 }
 
 /// The shutdown a unit test hands the body: it records the failure a fail-fast raised it with, the
