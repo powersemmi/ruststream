@@ -187,29 +187,32 @@ where
 #[doc(hidden)]
 pub trait SlotTransactions<M, Body = ()>: SlotEntry<M, Body> {
     /// Opens a broker-side transaction scope over the slot's wire.
-    fn begin(
-        &self,
+    fn begin<'a>(
+        &'a self,
     ) -> impl Future<
         Output = Result<
-            TransactionScope<'_, SlotPublisher<Self::Wire, M>, &'_ Self::Enc, Self>,
+            TransactionScope<'a, SlotPublisher<Self::Wire, M>, &'a Self::Enc, Self>,
             <Self::Wire as Publisher>::Error,
         >,
     >
     where
         Self: Sized,
-        Self::Wire: TransactionalPublisher;
+        M: 'a,
+        Self::Enc: 'a,
+        Self::Wire: TransactionalPublisher + 'a;
 
     /// Opens an owned transaction over the slot's wire, typed by the slot's dictionary.
-    fn transaction(
-        &self,
+    fn transaction<'a>(
+        &'a self,
     ) -> impl Future<
         Output = Result<
-            TypedTransaction<<Self::Wire as OwnedTransactions>::Transaction, &'_ Self::Enc, Self>,
+            TypedTransaction<<Self::Wire as OwnedTransactions>::Transaction, &'a Self::Enc, Self>,
             <Self::Wire as Publisher>::Error,
         >,
     >
     where
         Self: Sized,
+        Self::Enc: 'a,
         Self::Wire: OwnedTransactions;
 }
 
@@ -229,10 +232,11 @@ where
         Self::begin(self)
     }
 
-    fn transaction(
-        &self,
-    ) -> impl Future<Output = Result<TypedTransaction<W::Transaction, &'_ E, Self>, W::Error>>
+    fn transaction<'a>(
+        &'a self,
+    ) -> impl Future<Output = Result<TypedTransaction<W::Transaction, &'a E, Self>, W::Error>>
     where
+        E: 'a,
         W: OwnedTransactions,
     {
         Self::transaction(self)
