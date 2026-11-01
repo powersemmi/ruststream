@@ -499,3 +499,53 @@ async fn a_batch_reply_that_fails_midway_reports_the_failed_and_the_unsent_repli
 
     assert_eq!(*log.lock().expect("log"), [r#"error {"id":2} {"id":3}"#]);
 }
+
+/// Answers a whole batch with one receipt per job, and records the type of each lost reply's error.
+#[subscriber(UniformQueue::new(Queue { name: "typed-cause" }).max_wait(Duration::from_secs(1)), reply)]
+async fn typed_cause(jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> Vec<Receipt> {
+    let error = ctx.state().clone();
+    ctx.after(HandlerOutcome::ack())
+        .error(async move |failures: Failures| {
+            let each: Vec<String> = failures
+                .map(|failed| {
+                    let payload = String::from_utf8_lossy(failed.message().payload()).into_owned();
+                    let kind = failed
+                        .error()
+                        .downcast_ref::<io::Error>()
+                        .map(io::Error::kind);
+                    format!(" {payload} {kind:?}")
+                })
+                .collect();
+            error
+                .lock()
+                .expect("log")
+                .push(format!("error{}", each.concat()));
+        });
+    jobs.iter().map(|job| Receipt { id: job.id }).collect()
+}
+
+/// Every reply of a failed batch carries the broker's own error: the `.error` can read its type.
+#[tokio::test(start_paused = true)]
+async fn a_batch_reply_error_keeps_the_type_of_the_broker_error() {
+    let log = Log::default();
+    let startup = Arc::clone(&log);
+    let app = RustStream::new(AppInfo::new("batch", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(startup))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(typed_cause.batch(nonzero!(3)))
+                .out_reply(DownPublish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+    join_all([
+        publish_job(&tb, 1, "typed-cause"),
+        publish_job(&tb, 2, "typed-cause"),
+        publish_job(&tb, 3, "typed-cause"),
+    ])
+    .await;
+    tb.settle().await.expect("settle");
+
+    assert_eq!(
+        *log.lock().expect("log"),
+        [r#"error {"id":1} Some(Other) {"id":2} Some(Other) {"id":3} Some(Other)"#]
+    );
+}

@@ -208,8 +208,16 @@ impl MessageHeaders for FailedMessage {
 /// ```
 #[derive(Debug)]
 pub struct Failed {
-    error: BoxError,
+    error: Cause,
     message: FailedMessage,
+}
+
+/// The error of a [`Failed`]: its own, or the one error of a publish that carried several
+/// messages, shared by the failure of each.
+#[derive(Debug)]
+enum Cause {
+    Owned(BoxError),
+    Shared(Arc<BoxError>),
 }
 
 impl Failed {
@@ -217,14 +225,28 @@ impl Failed {
     #[doc(hidden)]
     #[must_use]
     pub const fn new(error: BoxError, message: FailedMessage) -> Self {
-        Self { error, message }
+        Self {
+            error: Cause::Owned(error),
+            message,
+        }
+    }
+
+    /// A failure of `message` whose error the failures of the rest of its publish share.
+    fn shared(error: Arc<BoxError>, message: FailedMessage) -> Self {
+        Self {
+            error: Cause::Shared(error),
+            message,
+        }
     }
 
     /// Why the publish failed: the broker publisher's own error, the encode error, or the
     /// "no free record" kind.
     #[must_use]
     pub fn error(&self) -> &(dyn StdError + Send + Sync + 'static) {
-        &*self.error
+        match &self.error {
+            Cause::Owned(error) => &**error,
+            Cause::Shared(error) => &***error,
+        }
     }
 
     /// The message that did not go out.
@@ -242,7 +264,11 @@ impl Failed {
     /// The cause and the message, taken apart.
     #[must_use]
     pub fn into_parts(self) -> (BoxError, FailedMessage) {
-        (self.error, self.message)
+        let error = match self.error {
+            Cause::Owned(error) => error,
+            Cause::Shared(error) => Box::new(SharedCause(error)),
+        };
+        (error, self.message)
     }
 }
 
@@ -504,10 +530,10 @@ impl ErrorHook {
     /// Hands the failure of a batch of messages that left in one publish to the handler's
     /// continuation, which the caller runs: one [`Failed`] per message, all with the one cause.
     pub(crate) fn react_all(self, error: BoxError, messages: Vec<FailedMessage>) -> Continuation {
-        let cause = Arc::new(SharedCause(error));
+        let cause = Arc::new(error);
         let failures = messages
             .into_iter()
-            .map(|message| Failed::new(Box::new(Arc::clone(&cause)), message))
+            .map(|message| Failed::shared(Arc::clone(&cause), message))
             .collect();
         self.0.react(Failures::many(failures))
     }
@@ -531,20 +557,20 @@ impl fmt::Debug for ErrorHook {
     }
 }
 
-/// The one error of a publish that carried several messages, which each of their [`Failed`]
-/// reports.
+/// The one error of a publish that carried several messages, owned by whoever takes a
+/// [`Failed`] apart; the original stays its `source`.
 #[derive(Debug)]
-struct SharedCause(BoxError);
+struct SharedCause(Arc<BoxError>);
 
 impl fmt::Display for SharedCause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
+        fmt::Display::fmt(&**self.0, f)
     }
 }
 
 impl StdError for SharedCause {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        self.0.source()
+        Some(&**self.0)
     }
 }
 
@@ -764,5 +790,33 @@ mod tests {
             .expect("ready");
 
         assert_eq!(rooted.load(Ordering::SeqCst), 2);
+    }
+
+    /// A failure of a batch publish, taken apart, still leads to the original error through its
+    /// source.
+    #[test]
+    fn a_shared_cause_taken_apart_keeps_the_original_error_as_its_source() {
+        let reached = Arc::new(AtomicUsize::new(0));
+        let record = Arc::clone(&reached);
+        let hook = ErrorHook::new(move |failures: Failures| {
+            for failed in failures {
+                let (cause, _message) = failed.into_parts();
+                let original = cause
+                    .source()
+                    .and_then(|source| source.downcast_ref::<Layered>());
+                record.fetch_add(usize::from(original.is_some()), Ordering::SeqCst);
+            }
+            async {}
+        });
+        let messages = vec![
+            FailedMessage::new("a", Bytes::new(), HeaderMap::new()),
+            FailedMessage::new("b", Bytes::new(), HeaderMap::new()),
+        ];
+
+        hook.react_all(Box::new(Layered(io::Error::other("root"))), messages)
+            .now_or_never()
+            .expect("ready");
+
+        assert_eq!(reached.load(Ordering::SeqCst), 2);
     }
 }
