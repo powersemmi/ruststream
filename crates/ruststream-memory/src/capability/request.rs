@@ -2,10 +2,10 @@
 
 use std::{
     fmt,
-    io::Write,
-    str,
     future::ready,
+    io::Write,
     marker::PhantomData,
+    str,
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
