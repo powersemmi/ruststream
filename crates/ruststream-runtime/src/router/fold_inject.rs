@@ -15,10 +15,10 @@ use crate::{
 };
 use ruststream_core::MaybeSendSync;
 
-use super::fold_plan::{LocalRoute, OpenLocalRoute};
+use super::fold_plan::{OneTaskRoute, OpenOneTaskRoute};
 use super::routes_inject::InjectRoute;
 
-impl<B, State, Source, M, Def, DecodeCodec, Extra> OpenLocalRoute<B, State>
+impl<B, State, Source, M, Def, DecodeCodec, Extra> OpenOneTaskRoute<B, State>
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 where
     B: Broker,
@@ -47,7 +47,7 @@ where
         connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
-    ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
+    ) -> Result<OneTaskRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
             def,
@@ -68,7 +68,7 @@ where
             injections,
             decode: policies.decode,
         };
-        Ok(LocalRoute {
+        Ok(OneTaskRoute {
             subscriber,
             handler,
             name,

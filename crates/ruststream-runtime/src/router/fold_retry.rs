@@ -29,7 +29,7 @@ use crate::{
 use super::builder::{AttachRetry, Router};
 use super::fold::OpenLayered;
 use super::fold_plan::{
-    Dispatched, LocalDispatch, LocalPlanned, OpenLocalRoute, OpenedDispatch, SequentialPlan,
+    Dispatched, OneTaskDispatch, OneTaskPlanned, OpenOneTaskRoute, OpenedDispatch, SequentialPlan,
 };
 use super::local::LocalPipeline;
 use super::routes::SubscribeRoute;
@@ -40,15 +40,15 @@ use super::routes_publish::{PublishingRoute, RawReplyRoute};
 /// The subscription descriptor of a registration on a local chain, read while the chain is still
 /// being written, before any state type is known. Machinery; never named directly.
 #[doc(hidden)]
-pub trait LocalRouteSource {
+pub trait OneTaskRouteSource {
     /// The descriptor the registration subscribes through.
     type Source;
 }
 
-/// Implements [`LocalRouteSource`] for the registrations a local mount site adds.
+/// Implements [`OneTaskRouteSource`] for the registrations a local mount site adds.
 macro_rules! route_source {
     ($([$($param:ident),+] $route:ty => $source:ident),+ $(,)?) => {$(
-        impl<$($param),+> LocalRouteSource for $route {
+        impl<$($param),+> OneTaskRouteSource for $route {
             type Source = $source;
         }
     )+};
@@ -63,13 +63,13 @@ route_source!(
     [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra> => Source,
 );
 
-impl<Route: LocalRouteSource, Dead> LocalRouteSource for DeclaredRoute<Route, Dead> {
+impl<Route: OneTaskRouteSource, Dead> OneTaskRouteSource for DeclaredRoute<Route, Dead> {
     type Source = Route::Source;
 }
 
 /// What the descriptor of a local registration declares about its retry copies.
 type LocalCopies<B, Head> =
-    <<Head as LocalRouteSource>::Source as SubscriptionSource<Connected<B>>>::Copies;
+    <<Head as OneTaskRouteSource>::Source as SubscriptionSource<Connected<B>>>::Copies;
 
 /// Whether the registration says where its copies go: the descriptor's address, or a `.to(name)`.
 type LocalSettled<B, Head, Dest> =
@@ -79,7 +79,7 @@ type LocalSettled<B, Head, Dest> =
 /// policy, destination and transforms its kept copies leave through.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct LocalRetriedRoute<Route, Policy, Stack, Settled> {
+pub struct OneTaskRetriedRoute<Route, Policy, Stack, Settled> {
     route: Route,
     slot: LocalRetrySlot<Policy, Stack>,
     _settled: PhantomData<fn() -> Settled>,
@@ -96,7 +96,7 @@ impl<B, Head, Tail, C, Layers, Pipe, Policy, Transforms, Enc, Dest>
     for Router<B, (Head, Tail), C, Layers, LocalPipeline<Pipe>>
 where
     B: Broker,
-    Head: RetryOpen + RouteMetadata + LocalRouteSource,
+    Head: RetryOpen + RouteMetadata + OneTaskRouteSource,
     Head::Source: SubscriptionSource<Connected<B>>,
     // Where the broker moves the delivery itself, this is the bound that refuses the position and
     // names the descriptor, as on the multi-thread runner.
@@ -106,7 +106,7 @@ where
     type Out = Router<
         B,
         (
-            LocalRetriedRoute<Head, Policy, Transforms, LocalSettled<B, Head, Dest>>,
+            OneTaskRetriedRoute<Head, Policy, Transforms, LocalSettled<B, Head, Dest>>,
             Tail,
         ),
         C,
@@ -128,7 +128,7 @@ where
         }
         Router {
             routes: (
-                LocalRetriedRoute {
+                OneTaskRetriedRoute {
                     route: head,
                     slot: LocalRetrySlot {
                         policy,
@@ -149,21 +149,21 @@ where
 
 // The registration that bound the position said where its copies go.
 impl<Route, Policy, Stack> RetryDestinationsDeclared
-    for LocalRetriedRoute<Route, Policy, Stack, DestinationDeclared>
+    for OneTaskRetriedRoute<Route, Policy, Stack, DestinationDeclared>
 {
 }
 
 // A step after the position plans the registration it wraps.
-impl<Route: LocalPlanned, Policy, Stack, Settled> LocalPlanned
-    for LocalRetriedRoute<Route, Policy, Stack, Settled>
+impl<Route: OneTaskPlanned, Policy, Stack, Settled> OneTaskPlanned
+    for OneTaskRetriedRoute<Route, Policy, Stack, Settled>
 {
-    type Route = LocalRetriedRoute<Route::Route, Policy, Stack, Settled>;
+    type Route = OneTaskRetriedRoute<Route::Route, Policy, Stack, Settled>;
     type Plan = Route::Plan;
 
     fn into_planned(self) -> (Self::Route, Self::Plan) {
         let (route, plan) = self.route.into_planned();
         (
-            LocalRetriedRoute {
+            OneTaskRetriedRoute {
                 route,
                 slot: self.slot,
                 _settled: PhantomData,
@@ -176,11 +176,11 @@ impl<Route: LocalPlanned, Policy, Stack, Settled> LocalPlanned
 // Without a plan the copies have nowhere to wait: the registration opens under the plain plan,
 // whose store is none, and the bound on its copies names the step to add.
 impl<B, State, Route, Policy, Stack, Settled> OpenLayered<B, State>
-    for LocalRetriedRoute<Route, Policy, Stack, Settled>
+    for OneTaskRetriedRoute<Route, Policy, Stack, Settled>
 where
     B: Broker,
     State: MaybeSendSync + 'static,
-    Route: OpenLocalRoute<B, State>,
+    Route: OpenOneTaskRoute<B, State>,
     <Route::Sub as Subscriber>::Message: 'static,
     Route::Body: 'static,
     NoCopies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>
@@ -206,14 +206,14 @@ where
 }
 
 impl<B, State, Route, Policy, Stack, Settled, Plan> OpenLayered<B, State>
-    for Dispatched<LocalRetriedRoute<Route, Policy, Stack, Settled>, Plan>
+    for Dispatched<OneTaskRetriedRoute<Route, Policy, Stack, Settled>, Plan>
 where
     B: Broker,
     State: MaybeSendSync + 'static,
-    Route: OpenLocalRoute<B, State>,
+    Route: OpenOneTaskRoute<B, State>,
     <Route::Sub as Subscriber>::Message: 'static,
     Route::Body: 'static,
-    Plan: LocalDispatch<
+    Plan: OneTaskDispatch<
         Copies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>
                     + AppliesDeclaration<Route::Declaration>,
     >,
@@ -245,7 +245,7 @@ where
 /// The broker's refusal to pair the policy, to say the address, or to subscribe.
 #[allow(clippy::type_complexity)] // the opened parts, named once here
 async fn open_retried<B, State, Route, Policy, Stack, Settled, Plan, Layers>(
-    retried: LocalRetriedRoute<Route, Policy, Stack, Settled>,
+    retried: OneTaskRetriedRoute<Route, Policy, Stack, Settled>,
     plan: Plan,
     connected: &Connected<B>,
     layers: &Layers,
@@ -264,13 +264,13 @@ async fn open_retried<B, State, Route, Policy, Stack, Settled, Plan, Layers>(
 where
     B: Broker,
     State: MaybeSendSync + 'static,
-    Route: OpenLocalRoute<B, State>,
+    Route: OpenOneTaskRoute<B, State>,
     <Route::Sub as Subscriber>::Message: 'static,
     Route::Body: 'static,
-    Plan: LocalDispatch<Copies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>,
+    Plan: OneTaskDispatch<Copies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>,
     Layers: BlanketLayer + Clone,
 {
-    let LocalRetriedRoute { route, slot, .. } = retried;
+    let OneTaskRetriedRoute { route, slot, .. } = retried;
     // Paired before the subscription opens, so a policy the broker refuses fails the startup
     // before any delivery arrives.
     let path = <Plan::Copies as PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>::pair_slot(

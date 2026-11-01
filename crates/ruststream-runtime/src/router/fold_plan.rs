@@ -6,7 +6,7 @@
 //! constant capacity for delayed retries), so a count the runner cannot honour does not compile.
 //! The step `Router::replan` wraps the registration just added in [`Dispatched`]; the
 //! fold opens it like a plain registration and hands the opened parts to the plan's
-//! [`LocalDispatch::run`].
+//! [`OneTaskDispatch::run`].
 
 // Written over the local twins of the contract for a runner that polls on one thread.
 #![allow(clippy::future_not_send)]
@@ -47,7 +47,7 @@ use super::routes_publish::{PublishingRoute, RawReplyRoute};
     message = "`{Self}` is not a dispatch plan of this runner",
     note = "a plan comes from the runner's own mount steps"
 )]
-pub trait LocalDispatch {
+pub trait OneTaskDispatch {
     /// What the plan keeps of its retry copies: [`NoCopies`], or
     /// [`KeepCopies`](crate::KeepCopies) for a plan with a store of its own, whose
     /// registration pairs the copy path when it opens.
@@ -57,7 +57,7 @@ pub trait LocalDispatch {
     /// for the plan's kept copies.
     fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
-        route: LocalRoute<Sub, Body, Cx>,
+        route: OneTaskRoute<Sub, Body, Cx>,
         path: Option<Path>,
         signal: Signal,
         state: &Arc<State>,
@@ -77,7 +77,7 @@ pub trait LocalDispatch {
 #[doc(hidden)]
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct LocalRoute<Sub, Body, Cx> {
+pub struct OneTaskRoute<Sub, Body, Cx> {
     /// The opened subscription.
     pub subscriber: Sub,
     /// The handler, wrapped in the router's layers.
@@ -93,7 +93,7 @@ pub struct LocalRoute<Sub, Body, Cx> {
     pub input: &'static str,
 }
 
-impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
+impl<Sub, Body, Cx> OneTaskRoute<Sub, Body, Cx> {
     /// Runs the route one delivery at a time, on the host the plan lends it: the plan of a route
     /// that declared no workers.
     pub async fn run_sequential<State, Signal, Lent>(
@@ -129,12 +129,12 @@ impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SequentialPlan;
 
-impl LocalDispatch for SequentialPlan {
+impl OneTaskDispatch for SequentialPlan {
     type Copies = NoCopies;
 
     async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
-        route: LocalRoute<Sub, Body, Cx>,
+        route: OneTaskRoute<Sub, Body, Cx>,
         _path: Option<Path>,
         signal: Signal,
         state: &Arc<State>,
@@ -163,7 +163,7 @@ pub struct Dispatched<Route, Plan> {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct OpenedDispatch<Sub, Body, Cx, Layers, Plan, Path> {
-    pub(super) route: LocalRoute<Sub, Body, Cx>,
+    pub(super) route: OneTaskRoute<Sub, Body, Cx>,
     pub(super) layers: Layers,
     pub(super) plan: Plan,
     pub(super) path: Option<Path>,
@@ -172,7 +172,7 @@ pub struct OpenedDispatch<Sub, Body, Cx, Layers, Plan, Path> {
 /// A registration a runner's mount steps give a plan: a plain one, with no plan yet (`()`), or
 /// one a step already planned.
 #[doc(hidden)]
-pub trait LocalPlanned: Sized {
+pub trait OneTaskPlanned: Sized {
     /// The registration without its plan.
     type Route;
     /// The plan it has: `()` for none.
@@ -182,10 +182,10 @@ pub trait LocalPlanned: Sized {
     fn into_planned(self) -> (Self::Route, Self::Plan);
 }
 
-/// Implements [`LocalPlanned`] for the registrations a mount site adds: none has a plan yet.
+/// Implements [`OneTaskPlanned`] for the registrations a mount site adds: none has a plan yet.
 macro_rules! impl_planless {
     ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
-        impl<$($param),+> LocalPlanned for $route<$($param),+> {
+        impl<$($param),+> OneTaskPlanned for $route<$($param),+> {
             type Route = Self;
             type Plan = ();
 
@@ -207,7 +207,7 @@ impl_planless!(
 impl<Route: RetryDestinationsDeclared, Plan> RetryDestinationsDeclared for Dispatched<Route, Plan> {}
 
 // A declaration rides the registration, so a step after it plans the registration it wraps.
-impl<Route: LocalPlanned, Dead> LocalPlanned for DeclaredRoute<Route, Dead> {
+impl<Route: OneTaskPlanned, Dead> OneTaskPlanned for DeclaredRoute<Route, Dead> {
     type Route = DeclaredRoute<Route::Route, Dead>;
     type Plan = Route::Plan;
 
@@ -217,7 +217,7 @@ impl<Route: LocalPlanned, Dead> LocalPlanned for DeclaredRoute<Route, Dead> {
     }
 }
 
-impl<Route, Plan> LocalPlanned for Dispatched<Route, Plan> {
+impl<Route, Plan> OneTaskPlanned for Dispatched<Route, Plan> {
     type Route = Route;
     type Plan = Plan;
 
@@ -229,7 +229,7 @@ impl<Route, Plan> LocalPlanned for Dispatched<Route, Plan> {
 impl<B, Head, Routes, RouteCodec, RouteLayers, Pipe>
     Router<B, (Head, Routes), RouteCodec, RouteLayers, LocalPipeline<Pipe>>
 where
-    Head: LocalPlanned,
+    Head: OneTaskPlanned,
 {
     /// Gives the registration just added (the preceding `include` call) the plan `change`
     /// makes of the one it has. A runner's own mount steps call it; the definition's `workers`
@@ -267,7 +267,7 @@ where
 /// what each delivery runs under. Every single-message registration of a local router is one;
 /// its plain opening and its planned one ([`Dispatched`]) both go through it.
 #[doc(hidden)]
-pub trait OpenLocalRoute<B: Broker, State> {
+pub trait OpenOneTaskRoute<B: Broker, State> {
     /// The descriptor the registration subscribes through.
     type Source;
     /// What the registration declared about its retries: [`Undeclared`], or
@@ -297,7 +297,7 @@ pub trait OpenLocalRoute<B: Broker, State> {
         connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
-    ) -> impl Future<Output = Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError>>;
+    ) -> impl Future<Output = Result<OneTaskRoute<Self::Sub, Self::Body, Self::Cx>, BoxError>>;
 }
 
 /// A registration that bound no deferred-retry position of its own: its plan's copies leave
@@ -323,7 +323,7 @@ impl<Source, Def, DecodeCodec, Extra> UnboundRetry
 }
 impl<Route: UnboundRetry, Dead> UnboundRetry for DeclaredRoute<Route, Dead> {}
 
-/// Implements the plain opening of every [`OpenLocalRoute`] registration: no plan, the router's
+/// Implements the plain opening of every [`OpenOneTaskRoute`] registration: no plan, the router's
 /// layer stack beside the handler.
 macro_rules! open_plain {
     ($([$($param:ident),+] $route:ty),+ $(,)?) => {$(
@@ -331,15 +331,15 @@ macro_rules! open_plain {
         where
             B: Broker,
             State: MaybeSendSync + 'static,
-            $route: OpenLocalRoute<B, State>,
-            <<$route as OpenLocalRoute<B, State>>::Sub as Subscriber>::Message: 'static,
-            <$route as OpenLocalRoute<B, State>>::Body: 'static,
-            NoCopies: AppliesDeclaration<<$route as OpenLocalRoute<B, State>>::Declaration>,
+            $route: OpenOneTaskRoute<B, State>,
+            <<$route as OpenOneTaskRoute<B, State>>::Sub as Subscriber>::Message: 'static,
+            <$route as OpenOneTaskRoute<B, State>>::Body: 'static,
+            NoCopies: AppliesDeclaration<<$route as OpenOneTaskRoute<B, State>>::Declaration>,
         {
             type Opened<Layers: BlanketLayer + Clone> = OpenedRoute<
-                <$route as OpenLocalRoute<B, State>>::Sub,
-                <$route as OpenLocalRoute<B, State>>::Body,
-                <$route as OpenLocalRoute<B, State>>::Cx,
+                <$route as OpenOneTaskRoute<B, State>>::Sub,
+                <$route as OpenOneTaskRoute<B, State>>::Body,
+                <$route as OpenOneTaskRoute<B, State>>::Cx,
                 Layers,
             >;
 
@@ -372,10 +372,10 @@ open_plain!(
 );
 
 // A declared registration opens as the one it wraps, with the declaration its mount chain made.
-impl<B, State, Route, Dead> OpenLocalRoute<B, State> for DeclaredRoute<Route, Dead>
+impl<B, State, Route, Dead> OpenOneTaskRoute<B, State> for DeclaredRoute<Route, Dead>
 where
     B: Broker,
-    Route: OpenLocalRoute<B, State, Declaration = Undeclared>,
+    Route: OpenOneTaskRoute<B, State, Declaration = Undeclared>,
     Route::Source: SubscriptionSource<Connected<B>>,
 {
     type Source = Route::Source;
@@ -393,12 +393,12 @@ where
         connected: &Connected<B>,
         scope: &ScopeDelivery,
         _declaration: RetryDeclaration,
-    ) -> impl Future<Output = Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError>> {
+    ) -> impl Future<Output = Result<OneTaskRoute<Self::Sub, Self::Body, Self::Cx>, BoxError>> {
         self.route.open_route(connected, scope, self.declaration)
     }
 }
 
-impl<B, State, Source, M, Input, DecodeCodec, Inner, Cx> OpenLocalRoute<B, State>
+impl<B, State, Source, M, Input, DecodeCodec, Inner, Cx> OpenOneTaskRoute<B, State>
     for SubscribeRoute<Source, Typed<M, Input, DecodeCodec, Inner>, Cx>
 where
     B: Broker,
@@ -426,10 +426,10 @@ where
         connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
-    ) -> Result<LocalRoute<Self::Sub, Self::Body, Cx>, BoxError> {
+    ) -> Result<OneTaskRoute<Self::Sub, Self::Body, Cx>, BoxError> {
         let (name, subscriber, delivery) =
             open_local_subscription::<B, _, _>(self.source, connected, scope, declaration).await?;
-        Ok(LocalRoute {
+        Ok(OneTaskRoute {
             subscriber,
             handler: self.handler,
             name,
@@ -450,23 +450,23 @@ macro_rules! open_dispatched {
         where
             B: Broker,
             State: MaybeSendSync + 'static,
-            $route: OpenLocalRoute<B, State> + UnboundRetry,
-            <<$route as OpenLocalRoute<B, State>>::Sub as Subscriber>::Message: 'static,
-            <$route as OpenLocalRoute<B, State>>::Body: 'static,
-            Plan: LocalDispatch<
-                Copies: PairCopies<B, <$route as OpenLocalRoute<B, State>>::Source>
-                    + AppliesDeclaration<<$route as OpenLocalRoute<B, State>>::Declaration>,
+            $route: OpenOneTaskRoute<B, State> + UnboundRetry,
+            <<$route as OpenOneTaskRoute<B, State>>::Sub as Subscriber>::Message: 'static,
+            <$route as OpenOneTaskRoute<B, State>>::Body: 'static,
+            Plan: OneTaskDispatch<
+                Copies: PairCopies<B, <$route as OpenOneTaskRoute<B, State>>::Source>
+                    + AppliesDeclaration<<$route as OpenOneTaskRoute<B, State>>::Declaration>,
             >,
-            <Plan::Copies as PairCopies<B, <$route as OpenLocalRoute<B, State>>::Source>>::Path:
-                PrepareCopy<<$route as OpenLocalRoute<B, State>>::Cx>,
+            <Plan::Copies as PairCopies<B, <$route as OpenOneTaskRoute<B, State>>::Source>>::Path:
+                PrepareCopy<<$route as OpenOneTaskRoute<B, State>>::Cx>,
         {
             type Opened<Layers: BlanketLayer + Clone> = OpenedDispatch<
-                <$route as OpenLocalRoute<B, State>>::Sub,
-                <$route as OpenLocalRoute<B, State>>::Body,
-                <$route as OpenLocalRoute<B, State>>::Cx,
+                <$route as OpenOneTaskRoute<B, State>>::Sub,
+                <$route as OpenOneTaskRoute<B, State>>::Body,
+                <$route as OpenOneTaskRoute<B, State>>::Cx,
                 Layers,
                 Plan,
-                <Plan::Copies as PairCopies<B, <$route as OpenLocalRoute<B, State>>::Source>>::Path,
+                <Plan::Copies as PairCopies<B, <$route as OpenOneTaskRoute<B, State>>::Source>>::Path,
             >;
 
             async fn open_layered<Layers: BlanketLayer + Clone>(
@@ -480,7 +480,7 @@ macro_rules! open_dispatched {
                 // the startup before any delivery arrives.
                 let path = <Plan::Copies as PairCopies<
                     B,
-                    <$route as OpenLocalRoute<B, State>>::Source,
+                    <$route as OpenOneTaskRoute<B, State>>::Source,
                 >>::pair(route.source(), connected)
                 .await?;
                 Ok(OpenedDispatch {
@@ -513,7 +513,7 @@ where
     Body: Handler<Sub::Message, Cx, State> + 'static,
     Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
     Layers: BlanketLayer,
-    Plan: LocalDispatch,
+    Plan: OneTaskDispatch,
     Path: PrepareCopy<Cx>,
 {
     async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
@@ -530,7 +530,7 @@ where
         // Applied where the loop starts, as on a plain route: the wrapped handler's type is the
         // layer's own.
         let handler = BlanketLayer::apply::<Sub::Message, Cx, State, _>(&layers, route.handler);
-        let route = LocalRoute {
+        let route = OneTaskRoute {
             subscriber: route.subscriber,
             handler,
             name: route.name,

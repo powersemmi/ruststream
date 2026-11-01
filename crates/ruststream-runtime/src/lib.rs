@@ -350,8 +350,8 @@ pub use router::{
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use router::{
-    Dispatched, LocalDispatch, LocalPlanned, LocalRetriedRoute, LocalRoute, LocalRouteSource,
-    OpenedDispatch, SequentialPlan, UnboundRetry,
+    Dispatched, OneTaskDispatch, OneTaskPlanned, OneTaskRetriedRoute, OneTaskRoute,
+    OneTaskRouteSource, OpenedDispatch, SequentialPlan, UnboundRetry,
 };
 #[cfg(feature = "alloc")]
 pub use router::{

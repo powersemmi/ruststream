@@ -25,7 +25,7 @@ use crate::{
     Settle, Subscriber, SubscriptionSource,
 };
 
-use super::fold_plan::{LocalRoute, OpenLocalRoute};
+use super::fold_plan::{OneTaskRoute, OpenOneTaskRoute};
 use super::local::LocalPipeline;
 use super::routes_publish::{PublishingRoute, RawReplyRoute};
 
@@ -39,7 +39,7 @@ type LocalReply<Def, DecodeCodec, Wiring> =
 
 // A single-message reply runs the per-message transforms only, as on the multi-thread runner,
 // so its wiring carries no batch stack.
-impl<B, State, Source, M, Def, DecodeCodec, Policy, Enc, PL, Extra> OpenLocalRoute<B, State>
+impl<B, State, Source, M, Def, DecodeCodec, Policy, Enc, PL, Extra> OpenOneTaskRoute<B, State>
     for PublishingRoute<
         Source,
         Def,
@@ -79,7 +79,7 @@ where
         connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
-    ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
+    ) -> Result<OneTaskRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
             def,
@@ -114,7 +114,7 @@ where
             #[cfg(feature = "testing")]
             origin: Origin::default(),
         };
-        Ok(LocalRoute {
+        Ok(OneTaskRoute {
             subscriber,
             handler,
             name,
@@ -125,7 +125,7 @@ where
     }
 }
 
-impl<B, State, Source, M, Def, DecodeCodec, Policy, Extra> OpenLocalRoute<B, State>
+impl<B, State, Source, M, Def, DecodeCodec, Policy, Extra> OpenOneTaskRoute<B, State>
     for RawReplyRoute<Source, Def, DecodeCodec, RawReplyWiring<Policy>, Extra>
 where
     B: Broker,
@@ -157,7 +157,7 @@ where
         connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
-    ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
+    ) -> Result<OneTaskRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
             def,
@@ -192,7 +192,7 @@ where
             #[cfg(feature = "testing")]
             origin: Origin::default(),
         };
-        Ok(LocalRoute {
+        Ok(OneTaskRoute {
             subscriber,
             handler,
             name,

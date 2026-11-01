@@ -25,8 +25,8 @@ use hash32::{FnvHasher, Hasher as _};
 use ruststream_core::{BuildContext, IncomingMessage, Settle, Subscriber};
 use ruststream_runtime::{
     Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, Halt, Handler, HeadersAtOnce,
-    HostDetach, KeepCopies, Keeping, LocalDispatch, LocalPipeline, LocalPlanned, LocalRoute,
-    NoCopies, PrepareCopy, PrepareKept, RetryCopies, RetryDestinationsDeclared, Router,
+    HostDetach, KeepCopies, Keeping, LocalPipeline, NoCopies, OneTaskDispatch, OneTaskPlanned,
+    OneTaskRoute, PrepareCopy, PrepareKept, RetryCopies, RetryDestinationsDeclared, Router,
     RouterCommit, RouterWith, ShutdownWait, dispatch,
 };
 use tracing::error;
@@ -74,7 +74,7 @@ pub trait Lanes {
     /// Runs the route on these lanes until `signal` stops it.
     fn run<Sub, Body, Cx, State, Signal, Host>(
         self,
-        route: LocalRoute<Sub, Body, Cx>,
+        route: OneTaskRoute<Sub, Body, Cx>,
         signal: Signal,
         state: &Arc<State>,
         host: &Host,
@@ -90,7 +90,7 @@ pub trait Lanes {
 impl Lanes for OneLane {
     fn run<Sub, Body, Cx, State, Signal, Host>(
         self,
-        route: LocalRoute<Sub, Body, Cx>,
+        route: OneTaskRoute<Sub, Body, Cx>,
         signal: Signal,
         state: &Arc<State>,
         host: &Host,
@@ -109,7 +109,7 @@ impl Lanes for OneLane {
 impl<const WORKERS: usize> Lanes for Pool<WORKERS> {
     fn run<Sub, Body, Cx, State, Signal, Host>(
         self,
-        route: LocalRoute<Sub, Body, Cx>,
+        route: OneTaskRoute<Sub, Body, Cx>,
         signal: Signal,
         state: &Arc<State>,
         host: &Host,
@@ -128,7 +128,7 @@ impl<const WORKERS: usize> Lanes for Pool<WORKERS> {
 impl<const LANES: usize> Lanes for Keyed<LANES> {
     fn run<Sub, Body, Cx, State, Signal, Host>(
         self,
-        route: LocalRoute<Sub, Body, Cx>,
+        route: OneTaskRoute<Sub, Body, Cx>,
         signal: Signal,
         state: &Arc<State>,
         host: &Host,
@@ -144,12 +144,12 @@ impl<const LANES: usize> Lanes for Keyed<LANES> {
     }
 }
 
-impl<L: Lanes> LocalDispatch for EmbeddedPlan<L, NoRoom> {
+impl<L: Lanes> OneTaskDispatch for EmbeddedPlan<L, NoRoom> {
     type Copies = NoCopies;
 
     async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
-        route: LocalRoute<Sub, Body, Cx>,
+        route: OneTaskRoute<Sub, Body, Cx>,
         _path: Option<Path>,
         signal: Signal,
         state: &Arc<State>,
@@ -166,12 +166,12 @@ impl<L: Lanes> LocalDispatch for EmbeddedPlan<L, NoRoom> {
     }
 }
 
-impl<L: Lanes, const CAPACITY: usize> LocalDispatch for EmbeddedPlan<L, Room<CAPACITY>> {
+impl<L: Lanes, const CAPACITY: usize> OneTaskDispatch for EmbeddedPlan<L, Room<CAPACITY>> {
     type Copies = KeepCopies;
 
     async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
-        route: LocalRoute<Sub, Body, Cx>,
+        route: OneTaskRoute<Sub, Body, Cx>,
         path: Option<Path>,
         signal: Signal,
         state: &Arc<State>,
@@ -208,7 +208,7 @@ impl<L: Lanes, const CAPACITY: usize> LocalDispatch for EmbeddedPlan<L, Room<CAP
 /// with no key takes the lanes in turn). A pool's loop takes a free worker before it pulls, so
 /// a delivery waits in the subscription rather than in a channel.
 async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
-    route: LocalRoute<Sub, Body, Cx>,
+    route: OneTaskRoute<Sub, Body, Cx>,
     signal: Signal,
     state: &Arc<State>,
     host: &Host,
@@ -220,7 +220,7 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
     Signal: ShutdownWait + Halt + Clone,
     Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
 {
-    let LocalRoute {
+    let OneTaskRoute {
         mut subscriber,
         handler,
         name,
@@ -576,7 +576,7 @@ impl<L, R> SoFar for EmbeddedPlan<L, R> {
 impl<B, Head, Routes, RouteCodec, RouteLayers, Pipe> MountSteps
     for Router<B, (Head, Routes), RouteCodec, RouteLayers, LocalPipeline<Pipe>>
 where
-    Head: LocalPlanned<Plan: SoFar>,
+    Head: OneTaskPlanned<Plan: SoFar>,
 {
     type WithLanes<Next> = Router<
         B,
