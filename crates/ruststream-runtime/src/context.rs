@@ -976,7 +976,7 @@ impl<'ctx, 'a, C, S> After<'ctx, 'a, C, S> {
     /// ```
     pub fn error<React, Reaction>(self, react: React) -> AfterError<'ctx, 'a, C, S>
     where
-        React: FnOnce(BoxError, FailedMessage) -> Reaction + MaybeSend + 'static,
+        React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
         // The builder is always made by `Context::after`, which gates it on an outcome kind.
@@ -1037,7 +1037,7 @@ impl<C, S> AfterThen<'_, '_, C, S> {
     /// ```
     pub fn error<React, Reaction>(self, react: React)
     where
-        React: FnOnce(BoxError, FailedMessage) -> Reaction + MaybeSend + 'static,
+        React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
         let hook = &mut self.ctx.after[self.at];

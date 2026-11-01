@@ -444,8 +444,13 @@ impl HandlerOutcome {
     /// The continuation receives the [`BoxError`] and the [`FailedMessage`] and returns
     /// nothing. It runs after the delivery is settled, as an [`and_after`](Self::and_after)
     /// continuation does, and the handler never runs again because of the failure. Whatever the
-    /// reaction needs (an `Out` publisher, state, a counter) the handler moves into the closure.
+    /// reaction needs (a client, state, a counter) the handler moves into the closure as a clone.
     /// Attaching a second one replaces the first.
+    ///
+    /// The closure is `Clone`, and the runtime runs a copy of it for each failure. An outcome
+    /// returned for a whole batch (a uniform one) carries it to every element, so it runs once
+    /// per element whose copy fails, each time with that element's error and message; a
+    /// [`and_after`](Self::and_after) beside it runs once, with the last element.
     ///
     /// Without `.error` a failed copy is logged with the subscription, the destination, the
     /// message type and the error, and is lost. On a mount whose broker retries and dead-letters
@@ -490,11 +495,19 @@ impl HandlerOutcome {
     /// ```
     pub fn error<React, Reaction>(mut self, react: React) -> Self
     where
-        React: FnOnce(BoxError, FailedMessage) -> Reaction + MaybeSend + 'static,
+        React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
         let status = self.outcome.status();
         self.outcome = Settlement::Erroring(Box::new((status, ErrorHook::new(react))));
+        self
+    }
+
+    /// Attaches an `.error` hook the dispatcher already holds, as [`error`](Self::error) does a
+    /// closure.
+    pub(crate) fn error_hook(mut self, hook: ErrorHook) -> Self {
+        let status = self.outcome.status();
+        self.outcome = Settlement::Erroring(Box::new((status, hook)));
         self
     }
 

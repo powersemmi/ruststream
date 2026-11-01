@@ -4,9 +4,12 @@
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::sync::Arc;
 use bytes::Bytes;
 use core::fmt;
 use core::mem;
+#[cfg(feature = "tokio")]
+use std::sync::{Mutex, PoisonError};
 use thiserror::Error;
 use tracing::warn;
 
@@ -117,36 +120,147 @@ impl FailedMessage {
     }
 }
 
-/// The boxed `.error` closure: `Send` where the runtime crate's `tokio` feature is on.
+/// The `.error` closure, erased: `Send` where the runtime crate's `tokio` feature is on.
 #[cfg(feature = "tokio")]
-type Hook = Box<dyn FnOnce(BoxError, FailedMessage) -> Continuation + Send>;
+trait Reactor: Send {
+    fn react(self: Box<Self>, error: BoxError, message: FailedMessage) -> Continuation;
+    fn share(self: Box<Self>) -> Arc<dyn Shared>;
+}
 
 /// See the `tokio` form: without the feature the closure carries no `Send`.
 #[cfg(not(feature = "tokio"))]
-type Hook = Box<dyn FnOnce(BoxError, FailedMessage) -> Continuation>;
+trait Reactor {
+    fn react(self: Box<Self>, error: BoxError, message: FailedMessage) -> Continuation;
+    fn share(self: Box<Self>) -> Arc<dyn Shared>;
+}
+
+/// One `.error` closure shared by the elements of a batch, which each take a copy of it when
+/// their own publish fails.
+#[cfg(feature = "tokio")]
+trait Shared: Send + Sync {
+    fn react(&self, error: BoxError, message: FailedMessage) -> Continuation;
+}
+
+/// See the `tokio` form.
+#[cfg(not(feature = "tokio"))]
+trait Shared {
+    fn react(&self, error: BoxError, message: FailedMessage) -> Continuation;
+}
+
+/// The closure as the one registration holds it.
+struct Owned<React>(React);
+
+impl<React, Reaction> Reactor for Owned<React>
+where
+    React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
+    Reaction: ContinuationFuture,
+{
+    fn react(self: Box<Self>, error: BoxError, message: FailedMessage) -> Continuation {
+        Box::pin((self.0)(error, message))
+    }
+
+    fn share(self: Box<Self>) -> Arc<dyn Shared> {
+        Arc::new(Holder::new(self.0))
+    }
+}
+
+/// The closure behind the `Arc` a batch shares. Under Tokio the copy is made under a lock held
+/// for the clone alone, which lets the closure be shared without being `Sync`.
+#[cfg(feature = "tokio")]
+struct Holder<React>(Mutex<React>);
+
+#[cfg(feature = "tokio")]
+impl<React> Holder<React> {
+    const fn new(react: React) -> Self {
+        Self(Mutex::new(react))
+    }
+
+    fn copy(&self) -> React
+    where
+        React: Clone,
+    {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// See the `tokio` form: without `Send` the closure is cloned in place.
+#[cfg(not(feature = "tokio"))]
+struct Holder<React>(React);
+
+#[cfg(not(feature = "tokio"))]
+impl<React> Holder<React> {
+    const fn new(react: React) -> Self {
+        Self(react)
+    }
+
+    fn copy(&self) -> React
+    where
+        React: Clone,
+    {
+        self.0.clone()
+    }
+}
+
+impl<React, Reaction> Shared for Holder<React>
+where
+    React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
+    Reaction: ContinuationFuture,
+{
+    fn react(&self, error: BoxError, message: FailedMessage) -> Continuation {
+        Box::pin(self.copy()(error, message))
+    }
+}
 
 /// The `.error` continuation of one [`HandlerOutcome`](crate::HandlerOutcome), until a publish
 /// the runtime makes for it fails. Machinery; never named directly.
 #[doc(hidden)]
-pub struct ErrorHook(Box<Hook>);
+pub struct ErrorHook(Inner);
+
+/// An [`ErrorHook`]: a closure held by one registration, or one shared by a batch.
+enum Inner {
+    One(Box<dyn Reactor>),
+    Shared(Arc<dyn Shared>),
+}
 
 impl ErrorHook {
     #[must_use]
     pub fn new<React, Reaction>(react: React) -> Self
     where
-        React: FnOnce(BoxError, FailedMessage) -> Reaction + MaybeSend + 'static,
+        React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
-        // A box around the box: the closure is a fat pointer, and an outcome that carries none
-        // pays eight bytes for it rather than sixteen.
-        Self(Box::new(Box::new(move |error, message| {
-            Box::pin(react(error, message))
-        })))
+        Self(Inner::One(Box::new(Owned(react))))
     }
 
     /// Hands the failure to the handler's continuation, which the caller runs.
     pub fn react(self, error: BoxError, message: FailedMessage) -> Continuation {
-        (*self.0)(error, message)
+        match self.0 {
+            Inner::One(owned) => owned.react(error, message),
+            Inner::Shared(shared) => shared.react(error, message),
+        }
+    }
+
+    /// Moves the closure behind an `Arc` for the elements of a batch to share: one allocation
+    /// for the batch, and nothing is cloned until an element's publish fails.
+    pub(crate) fn into_shared(self) -> SharedHook {
+        match self.0 {
+            Inner::One(owned) => SharedHook(owned.share()),
+            Inner::Shared(shared) => SharedHook(shared),
+        }
+    }
+}
+
+/// An [`ErrorHook`] shared by the elements of a batch.
+#[derive(Clone)]
+pub(crate) struct SharedHook(Arc<dyn Shared>);
+
+impl SharedHook {
+    /// The hook of one element: a reference count, not a copy of the closure.
+    pub(crate) fn hook(&self) -> ErrorHook {
+        ErrorHook(Inner::Shared(Arc::clone(&self.0)))
     }
 }
 

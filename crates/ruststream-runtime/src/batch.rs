@@ -12,7 +12,6 @@ use crate::handler::MaybeSend;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::iter;
 use core::{any, fmt, marker::PhantomData};
 #[cfg(feature = "otel")]
 use std::slice;
@@ -36,10 +35,11 @@ use super::context::Context;
 use super::dispatch::{Slot, Workers, settle_outcome};
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handle::Deserialized;
-use super::handler::{HandlerOutcome, HandlerResult, LocalCall, SendCall};
+use super::handler::{Continuation, HandlerOutcome, HandlerResult, LocalCall, SendCall};
 use super::host::{HostDetach, PrepareKept, SendHost};
 use super::input::{DecodeWith, InputKind, REPORTED};
 use super::metadata::HandlerMetadata;
+use super::publish_failure::{ErrorHook, SharedHook};
 #[cfg(all(test, feature = "json"))]
 use crate::codec::Codec;
 #[cfg(feature = "testing")]
@@ -142,21 +142,49 @@ pub fn batch_verdict<O: IntoBatchResult>(
 }
 
 /// Fans one uniform outcome out to a batch-length settlement vector: the status repeats per
-/// element and the continuation rides the last one. The failure-path half of [`batch_verdict`],
-/// also how the `#[subscriber]` expansion lowers a batch reply body's uniform `Err`. Machinery;
-/// not part of the public API.
+/// element, the `.error` is shared by every element (it runs once per element whose copy fails)
+/// and the continuation rides the last one. The failure-path half of [`batch_verdict`], also how
+/// the `#[subscriber]` expansion lowers a batch reply body's uniform `Err`. Machinery; not part
+/// of the public API.
 #[doc(hidden)]
 #[must_use]
 pub fn uniform_batch(outcome: HandlerOutcome, batch_len: usize) -> Vec<HandlerOutcome> {
-    if batch_len == 0 {
-        return Vec::new();
+    let mut fan = UniformFan::new(outcome);
+    (0..batch_len)
+        .map(|index| fan.element(index + 1 == batch_len))
+        .collect()
+}
+
+/// A uniform outcome handed out element by element: the status and a share of the `.error` to
+/// each, the continuation to the last.
+pub(crate) struct UniformFan {
+    status: HandlerResult,
+    after: Option<Continuation>,
+    error: Option<SharedHook>,
+}
+
+impl UniformFan {
+    pub(crate) fn new(outcome: HandlerOutcome) -> Self {
+        let (status, after, error) = outcome.into_parts();
+        Self {
+            status,
+            after,
+            error: error.map(ErrorHook::into_shared),
+        }
     }
-    let status = outcome.outcome();
-    let mut settles: Vec<HandlerOutcome> = iter::repeat_with(|| HandlerOutcome::from(status))
-        .take(batch_len - 1)
-        .collect();
-    settles.push(outcome);
-    settles
+
+    /// The outcome of the next element.
+    #[inline]
+    pub(crate) fn element(&mut self, last: bool) -> HandlerOutcome {
+        let mut own = HandlerOutcome::from(self.status);
+        if let Some(error) = &self.error {
+            own = own.error_hook(error.hook());
+        }
+        if last && let Some(after) = self.after.take() {
+            own = own.and_after_boxed(after);
+        }
+        own
+    }
 }
 
 /// A handler invoked with one whole decoded batch.

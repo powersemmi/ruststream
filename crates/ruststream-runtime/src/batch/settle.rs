@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use bytes::Bytes;
 use tracing::error;
 
-use super::{BatchResult, uniform_batch};
+use super::{BatchResult, UniformFan, uniform_batch};
 use crate::dispatch::{Delivery, Slot, settle_outcome, settle_reacting};
 use crate::handler::{HandlerOutcome, HandlerResult};
 use crate::host::{HostDetach, PrepareKept};
@@ -219,22 +219,18 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
     let LentValues = lent;
     match result {
         BatchResult::Uniform(outcome) => {
+            #[cfg(feature = "testing")]
             let status = outcome.outcome();
-            // The one uniform outcome, with its continuations, rides the last element: they run
-            // after the whole batch is settled (at-most-once, like the per-element ones), and a
-            // copy the runtime fails to publish for that element reaches the `.error`.
-            let mut outcome = Some(outcome);
+            // The one uniform outcome fans out: each element settles by the status and owns a
+            // share of the `.error`, which runs for a copy the runtime fails to publish for it;
+            // the continuation rides the last element and runs after the whole batch is settled
+            // (at-most-once, like the per-element ones).
+            let mut fan = UniformFan::new(outcome);
             let last = accepted.len().saturating_sub(1);
             for (index, msg) in accepted.into_iter().enumerate() {
                 #[cfg(feature = "testing")]
                 batch.settled(status);
-                let own = if index == last {
-                    outcome
-                        .take()
-                        .unwrap_or_else(|| HandlerOutcome::from(status))
-                } else {
-                    HandlerOutcome::from(status)
-                };
+                let own = fan.element(index == last);
                 settle_element(msg, own, subscription, delivery, host).await;
             }
         }

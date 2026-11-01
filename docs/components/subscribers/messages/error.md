@@ -17,7 +17,8 @@ A publish the runtime makes on its behalf gives the same control through `.error
 
 The continuation receives the cause and the [`FailedMessage`](api:ruststream::runtime::FailedMessage): its destination, its bytes and its headers.
 It returns nothing, like [`and_after`](./and-after.md), and runs once the delivery is settled.
-Whatever the reaction needs (an `Out` publisher, state, a counter) the handler moves into the closure.
+Whatever the reaction needs (a client, state, a counter) the handler moves into the closure.
+The closure is `Clone`, because the runtime runs a copy of it for each failure: keep shared state behind an `Arc`.
 
 The handler never runs again because a runtime publish failed.
 The delivery is settled before the copy is published, so a failed copy cannot make the handler repeat its side effects or run past its `max_attempts` cap.
@@ -45,7 +46,8 @@ The handler below retries once at its cap, so the retry becomes a dead letter, a
 
 On a subscription whose broker retries and dead-letters natively the runtime publishes nothing, so the continuation never runs.
 Each outcome that carries `.error` there logs a warning naming the subscription.
-A batch handler attaches `.error` to the outcome of the element it concerns; a uniform outcome for the whole batch carries it on the last element.
+A batch handler attaches `.error` to the outcome of the element it concerns; a uniform outcome for the whole batch carries it to every element, and it runs once for each element whose copy fails, with that element's error and message.
+The [`and_after`](./and-after.md) beside a uniform outcome runs once, with the last element.
 
 ## From the context
 
