@@ -45,7 +45,6 @@ The handler below retries once at its cap, so the retry becomes a dead letter, a
 
 On a subscription whose broker retries and dead-letters natively the runtime publishes nothing, so the continuation never runs.
 Each outcome that carries `.error` there logs a warning naming the subscription.
-A batch handler attaches `.error` to the outcome of the element it concerns.
 
 ## From the context
 
