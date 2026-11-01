@@ -35,6 +35,7 @@ impl PublishLayer for AppStamp {
 }
 
 /// A per-slot transform: the outbox envelope one destination wants and the others do not.
+#[derive(Clone)]
 struct Envelope;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
@@ -47,6 +48,7 @@ impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
 
 /// A per-slot transform reading the one thing a slot position hands it: which slot the message is
 /// leaving through. One value can then ride several slots and still tell them apart.
+#[derive(Clone)]
 struct StampSlot;
 
 impl<Options> PublishTransform<ForSlot, Options> for StampSlot {
@@ -59,6 +61,7 @@ impl<Options> PublishTransform<ForSlot, Options> for StampSlot {
 }
 
 /// A per-reply transform, stamping the delivery the reply answers.
+#[derive(Clone)]
 struct StampSource;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for StampSource {

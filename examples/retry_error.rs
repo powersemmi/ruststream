@@ -31,6 +31,7 @@ struct Alert {
 }
 
 /// A publisher whose broker is down.
+#[derive(Clone)]
 struct Down;
 
 impl Publisher for Down {

@@ -291,6 +291,7 @@ fn a_publish_builder_hides_its_wiring() {
 
 /// A publisher handle carrying an argument for every message it sends: the shape a broker
 /// adapter takes when the base reaches the builder.
+#[derive(Clone)]
 struct Tenanted<P>(P, HeaderMap);
 
 impl<P: Publisher> Publisher for Tenanted<P> {

@@ -638,6 +638,7 @@ fn the_dispatch_metrics_allocate_nothing_per_message() {
 
 /// Answers on the destination the request names in its `x-tenant` header, so a test can publish
 /// to as many destinations as it likes.
+#[derive(Clone)]
 struct ToTenant;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for ToTenant {

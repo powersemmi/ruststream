@@ -19,6 +19,7 @@ use ruststream::testing::expect_published;
 use common::{Order, Receipt, Wire, connected};
 
 /// Stamps every outgoing reply, so the test can prove the transform stack survived pairing.
+#[derive(Clone)]
 struct Envelope;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {

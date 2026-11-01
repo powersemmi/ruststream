@@ -330,6 +330,7 @@ mod with_header {
     use super::{Order, Receipt};
 
     /// Stamps the schema version on every reply this mounting sends.
+    #[derive(Clone)]
     struct SchemaVersion;
 
     impl<K: ContextKind, Options> PublishTransform<K, Options> for SchemaVersion {

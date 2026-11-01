@@ -336,7 +336,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: Send + Sync, Body>
 // stamped message. The transaction calls and the request round trip reach the leaf directly -
 // the pipeline ends in a send, and neither of those is one - and report their errors in the
 // entry's own error type.
-impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline<W>, Body> Publisher
+impl<M: OutSlot, W: Publisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> Publisher
     for Slot<M, W, E, Pipe, Body>
 {
     // The slot is attribution, not policy: the payload travels in the wired publisher's own
@@ -363,7 +363,7 @@ impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline<W>, Body> Publi
     }
 }
 
-impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
+impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
 {
     async fn begin_transaction(&self) -> Result<(), Self::Error> {
@@ -382,8 +382,8 @@ impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>
     }
 }
 
-impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline<W>, Body> OwnedTransactions
-    for Slot<M, W, E, Pipe, Body>
+impl<M: OutSlot, W: OwnedTransactions, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+    OwnedTransactions for Slot<M, W, E, Pipe, Body>
 {
     type Transaction = W::Transaction;
 
@@ -395,7 +395,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline<W>, Bod
     }
 }
 
-impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
+impl<M: OutSlot, W: RequestReply, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
     for Slot<M, W, E, Pipe, Body>
 {
     type Reply = W::Reply;

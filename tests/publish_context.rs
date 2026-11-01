@@ -47,6 +47,7 @@ impl Field<TraceCtx> for Correlation {
 
 /// A static, zero-cost publish transform: stamps the originating delivery's correlation id onto the
 /// reply, read off the typed context through [`PublishContext`].
+#[derive(Clone)]
 struct PropagateCorrelation;
 
 impl<Options> PublishTransform<ForReply<TraceCtx>, Options> for PropagateCorrelation {
@@ -175,6 +176,7 @@ impl PublishLayer for AppendB {
 }
 
 /// The reply position's own transform.
+#[derive(Clone)]
 struct AppendT;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for AppendT {

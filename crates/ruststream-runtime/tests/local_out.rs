@@ -154,6 +154,7 @@ where
 }
 
 /// A slot transform: stamps every message leaving the slot with the header `stamped`.
+#[derive(Clone)]
 struct Stamp;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {

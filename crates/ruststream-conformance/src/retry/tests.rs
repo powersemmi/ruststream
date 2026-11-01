@@ -639,6 +639,7 @@ enum Settling {
 }
 
 /// A publisher that fails every publish.
+#[derive(Clone)]
 struct Refuses;
 
 impl Publisher for Refuses {
@@ -656,6 +657,7 @@ impl Publisher for Refuses {
 }
 
 /// A publisher that sends every message twice.
+#[derive(Clone)]
 struct Duplicates(MemoryPublisher);
 
 impl Publisher for Duplicates {
@@ -681,6 +683,7 @@ impl Publisher for Duplicates {
 }
 
 /// A publisher that drops one header, or every header, on the way to the bus.
+#[derive(Clone)]
 struct StripsHeaders(MemoryPublisher, Option<&'static str>);
 
 impl Publisher for StripsHeaders {
@@ -711,6 +714,7 @@ impl Publisher for StripsHeaders {
 
 /// A publisher that leaves the send to a task on whichever runtime called it, and reports success
 /// at once: the defect a handler on a dedicated thread loses its retry copy to.
+#[derive(Clone)]
 struct SpawnsOnCaller(MemoryPublisher);
 
 impl Publisher for SpawnsOnCaller {
@@ -738,6 +742,7 @@ impl Publisher for SpawnsOnCaller {
 
 /// A publisher that attaches to the runtime of its first caller and sends from there afterwards:
 /// the lazily attached socket that dies with the handler thread which first used it.
+#[derive(Clone)]
 struct AttachesOnFirstUse(MemoryPublisher, OnceLock<Handle>);
 
 impl Publisher for AttachesOnFirstUse {

@@ -441,6 +441,7 @@ impl Drop for HandedBackLater {
 }
 
 /// A publisher whose every publish fails.
+#[derive(Clone)]
 struct Refusing;
 
 impl Publisher for Refusing {

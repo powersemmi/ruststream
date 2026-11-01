@@ -9,6 +9,7 @@
 ))]
 
 use crate::common;
+use std::sync::Arc;
 
 use std::error::Error as StdError;
 use std::fmt;
@@ -37,8 +38,9 @@ impl StdError for Rejected {}
 
 /// Rejects the first reply, then forwards to the broker: the redelivery the failure asks for
 /// must be able to succeed, so the whole failure-then-retry path is observable.
+#[derive(Clone)]
 struct FailsOnce {
-    armed: AtomicBool,
+    armed: Arc<AtomicBool>,
     inner: MemoryPublisher,
 }
 

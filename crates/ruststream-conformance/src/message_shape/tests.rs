@@ -1,6 +1,7 @@
 //! Each check against the in-memory broker, which passes, and against a broken double of it,
 //! which the check must fail: a check no broker can fail proves nothing.
 
+use std::sync::Arc;
 use std::{
     future::pending,
     mem,
@@ -80,14 +81,15 @@ enum Fault {
 /// How far apart [`Fault::Trickles`] delivers its messages.
 const TRICKLE: Duration = Duration::from_secs(1);
 
+#[derive(Clone)]
 struct Faulty {
     inner: MemoryPublisher,
     fault: Fault,
-    held: Mutex<Vec<Held>>,
+    held: Arc<Mutex<Vec<Held>>>,
     /// How many publishes with no headers went through, for the faults that pick one by order.
-    plain: AtomicUsize,
+    plain: Arc<AtomicUsize>,
     /// Refused messages still to deliver, each with the publishes left before it goes.
-    refused: Mutex<Vec<(Held, usize)>>,
+    refused: Arc<Mutex<Vec<(Held, usize)>>>,
 }
 
 impl Faulty {
@@ -95,9 +97,9 @@ impl Faulty {
         Self {
             inner,
             fault,
-            held: Mutex::new(Vec::new()),
-            plain: AtomicUsize::new(0),
-            refused: Mutex::new(Vec::new()),
+            held: Mutex::new(Vec::new()).into(),
+            plain: AtomicUsize::new(0).into(),
+            refused: Mutex::new(Vec::new()).into(),
         }
     }
 
@@ -587,13 +589,14 @@ struct PriorityPublish {
     resolve: Resolve,
 }
 
+#[derive(Clone)]
 struct PriorityPublisher {
     inner: MemoryPublisher,
     policy: u8,
     resolve: Resolve,
-    last: Mutex<Option<u8>>,
+    last: Arc<Mutex<Option<u8>>>,
     /// A refused message held back until the next publish.
-    late: Mutex<Option<Held>>,
+    late: Arc<Mutex<Option<Held>>>,
 }
 
 impl PublishPolicy<ConnectedMemoryBroker> for PriorityPublish {
@@ -604,8 +607,8 @@ impl PublishPolicy<ConnectedMemoryBroker> for PriorityPublish {
             inner: MemoryPublish.pair(connected).await?,
             policy: self.priority,
             resolve: self.resolve,
-            last: Mutex::new(None),
-            late: Mutex::new(None),
+            last: Mutex::new(None).into(),
+            late: Mutex::new(None).into(),
         })
     }
 }

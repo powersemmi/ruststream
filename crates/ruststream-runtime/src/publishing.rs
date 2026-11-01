@@ -914,6 +914,7 @@ mod tests {
         use ruststream::memory::{MemoryBroker, MemoryError};
 
         /// A publisher that always refuses, modelling a broker rejecting the reply.
+        #[derive(Clone)]
         struct Rejecting;
 
         impl Publisher for Rejecting {

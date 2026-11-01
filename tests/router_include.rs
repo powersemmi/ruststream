@@ -182,6 +182,7 @@ async fn rg_confirm(o: &Order) -> Receipt {
 }
 
 /// A reply transform that stamps every reply it sees.
+#[derive(Clone)]
 struct StampReply;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for StampReply {

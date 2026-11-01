@@ -27,6 +27,7 @@ fn reply_to(name: &'static str) -> HeaderMap {
 /// The reply-to pattern the two motivating brokers implement: the answer goes where the request
 /// asked to be answered, and to the declared fallback when it asked for nothing. It declares
 /// `Names`, so it mounts only where the position offers the right to set the destination.
+#[derive(Clone)]
 struct ReplyTo;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
@@ -47,6 +48,7 @@ impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
 }
 
 /// An ordinary transform beside the redirect: it owns the headers and nothing else.
+#[derive(Clone)]
 struct Stamp;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
@@ -137,6 +139,7 @@ async fn without_one_the_declared_destination_stands() {
 }
 
 /// The slot counterpart: a shard router deciding where each message goes.
+#[derive(Clone)]
 struct ByTenant;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for ByTenant {

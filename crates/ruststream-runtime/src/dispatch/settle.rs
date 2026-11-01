@@ -849,6 +849,7 @@ mod tests {
     /// A reading publisher that reports the address the payload reached it at, for the assertion the
     /// benchmarks cannot make: the in-memory broker redelivers natively, so no measured scenario
     /// reaches the deferred copy at all.
+    #[derive(Clone)]
     struct FormReportingPublisher(mpsc::UnboundedSender<usize>);
 
     impl Publisher for FormReportingPublisher {

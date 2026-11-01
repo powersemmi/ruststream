@@ -186,6 +186,13 @@ where
 struct Attributed<'a, M, W>(&'a W, PhantomData<fn() -> M>);
 
 #[cfg(feature = "testing")]
+impl<M, W> Clone for Attributed<'_, M, W> {
+    fn clone(&self) -> Self {
+        Self(self.0, PhantomData)
+    }
+}
+
+#[cfg(feature = "testing")]
 impl<M: OutSlot, W: LocalPublisher> LocalPublisher for Attributed<'_, M, W> {
     type Payload = W::Payload;
     type Error = W::Error;
@@ -227,10 +234,10 @@ impl<C: Codec> SlotEncoding for C {}
 /// [`UnnamedCodec`](crate::UnnamedCodec), and an encoded publish names the missing codec.
 #[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
 #[doc(hidden)]
-pub trait SlotEncoding {}
+pub trait SlotEncoding: Clone {}
 
 #[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
-impl<C> SlotEncoding for C {}
+impl<C: Clone> SlotEncoding for C {}
 
 /// [`OutEntry`](super::OutEntry) for a [`LocalHandle`](crate::LocalHandle) body: what one arena
 /// entry is, stated as the mount's choices, with no `Send` or `Sync` demanded of it.

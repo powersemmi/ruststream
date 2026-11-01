@@ -38,6 +38,7 @@ struct Answer {
 }
 
 /// Answers where the request asked to be answered.
+#[derive(Clone)]
 struct ReplyTo;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {

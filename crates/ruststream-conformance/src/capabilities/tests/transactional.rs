@@ -109,9 +109,10 @@ async fn publish_directly(
     }
 }
 
+#[derive(Clone)]
 struct FaultyTxPublisher {
     inner: MemoryPublisher,
-    open: Mutex<Option<Vec<Buffered>>>,
+    open: Arc<Mutex<Option<Vec<Buffered>>>>,
     fault: TxFault,
 }
 
@@ -119,7 +120,7 @@ impl FaultyTxPublisher {
     fn new(connected: &ConnectedMemoryBroker, fault: TxFault) -> Self {
         Self {
             inner: connected.publisher(),
-            open: Mutex::new(None),
+            open: Mutex::new(None).into(),
             fault,
         }
     }
@@ -183,6 +184,7 @@ impl TransactionalPublisher for FaultyTxPublisher {
     }
 }
 
+#[derive(Clone)]
 struct FaultyOwnedPublisher {
     inner: MemoryPublisher,
     fault: TxFault,

@@ -153,6 +153,7 @@ impl ConnectedBroker for ConnectedQueue {
     }
 }
 
+#[derive(Clone)]
 struct QueuePublisher {
     world: Arc<World>,
     link: Arc<Link>,

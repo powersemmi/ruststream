@@ -61,6 +61,7 @@ impl PriorityPublish {
 }
 
 /// The live publisher the policy pairs with the connected broker.
+#[derive(Clone)]
 struct PriorityPublisher {
     inner: MemoryPublisher,
     default_priority: u8,

@@ -308,9 +308,10 @@ crate::__contract_twin! {
     send {
         /// A producer that sends messages into the broker.
         ///
-        /// `Publisher` is `Send + Sync` so a single instance can be shared across tasks.
-        /// Implementations are expected to be cheap to clone; expensive shared state (connection
-        /// pool, batch buffers) should live behind an [`Arc`].
+        /// `Publisher` is `Send + Sync` so a single instance can be shared across tasks, and
+        /// `Clone` so a handler can move its `Out` publisher into a continuation such as
+        /// `.error(..)`. A clone is another handle on the same connection: expensive shared state
+        /// (connection pool, batch buffers) lives behind an [`Arc`].
         ///
         /// # Examples
         ///
@@ -330,7 +331,7 @@ crate::__contract_twin! {
             note = "for an `Out<impl Publisher, _>` slot, the type comes from the policy attached \
                     at the include site: attach one whose live form publishes"
         )]
-        pub trait Publisher: Send + Sync
+        pub trait Publisher: Send + Sync + Clone
     }
     local {
         #[doc = include_str!("local/publisher.md")]
@@ -340,9 +341,9 @@ crate::__contract_twin! {
                     holds `Rc` or `RefCell`; every `Publisher` is a `LocalPublisher` through the \
                     blanket impl"
         )]
-        pub trait LocalPublisher
+        pub trait LocalPublisher: Clone
     }
-    blanket { impl<T: ?Sized + Publisher> LocalPublisher for T }
+    blanket { impl<T: Publisher> LocalPublisher for T }
     forward { <T as Publisher> }
     docs { Publisher }
     types {

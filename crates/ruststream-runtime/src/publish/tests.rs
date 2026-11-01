@@ -9,6 +9,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 #[cfg(feature = "json")]
 use core::fmt;
+use std::sync::Arc;
 
 #[cfg(feature = "json")]
 use crate::PublishPolicy;
@@ -68,13 +69,13 @@ mod fixtures {
 
     /// A transactional publisher whose protocol steps fail on demand: the memory broker's
     /// transactions always succeed, so the batch path's error handling needs this.
-    #[derive(Debug, Default)]
+    #[derive(Clone, Debug, Default)]
     pub(super) struct Rigged {
         pub(super) fail_begin: bool,
         pub(super) fail_commit: bool,
         pub(super) fail_abort: bool,
-        pub(super) published: AtomicUsize,
-        pub(super) aborted: AtomicUsize,
+        pub(super) published: Arc<AtomicUsize>,
+        pub(super) aborted: Arc<AtomicUsize>,
     }
 
     impl Rigged {
@@ -181,6 +182,7 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
 
     use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
 
+    #[derive(Clone)]
     struct PendingCommit;
 
     impl Publisher for PendingCommit {
@@ -889,8 +891,8 @@ async fn the_options_position_starts_empty_and_reaches_the_sink() {
     }
 
     /// Records the settings of every message it is handed, which is the whole subject here.
-    #[derive(Default)]
-    struct Recording(Mutex<Vec<Option<Settings>>>);
+    #[derive(Clone, Default)]
+    struct Recording(Arc<Mutex<Vec<Option<Settings>>>>);
 
     impl Publisher for Recording {
         type Payload = Lend;
@@ -957,10 +959,10 @@ async fn concurrent_batches_take_the_transaction_in_turn() {
     #[error("a transaction is already open")]
     struct Busy;
 
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     struct OneAtATime {
-        open: AtomicBool,
-        committed: AtomicUsize,
+        open: Arc<AtomicBool>,
+        committed: Arc<AtomicUsize>,
     }
 
     impl Publisher for OneAtATime {

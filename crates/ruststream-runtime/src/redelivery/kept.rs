@@ -541,9 +541,10 @@ mod tests {
     type Sent = (String, Vec<u8>, HeaderMap, Option<Priority>);
 
     /// A publisher with a constant header of its own, recording what it is handed.
+    #[derive(Clone)]
     struct Recording {
         base: HeaderMap,
-        sent: Mutex<Vec<Sent>>,
+        sent: Arc<Mutex<Vec<Sent>>>,
     }
 
     impl Publisher for Recording {
@@ -601,6 +602,7 @@ mod tests {
     struct JobContext;
 
     /// Reads the delivery it retries, and raises the copy's priority.
+    #[derive(Clone)]
     struct Escalate;
 
     impl PublishTransform<ForReply<JobContext>, Priority> for Escalate {

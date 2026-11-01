@@ -629,6 +629,7 @@ async fn a_labeled_scope_records_its_server_and_decodes_with_its_own_codec() {
 }
 
 /// Stamps every outgoing reply, so a test can prove which reply source was used.
+#[derive(Clone)]
 struct Envelope;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {

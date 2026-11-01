@@ -216,6 +216,7 @@ async fn raw_reply_result_form_controls_the_publish() {
 /// exercises the reply-publish failure path without tearing a broker down.
 struct FlakyPublish(Arc<AtomicBool>);
 
+#[derive(Clone)]
 struct FlakyPublisher {
     inner: MemoryPublisher,
     fail_next: Arc<AtomicBool>,

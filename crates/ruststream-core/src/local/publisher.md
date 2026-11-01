@@ -3,7 +3,8 @@ The local form of [`Publisher`]: the live publish handle, for a client whose typ
 
 The items are those of [`Publisher`] without the `Send` and `Sync` bounds on the handle and its
 future. [`Payload`](Self::Payload), [`Error`](Self::Error) and [`Options`](Self::Options) keep
-their bounds. Every [`Publisher`] is a `LocalPublisher` through a blanket impl.
+their bounds. The handle is `Clone`, as a `Publisher` is: an `Rc`-held client clones by
+refcount. Every [`Publisher`] is a `LocalPublisher` through a blanket impl.
 
 # Examples
 
@@ -21,6 +22,7 @@ struct Client {
     outgoing: RefCell<VecDeque<(String, Vec<u8>)>>,
 }
 
+#[derive(Clone)]
 pub struct QueuePublisher {
     client: Rc<Client>,
 }

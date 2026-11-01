@@ -9,6 +9,7 @@ use std::error::Error;
 use std::future::ready;
 use std::pin::pin;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
 
@@ -124,60 +125,8 @@ fn memory_broker_meets_every_capability_twin_through_the_blanket_impls() {
     >();
 }
 
-/// A publisher whose last field is unsized, so `Self` is not `Sized`.
-struct Counting<Tail: ?Sized> {
-    sent: AtomicUsize,
-    tail: Tail,
-}
-
-impl Publisher for Counting<[u8]> {
-    type Payload = Lend;
-    type Error = Infallible;
-    type Options = ();
-
-    fn publish(
-        &self,
-        msg: OutgoingFor<'_, Lend>,
-        _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), Infallible>> + Send {
-        let (_name, payload, _headers) = msg.into_parts();
-        if payload.ends_with(&self.tail) {
-            self.sent.fetch_add(1, Ordering::Relaxed);
-        }
-        ready(Ok(()))
-    }
-}
-
-/// A body over the local family that accepts an unsized publisher behind a reference.
-// The local family's futures carry no `Send` bound; this body runs on the test's own thread.
-#[allow(clippy::future_not_send)]
-async fn publish_local<P>(publisher: &P, orders: &[&[u8]]) -> Result<(), P::Error>
-where
-    P: ?Sized + LocalPublisher<Payload = Lend>,
-{
-    for order in orders {
-        publisher
-            .publish(OutgoingMessage::new("orders", order), None)
-            .await?;
-    }
-    Ok(())
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn an_unsized_publisher_publishes_through_its_local_twin() -> Result<(), BoxError> {
-    let sized = Counting {
-        sent: AtomicUsize::new(0),
-        tail: *b"-",
-    };
-    let publisher: &Counting<[u8]> = &sized;
-
-    publish_local(publisher, &[b"order-1", b"order-2", b"order-"]).await?;
-
-    assert_eq!(publisher.sent.load(Ordering::Relaxed), 1);
-    Ok(())
-}
-
-/// Every Send trait that admits an unsized implementor reaches its twin through the blanket impl.
+/// Every Send trait that admits an unsized implementor reaches its twin through the blanket impl
+/// (a publisher is `Clone`, so always sized).
 #[test]
 fn unsized_implementations_meet_their_local_twins() {
     fn local<Sub, Pub, Req>()
@@ -231,6 +180,7 @@ struct RcDelivery {
 #[derive(Default)]
 struct RcPublish;
 
+#[derive(Clone)]
 struct RcPublisher {
     state: Rc<State>,
 }

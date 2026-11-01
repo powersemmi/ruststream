@@ -143,6 +143,7 @@ where
 
 /// The slot transform the mounts below compose: it stamps what leaves the slot it rides. It reads
 /// no context, so one impl serves every position.
+#[derive(Clone)]
 pub(super) struct Trace;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Trace {

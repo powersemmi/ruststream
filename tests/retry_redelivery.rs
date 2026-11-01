@@ -358,7 +358,7 @@ where
 }
 
 /// The live form of [`StampedPublish`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Stamped<P> {
     inner: P,
     base: HeaderMap,
@@ -406,7 +406,7 @@ struct PriorityPublish {
 }
 
 /// The live form of [`PriorityPublish`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct PriorityPublisher<P> {
     inner: P,
     default_priority: u8,

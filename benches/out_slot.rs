@@ -38,6 +38,7 @@ struct Event {
 struct Audit;
 
 /// One transform on the publish path: a constant header.
+#[derive(Clone)]
 struct Stamp;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {

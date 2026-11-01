@@ -196,6 +196,7 @@ impl<M, W, E, Pipe, Body> LocalPublisher for LocalSlot<M, W, E, Pipe, Body>
 where
     M: OutSlot,
     W: LocalPublisher,
+    E: Clone,
     Pipe: LocalOutPipeline<W>,
 {
     type Payload = W::Payload;

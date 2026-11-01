@@ -432,7 +432,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
             writes none is generic over them - `impl<K: ContextKind, Options> \
             PublishTransform<K, Options> for ..` - and mounts anywhere"
 )]
-pub trait PublishTransform<K: ContextKind, Options = ()>: Send + Sync {
+pub trait PublishTransform<K: ContextKind, Options = ()>: Send + Sync + Clone {
     /// What this transform does to the destination: [`Reads`] or [`Names`].
     type Destination: DestinationUse;
 

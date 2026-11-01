@@ -247,10 +247,11 @@ async fn a_fully_undecodable_batch_never_reaches_the_handler() {
 
 /// A publisher that fails every publish after the first `succeed_first`, to model a reply
 /// publish failing part-way through a batch.
+#[derive(Clone)]
 struct HalfwayPublisher {
     inner: MemoryPublisher,
     succeed_first: usize,
-    published: AtomicUsize,
+    published: Arc<AtomicUsize>,
 }
 
 impl HalfwayPublisher {
@@ -258,7 +259,7 @@ impl HalfwayPublisher {
         Self {
             inner,
             succeed_first,
-            published: AtomicUsize::new(0),
+            published: AtomicUsize::new(0).into(),
         }
     }
 }

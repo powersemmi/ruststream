@@ -675,31 +675,6 @@ impl NeutralArena {
             bounds.push(quote! {
                 #entry: ::ruststream::runtime::SlotEntry<#marker, #body, Wire: #capability>
             });
-            // A cloneable slot is one a body moves into a continuation, which the multi-thread
-            // runner needs `Send` and `'static`, publish future included. A body that never
-            // clones asks for none of it, so the embedded runner's `!Send` publishers stay legal.
-            let cloned = out
-                .bounds
-                .iter()
-                .any(|bound| capability_named(bound, &["Clone"]));
-            if cloned {
-                bounds.push(quote! {
-                    #entry: 'static
-                        + ::ruststream::runtime::MaybeSendSync
-                        + ::ruststream::runtime::MaybeSendPublisher
-                });
-                bounds.push(quote! {
-                    #entry: for<'__rs_sink> ::ruststream::runtime::SlotPublish<
-                        #marker,
-                        #body,
-                        Sink<'__rs_sink> = &'__rs_sink #entry,
-                    >
-                });
-                bounds.push(quote! {
-                    <#entry as ::ruststream::runtime::SlotPublish<#marker, #body>>::Enc:
-                        ::ruststream::runtime::MaybeSendSync
-                });
-            }
             if out.bounds.iter().any(|bound| {
                 capability_named(
                     bound,
@@ -713,6 +688,28 @@ impl NeutralArena {
             }) {
                 bounds.push(quote! {
                     #entry: ::ruststream::runtime::SlotPublish<#marker, #body>
+                });
+
+                // An entry that publishes is a `Publisher`, hence `Clone`: a body moves a clone into a continuation,
+                // which the multi-thread runner needs `Send` and `'static`, publish future included.
+                // The embedded runner asks for none of it (`MaybeSendSync` and `MaybeSendPublisher`
+                // hold for every type there), so its `!Send` publishers stay legal.
+                bounds.push(quote! {
+                    #entry: ::core::clone::Clone
+                        + 'static
+                        + ::ruststream::runtime::MaybeSendSync
+                        + ::ruststream::runtime::MaybeSendPublisher
+                });
+                bounds.push(quote! {
+                    #entry: for<'__rs_sink> ::ruststream::runtime::SlotPublish<
+                        #marker,
+                        #body,
+                        Sink<'__rs_sink> = &'__rs_sink #entry,
+                    >
+                });
+                bounds.push(quote! {
+                    <#entry as ::ruststream::runtime::SlotPublish<#marker, #body>>::Enc:
+                        ::ruststream::runtime::MaybeSendSync
                 });
             }
             // Every other capability also sits on the entry itself, which forwards it through
