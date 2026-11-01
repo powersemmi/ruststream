@@ -13,7 +13,7 @@ use std::time::Duration;
 use futures::future::join_all;
 use ruststream::Buffered;
 use ruststream::memory::prelude::*;
-use ruststream::memory::{ConnectedMemoryBroker, LogMode};
+use ruststream::memory::{ConnectedMemoryBroker, LogMode, MemoryPublish};
 use ruststream::testing::TestApp;
 use ruststream::{Lend, OutgoingMessage, PairError};
 use serde::{Deserialize, Serialize};
@@ -421,4 +421,36 @@ async fn a_uniform_batch_error_runs_while_the_and_after_panics() {
     let (_, after) = run_uniform!(panicking, "panicking", Refuses12Publish);
 
     assert_eq!(after, ["error x2"]);
+}
+
+/// Answers a whole batch and leaves a `.then` that waits for the answers to be published.
+#[subscriber(UniformQueue::new(Queue { name: "receipted-then" }).max_wait(Duration::from_secs(1)), reply)]
+async fn receipted_then(jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> Vec<Receipt> {
+    let log = ctx.state().clone();
+    ctx.after(HandlerOutcome::ack())
+        .error(async move |_failures: Failures| {})
+        .then(async move { log.lock().expect("log").push("then".to_owned()) });
+    jobs.iter().map(|job| Receipt { id: job.id }).collect()
+}
+
+/// A batch of replies the broker takes runs the context's `.then`, once.
+#[tokio::test(start_paused = true)]
+async fn a_published_batch_reply_runs_the_context_then() {
+    let log = Log::default();
+    let startup = Arc::clone(&log);
+    let app = RustStream::new(AppInfo::new("batch", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(startup))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(receipted_then.batch(nonzero!(2)))
+                .out_reply(MemoryPublish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+    join_all([
+        publish_job(&tb, 1, "receipted-then"),
+        publish_job(&tb, 2, "receipted-then"),
+    ])
+    .await;
+    tb.settle().await.expect("settle");
+
+    assert_eq!(*log.lock().expect("log"), ["then"]);
 }
