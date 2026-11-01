@@ -18,7 +18,7 @@ use bytes::{Bytes, BytesMut};
 use ruststream_core::{HeaderMap, LocalSettle};
 use ruststream_runtime::{
     Clock, Continuation, CopyPublisher, FailedMessage, KeptCopies, KeptDelivery, LocalDetach,
-    NoFreeRecordError, PrepareCopy, PrepareKept, Reaction, publish_done, publish_lost,
+    NoFreeRecordError, PrepareCopy, PrepareKept, Reaction, Refusal, publish_done, publish_lost,
 };
 
 use crate::clock::{EmbassyClock, Schedule};
@@ -237,23 +237,43 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             .await;
         let follow = match sent {
             Ok(()) => publish_done(reaction),
-            Err(refusal) => {
-                // A taking publisher hands its own copy of the bytes back; a lending one is
-                // answered with the record's, which are copied because the record is reused.
-                let (err, failed) =
-                    refusal.into_message(target, |_, _| Bytes::copy_from_slice(&payload));
-                publish_lost(
-                    reaction,
-                    &self.subscription,
-                    target,
-                    self.input,
-                    err,
-                    || failed,
-                )
-            }
+            Err(refusal) => self.lost(reaction, target, refusal, |_, _| {
+                // The record is reused, so a lending publisher's bytes are copied.
+                Bytes::copy_from_slice(&payload)
+            }),
         };
         self.give_back(record, payload, destination);
         follow
+    }
+
+    /// Reports a copy the publisher refused. The message is read out of the refusal only for a
+    /// registered error: the publisher returns it, so nothing is copied for a copy nobody watches.
+    fn lost(
+        &self,
+        reaction: Option<Reaction>,
+        target: &str,
+        refusal: Refusal,
+        lent: impl FnOnce(usize, usize) -> Bytes,
+    ) -> Option<Continuation> {
+        if reaction.is_none() {
+            return publish_lost(
+                None,
+                &self.subscription,
+                target,
+                self.input,
+                refusal.into_error(),
+                || FailedMessage::new(target, None, HeaderMap::new()),
+            );
+        }
+        let (err, failed) = refusal.into_message(target, lent);
+        publish_lost(
+            reaction,
+            &self.subscription,
+            target,
+            self.input,
+            err,
+            || failed,
+        )
     }
 
     /// Frees `record`, keeping `payload`'s buffer for the next copy.
@@ -310,17 +330,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
                 .await;
             match sent {
                 Ok(()) => publish_done(reaction),
-                Err(refusal) => {
-                    let (err, failed) = refusal.into_message(target, |_, _| payload.freeze());
-                    publish_lost(
-                        reaction,
-                        &self.subscription,
-                        target,
-                        self.input,
-                        err,
-                        || failed,
-                    )
-                }
+                Err(refusal) => self.lost(reaction, target, refusal, |_, _| payload.freeze()),
             }
         }
     }
@@ -444,7 +454,7 @@ mod tests {
     use core::task::{Context, Poll, Waker};
     use core::time::Duration;
 
-    use ruststream_core::HeaderMap;
+    use ruststream_core::{HeaderMap, Lend, OutgoingMessage, PublishMessageError};
     use ruststream_runtime::{
         Clock, CopyPublisher, ErrorHook, Failures, KeptCopies, LocalDetach, Reaction, Refusal,
     };
@@ -585,12 +595,17 @@ mod tests {
 
         fn publish_copy(
             &self,
-            _destination: &str,
-            _payload: &[u8],
-            _headers: HeaderMap,
+            destination: &str,
+            payload: &[u8],
+            headers: HeaderMap,
             _options: Option<&()>,
         ) -> impl Future<Output = Result<(), Refusal>> {
-            ready(Err(Refusal::new("the subscription is full")))
+            // A publisher answers a refusal with the message it was handed, as the broker
+            // crates' do.
+            let msg = OutgoingMessage::assembled(destination, payload, headers);
+            ready(Err(Refusal::returned::<Lend>(
+                PublishMessageError::with_message("the subscription is full", msg),
+            )))
         }
     }
 
@@ -847,26 +862,27 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_publish_copies_the_message_only_for_a_registered_error() {
+    fn a_refused_copy_costs_a_registered_error_the_payload_and_nothing_else() {
         let plain = allocations_of_a_send(Refusing, false);
         let watched = allocations_of_a_send(Refusing, true);
-        assert!(
-            watched >= plain + 2,
-            "the failed message (payload and headers) is copied for the continuation alone: \
-             {plain} against {watched}"
+        assert_eq!(
+            watched,
+            plain + 3,
+            "the publisher hands the message back with its headers, so no header map is cloned; a \
+             registered error costs the payload the record lends, the destination of the failed \
+             message and the continuation that runs the error: {plain} against {watched}"
         );
     }
 
     #[test]
-    fn a_published_copy_costs_a_registered_reaction_one_header_map_and_no_payload() {
+    fn a_published_copy_costs_a_registered_reaction_nothing() {
         let sent = Recorded::default();
         let plain = allocations_of_a_send(&sent, false);
         let watched = allocations_of_a_send(&sent, true);
         assert_eq!(
-            watched,
-            plain + 1,
-            "a publish consumes the headers, so a registered reaction keeps one map; the payload \
-             is copied only once the publish failed"
+            watched, plain,
+            "a publish consumes the headers and nothing is cloned for a reaction: a refused \
+             publish returns the message instead"
         );
     }
 
