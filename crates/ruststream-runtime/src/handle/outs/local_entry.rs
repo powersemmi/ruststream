@@ -9,6 +9,8 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::ops::Deref;
 
+#[cfg(feature = "testing")]
+use crate::PublishOutcome;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::Codec;
 use crate::inject::LocalFromStartup;
@@ -25,7 +27,7 @@ use crate::testing::coordinator::{
 };
 use crate::{
     Broker, Connected, HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, PairError,
-    PublishOutcome, PublishPolicy,
+    PublishPolicy,
 };
 
 use super::arena::SlotDictionary;
