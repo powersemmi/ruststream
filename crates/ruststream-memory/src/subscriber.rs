@@ -14,8 +14,8 @@ use std::{
 
 use futures::{Stream, stream};
 use ruststream_core::{
-    AckError, AddressedCopies, FromName, HeaderMap, IncomingMessage, RawMessage, RedeliveryAddress,
-    RedeliveryAddressed, Settle, Subscribe, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, FromName, HeaderMap, IncomingMessage, MaybeSend, RawMessage,
+    RedeliveryAddress, RedeliveryAddressed, Settle, Subscribe, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 #[cfg(feature = "testing")]
@@ -209,7 +209,9 @@ impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
     type Message = MemoryMessage<Log>;
     type Error = Infallible;
 
-    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+    fn stream(
+        &mut self,
+    ) -> impl Stream<Item = Result<Self::Message, Self::Error>> + MaybeSend + '_ {
         #[cfg(feature = "testing")]
         let coordinator = self.coordinator();
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can

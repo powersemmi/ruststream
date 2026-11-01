@@ -27,7 +27,7 @@ use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out, PublishError
 use ruststream::testing::InProcess;
 use ruststream::testing::TestError;
 use ruststream::testing::embedded::TestApp;
-use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
+use ruststream::{Deserialized, OutSlot, Outgoing, Serialized, subscriber};
 
 /// The board's bus: each subscription holds four messages.
 type Bus = LocalMemoryBroker<4>;

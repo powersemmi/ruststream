@@ -38,8 +38,8 @@ mod scenarios {
         SubscriptionSource,
     };
     use ruststream_runtime::{
-        Clock, Context, Deserialized, HandlerOutcome, Input, IntoSource, LocalHandle,
-        SoloDeserialized, local_subscriber,
+        Clock, Context, Deserialized, Handle, HandlerOutcome, Input, IntoSource, SoloDeserialized,
+        subscriber,
     };
     use ruststream_runtime_embassy::{Control, EmbassyClock, EmbeddedApp, MountSteps, Mounts};
     use static_cell::StaticCell;
@@ -260,7 +260,7 @@ mod scenarios {
         record: &'static Record,
     }
 
-    impl LocalHandle<Seq> for Slow {
+    impl Handle<Seq> for Slow {
         fn handle(
             &self,
             seq: &Seq,
@@ -300,7 +300,7 @@ mod scenarios {
         };
         EmbeddedApp::new().with_broker(broker, |b| {
             b.include(
-                local_subscriber(
+                subscriber(
                     KeyedSource,
                     Slow {
                         record: &stand.record,
@@ -319,7 +319,7 @@ mod scenarios {
         };
         EmbeddedApp::new().with_broker(broker, |b| {
             b.include(
-                local_subscriber(
+                subscriber(
                     KeyedSource,
                     Slow {
                         record: &stand.record,
@@ -338,7 +338,7 @@ mod scenarios {
         };
         EmbeddedApp::new().with_broker(broker, |b| {
             b.include(
-                local_subscriber(
+                subscriber(
                     KeyedSource,
                     Slow {
                         record: &stand.record,

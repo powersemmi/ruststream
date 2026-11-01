@@ -24,8 +24,8 @@ use futures::future::{Either, join, select};
 use hash32::{FnvHasher, Hasher as _};
 use ruststream_core::{BuildContext, IncomingMessage, Settle, Subscriber};
 use ruststream_runtime::{
-    Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, Halt, HeadersAtOnce, HostDetach,
-    KeepCopies, Keeping, LocalDispatch, LocalHandler, LocalPipeline, LocalPlanned, LocalRoute,
+    Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, Halt, Handler, HeadersAtOnce,
+    HostDetach, KeepCopies, Keeping, LocalDispatch, LocalPipeline, LocalPlanned, LocalRoute,
     NoCopies, PrepareCopy, PrepareKept, RetryCopies, RetryDestinationsDeclared, Router,
     RouterCommit, RouterWith, ShutdownWait, dispatch,
 };
@@ -81,7 +81,7 @@ pub trait Lanes {
     ) -> impl Future<Output = ()>
     where
         Sub: Subscriber,
-        Body: LocalHandler<Sub::Message, Cx, State>,
+        Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>;
@@ -97,7 +97,7 @@ impl Lanes for OneLane {
     ) -> impl Future<Output = ()>
     where
         Sub: Subscriber,
-        Body: LocalHandler<Sub::Message, Cx, State>,
+        Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
@@ -116,7 +116,7 @@ impl<const WORKERS: usize> Lanes for Pool<WORKERS> {
     ) -> impl Future<Output = ()>
     where
         Sub: Subscriber,
-        Body: LocalHandler<Sub::Message, Cx, State>,
+        Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
@@ -135,7 +135,7 @@ impl<const LANES: usize> Lanes for Keyed<LANES> {
     ) -> impl Future<Output = ()>
     where
         Sub: Subscriber,
-        Body: LocalHandler<Sub::Message, Cx, State>,
+        Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
@@ -156,7 +156,7 @@ impl<L: Lanes> LocalDispatch for EmbeddedPlan<L, NoRoom> {
         host: &Host,
     ) where
         Sub: Subscriber,
-        Body: LocalHandler<Sub::Message, Cx, State>,
+        Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: Detach,
@@ -178,7 +178,7 @@ impl<L: Lanes, const CAPACITY: usize> LocalDispatch for EmbeddedPlan<L, Room<CAP
         host: &Host,
     ) where
         Sub: Subscriber,
-        Body: LocalHandler<Sub::Message, Cx, State>,
+        Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: Detach,
@@ -215,7 +215,7 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
     keyed: bool,
 ) where
     Sub: Subscriber,
-    Body: LocalHandler<Sub::Message, Cx, State>,
+    Body: Handler<Sub::Message, Cx, State>,
     Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
     Signal: ShutdownWait + Halt + Clone,
     Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
@@ -322,7 +322,7 @@ async fn work<Message, Body, Cx, State, Signal, Host, const COUNT: usize>(
     shared: &Shared<'_, Body, Cx, State, Signal, Host>,
 ) where
     Message: Settle,
-    Body: LocalHandler<Message, Cx, State>,
+    Body: Handler<Message, Cx, State>,
     Cx: BuildContext<Message> + MaybeSendSync + 'static,
     Signal: Halt,
     Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
@@ -372,7 +372,7 @@ fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
 /// use core::future::ready;
 ///
 /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
-/// use ruststream_runtime::{Context, Deserialized, HandlerOutcome, Input, LocalHandle, SoloDeserialized, local_subscriber};
+/// use ruststream_runtime::{Context, Deserialized, HandlerOutcome, Input, Handle, SoloDeserialized, subscriber};
 /// use ruststream_runtime_embassy::{EmbeddedApp, MountSteps, Mounts};
 ///
 /// /// A command for the motor, as the radio sends it.
@@ -393,7 +393,7 @@ fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
 ///
 /// struct Drive;
 ///
-/// impl LocalHandle<Command<'_>> for Drive {
+/// impl Handle<Command<'_>> for Drive {
 ///     fn handle(
 ///         &self,
 ///         command: &Command<'_>,
@@ -408,7 +408,7 @@ fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
 /// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
 ///     EmbeddedApp::new().with_broker(bus, |b| {
 ///         // Four commands at once, and room for two delayed retries.
-///         b.include(local_subscriber(LocalMemorySource::new("motor"), Drive).build())
+///         b.include(subscriber(LocalMemorySource::new("motor"), Drive).build())
 ///             .pool::<4>()
 ///             .retry_capacity::<2>()
 ///     })
@@ -420,19 +420,19 @@ fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
 ///
 /// ```compile_fail
 /// # use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
-/// # use ruststream_runtime::{Context, Deserialized, HandlerOutcome, Input, LocalHandle, SoloDeserialized, local_subscriber};
+/// # use ruststream_runtime::{Context, Deserialized, HandlerOutcome, Input, Handle, SoloDeserialized, subscriber};
 /// # use ruststream_runtime_embassy::{EmbeddedApp, MountSteps, Mounts};
 /// # struct Command;
 /// # impl Deserialized for Command { type Output<'a> = Command; type Error = core::convert::Infallible;
 /// #     fn from_payload(_: &[u8]) -> Result<Command, Self::Error> { Ok(Command) } }
 /// # impl Input for Command { type Axis = SoloDeserialized<Command>; }
 /// # struct Drive;
-/// # impl LocalHandle<Command> for Drive {
+/// # impl Handle<Command> for Drive {
 /// #     fn handle(&self, _: &Command, _: &(), _: &mut Context<'_>)
 /// #         -> impl Future<Output = Result<(), HandlerOutcome>> { core::future::ready(Ok(())) } }
 /// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
 ///     EmbeddedApp::new().with_broker(bus, |b| {
-///         b.include(local_subscriber(LocalMemorySource::new("motor"), Drive).build()).pool::<0>()
+///         b.include(subscriber(LocalMemorySource::new("motor"), Drive).build()).pool::<0>()
 ///     })
 /// }
 /// # let _ = app(LocalMemoryBroker::new());
@@ -442,19 +442,19 @@ fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
 ///
 /// ```compile_fail
 /// # use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
-/// # use ruststream_runtime::{Context, Deserialized, HandlerOutcome, Input, LocalHandle, SoloDeserialized, local_subscriber};
+/// # use ruststream_runtime::{Context, Deserialized, HandlerOutcome, Input, Handle, SoloDeserialized, subscriber};
 /// # use ruststream_runtime_embassy::{EmbeddedApp, MountSteps, Mounts};
 /// # struct Command;
 /// # impl Deserialized for Command { type Output<'a> = Command; type Error = core::convert::Infallible;
 /// #     fn from_payload(_: &[u8]) -> Result<Command, Self::Error> { Ok(Command) } }
 /// # impl Input for Command { type Axis = SoloDeserialized<Command>; }
 /// # struct Drive;
-/// # impl LocalHandle<Command> for Drive {
+/// # impl Handle<Command> for Drive {
 /// #     fn handle(&self, _: &Command, _: &(), _: &mut Context<'_>)
 /// #         -> impl Future<Output = Result<(), HandlerOutcome>> { core::future::ready(Ok(())) } }
 /// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
 ///     EmbeddedApp::new().with_broker(bus, |b| {
-///         b.include(local_subscriber(LocalMemorySource::new("motor"), Drive).build()).keyed::<0>()
+///         b.include(subscriber(LocalMemorySource::new("motor"), Drive).build()).keyed::<0>()
 ///     })
 /// }
 /// # let _ = app(LocalMemoryBroker::new());
@@ -464,19 +464,19 @@ fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
 ///
 /// ```compile_fail
 /// # use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
-/// # use ruststream_runtime::{Context, Deserialized, HandlerOutcome, Input, LocalHandle, SoloDeserialized, local_subscriber};
+/// # use ruststream_runtime::{Context, Deserialized, HandlerOutcome, Input, Handle, SoloDeserialized, subscriber};
 /// # use ruststream_runtime_embassy::{EmbeddedApp, MountSteps, Mounts};
 /// # struct Command;
 /// # impl Deserialized for Command { type Output<'a> = Command; type Error = core::convert::Infallible;
 /// #     fn from_payload(_: &[u8]) -> Result<Command, Self::Error> { Ok(Command) } }
 /// # impl Input for Command { type Axis = SoloDeserialized<Command>; }
 /// # struct Drive;
-/// # impl LocalHandle<Command> for Drive {
+/// # impl Handle<Command> for Drive {
 /// #     fn handle(&self, _: &Command, _: &(), _: &mut Context<'_>)
 /// #         -> impl Future<Output = Result<(), HandlerOutcome>> { core::future::ready(Ok(())) } }
 /// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
 ///     EmbeddedApp::new().with_broker(bus, |b| {
-///         b.include(local_subscriber(LocalMemorySource::new("motor"), Drive).build()).retry_capacity::<0>()
+///         b.include(subscriber(LocalMemorySource::new("motor"), Drive).build()).retry_capacity::<0>()
 ///     })
 /// }
 /// # let _ = app(LocalMemoryBroker::new());

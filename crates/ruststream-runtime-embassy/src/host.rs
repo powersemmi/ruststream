@@ -11,7 +11,6 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::future::poll_fn;
-use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Poll, Waker};
 use core::time::Duration;
 
@@ -19,6 +18,7 @@ use embassy_sync::blocking_mutex::Mutex;
 use ruststream_runtime::{Clock, Continuation, Detach, MaybeSend, MaybeSendSync};
 
 use crate::clock::EmbassyClock;
+use crate::flag::Flag;
 use crate::frames::FrameLock;
 
 /// One piece of detached work: `Send` where the runtime's `tokio` feature is on.
@@ -43,9 +43,9 @@ struct Inbox {
 pub(crate) struct Detached<Timers: Clock = EmbassyClock> {
     inbox: Mutex<FrameLock, RefCell<Inbox>>,
     /// Set when the inbox holds work the driver has not taken.
-    handed: AtomicBool,
+    handed: Flag,
     /// Set once nothing more will be handed over: the driver ends when it has run what it holds.
-    closed: AtomicBool,
+    closed: Flag,
     clock: Timers,
 }
 
@@ -57,15 +57,15 @@ impl<Timers: Clock<Sleep: 'static> + 'static> Detached<Timers> {
                 works: Vec::new(),
                 waker: None,
             })),
-            handed: AtomicBool::new(false),
-            closed: AtomicBool::new(false),
+            handed: Flag::new(),
+            closed: Flag::new(),
             clock,
         }
     }
 
     /// Stops taking work: the driver ends once what it holds has finished.
     pub(crate) fn close(&self) {
-        self.closed.store(true, Ordering::Release);
+        self.closed.raise();
         self.wake();
     }
 
@@ -85,16 +85,15 @@ impl<Timers: Clock<Sleep: 'static> + 'static> Detached<Timers> {
                 known = Some(waker);
             }
             // Read before the inbox is taken, so work handed over after the take raises it again.
-            let closed = self.closed.load(Ordering::Acquire);
-            if self.handed.load(Ordering::Acquire) {
-                self.handed.store(false, Ordering::Release);
+            let closed = self.closed.is_raised();
+            if self.handed.take() {
                 self.inbox
                     .lock(|inbox| running.append(&mut inbox.borrow_mut().works));
             }
             if !running.is_empty() {
                 running.retain_mut(|work| work.as_mut().poll(cx).is_pending());
             }
-            if closed && running.is_empty() && !self.handed.load(Ordering::Acquire) {
+            if closed && running.is_empty() && !self.handed.is_raised() {
                 Poll::Ready(())
             } else {
                 Poll::Pending
@@ -104,7 +103,7 @@ impl<Timers: Clock<Sleep: 'static> + 'static> Detached<Timers> {
 
     fn hand(&self, work: Work) {
         self.inbox.lock(|inbox| inbox.borrow_mut().works.push(work));
-        self.handed.store(true, Ordering::Release);
+        self.handed.raise();
         self.wake();
     }
 

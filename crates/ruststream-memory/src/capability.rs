@@ -14,7 +14,7 @@ use std::{
 use futures::{Stream, stream};
 
 use super::{LogMode, MemoryMessage, MemorySubscriber};
-use ruststream_core::{BatchSubscriber, IncomingMessage, Partitioned, Subscriber};
+use ruststream_core::{BatchSubscriber, IncomingMessage, MaybeSend, Partitioned, Subscriber};
 
 /// The well-known header the [`Partitioned`] implementation reads the partition key from.
 pub const PARTITION_KEY_HEADER: &str = "partition-key";
@@ -40,7 +40,7 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
+    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + MaybeSend + '_ {
         let limit = size.get();
         #[cfg(feature = "testing")]
         let coordinator = self.coordinator();

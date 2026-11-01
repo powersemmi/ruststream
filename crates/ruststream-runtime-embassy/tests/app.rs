@@ -28,8 +28,8 @@ mod scenarios {
     use ruststream_core::{Broker, ConnectedBroker, OutgoingMessage, Publisher};
     use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
     use ruststream_runtime::{
-        Context, Deserialized, FailurePolicies, FailurePolicy, HandlerOutcome, Input, LocalHandle,
-        SoloDeserialized, SubscriberSettings, local_subscriber,
+        Context, Deserialized, FailurePolicies, FailurePolicy, Handle, HandlerOutcome, Input,
+        SoloDeserialized, SubscriberSettings, subscriber,
     };
     use ruststream_runtime_embassy::frames::{
         Frame, FrameBroker, FrameSource, Frames, Settlements,
@@ -85,7 +85,7 @@ mod scenarios {
         seen: &'static AtomicU32,
     }
 
-    impl LocalHandle<Reading<'_>> for Count {
+    impl Handle<Reading<'_>> for Count {
         fn handle(
             &self,
             _reading: &Reading<'_>,
@@ -122,7 +122,7 @@ mod scenarios {
         EmbeddedApp::new()
             .with_broker(FrameBroker::new(&stand.frames, &stand.settled), |b| {
                 b.include(
-                    local_subscriber(
+                    subscriber(
                         FrameSource::new("frames"),
                         Count {
                             seen: &stand.seen_frames,
@@ -133,7 +133,7 @@ mod scenarios {
             })
             .with_broker(stand.bus.clone(), |b| {
                 b.include(
-                    local_subscriber(
+                    subscriber(
                         LocalMemorySource::new("bus/readings"),
                         Count {
                             seen: &stand.seen_bus,
@@ -148,7 +148,7 @@ mod scenarios {
     fn fails_fast(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
         EmbeddedApp::new().with_broker(FrameBroker::new(&stand.frames, &stand.settled), |b| {
             b.include(
-                local_subscriber(
+                subscriber(
                     FrameSource::new("frames"),
                     Count {
                         seen: &stand.seen_failing,
@@ -206,10 +206,8 @@ mod scenarios {
             seen: &stand.seen_bus,
         };
         EmbeddedApp::new().with_broker(stand.ending_bus.clone(), |b| {
-            b.include(local_subscriber(LocalMemorySource::new("bus/ending"), count()).build())
-                .include(
-                    local_subscriber(LocalMemorySource::new("bus/ending-pool"), count()).build(),
-                )
+            b.include(subscriber(LocalMemorySource::new("bus/ending"), count()).build())
+                .include(subscriber(LocalMemorySource::new("bus/ending-pool"), count()).build())
                 .pool::<2>()
         })
     }

@@ -16,9 +16,9 @@ use ruststream::memory::local::prelude::{
     BytesMut, LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource,
 };
 use ruststream::runtime::{
-    Context, Deserialized, EmbeddedApp, HandlerOutcome, Input, LocalHandle, LocalOutEntry,
-    MessageWire, Mounts, OutSlot, Outs, PublishedThrough, Reads, Serialized, SerializedWire,
-    SoloDeserialized, WireBytes, local_subscriber,
+    Context, Deserialized, EmbeddedApp, Handle, HandlerOutcome, Input, MessageWire, Mounts,
+    OutEntry, OutSlot, Outs, PublishedThrough, Reads, Serialized, SerializedWire, SoloDeserialized,
+    WireBytes, subscriber,
 };
 use ruststream::testing::embedded::TestApp;
 use ruststream::{
@@ -88,9 +88,9 @@ struct Limits {
 /// Raises an alert for every level at or above the board's limit.
 struct Raise;
 
-impl<Entry> LocalHandle<Frame<'_>, (), Outs<(Entry,)>, (), Limits> for Raise
+impl<Entry> Handle<Frame<'_>, (), Outs<(Entry,)>, (), Limits> for Raise
 where
-    Entry: LocalOutEntry<Alerts, Wire: Publisher>,
+    Entry: OutEntry<Alerts, Wire: Publisher>,
 {
     async fn handle(
         &self,
@@ -114,7 +114,7 @@ fn tank(bus: Bus) -> EmbeddedApp<impl Mounts<State = Limits>> {
     EmbeddedApp::new()
         .with_state(Limits { alarm: 200 })
         .with_broker(bus, |b| {
-            b.include(local_subscriber(LocalMemorySource::new("tank/level"), Raise).build())
+            b.include(subscriber(LocalMemorySource::new("tank/level"), Raise).build())
                 .out(Alerts, LocalMemoryPublish)
         })
 }

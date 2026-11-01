@@ -3,8 +3,8 @@ use core::future::ready;
 
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream_runtime::{
-    Context, Deserialized, HandlerOutcome, Input, LocalHandle, SoloDeserialized, SubscriberSettings,
-    local_subscriber,
+    Context, Deserialized, HandlerOutcome, Input, Handle, SoloDeserialized, SubscriberSettings,
+    subscriber,
 };
 use ruststream_runtime_embassy::{EmbeddedApp, Mounts};
 use ruststream::nonzero;
@@ -26,7 +26,7 @@ impl Input for Reading<'_> {
 
 struct Log;
 
-impl LocalHandle<Reading<'_>> for Log {
+impl Handle<Reading<'_>> for Log {
     fn handle(
         &self,
         reading: &Reading<'_>,
@@ -41,7 +41,7 @@ impl LocalHandle<Reading<'_>> for Log {
 fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(
-            local_subscriber(LocalMemorySource::new("readings"), Log)
+            subscriber(LocalMemorySource::new("readings"), Log)
                 .threads(nonzero!(2))
                 .build(),
         )
