@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
 use crate::error::{DownPublish, Job, Queue, RETRY_DELAY};
-use ruststream_core::PublishOutcome;
+use ruststream_core::{PublishMessageError, PublishOutcome};
 
 /// Publishes one job to `to`.
 async fn publish_job<State: Send + Sync + 'static>(tb: &TestApp<State>, id: u32, to: &'static str) {
@@ -50,7 +50,10 @@ impl Publisher for Refuses1 {
     ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
         let refused = msg.payload().windows(7).any(|w| w == br#""id":1}"#);
         ready(if refused {
-            Err(io::Error::other("refused"))
+            Err(PublishMessageError::with_message(
+                io::Error::other("refused"),
+                msg,
+            ))
         } else {
             Ok(())
         })
@@ -75,7 +78,10 @@ impl Publisher for Refuses12 {
             .iter()
             .any(|id| msg.payload().windows(7).any(|w| w == *id));
         ready(if refused {
-            Err(io::Error::other("refused"))
+            Err(PublishMessageError::with_message(
+                io::Error::other("refused"),
+                msg,
+            ))
         } else {
             Ok(())
         })
@@ -130,7 +136,10 @@ impl Publisher for RefusesJob {
             .windows(wanted.len())
             .any(|w| w == wanted.as_bytes());
         ready(if refused {
-            Err(io::Error::other("refused"))
+            Err(PublishMessageError::with_message(
+                io::Error::other("refused"),
+                msg,
+            ))
         } else {
             Ok(())
         })

@@ -821,7 +821,6 @@ mod tests {
     use alloc::borrow::ToOwned;
     use alloc::format;
     use core::future::ready;
-    use ruststream_core::PublishOutcome;
 
     use super::{PublishingCall, PublishingDef, publishing_metadata};
     use crate::HeaderMap;
@@ -913,6 +912,7 @@ mod tests {
         use crate::testkit::log_capture::{find, start};
         use crate::{HeaderMap, Lend, OutgoingMessage, Publisher};
         use ruststream::memory::{MemoryBroker, MemoryError};
+        use ruststream_core::{PublishMessageError, PublishOutcome};
 
         /// A publisher that always refuses, modelling a broker rejecting the reply.
         #[derive(Clone)]
@@ -925,10 +925,13 @@ mod tests {
 
             fn publish<'msg>(
                 &self,
-                _msg: OutgoingMessage<'msg, &'msg [u8]>,
+                msg: OutgoingMessage<'msg, &'msg [u8]>,
                 _options: Option<&Self::Options>,
             ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
-                ready(Err(MemoryError::ShutDown))
+                ready(Err(PublishMessageError::with_message(
+                    MemoryError::ShutDown,
+                    msg,
+                )))
             }
         }
 

@@ -27,7 +27,6 @@ use std::time::Duration;
 
 use common::{Order, Receipt};
 use futures::{Stream, StreamExt};
-use ruststream::PublishOutcome;
 use ruststream::Settle;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{
@@ -44,6 +43,7 @@ use ruststream::{
     OutgoingFor, OutgoingMessage, PairError, PublishPolicy, Publisher, RedeliveryAddress,
     RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
 };
+use ruststream::{PublishMessageError, PublishOutcome};
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
@@ -443,7 +443,12 @@ impl<P: Publisher> Publisher for PriorityPublisher<P> {
         let mut headers = msg.headers().clone();
         headers.insert("priority", priority.to_string());
         let stamped = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
-        self.inner.publish(stamped, None).await
+        let error = match self.inner.publish(stamped, None).await {
+            Ok(()) => return Ok(()),
+            Err(failed) => failed.into_error(),
+        };
+        // The stamped copy was built here, so the refusal hands back the message it was given.
+        Err(PublishMessageError::with_message(error, msg))
     }
 }
 

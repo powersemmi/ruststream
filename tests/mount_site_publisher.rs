@@ -14,12 +14,12 @@ use std::future::ready;
 
 use common::{Order, Wire};
 
-use ruststream::PublishOutcome;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{Outgoing, PublishLayer, PublishNext, PublishPipeline};
 use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, PairError, Take};
+use ruststream::{PublishMessageError, PublishOutcome};
 
 /// The app-wide middleware: it stamps every publish the service makes.
 #[derive(Clone)]
@@ -134,7 +134,11 @@ impl Publisher for PrefixedPublisher {
         let name = format!("{}{}", self.prefix, msg.name());
         let forwarded =
             OutgoingMessage::new(name.as_str(), msg.payload()).with_headers(msg.headers().clone());
-        self.inner.publish(forwarded, options).await
+        // The wrapper built the forwarded message, so the refusal carries none.
+        self.inner
+            .publish(forwarded, options)
+            .await
+            .map_err(PublishMessageError::without_message)
     }
 }
 

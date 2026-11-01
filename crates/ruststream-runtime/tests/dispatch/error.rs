@@ -26,7 +26,7 @@ use ruststream::{
     AckError, AddressedCopies, BrokerMoves, Lend, OutgoingMessage, PairError, RedeliveryAddress,
     RedeliveryAddressed, Settle, Subscribe, Subscriber, SubscriptionSource, Take,
 };
-use ruststream_core::PublishOutcome;
+use ruststream_core::{PublishMessageError, PublishOutcome};
 use serde::{Deserialize, Serialize};
 
 pub(crate) const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -132,10 +132,13 @@ impl Publisher for Down {
 
     fn publish<'msg>(
         &self,
-        _msg: OutgoingMessage<'msg, &'msg [u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
     ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
-        ready(Err(io::Error::other("broker down")))
+        ready(Err(PublishMessageError::with_message(
+            io::Error::other("broker down"),
+            msg,
+        )))
     }
 }
 
@@ -429,9 +432,15 @@ impl Publisher for RefusesDeadLetter {
         options: Option<&()>,
     ) -> PublishOutcome<'msg, io::Error, Take> {
         if msg.name() == "jobs.dead" {
-            return Err(io::Error::other("dead letter refused"));
+            return Err(PublishMessageError::with_message(
+                io::Error::other("dead letter refused"),
+                msg,
+            ));
         }
-        self.0.publish(msg, options).await.map_err(io::Error::other)
+        self.0
+            .publish(msg, options)
+            .await
+            .map_err(|failed| PublishMessageError::new(io::Error::other(failed.into_error())))
     }
 }
 

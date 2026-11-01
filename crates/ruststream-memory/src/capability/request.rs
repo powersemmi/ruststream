@@ -191,7 +191,7 @@ impl RequestReply for MemoryRequester {
 #[cfg(test)]
 mod tests {
     use futures::StreamExt;
-    use ruststream_core::Settle;
+    use ruststream_core::{PublishMessageError, Settle};
 
     use super::*;
     use crate::capability::tests::replaying;
@@ -235,8 +235,11 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(publish, Err(RequestError::ShutDown)),
-            "{publish:?}"
+            matches!(
+                publish.map_err(PublishMessageError::into_error),
+                Err(RequestError::ShutDown)
+            ),
+            "publish after shutdown"
         );
 
         let request = requester

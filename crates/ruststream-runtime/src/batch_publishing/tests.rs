@@ -275,7 +275,7 @@ impl Publisher for HalfwayPublisher {
         options: Option<&Self::Options>,
     ) -> PublishOutcome<'msg, MemoryError, Take> {
         if self.published.fetch_add(1, Ordering::SeqCst) >= self.succeed_first {
-            return Err(MemoryError::ShutDown);
+            return Err(MemoryError::ShutDown.into());
         }
         self.inner.publish(msg, options).await
     }

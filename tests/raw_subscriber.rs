@@ -234,7 +234,7 @@ impl Publisher for FlakyPublisher {
         options: Option<&Self::Options>,
     ) -> PublishOutcome<'msg, MemoryError, Take> {
         if self.fail_next.swap(false, Ordering::SeqCst) {
-            return Err(MemoryError::ShutDown);
+            return Err(MemoryError::ShutDown.into());
         }
         self.inner.publish(msg, options).await
     }

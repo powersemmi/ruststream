@@ -434,7 +434,7 @@ impl<const CAP: usize> LocalPublisher for LocalMemoryPublisher<CAP> {
         ready(
             self.bus
                 .fanout(name, payload.freeze(), headers)
-                .map_err(Into::into),
+                .map_err(|unsent| unsent.returned(name)),
         )
     }
 }
@@ -501,7 +501,10 @@ impl<const CAP: usize> LocalTestableBroker for ConnectedLocalMemoryBroker<CAP> {
             .bus
             .fanout(name, Bytes::copy_from_slice(payload), headers)
         {
-            panic!("the harness injected into {name:?} and the bus refused it: {refused}");
+            panic!(
+                "the harness injected into {name:?} and the bus refused it: {}",
+                refused.error
+            );
         }
     }
 
@@ -521,7 +524,7 @@ mod tests {
 
     use embassy_futures::block_on;
     use futures::{FutureExt, StreamExt};
-    use ruststream_core::{LocalSettle, LocalSubscriber, OutgoingFor};
+    use ruststream_core::{LocalSettle, LocalSubscriber, OutgoingFor, PublishMessageError};
 
     use super::*;
     use crate::local::drive::{ended, waiting};
@@ -568,7 +571,7 @@ mod tests {
 
             let refused = publisher.publish(reading("temp", b"22"), None).await;
             assert_eq!(
-                refused,
+                refused.map_err(PublishMessageError::into_error),
                 Err(LocalMemoryError::Full {
                     name: "temp".into(),
                     capacity: 1,
@@ -595,7 +598,10 @@ mod tests {
             let in_hand = waiting(&mut stream).unwrap();
 
             assert!(matches!(
-                publisher.publish(reading("temp", b"22"), None).await,
+                publisher
+                    .publish(reading("temp", b"22"), None)
+                    .await
+                    .map_err(PublishMessageError::into_error),
                 Err(LocalMemoryError::Full { .. })
             ));
             in_hand.nack(true).await.unwrap();
@@ -686,7 +692,10 @@ mod tests {
             assert_eq!(closed.subscriptions_closed(), 0);
 
             assert_eq!(
-                publisher.publish(reading("temp", b"21"), None).await,
+                publisher
+                    .publish(reading("temp", b"21"), None)
+                    .await
+                    .map_err(PublishMessageError::into_error),
                 Err(LocalMemoryError::ShutDown)
             );
             assert_eq!(

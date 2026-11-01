@@ -21,9 +21,8 @@ use ruststream::memory::{
 use ruststream_core::PublishOutcome;
 use ruststream_core::{
     AckError, AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, HeaderMap,
-    IncomingMessage, Name, OutgoingFor, OutgoingMessage, PairError, PublishMessageError,
-    PublishPolicy, Publisher, RawMessage, Seekable, Seeker, Settle, Subscribe, Subscriber, Take,
-    nonzero,
+    IncomingMessage, Name, OutgoingFor, OutgoingMessage, PairError, PublishPolicy, Publisher,
+    RawMessage, Seekable, Seeker, Settle, Subscribe, Subscriber, Take, nonzero,
 };
 use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, TestableBroker};
 

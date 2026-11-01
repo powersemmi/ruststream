@@ -38,7 +38,6 @@ use crate::Settle;
 use crate::Take;
 #[cfg(feature = "json")]
 use crate::{BytesMut, Lend, PayloadForm};
-use ruststream_core::PublishOutcome;
 
 /// Fixtures the in-memory broker cannot express: a value the codec cannot encode, a
 /// transactional publisher rigged to fail one step of the protocol, and a policy that
@@ -56,6 +55,7 @@ mod fixtures {
     use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
     use crate::{OwnedTransactions, PairError, PublishPolicy};
     use ruststream::memory::{ConnectedMemoryBroker, MemoryTransaction};
+    use ruststream_core::PublishOutcome;
 
     /// A value JSON cannot encode: an object key must be a string, and this map's are
     /// tuples. Encoding one is a real codec failure, not a stubbed one.
@@ -182,6 +182,7 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
     use core::future::{pending, ready};
 
     use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
+    use ruststream_core::PublishOutcome;
 
     #[derive(Clone)]
     struct PendingCommit;
@@ -885,6 +886,7 @@ async fn the_options_position_starts_empty_and_reaches_the_sink() {
     use std::sync::Mutex;
 
     use crate::{Lend, OutgoingMessage, Publisher};
+    use ruststream_core::PublishOutcome;
 
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
     struct Settings {
@@ -955,6 +957,7 @@ async fn concurrent_batches_take_the_transaction_in_turn() {
     use tokio::task::yield_now;
 
     use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
+    use ruststream_core::PublishOutcome;
 
     #[derive(Debug, Error)]
     #[error("a transaction is already open")]

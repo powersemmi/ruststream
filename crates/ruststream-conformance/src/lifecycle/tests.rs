@@ -905,7 +905,7 @@ impl Publisher for Forgetful {
         self.0
             .publish(msg, options)
             .await
-            .map_err(|failed| ruststream_core::PublishMessageError::new(failed.into_error()))
+            .map_err(|failed| PublishMessageError::new(failed.into_error()))
     }
 }
 
