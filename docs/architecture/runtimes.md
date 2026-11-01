@@ -33,6 +33,13 @@ A body that holds an `Rc` across an `.await` fails at the `include` that mounts 
 The embassy runner polls every handler on its one task and asks nothing of the future, so the same body mounts there.
 A continuation that runs after the settlement (`and_after`, a context hook) follows the same rule: its future is `Send` when the tokio runtime is on and carries no `Send` when only embassy is, so a device continuation may publish through the local bus.
 
+## One trait for both runners
+
+A broker implements one `Publisher`, one `Settle` and one set of capability traits, and both runners use them.
+Their futures and supertraits ask for `Send` (and `Sync`) when `tokio` is on and for nothing when only `embassy` is, so a broker on a device implements the same traits as a broker on a server.
+A broker's option steps bound `PublishSink<Options = ..>` and apply on either runner.
+A build with both features takes the stricter bound: a broker type that holds an `Rc` does not compile next to tokio, and the family's local memory bus shares its state through thread-safe pointers there.
+
 ## What each runner offers
 
 The tokio runner offers `workers(n)`, `threads(n)`, the signals, metrics, OpenTelemetry and the CLI.
