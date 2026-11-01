@@ -1,42 +1,155 @@
 //! The worker pool behind `workers(n)` on a batch subscription: the crew of the per-delivery
 //! pool, fed whole batches.
 //!
-//! The workers start with the subscription, each with a channel of its own and the decode and
+//! The workers start with the subscription, each with an inbox of its own and the decode and
 //! encode buffers its batches run with. The loop polls the subscription only with a worker free,
-//! so at most `count` batches are in flight, and a batch pays one channel send: no task, no
-//! reference count.
+//! so at most `count` batches are in flight, and a batch pays one hand-off through a slot that
+//! was allocated with the crew: no task, no reference count, no allocation.
 
 use std::future::poll_fn;
 use std::num::NonZeroUsize;
 use std::pin::pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 
 use bytes::BytesMut;
+use crossbeam_queue::ArrayQueue;
 use futures::Stream;
-use tokio::sync::mpsc;
+use tokio::sync::Notify;
 use tracing::error;
 
-use super::pool::{Crew, Farewell, Idle, Shared};
+use super::pool::{Crew, Shared};
 use super::{Shutdown, Turn, Workers};
 use crate::BatchSubscriber;
 use ruststream_runtime::{BatchHandler, RetryCopies, run_batch};
 
+/// The workers that are free for a batch, in the order they reported.
+///
+/// A queue of its own rather than a channel: a channel allocates a block as its sends move on,
+/// which is an allocation every few batches, and this one holds one slot per worker for good.
+struct FreeList {
+    queue: ArrayQueue<usize>,
+    reported: Notify,
+}
+
+impl FreeList {
+    fn new(count: usize) -> Self {
+        Self {
+            queue: ArrayQueue::new(count),
+            reported: Notify::new(),
+        }
+    }
+
+    /// A worker is free. Each index is in the queue at most once (a worker reports only after
+    /// it handed its batch back, and again only after the loop took it), so there is always room.
+    fn report(&self, index: usize) {
+        let _ = self.queue.push(index);
+        self.reported.notify_one();
+    }
+
+    /// The next free worker. A report that lands between the pop and the wait leaves a permit
+    /// behind, so the wait returns at once.
+    async fn next(&self) -> usize {
+        loop {
+            if let Some(index) = self.queue.pop() {
+                return index;
+            }
+            self.reported.notified().await;
+        }
+    }
+}
+
+/// The slot a worker's next batch is handed through.
+///
+/// A queue of one rather than a channel, for the same reason as [`FreeList`]. The loop hands a
+/// batch only to a worker it has seen report free, so the slot is empty when it is filled.
+struct Inbox<Batch> {
+    slot: ArrayQueue<Batch>,
+    arrived: Notify,
+    closed: AtomicBool,
+    gone: AtomicBool,
+}
+
+impl<Batch> Inbox<Batch> {
+    fn new() -> Self {
+        Self {
+            slot: ArrayQueue::new(1),
+            arrived: Notify::new(),
+            closed: AtomicBool::new(false),
+            gone: AtomicBool::new(false),
+        }
+    }
+
+    /// Hands the worker its batch, or says it cannot: the worker ended, or its slot is taken.
+    fn hand(&self, batch: Batch) -> Result<(), ()> {
+        // The worker marks itself gone before it reports free, and the loop learns of the free
+        // worker through the queue, so a worker that ended is seen ended here.
+        if self.gone.load(Ordering::Acquire) || self.slot.push(batch).is_err() {
+            return Err(());
+        }
+        self.arrived.notify_one();
+        Ok(())
+    }
+
+    /// No more batches: the worker finishes the one it holds, drains the slot and ends.
+    fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.arrived.notify_one();
+    }
+
+    /// The next batch, or `None` once the inbox is closed and empty. The flag is read before the
+    /// slot, so a batch handed before the close is never missed.
+    async fn next(&self) -> Option<Batch> {
+        loop {
+            let closed = self.closed.load(Ordering::Acquire);
+            if let Some(batch) = self.slot.pop() {
+                return Some(batch);
+            }
+            if closed {
+                return None;
+            }
+            self.arrived.notified().await;
+        }
+    }
+}
+
+/// A worker's report that it ended mid-batch: its index once more, so a worker that panicked
+/// outside the handler's future is found by the next batch the loop hands it, rather than never
+/// picked again. A worker that leaves its loop disarms it first.
+struct Farewell<Batch> {
+    ended: Option<(Arc<FreeList>, Arc<Inbox<Batch>>)>,
+    index: usize,
+}
+
+impl<Batch> Drop for Farewell<Batch> {
+    fn drop(&mut self) {
+        if let Some((free, inbox)) = &self.ended {
+            inbox.gone.store(true, Ordering::Release);
+            free.report(self.index);
+        }
+    }
+}
+
 /// One worker: a sequential loop over the batches handed to it, with buffers of its own.
 async fn work<Batch, Body, Cx, State, Retry>(
     shared: Arc<Shared<Body, State, Cx, Retry>>,
-    mut inbox: mpsc::Receiver<Batch>,
-    idle: Idle,
+    inbox: Arc<Inbox<Batch>>,
+    free: Arc<FreeList>,
+    index: usize,
 ) where
     Retry: RetryCopies<Cx>,
     Body: BatchHandler<Batch, Cx, State>,
     Cx: Send + Sync + 'static,
     State: Send + Sync,
 {
+    let mut farewell = Farewell {
+        ended: Some((Arc::clone(&free), Arc::clone(&inbox))),
+        index,
+    };
     let mut scratch = Body::Scratch::default();
     let mut encode = BytesMut::new();
-    let mut farewell = Farewell(Some(idle));
-    while let Some(batch) = inbox.recv().await {
+    while let Some(batch) = inbox.next().await {
         // Turbofish: the adapter handlers are generic over the batch context, so the worker's
         // own parameter names it.
         run_batch::<_, _, Cx, _, _, _>(
@@ -51,16 +164,10 @@ async fn work<Batch, Body, Cx, State, Retry>(
             &shared.failure,
         )
         .await;
-        // The loop keeps its end open until the workers are joined; a closed one means the loop
-        // is gone, and so is anything more to do.
-        if let Some(idle) = &farewell.0
-            && idle.loop_side.send(idle.index).await.is_err()
-        {
-            break;
-        }
+        free.report(index);
     }
     // Out of the loop on its own terms: the loop is stopping or gone, and reads no more reports.
-    farewell.0 = None;
+    farewell.ended = None;
 }
 
 /// Drives `subscriber` through `shared.handler` on `workers.count()` long-lived workers until
@@ -82,22 +189,20 @@ pub(super) async fn run<Sub, Body, Cx, State, Retry>(
     let count = workers.count().get();
     // Every worker is free at the start, so the queue of free ones is seeded with all of them;
     // it never holds more.
-    let (free_side, mut free) = mpsc::channel(count);
+    let free = Arc::new(FreeList::new(count));
     let mut inboxes = Vec::with_capacity(count);
     let mut crew = Crew(Vec::with_capacity(count));
     for index in 0..count {
-        let (inbox_side, inbox) = mpsc::channel(1);
-        let idle = Idle {
+        let inbox = Arc::new(Inbox::new());
+        crew.0.push(tokio::spawn(work(
+            Arc::clone(&shared),
+            Arc::clone(&inbox),
+            Arc::clone(&free),
             index,
-            loop_side: free_side.clone(),
-        };
-        crew.0
-            .push(tokio::spawn(work(Arc::clone(&shared), inbox, idle)));
-        inboxes.push(inbox_side);
-        // Room for every worker was made above, and nothing has taken any yet.
-        let _ = free_side.try_send(index);
+        )));
+        inboxes.push(inbox);
+        free.report(index);
     }
-    drop(free_side);
     // The registration's own batch size, straight to the broker: whatever comes back is the
     // batch the handler sees.
     let mut stream = pin!(subscriber.batches(batch_size));
@@ -113,17 +218,20 @@ pub(super) async fn run<Sub, Body, Cx, State, Retry>(
         let worker = if let Some(worker) = held {
             worker
         } else {
-            // The token first only where no worker is free: a pool with room pays the channel
-            // alone.
-            let freed = poll_fn(|cx| match free.poll_recv(cx) {
-                Poll::Ready(index) => Poll::Ready(index.map_or(Turn::Ended, Turn::Delivery)),
-                Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
-            })
-            .await;
+            // The token first only where no worker is free: a pool with room pays the queue
+            // alone. A worker that ends reports itself once more, so the wait always has one
+            // to find.
+            let freed = {
+                let mut next = pin!(free.next());
+                poll_fn(|cx| match next.as_mut().poll(cx) {
+                    Poll::Ready(index) => Poll::Ready(Turn::Delivery(index)),
+                    Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
+                })
+                .await
+            };
             match freed {
                 Turn::Delivery(index) => *held.insert(index),
-                // Every worker gone is a pool with nobody to hand anything to.
-                Turn::Ended | Turn::Shutdown => break,
+                _ => break,
             }
         };
         // The stream first, the token only where the stream has nothing: see `turn_into`, whose
@@ -137,7 +245,7 @@ pub(super) async fn run<Sub, Body, Cx, State, Retry>(
         match pulled {
             Turn::Delivery(Ok(batch)) => {
                 held = None;
-                if inboxes[worker].send(batch).await.is_err() {
+                if inboxes[worker].hand(batch).is_err() {
                     // A worker only disappears if its task panicked; stop pulling rather than
                     // running on fewer workers than the registration asked for.
                     error!(
@@ -166,7 +274,8 @@ pub(super) async fn run<Sub, Body, Cx, State, Retry>(
     }
     // Closing the inboxes lets each worker finish what it holds and exit; the free queue stays
     // open until then, so none of them mistakes a late report for the end.
-    drop(inboxes);
+    for inbox in &inboxes {
+        inbox.close();
+    }
     crew.join().await;
-    drop(free);
 }
