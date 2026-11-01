@@ -672,10 +672,34 @@ impl NeutralArena {
             // `LocalPublisher`, and the multi-thread runner checks `Send` at its mount.
             let capability = Runtime::Embassy.capability(out.bounds);
             let body = body_ty(out.bodies.as_ref());
-            // `'static` so a body can move a clone of the entry into a continuation.
             bounds.push(quote! {
-                #entry: 'static + ::ruststream::runtime::SlotEntry<#marker, #body, Wire: #capability>
+                #entry: ::ruststream::runtime::SlotEntry<#marker, #body, Wire: #capability>
             });
+            // A cloneable slot is one a body moves into a continuation, which the multi-thread
+            // runner needs `Send` and `'static`, publish future included. A body that never
+            // clones asks for none of it, so the embedded runner's `!Send` publishers stay legal.
+            let cloned = out
+                .bounds
+                .iter()
+                .any(|bound| capability_named(bound, &["Clone"]));
+            if cloned {
+                bounds.push(quote! {
+                    #entry: 'static
+                        + ::ruststream::runtime::MaybeSendSync
+                        + ::ruststream::runtime::MaybeSendPublisher
+                });
+                bounds.push(quote! {
+                    #entry: for<'__rs_sink> ::ruststream::runtime::SlotPublish<
+                        #marker,
+                        #body,
+                        Sink<'__rs_sink> = &'__rs_sink #entry,
+                    >
+                });
+                bounds.push(quote! {
+                    <#entry as ::ruststream::runtime::SlotPublish<#marker, #body>>::Enc:
+                        ::ruststream::runtime::MaybeSendSync
+                });
+            }
             if out.bounds.iter().any(|bound| {
                 capability_named(
                     bound,

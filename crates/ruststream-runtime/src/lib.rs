@@ -173,7 +173,9 @@ pub use failure::DispatchFailure;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use handle::{AnyOutPos, SelectEntry, SlotAdmit, SlotEntry, SlotPublish, SlotTransactions};
+pub use handle::{
+    AnyOutPos, MaybeSendPublisher, SelectEntry, SlotAdmit, SlotEntry, SlotPublish, SlotTransactions,
+};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use handle::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
@@ -231,9 +233,12 @@ pub use slot::{BindSlotsBody, LocalBindSlotsBody};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use handler::Continuation;
+// The bound a body that clones its entry into a continuation asks of it.
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 #[doc(hidden)]
 pub use handler::HandlerResult;
+#[doc(hidden)]
+pub use handler::MaybeSendSync;
 #[cfg(feature = "alloc")]
 pub use in_messages::{
     CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,

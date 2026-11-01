@@ -10,12 +10,10 @@ use core::marker::PhantomData;
 use core::ops::Deref;
 
 use crate::codec::Codec;
-use crate::handler::MaybeSendSync;
-use crate::publish::LocalPublishSink;
-#[cfg(feature = "tokio")]
-use crate::publish::PublishSink;
 use crate::publish::{Admits, TransactionScope, TypedTransaction};
-use crate::publish::{HeadersUnset, LocalOutPipeline, MessageBody, OutPipeline, PublishBuilder};
+use crate::publish::{
+    HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, OutPipeline, PublishBuilder,
+};
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 use crate::{
     HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, OwnedTransactions, Publisher,
@@ -28,28 +26,36 @@ use super::local_entry::{LocalSlot, SlotEncoding};
 
 /// An arena entry of either runner, as a runtime-neutral body holds it: a window onto the live
 /// value the slot's policy paired.
-pub trait SlotEntry<M, Body = ()>: Deref<Target = Self::Wire> + MaybeSendSync {
+pub trait SlotEntry<M, Body = ()>: Deref<Target = Self::Wire> {
     /// The live value the slot's policy paired.
     type Wire;
 }
 
-impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for Slot<M, W, E, Pipe, Body>
-where
-    W: MaybeSendSync,
-    E: MaybeSendSync,
-    Pipe: MaybeSendSync,
-{
+impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for Slot<M, W, E, Pipe, Body> {
     type Wire = W;
 }
 
-impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body>
-where
-    W: MaybeSendSync,
-    E: MaybeSendSync,
-    Pipe: MaybeSendSync,
-{
+impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body> {
     type Wire = W;
 }
+
+/// A publisher whose futures are `Send` where the runtime crate's `tokio` feature is on, and any
+/// publisher otherwise. A body that clones its entry into a continuation asks it of the entry,
+/// so that a publish through `&entry` is proved `Send` for a body generic over its entry.
+#[cfg(feature = "tokio")]
+#[doc(hidden)]
+pub trait MaybeSendPublisher: Publisher {}
+
+#[cfg(feature = "tokio")]
+impl<Entry: Publisher + ?Sized> MaybeSendPublisher for Entry {}
+
+/// See the `tokio` form: without the feature every entry qualifies.
+#[cfg(not(feature = "tokio"))]
+#[doc(hidden)]
+pub trait MaybeSendPublisher {}
+
+#[cfg(not(feature = "tokio"))]
+impl<Entry: ?Sized> MaybeSendPublisher for Entry {}
 
 /// An entry whose live value publishes: the slot itself publishes through its path, and
 /// [`message`](Self::message) starts a typed publish over the slot's codec and dictionary.
@@ -58,15 +64,7 @@ pub trait SlotPublish<M, Body = ()>:
 {
     /// The codec typed publishes through the slot encode with.
     type Enc: SlotEncoding;
-    /// The sink a publish through the slot travels. With the `tokio` feature it is a
-    /// [`PublishSink`], which is what proves a body's publish future `Send` where the body is
-    /// generic over its entry.
-    #[cfg(feature = "tokio")]
-    type Sink<'a>: PublishSink<Options = <Self::Wire as LocalPublisher>::Options>
-    where
-        Self: 'a;
     /// The sink a publish through the slot travels.
-    #[cfg(not(feature = "tokio"))]
     type Sink<'a>: LocalPublishSink<Options = <Self::Wire as LocalPublisher>::Options>
     where
         Self: 'a;
@@ -106,13 +104,12 @@ where
     }
 }
 
-#[cfg(not(feature = "tokio"))]
 impl<M, W, E, Pipe, Body> SlotPublish<M, Body> for LocalSlot<M, W, E, Pipe, Body>
 where
     M: OutSlot,
-    W: LocalPublisher + MaybeSendSync,
-    E: SlotEncoding + MaybeSendSync,
-    Pipe: LocalOutPipeline<W> + MaybeSendSync,
+    W: LocalPublisher,
+    E: SlotEncoding,
+    Pipe: LocalOutPipeline<W>,
 {
     type Enc = E;
     type Sink<'a>

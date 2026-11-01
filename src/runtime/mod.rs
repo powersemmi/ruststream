@@ -42,8 +42,8 @@ pub use ruststream_runtime::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{
-    AnyOutPos, BindSlotsBody, LocalBindSlotsBody, SelectEntry, SlotEntry, SlotPublish,
-    SlotTransactions,
+    AnyOutPos, BindSlotsBody, LocalBindSlotsBody, MaybeSendPublisher, MaybeSendSync, SelectEntry,
+    SlotEntry, SlotPublish, SlotTransactions,
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
