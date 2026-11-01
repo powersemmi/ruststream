@@ -10,7 +10,7 @@
 //!
 //! A route the fold does not open is a compile error at the runner's call, naming it.
 
-// Written over the local twins of the contract for a runner that polls on one thread: the
+// Written over the contract traits for a runner that polls on one thread: the
 // futures are `Send` exactly where the types they run are, and nothing here spawns them.
 #![allow(clippy::future_not_send)]
 

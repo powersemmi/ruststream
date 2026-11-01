@@ -119,8 +119,7 @@ macro_rules! observed {
 /// says how each delivery lends its headers to the context (see [`LendHeaders`]).
 // The parts are independent and each runner passes its own; bundling them into a struct would
 // hide that.
-// Written over the local twins of the contract, so the future is `Send` exactly where the types
-// it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
+// Written over the contract traits, so the future is `Send` exactly where the types it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
@@ -303,8 +302,7 @@ pub fn placed<C>(workers: Workers, delivery: &Delivery<C>) -> Workers {
 }
 
 /// One delivery, end to end: the handler, the settle and what the delivery leaves behind.
-// Written over the local twins of the contract, so the future is `Send` exactly where the types
-// it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
+// Written over the contract traits, so the future is `Send` exactly where the types it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 // Each part is the delivery's own or the runner's; bundling them would hide which is which.
@@ -533,8 +531,7 @@ fn record_call<C>(
 /// once the batch has settled (per-element outcomes make a gated hook ill-defined on a batch).
 // The loop hands this everything one batch needs, the buffers it lends included: see
 // spawn_dispatch_workers.
-// Written over the local twins of the contract, so the future is `Send` exactly where the types
-// it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
+// Written over the contract traits, so the future is `Send` exactly where the types it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]

@@ -215,11 +215,11 @@ use parse::SubscriberArgs;
 ///
 /// # On the embassy runtime
 ///
-/// With the facade's `embassy` feature the attribute emits the local forms: the body implements
-/// `Handle` instead of `Handle`, and `Out<impl Publisher>` asks for the `Publisher` of
-/// the board's broker (each publisher capability maps to its `Local` twin). The body's future is
-/// polled on the app's one task, so it may hold values that are not `Send` across an `.await`. A
-/// batch handler takes no `Out` parameter there, and a handler with one does not reply.
+/// With the facade's `embassy` feature and the Tokio runner off, the attribute emits the same
+/// body, and `Out<impl Publisher>` asks for the `Publisher` of the board's broker. Nothing is
+/// asked to be `Send` there: the body's future is polled on the app's one task, so it may hold
+/// values that are not `Send` across an `.await`. A batch handler takes no `Out` parameter, and a
+/// handler with one does not reply.
 ///
 /// ```ignore
 /// use std::rc::Rc;

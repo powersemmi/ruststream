@@ -8,7 +8,7 @@
 //! fold opens it like a plain registration and hands the opened parts to the plan's
 //! [`OneTaskDispatch::run`].
 
-// Written over the local twins of the contract for a runner that polls on one thread.
+// Written over the contract traits for a runner that polls on one thread.
 #![allow(clippy::future_not_send)]
 
 use alloc::sync::Arc;

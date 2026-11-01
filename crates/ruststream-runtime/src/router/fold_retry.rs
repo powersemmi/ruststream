@@ -6,7 +6,7 @@
 //! it calls per copy. Here nothing is erased: the route carries the policy, and the plan's store
 //! holds the publisher it pairs into, so a copy leaves with no dynamic call.
 
-// Written over the local twins of the contract for a runner that polls on one thread.
+// Written over the contract traits for a runner that polls on one thread.
 #![allow(clippy::future_not_send)]
 
 use alloc::borrow::Cow;

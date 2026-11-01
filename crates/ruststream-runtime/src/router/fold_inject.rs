@@ -2,7 +2,7 @@
 //! router, its slots paired against the connected broker of the local family when the
 //! subscription opens and before its first delivery.
 
-// Written over the local twins of the contract for a runner that polls on one thread: the
+// Written over the contract traits for a runner that polls on one thread: the
 // futures are `Send` exactly where the types they run are, and nothing here spawns them.
 #![allow(clippy::future_not_send)]
 

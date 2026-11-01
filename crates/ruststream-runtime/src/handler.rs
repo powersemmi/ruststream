@@ -677,7 +677,8 @@ impl<E> IntoOutcome for Result<HandlerOutcome, E> {
 /// The same trait serves both pipeline levels: a raw delivery (`Handler<M>` where
 /// `M: IncomingMessage`) and a decoded value (`Handler<T>`). The input is only ever borrowed, so
 /// it may be unsized (`Handler<[u8]>` for a byte-level handler). Implementations are
-/// `Send + Sync` so a single handler can be shared across many concurrent inputs.
+/// `Send + Sync` next to the Tokio runner, so a single handler can be shared across many
+/// concurrent inputs, and need not be without it.
 ///
 /// # Examples
 ///
