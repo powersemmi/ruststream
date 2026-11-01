@@ -141,6 +141,9 @@ test:
     cargo test -p ruststream-testing --features embassy,json
     # The same crate on the tokio runner alone: every embedded target gates itself on embassy.
     cargo test -p ruststream-testing --features tokio,json
+    # The Tokio runner off: the contract traits ask nothing of a broker's types, and a broker that
+    # keeps its state in `Rc` runs a body written once for every broker.
+    cargo test --no-default-features --features memory,testing,json,embassy --test local_family
     # The reduced-feature legs CI runs, in CI's order. A module compiled only with a feature off
     # is invisible to the workspace run above, so an API a refactor removed can survive there
     # until CI says otherwise: `codec_free_lanes` and `ui_codec_free` build only where no codec

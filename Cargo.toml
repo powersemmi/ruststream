@@ -931,6 +931,13 @@ name = "suite"
 path = "tests/main.rs"
 required-features = ["tokio"]
 
+# The brokers of this suite keep their state in `Rc`, which a multi-thread runtime refuses, so it
+# is built where the Tokio runner is off.
+[[test]]
+name = "local_family"
+path = "tests/local_family.rs"
+required-features = ["memory", "testing"]
+
 # The tests of the examples, one module per example: a binary of its own, so it compiles beside
 # the suite instead of after it.
 [[test]]

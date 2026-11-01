@@ -1,6 +1,7 @@
-//! The `Local*` contract family: a broker whose types are not `Send` implements it, every Send
-//! broker implements it through the blanket impls, and a body written once over it runs on the
-//! test's own thread.
+//! The contract traits implemented by a broker whose types are not `Send`, and a body written
+//! once over them running on the test's own thread. Built where the Tokio runner is off, because
+//! it asks every broker for `Send`.
+#![cfg(not(feature = "tokio"))]
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -13,17 +14,11 @@ use std::task::Poll;
 
 use futures::{Stream, StreamExt, stream};
 use ruststream::PublishOutcome;
-use ruststream::memory::{
-    ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemoryPublisher, MemoryRequester,
-    MemorySource, MemorySubscriber, MemoryTransaction, Retaining,
-};
-use ruststream::testing::InProcess;
+use ruststream::memory::MemoryBroker;
 use ruststream::{
-    AckError, BatchSubscriber, Broker, BrokerMoves, BytesMut, ConnectedBroker, DefaultPublish,
-    DescribeServer, HeaderMap, IncomingMessage, OutgoingFor, OutgoingMessage, OwnedTransactions,
-    PairError, Positioned, PublishPolicy, Publisher, RedeliveryAddressed, RequestReply, Seekable,
-    Seeker, Settle, Subscribe, Subscriber, SubscriptionSource, Take, Transaction,
-    TransactionalPublisher,
+    AckError, Broker, BrokerMoves, BytesMut, ConnectedBroker, DefaultPublish, HeaderMap,
+    IncomingMessage, OutgoingFor, OutgoingMessage, PairError, PublishPolicy, Publisher, Settle,
+    Subscribe, Subscriber, Take,
 };
 use tokio::task::{self, LocalSet};
 
@@ -31,10 +26,10 @@ type BoxError = Box<dyn Error + Send + Sync>;
 
 const ORDERS: &[&[u8]] = &[b"order-1", b"order-2", b"order-3"];
 
-/// The live form a broker's default policy pairs into, read through the local family.
+/// The live form a broker's default policy pairs into, read through the contract traits.
 type LocalLive<C> = <<C as DefaultPublish>::Policy as PublishPolicy<C>>::Live;
 
-/// What a runtime over the local family runs: connect, subscribe, publish, receive, settle,
+/// What a runtime over the contract traits runs: connect, subscribe, publish, receive, settle,
 /// shut down. Written once, it accepts a `!Send` broker and a Send one alike.
 async fn round_trip<B>(broker: B, orders: &[&[u8]]) -> Result<Vec<Vec<u8>>, BoxError>
 where
@@ -86,69 +81,16 @@ async fn a_broker_that_is_not_send_runs_the_local_body_on_a_local_set() -> Resul
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn memory_broker_meets_the_local_bounds_through_the_blanket_impls() -> Result<(), BoxError> {
+async fn memory_broker_runs_the_body_written_for_a_broker_that_is_not_send() -> Result<(), BoxError>
+{
     let received = round_trip(MemoryBroker::new(), ORDERS).await?;
 
     assert_eq!(received, expected());
     Ok(())
 }
 
-/// The bounds a runtime over the local family states for every capability, met by the reference
-/// broker's types through the blanket impls alone.
-fn capability_twins<Conn, Src, Sub, Msg, Pub, Tx, Req>()
-where
-    Conn: Subscribe + DefaultPublish,
-    Src: SubscriptionSource<Conn> + RedeliveryAddressed<Conn>,
-    Sub: BatchSubscriber + Seekable<Seeker: Seeker>,
-    Msg: Positioned,
-    Pub: TransactionalPublisher + OwnedTransactions<Transaction = Tx>,
-    Tx: Transaction,
-    Req: RequestReply,
-{
-}
-
-#[test]
-fn memory_broker_meets_every_capability_twin_through_the_blanket_impls() {
-    fn broker<B: Broker + DescribeServer + InProcess>() {}
-
-    broker::<MemoryBroker<Retaining>>();
-    capability_twins::<
-        ConnectedMemoryBroker<Retaining>,
-        MemorySource,
-        MemorySubscriber<Retaining>,
-        MemoryMessage<Retaining>,
-        MemoryPublisher,
-        MemoryTransaction,
-        MemoryRequester,
-    >();
-}
-
-/// Every Send trait reaches its twin through the blanket impl; the subscribers admit an unsized
-/// implementor, the publishers are `Clone` and so sized.
-#[test]
-fn implementations_meet_their_local_twins() {
-    fn local<Sub, Pub, Req>()
-    where
-        Sub: ?Sized + Subscriber + BatchSubscriber + Seekable,
-        Pub: Publisher + TransactionalPublisher + OwnedTransactions,
-        Req: RequestReply,
-    {
-    }
-
-    fn send<Sub, Pub, Req>()
-    where
-        Sub: ?Sized + Subscriber + BatchSubscriber + Seekable,
-        Pub: Publisher + TransactionalPublisher + OwnedTransactions,
-        Req: RequestReply,
-    {
-        local::<Sub, Pub, Req>();
-    }
-
-    send::<MemorySubscriber<Retaining>, MemoryPublisher, MemoryRequester>();
-}
-
 // A broker over a client that keeps its state in `Rc` and `RefCell`: none of its types is `Send`,
-// so it implements the local family and nothing else.
+// so it implements the contract traits without asking for `Send`.
 
 #[derive(Default)]
 struct State {
