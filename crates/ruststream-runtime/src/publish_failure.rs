@@ -474,6 +474,17 @@ impl ErrorHook {
         self.0.react(Failures::one(Failed::new(error, message)))
     }
 
+    /// Hands the failure of a batch of messages that left in one publish to the handler's
+    /// continuation, which the caller runs: one [`Failed`] per message, all with the one cause.
+    pub(crate) fn react_all(self, error: BoxError, messages: Vec<FailedMessage>) -> Continuation {
+        let cause = Arc::new(SharedCause(error));
+        let failures = messages
+            .into_iter()
+            .map(|message| Failed::new(Box::new(Arc::clone(&cause)), message))
+            .collect();
+        self.0.react(Failures::many(failures))
+    }
+
     /// Splits the hook of a uniform batch outcome over its `elements`: the closure runs once,
     /// with every element's failure, after the last element's publish has been reported.
     // Without the `tokio` feature the runner is single-threaded and the closure carries no `Send`,
@@ -490,6 +501,23 @@ impl ErrorHook {
 impl fmt::Debug for ErrorHook {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ErrorHook").finish_non_exhaustive()
+    }
+}
+
+/// The one error of a publish that carried several messages, which each of their [`Failed`]
+/// reports.
+#[derive(Debug)]
+struct SharedCause(BoxError);
+
+impl fmt::Display for SharedCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl StdError for SharedCause {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.0.source()
     }
 }
 
@@ -553,6 +581,12 @@ impl Reaction {
     #[must_use]
     pub fn succeeded(self) -> Option<Continuation> {
         self.0.then
+    }
+
+    /// What follows the one publish of a batch that failed: the `.error` continuation, told of
+    /// every message the publish carried.
+    pub(crate) fn failed_all(self, error: BoxError, messages: Vec<FailedMessage>) -> Continuation {
+        self.0.error.react_all(error, messages)
     }
 
     /// What follows a publish that failed: the `.error` continuation, given the cause.

@@ -9,7 +9,6 @@ use tokio_util::task::TaskTracker;
 
 use super::super::batch::handled;
 use super::super::dispatch::Delivery;
-use super::super::handler::HandlerResult;
 use super::super::publish::{Transactional, TypedPublisher};
 use super::*;
 use crate::codec::JsonCodec;
@@ -18,8 +17,7 @@ use crate::testkit::Tracked;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 use crate::testkit::log_capture;
 use crate::{
-    HeaderMap, IncomingMessage, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource,
-    Take,
+    IncomingMessage, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource, Take,
 };
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher};
 
