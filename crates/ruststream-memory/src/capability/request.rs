@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use bytes::Bytes;
 use thiserror::Error;
 use tokio::{sync::mpsc, time::timeout};
 
@@ -15,6 +16,18 @@ use crate::{Discarding, MemoryMessage, MemoryState};
 use ruststream_core::{
     BytesMut, OutgoingMessage, PublishOutcome, Publisher, RequestReply, Str, Take,
 };
+
+/// An inbox name as the bytes of a `reply-to` value, over the `Arc` the registry keeps.
+///
+/// `Arc<str>` does not view as bytes by itself; this holder does, so [`Bytes::from_owner`] shares
+/// the name instead of copying it.
+struct InboxName(Arc<str>);
+
+impl AsRef<[u8]> for InboxName {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
 
 /// Errors returned by [`MemoryRequester`] operations.
 #[derive(Debug, Error)]
@@ -129,7 +142,7 @@ impl Publisher for MemoryRequester {
         let (name, payload, headers) = msg.into_parts();
         ready(
             self.state
-                .fanout_unsent(name, payload.freeze(), headers)
+                .fanout_unsent(name, payload, headers)
                 .map_err(|unsent| (*unsent).returned_as(name, |_| RequestError::ShutDown)),
         )
     }
@@ -146,21 +159,20 @@ impl RequestReply for MemoryRequester {
         wait: Duration,
     ) -> Result<Self::Reply, Self::Error> {
         let id = self.state.inbox_seq.fetch_add(1, Ordering::Relaxed);
-        let inbox = format!("_inbox.{id}");
+        let inbox: Arc<str> = Arc::from(format!("_inbox.{id}"));
         let (tx, mut rx) = mpsc::unbounded_channel();
         self.state
-            .register(&inbox, tx.clone())
+            .register_shared(Arc::clone(&inbox), tx.clone())
             .map_err(|_| RequestError::ShutDown)?;
 
         // The name is the caller's buffer, so it outlives the message consumed here; the inbox
         // is written into the request's own map rather than into a copy of it.
         let (subject, payload, mut headers) = msg.into_parts();
-        headers.insert(Str::from_static("reply-to"), inbox.clone());
-        if self
-            .state
-            .fanout(subject, payload.freeze(), headers)
-            .is_err()
-        {
+        headers.insert(
+            Str::from_static("reply-to"),
+            Bytes::from_owner(InboxName(Arc::clone(&inbox))),
+        );
+        if self.state.fanout(subject, payload, headers).is_err() {
             self.state.unregister(&inbox);
             return Err(RequestError::ShutDown);
         }
@@ -311,6 +323,45 @@ mod tests {
             Bus::ShutDown(_) => false,
         };
         assert!(!inbox_leaked);
+    }
+
+    /// The inbox is named once: the registry key and the `reply-to` value the answerer reads are
+    /// the same bytes, so reading the header back is a reference count, not a copy.
+    #[tokio::test]
+    async fn the_reply_address_is_the_name_the_registry_holds() {
+        let broker = MemoryBroker::new();
+        let mut service = broker.subscribe("svc.echo");
+        let publisher = broker.publisher();
+        let requester = broker.requester();
+
+        let respond = async {
+            let mut stream = std::pin::pin!(service.stream());
+            let msg = stream.next().await.unwrap().unwrap();
+            let reply_to = msg.headers().get_shared("reply-to").unwrap();
+            let registry_key = match &*broker.state.subscribers.lock().unwrap() {
+                Bus::Live(registry) => registry
+                    .names
+                    .keys()
+                    .find(|name| name.starts_with("_inbox."))
+                    .map(|name| name.as_ptr()),
+                Bus::ShutDown(_) => None,
+            };
+            let name = str::from_utf8(&reply_to).unwrap().to_owned();
+            publisher
+                .publish(OutgoingMessage::new(&name, b"pong"), None)
+                .await
+                .unwrap();
+            msg.ack().await.unwrap();
+            (reply_to.as_ptr(), registry_key)
+        };
+        let request = requester.request(
+            OutgoingMessage::new("svc.echo", b"ping".as_slice()),
+            Duration::from_secs(1),
+        );
+
+        let (reply, (header_ptr, registry_ptr)) = futures::join!(request, respond);
+        reply.unwrap();
+        assert_eq!(Some(header_ptr), registry_ptr);
     }
 
     /// A request inbox is used once and never subscribed again, so what a retaining broker recorded

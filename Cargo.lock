@@ -1633,6 +1633,7 @@ dependencies = [
 name = "ruststream-memory"
 version = "0.8.0"
 dependencies = [
+ "allocation-counter",
  "bytes",
  "bytes-utils",
  "critical-section",

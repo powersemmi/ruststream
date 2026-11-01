@@ -12,6 +12,7 @@ use std::{
 };
 
 #[cfg(any(feature = "testing", test))]
+use bytes::Bytes;
 use bytes_utils::Str;
 
 use super::DeliveryInner;
@@ -263,7 +264,7 @@ impl NameLog {
         self.entries
             .iter()
             .map(|entry| {
-                RawMessage::new(name.clone(), entry.shared.payload.clone())
+                RawMessage::new(name.clone(), Bytes::copy_from_slice(&entry.shared.payload))
                     .with_headers(entry.shared.headers.clone())
             })
             .collect()
