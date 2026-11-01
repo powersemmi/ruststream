@@ -11,9 +11,7 @@ use core::ops::Deref;
 
 use crate::codec::Codec;
 use crate::publish::{Admits, TransactionScope, TypedTransaction};
-use crate::publish::{
-    HeadersUnset, LocalOutPipeline, MessageBody, OutPipeline, PublishBuilder, PublishSink,
-};
+use crate::publish::{HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishSink};
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 use crate::{
     MaybeSendSync, OutgoingDestination, OwnedTransactions, Publisher, TransactionalPublisher,
@@ -21,7 +19,6 @@ use crate::{
 
 use super::arena::Outs;
 use super::entry::Slot;
-use super::local_entry::{LocalSlot, SlotEncoding};
 
 /// An arena entry of either runner, as a runtime-neutral body holds it: a window onto the live
 /// value the slot's policy paired.
@@ -34,53 +31,18 @@ impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for Slot<M, W, E, Pipe, Body> {
     type Wire = W;
 }
 
-impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body> {
-    type Wire = W;
-}
-
-/// A publisher whose futures are `Send` where the runtime crate's `tokio` feature is on, and any
-/// publisher otherwise. A body that clones its entry into a continuation asks it of the entry,
-/// so that a publish through `&entry` is proved `Send` for a body generic over its entry. `Options`
-/// is the wired publisher's per-message settings, which the entry publishes with, so a broker's
-/// builder steps stay on the entry's `message(..)`.
-#[cfg(feature = "tokio")]
-#[doc(hidden)]
-pub trait MaybeSendPublisher<Options>: Publisher<Options = Options> {}
-
-#[cfg(feature = "tokio")]
-impl<Entry: Publisher> MaybeSendPublisher<Entry::Options> for Entry {}
-
-/// See the `tokio` form: without the feature every entry qualifies.
-#[cfg(not(feature = "tokio"))]
-#[doc(hidden)]
-pub trait MaybeSendPublisher<Options> {}
-
-#[cfg(not(feature = "tokio"))]
-impl<Entry: ?Sized, Options> MaybeSendPublisher<Options> for Entry {}
-
 /// An entry whose publish sink is the entry itself, which is what lets a body generic over its
-/// entry prove its publish future `Send` where the `tokio` feature is on. Every entry qualifies
-/// without the feature, and the bound then states nothing about the sink.
-#[cfg(feature = "tokio")]
+/// entry prove its publish future `Send` where the `tokio` feature is on.
 #[doc(hidden)]
 pub trait MaybeSendSink<M, Body = ()>:
     'static + for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Self>
 {
 }
 
-#[cfg(feature = "tokio")]
 impl<Entry, M, Body> MaybeSendSink<M, Body> for Entry where
     Entry: 'static + for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Entry>
 {
 }
-
-/// See the `tokio` form: without the feature every entry qualifies.
-#[cfg(not(feature = "tokio"))]
-#[doc(hidden)]
-pub trait MaybeSendSink<M, Body = ()> {}
-
-#[cfg(not(feature = "tokio"))]
-impl<Entry: ?Sized, M, Body> MaybeSendSink<M, Body> for Entry {}
 
 /// An entry whose live value publishes: the slot itself publishes through its path, and
 /// [`message`](Self::message) starts a typed publish over the slot's codec and dictionary.
@@ -89,7 +51,7 @@ pub trait SlotPublish<M, Body = ()>:
     + Publisher<Options = <<Self as SlotEntry<M, Body>>::Wire as Publisher>::Options>
 {
     /// The codec typed publishes through the slot encode with.
-    type Enc: SlotEncoding;
+    type Enc: Codec;
     /// The sink a publish through the slot travels.
     type Sink<'a>: PublishSink<Options = <Self::Wire as Publisher>::Options>
     where
@@ -111,32 +73,6 @@ where
     W: Publisher,
     E: Codec + MaybeSendSync,
     Pipe: OutPipeline<W>,
-{
-    type Enc = E;
-    type Sink<'a>
-        = &'a Self
-    where
-        Self: 'a;
-
-    fn message<'a, T, Index>(
-        &'a self,
-        value: &'a T,
-    ) -> PublishBuilder<&'a Self, MessageBody<'a, T>, &'a E, HeadersUnset, T::Form>
-    where
-        Body: ContainsMessage<T, Index>,
-        T: OutgoingDestination + PublishedThrough<M>,
-    {
-        Self::message(self, value)
-    }
-}
-
-impl<M, W, E, Pipe, Body> SlotPublish<M, Body> for LocalSlot<M, W, E, Pipe, Body>
-where
-    M: OutSlot,
-    W: Publisher,
-    E: SlotEncoding,
-    Pipe: LocalOutPipeline<W>,
-    Self: MaybeSendSync,
 {
     type Enc = E;
     type Sink<'a>

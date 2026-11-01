@@ -19,9 +19,9 @@ use ruststream_core::{
 };
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
-    Context, ContextKind, Deserialized, Detach, Halt, HandlerOutcome, Input, LocalHandle,
-    OpenRoutes, Outgoing, PublishTransform, Reads, Router, RunRoutes, ScopeDelivery, ShutdownWait,
-    SoloDeserialized, local_subscriber,
+    Context, ContextKind, Deserialized, Detach, Halt, Handle, HandlerOutcome, Input, OpenRoutes,
+    Outgoing, PublishTransform, Reads, Router, RunRoutes, ScopeDelivery, ShutdownWait,
+    SoloDeserialized, subscriber,
 };
 use tokio::sync::Notify;
 use tokio::sync::futures::Notified;
@@ -104,7 +104,7 @@ impl Input for Request<'_> {
 /// Answers a request with its bytes as text, which the reply codec encodes.
 struct Echo;
 
-impl LocalHandle<Request<'_>, String> for Echo {
+impl Handle<Request<'_>, String> for Echo {
     fn handle(
         &self,
         request: &Request<'_>,
@@ -139,7 +139,7 @@ async fn an_encoded_reply_leaves_through_the_codec_to_a_local_broker() {
         .expect("the answers subscribe");
     let opened = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
         .include(
-            local_subscriber(LocalMemorySource::new("requests"), Echo)
+            subscriber(LocalMemorySource::new("requests"), Echo)
                 .reply()
                 .to("answers")
                 .build(),

@@ -42,8 +42,8 @@ pub use ruststream_runtime::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{
-    AnyOutPos, BindSlotsBody, LocalBindSlotsBody, MaybeSendPublisher, MaybeSendSink, MaybeSendSync,
-    SelectEntry, SlotEntry, SlotPublish, SlotTransactions,
+    AnyOutPos, BindSlotsBody, MaybeSendSink, MaybeSendSync, SelectEntry, SlotEntry, SlotPublish,
+    SlotTransactions,
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
@@ -86,9 +86,7 @@ pub use ruststream_runtime::{
 };
 #[cfg(not(target_os = "none"))]
 pub use ruststream_runtime::{Bindable, Bound, BrokerRegistration};
-pub use ruststream_runtime::{
-    BlanketLayer, HandlerExt, Identity, Layer, LocalBlanketLayer, Stack, layers,
-};
+pub use ruststream_runtime::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 #[doc(hidden)]
 pub use ruststream_runtime::{
     BoundRetry, CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere,
@@ -112,7 +110,7 @@ pub use ruststream_runtime::{
     Failed, FailedMessage, Failures, MissingPayloadError, NoFreeRecordError,
 };
 pub use ruststream_runtime::{FailurePolicies, FailurePolicy};
-pub use ruststream_runtime::{Handler, HandlerOutcome, LocalHandler};
+pub use ruststream_runtime::{Handler, HandlerOutcome};
 pub use ruststream_runtime::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
     OutgoingMessageMetadata,
@@ -121,9 +119,6 @@ pub use ruststream_runtime::{
     IncludeDef, LocalPipeline, MapPublisher, MountChain, Router, RouterDef, RouterHandlers,
     RouterOut, RouterPublishing, RouterPublishingOut, RouterWith, forms,
 };
-#[doc(hidden)]
-pub use ruststream_runtime::{LocalBindSlots, LocalHasSlots};
-pub use ruststream_runtime::{LocalHandle, LocalOutEntry, LocalSlot, local_subscriber};
 pub use ruststream_runtime::{Placement, RETRY_COUNT_HEADER, Workers};
 #[cfg(feature = "poll-diagnostics")]
 pub use ruststream_runtime::{PollDiagnostics, PollReport};

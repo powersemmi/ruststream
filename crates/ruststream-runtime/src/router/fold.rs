@@ -28,20 +28,16 @@ use pin_project_lite::pin_project;
 use tracing::error;
 
 use crate::RetryDeclaration;
-use crate::batch::{DeserializedBatch, LocalBatch, LocalSliceHandler};
+use crate::batch::{BatchHandler, DeserializedBatch};
 use crate::coop::{Bounded, Cooperative, YIELD_AFTER};
 use crate::dispatch::{Delivery, HeadersAtOnce, Turn, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
-use crate::handle::Deserialized;
-use crate::handler::LocalHandler;
-use crate::host::{Detach, Halt, HostDetach, PrepareKept, ShutdownWait};
+use crate::handler::Handler;
+use crate::host::{Detach, Halt, SendHost, ShutdownWait};
 use crate::lifecycle::BoxError;
-use crate::middleware::{LocalBlanketLayer, Stack};
-use crate::redelivery::{RetryCopies, ScopeDelivery, open_local_subscription};
-use crate::{
-    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, Settle, Subscriber,
-    SubscriptionSource,
-};
+use crate::middleware::{BlanketLayer, Stack};
+use crate::redelivery::{ScopeDelivery, open_local_subscription};
+use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber, SubscriptionSource};
 
 use super::builder::Router;
 use super::routes::BatchRoute;
@@ -98,14 +94,14 @@ pub trait RunRoutes<State> {
 )]
 pub trait OpenLayered<B: Broker, State> {
     /// The opened registrations, each holding the layer stack it runs under.
-    type Opened<Layers: LocalBlanketLayer + Clone>: RunRoutes<State>;
+    type Opened<Layers: BlanketLayer + Clone>: RunRoutes<State>;
 
     /// Subscribes every registration against `connected`, keeping `layers` beside each handler.
     ///
     /// # Errors
     ///
     /// See [`OpenRoutes::open`].
-    fn open_layered<Layers: LocalBlanketLayer + Clone>(
+    fn open_layered<Layers: BlanketLayer + Clone>(
         self,
         connected: &Connected<B>,
         layers: &Layers,
@@ -148,9 +144,9 @@ impl<Sub, Body, Cx, Layers> OpenedRoute<Sub, Body, Cx, Layers> {
 }
 
 impl<B: Broker, State> OpenLayered<B, State> for () {
-    type Opened<Layers: LocalBlanketLayer + Clone> = ();
+    type Opened<Layers: BlanketLayer + Clone> = ();
 
-    fn open_layered<Layers: LocalBlanketLayer + Clone>(
+    fn open_layered<Layers: BlanketLayer + Clone>(
         self,
         _connected: &Connected<B>,
         _layers: &Layers,
@@ -181,9 +177,9 @@ where
     Head: OpenLayered<B, State>,
     Tail: OpenLayered<B, State>,
 {
-    type Opened<Layers: LocalBlanketLayer + Clone> = (Head::Opened<Layers>, Tail::Opened<Layers>);
+    type Opened<Layers: BlanketLayer + Clone> = (Head::Opened<Layers>, Tail::Opened<Layers>);
 
-    async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+    async fn open_layered<Layers: BlanketLayer + Clone>(
         self,
         connected: &Connected<B>,
         layers: &Layers,
@@ -313,7 +309,7 @@ impl<B, State, Routes, RouteCodec, RouteLayers, RoutePipe> OpenRoutes<B, State>
 where
     B: Broker,
     Routes: Balance<Tree: OpenLayered<B, State>>,
-    RouteLayers: LocalBlanketLayer + Clone,
+    RouteLayers: BlanketLayer + Clone,
 {
     type Opened = <Routes::Tree as OpenLayered<B, State>>::Opened<RouteLayers>;
 
@@ -335,12 +331,12 @@ impl<B, State, Routes, RouteCodec, RouteLayers, RoutePipe> OpenLayered<B, State>
 where
     B: Broker,
     Routes: Balance<Tree: OpenLayered<B, State>>,
-    RouteLayers: LocalBlanketLayer + Clone,
+    RouteLayers: BlanketLayer + Clone,
 {
-    type Opened<Layers: LocalBlanketLayer + Clone> =
+    type Opened<Layers: BlanketLayer + Clone> =
         <Routes::Tree as OpenLayered<B, State>>::Opened<Stack<RouteLayers, Layers>>;
 
-    fn open_layered<Layers: LocalBlanketLayer + Clone>(
+    fn open_layered<Layers: BlanketLayer + Clone>(
         self,
         connected: &Connected<B>,
         layers: &Layers,
@@ -355,9 +351,11 @@ where
 impl<State, Sub, Body, Cx, Layers> RunRoutes<State> for OpenedRoute<Sub, Body, Cx, Layers>
 where
     Sub: Subscriber,
-    Body: LocalHandler<Sub::Message, Cx, State>,
+    Sub::Message: 'static,
+    State: MaybeSendSync + 'static,
+    Body: Handler<Sub::Message, Cx, State> + 'static,
     Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
-    Layers: LocalBlanketLayer,
+    Layers: BlanketLayer,
 {
     async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
     where
@@ -367,8 +365,7 @@ where
         let failure = DispatchFailure::new(self.policies, signal.clone());
         // Applied here, where the loop starts: the wrapped handler's type is the layer's own
         // and cannot be named in the opened list.
-        let handler =
-            LocalBlanketLayer::apply::<Sub::Message, Cx, State, _>(&self.layers, self.handler);
+        let handler = BlanketLayer::apply::<Sub::Message, Cx, State, _>(&self.layers, self.handler);
         run_sequential(
             Cooperative(self.subscriber),
             handler,
@@ -406,13 +403,13 @@ where
     B: Broker,
     Source: SubscriptionSource<Connected<B>>,
     Source::Subscriber: BatchSubscriber<Message = M>,
-    LocalBatch<DeserializedBatch<M, F, Inner>>:
+    DeserializedBatch<M, F, Inner>:
         RunsBatches<<Source::Subscriber as BatchSubscriber>::Batch, Cx, State>,
 {
-    type Opened<Layers: LocalBlanketLayer + Clone> =
-        OpenedBatchRoute<Source::Subscriber, LocalBatch<DeserializedBatch<M, F, Inner>>, Cx>;
+    type Opened<Layers: BlanketLayer + Clone> =
+        OpenedBatchRoute<Source::Subscriber, DeserializedBatch<M, F, Inner>, Cx>;
 
-    async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+    async fn open_layered<Layers: BlanketLayer + Clone>(
         self,
         connected: &Connected<B>,
         _layers: &Layers,
@@ -427,7 +424,7 @@ where
         .await?;
         Ok(OpenedBatchRoute {
             subscriber,
-            handler: LocalBatch(self.handler),
+            handler: self.handler,
             name,
             batch_size: self.batch_size,
             delivery,
@@ -522,24 +519,19 @@ pub trait RunsBatches<Batch, C, S> {
     ) -> impl Future<Output = ()>
     where
         Signal: Halt,
-        Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>;
+        Host: SendHost<C>;
 }
 
-impl<Batch, M, F, Inner, C, S> RunsBatches<Batch, C, S>
-    for LocalBatch<DeserializedBatch<M, F, Inner>>
+impl<Batch, C, S, Handler> RunsBatches<Batch, C, S> for Handler
 where
-    Batch: IntoIterator<Item = M>,
-    M: Settle,
-    F: Deserialized,
-    Inner: for<'p> LocalSliceHandler<F::Output<'p>, C, S>,
-    C: BuildBatchContext<M> + MaybeSendSync + 'static,
+    Handler: BatchHandler<Batch, C, S>,
 {
-    type Scratch = ();
+    type Scratch = Handler::Scratch;
 
     fn run_one<Signal, Host>(
         &self,
         batch: Batch,
-        scratch: &mut (),
+        scratch: &mut Handler::Scratch,
         encode: &mut BytesMut,
         name: &str,
         state: &S,
@@ -549,7 +541,7 @@ where
     ) -> impl Future<Output = ()>
     where
         Signal: Halt,
-        Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
+        Host: SendHost<C>,
     {
         run_batch::<Self, Batch, C, S, Signal, Host>(
             self, batch, scratch, encode, name, state, delivery, host, failure,

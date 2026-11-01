@@ -5,7 +5,7 @@
 //! [`run_suite`] against their production broker: each scenario starts from a fresh broker
 //! produced by the caller-supplied factory, connects it through its
 //! [`InProcess`] transition and drives the connected form through the broker's own
-//! [`Subscribe`](ruststream_core::Subscribe) / [`TestableBroker::inject`] surface - no server.
+//! [`Subscribe`] / [`TestableBroker::inject`] surface - no server.
 //!
 //! # Examples
 //!
@@ -63,7 +63,7 @@ type SubscriberMessage<S> = <S as Subscriber>::Message;
 /// `factory` is invoked once per scenario to obtain a fresh broker, so tests cannot leak state
 /// between each other. It builds the production broker, the one a service builds its app on;
 /// each scenario connects it through its [`InProcess`] transition and drives the connected form
-/// through the broker's own [`Subscribe`](ruststream_core::Subscribe) / [`TestableBroker::inject`] surface.
+/// through the broker's own [`Subscribe`] / [`TestableBroker::inject`] surface.
 ///
 /// This is the routing contract and nothing else. A capability
 /// ([`BatchSubscriber`](ruststream_core::BatchSubscriber),
@@ -210,7 +210,7 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 /// reaches it from.
 ///
 /// The steps are: synchronous construction, then the consuming `connect` producing the typed
-/// connected form, a subscription opened through the broker's own [`SubscriptionSource`](ruststream_core::SubscriptionSource), publishes
+/// connected form, a subscription opened through the broker's own [`SubscriptionSource`], publishes
 /// the subscription receives and settles, then the consuming `shutdown` producing the terminal
 /// witness. Owner-side misuse after shutdown is a compile error under the ladder, so what remains
 /// checkable at runtime is the aliased-handle contract.

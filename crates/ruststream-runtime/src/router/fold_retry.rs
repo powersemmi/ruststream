@@ -14,14 +14,16 @@ use core::marker::PhantomData;
 
 use crate::lifecycle::BoxError;
 use crate::metadata::OutgoingKind;
-use crate::middleware::LocalBlanketLayer;
+use crate::middleware::BlanketLayer;
 use crate::redelivery::{
     AppliesDeclaration, LocalRetrySlot, NoCopies, PairSlot, PublishesCopiesHere, ScopeDelivery,
 };
 use crate::retry::{RetryOffer, RetryOpen, SettlesDestination};
+use ruststream_core::MaybeSendSync;
+
 use crate::{
     Broker, Connected, DestinationDeclared, OutAttachment, Reads, Retry, RetryDeclaration,
-    SubscriptionSource,
+    Subscriber, SubscriptionSource,
 };
 
 use super::builder::{AttachRetry, Router};
@@ -177,11 +179,14 @@ impl<B, State, Route, Policy, Stack, Settled> OpenLayered<B, State>
     for LocalRetriedRoute<Route, Policy, Stack, Settled>
 where
     B: Broker,
+    State: MaybeSendSync + 'static,
     Route: OpenLocalRoute<B, State>,
+    <Route::Sub as Subscriber>::Message: 'static,
+    Route::Body: 'static,
     NoCopies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>
         + AppliesDeclaration<Route::Declaration>,
 {
-    type Opened<Layers: LocalBlanketLayer + Clone> = OpenedDispatch<
+    type Opened<Layers: BlanketLayer + Clone> = OpenedDispatch<
         Route::Sub,
         Route::Body,
         Route::Cx,
@@ -190,7 +195,7 @@ where
         <NoCopies as PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>::Path,
     >;
 
-    fn open_layered<Layers: LocalBlanketLayer + Clone>(
+    fn open_layered<Layers: BlanketLayer + Clone>(
         self,
         connected: &Connected<B>,
         layers: &Layers,
@@ -204,13 +209,16 @@ impl<B, State, Route, Policy, Stack, Settled, Plan> OpenLayered<B, State>
     for Dispatched<LocalRetriedRoute<Route, Policy, Stack, Settled>, Plan>
 where
     B: Broker,
+    State: MaybeSendSync + 'static,
     Route: OpenLocalRoute<B, State>,
+    <Route::Sub as Subscriber>::Message: 'static,
+    Route::Body: 'static,
     Plan: LocalDispatch<
         Copies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>
                     + AppliesDeclaration<Route::Declaration>,
     >,
 {
-    type Opened<Layers: LocalBlanketLayer + Clone> = OpenedDispatch<
+    type Opened<Layers: BlanketLayer + Clone> = OpenedDispatch<
         Route::Sub,
         Route::Body,
         Route::Cx,
@@ -219,7 +227,7 @@ where
         <Plan::Copies as PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>::Path,
     >;
 
-    fn open_layered<Layers: LocalBlanketLayer + Clone>(
+    fn open_layered<Layers: BlanketLayer + Clone>(
         self,
         connected: &Connected<B>,
         layers: &Layers,
@@ -255,9 +263,12 @@ async fn open_retried<B, State, Route, Policy, Stack, Settled, Plan, Layers>(
 >
 where
     B: Broker,
+    State: MaybeSendSync + 'static,
     Route: OpenLocalRoute<B, State>,
+    <Route::Sub as Subscriber>::Message: 'static,
+    Route::Body: 'static,
     Plan: LocalDispatch<Copies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>,
-    Layers: LocalBlanketLayer + Clone,
+    Layers: BlanketLayer + Clone,
 {
     let LocalRetriedRoute { route, slot, .. } = retried;
     // Paired before the subscription opens, so a policy the broker refuses fails the startup

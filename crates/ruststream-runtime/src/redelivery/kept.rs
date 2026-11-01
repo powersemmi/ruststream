@@ -12,6 +12,7 @@ use core::any::type_name;
 use core::future::ready;
 use core::marker::PhantomData;
 use core::mem;
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
 use bytes::BytesMut;
 
@@ -31,10 +32,10 @@ use crate::{
 /// Where a kept copy leaves: the publisher and the address that reaches the subscription
 /// again. Machinery; never named directly.
 #[doc(hidden)]
-pub trait CopyPublisher {
+pub trait CopyPublisher: MaybeSync {
     /// The per-message settings a kept copy carries to its publish: what the mount site's
     /// transforms wrote when the copy was kept.
-    type Options;
+    type Options: MaybeSendSync;
 
     /// The address a copy back to the subscription is published under.
     fn address(&self) -> &str;
@@ -50,7 +51,7 @@ pub trait CopyPublisher {
         payload: &[u8],
         headers: HeaderMap,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Refusal>>;
+    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend;
 }
 
 /// A copy path that prepares the copy of a delivery whose broker context is `Cx` while the
@@ -81,7 +82,7 @@ pub struct AddressedCopy<Live, Stack = PublishTransformIdentity> {
     stack: Stack,
 }
 
-impl<Live: Publisher, Stack> CopyPublisher for AddressedCopy<Live, Stack> {
+impl<Live: Publisher, Stack: MaybeSync> CopyPublisher for AddressedCopy<Live, Stack> {
     type Options = Live::Options;
 
     fn address(&self) -> &str {
@@ -109,7 +110,7 @@ impl<Live: Publisher, Stack> CopyPublisher for AddressedCopy<Live, Stack> {
 impl<Cx, Live, Stack> PrepareCopy<Cx> for AddressedCopy<Live, Stack>
 where
     Live: Publisher,
-    Stack: KeptTransforms<Cx, Live::Options>,
+    Stack: KeptTransforms<Cx, Live::Options> + MaybeSync,
 {
     fn prepare<M: Settle>(
         &self,
@@ -442,7 +443,7 @@ where
     Policy: PublishPolicy<Connected<B>>,
     Policy::Live: Publisher,
     // The transforms run over each copy as it is kept, reading the delivery it copies.
-    Stack: KeptTransforms<Cx, <Policy::Live as Publisher>::Options>,
+    Stack: KeptTransforms<Cx, <Policy::Live as Publisher>::Options> + MaybeSync,
 {
     type Path = AddressedCopy<Policy::Live, Stack>;
 

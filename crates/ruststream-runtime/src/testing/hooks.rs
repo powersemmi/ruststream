@@ -16,6 +16,8 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 
+use super::on_thread::OnThread;
+
 use futures::FutureExt;
 #[cfg(feature = "tokio")]
 use tokio::runtime::Handle;
@@ -155,7 +157,32 @@ type PendingRun = Box<dyn for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Se
 
 /// See the `tokio` form: without the feature the hooks run on the thread that polls the app.
 #[cfg(not(feature = "tokio"))]
-type PendingRun = Box<dyn for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c>>;
+type PendingRun = OnThread<Box<dyn for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c>>>;
+
+fn pending_run<Run>(hooks: Run) -> PendingRun
+where
+    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + MaybeSend + 'static,
+{
+    #[cfg(feature = "tokio")]
+    {
+        Box::new(hooks)
+    }
+    #[cfg(not(feature = "tokio"))]
+    {
+        OnThread::new(Box::new(hooks))
+    }
+}
+
+fn start_pending(run: PendingRun, coordinator: &Coordinator) -> HookFuture<'_> {
+    #[cfg(feature = "tokio")]
+    {
+        run(coordinator)
+    }
+    #[cfg(not(feature = "tokio"))]
+    {
+        run.into_inner()(coordinator)
+    }
+}
 
 /// The hooks of one event, handed to the harness that polls an app running as one future: the
 /// harness turns them into a future and polls it beside the app.
@@ -173,7 +200,9 @@ impl PendingHooks {
     pub fn into_future(self, coordinator: Coordinator) -> Pin<Box<dyn Future<Output = ()>>> {
         let Self { run, done } = self;
         Box::pin(async move {
-            let outcome = AssertUnwindSafe(run(&coordinator)).catch_unwind().await;
+            let outcome = AssertUnwindSafe(start_pending(run, &coordinator))
+                .catch_unwind()
+                .await;
             if let Err(payload) = outcome {
                 lock(&coordinator.hooks().failed).get_or_insert(payload);
             }
@@ -182,17 +211,20 @@ impl PendingHooks {
     }
 }
 
+/// A registered hook, shared by the events it runs on.
+type Held<Hook> = Arc<OnThread<Box<Hook>>>;
+
 /// An `on_call` hook, with the handle it was registered on.
 struct OnCall {
     scope_id: usize,
     name: String,
-    hook: Arc<dyn CallHook>,
+    hook: Held<dyn CallHook>,
 }
 
 /// An `on_publish` hook, with what its handle reads.
 struct OnPublish {
     target: PublishTarget,
-    hook: Arc<dyn PublishHook>,
+    hook: Held<dyn PublishHook>,
 }
 
 /// One recorded call and the hooks it runs: those registered on its handle when it was recorded.
@@ -202,7 +234,7 @@ pub(crate) struct DueCall {
     scope_id: usize,
     name: String,
     within: Within,
-    hooks: Vec<Arc<dyn CallHook>>,
+    hooks: Vec<Held<dyn CallHook>>,
 }
 
 /// One recorded publish and the hooks it runs, or nothing when no hook matched it.
@@ -217,7 +249,7 @@ struct PublishRun {
     coordinator: Coordinator,
     target: PublishTarget,
     within: Within,
-    hooks: Vec<Arc<dyn PublishHook>>,
+    hooks: Vec<Held<dyn PublishHook>>,
 }
 
 impl DuePublish {
@@ -242,7 +274,7 @@ impl Hooks {
         lock(&self.calls).push(OnCall {
             scope_id,
             name,
-            hook: Arc::new(hook),
+            hook: Arc::new(OnThread::new(Box::new(hook))),
         });
         self.registered.store(true, Ordering::SeqCst);
     }
@@ -259,7 +291,7 @@ impl Hooks {
         };
         lock(&self.publishes).push(OnPublish {
             target,
-            hook: Arc::new(hook),
+            hook: Arc::new(OnThread::new(Box::new(hook))),
         });
         self.registered.store(true, Ordering::SeqCst);
     }
@@ -270,7 +302,7 @@ impl Hooks {
         &self,
         scope_id: usize,
         name: &str,
-    ) -> Option<Vec<Arc<dyn CallHook>>> {
+    ) -> Option<Vec<Held<dyn CallHook>>> {
         if !self.registered.load(Ordering::SeqCst) {
             return None;
         }
@@ -339,7 +371,7 @@ impl DueCall {
         scope_id: usize,
         name: String,
         within: Within,
-        hooks: Vec<Arc<dyn CallHook>>,
+        hooks: Vec<Held<dyn CallHook>>,
     ) -> Self {
         Self {
             scope_id,
@@ -420,7 +452,7 @@ where
 {
     let (done, finished) = oneshot::channel();
     lock(&coordinator.hooks().pending).push(PendingHooks {
-        run: Box::new(hooks),
+        run: pending_run(hooks),
         done,
     });
     // The harness answers once the hooks are done, or drops the answer with the hooks when the

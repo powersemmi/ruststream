@@ -1703,6 +1703,7 @@ dependencies = [
  "ruststream-core",
  "ruststream-memory",
  "schemars",
+ "send_wrapper",
  "serde",
  "serde-json-slice",
  "serde_json",

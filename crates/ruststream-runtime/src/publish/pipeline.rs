@@ -3,7 +3,7 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::fmt;
-use ruststream_core::{MaybeSend, MaybeSendSync};
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
 use super::{Outgoing, PublishFut};
 use crate::lifecycle::BoxError;
@@ -41,14 +41,14 @@ pub trait PublishPipeline: MaybeSendSync {
 /// of a [`Router::local`](crate::Router::local) chain is one for every
 /// [`Publisher`](crate::Publisher). Machinery; never named directly.
 #[doc(hidden)]
-pub(crate) trait SendThrough<P: Publisher> {
+pub(crate) trait SendThrough<P: Publisher>: MaybeSync {
     /// Sends `out` to `send` with the per-message settings the call site adjusted.
     fn send_through<'a>(
         &'a self,
         out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
-    ) -> impl Future<Output = Result<(), BoxError>> + 'a;
+    ) -> impl Future<Output = Result<(), BoxError>> + MaybeSend + 'a;
 }
 
 impl<Pipeline: PublishPipeline, P: Publisher> SendThrough<P> for Pipeline {
@@ -58,7 +58,7 @@ impl<Pipeline: PublishPipeline, P: Publisher> SendThrough<P> for Pipeline {
         out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
-    ) -> impl Future<Output = Result<(), BoxError>> + 'a {
+    ) -> impl Future<Output = Result<(), BoxError>> + MaybeSend + 'a {
         self.run(out, send, options)
     }
 }

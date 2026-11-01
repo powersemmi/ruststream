@@ -18,7 +18,6 @@ use crate::IncomingMessage;
 use crate::handler::{Continuation, HandlerResult};
 use crate::host::{HostDetach, PrepareKept};
 use crate::publish::PublishContext;
-#[cfg(feature = "tokio")]
 use crate::publish_failure::publish_done;
 use crate::publish_failure::{Reaction, Refusal, publish_lost};
 use crate::redelivery::{RetryCopies, RetryRoute};
@@ -710,32 +709,20 @@ where
     // handed on to it: the copy is one of the delivery's publishes.
     #[cfg(feature = "testing")]
     let scope = harness_scope(delivery);
-    // The registration's retry publisher exists only on a runner that spawns onto a thread pool,
-    // whose build has the `tokio` feature and so a `Send` continuation.
-    #[cfg(not(feature = "tokio"))]
-    drop(reaction);
     let republish = move |run_here: bool| {
         let republish = async move {
             let cx = PublishContext::new(&subscription, &delivered, &context);
             let copy =
                 OutgoingMessage::new(target.as_ref(), payload.as_ref()).with_headers(headers);
             let sent = route.publisher.publish_copy(copy, &cx).await;
-            #[cfg(feature = "tokio")]
             let done = copy_sent(sent, reaction, &subscription, &target, route.input, payload);
-            #[cfg(not(feature = "tokio"))]
-            let done = copy_sent(sent, &subscription, &target, route.input, payload);
             // A delayed copy runs the continuation in its own task; an immediate one hands it back.
-            // Without the `tokio` feature no continuation is made here, and a `!Send` one could
-            // not be awaited in a task that must be `Send`.
-            #[cfg(feature = "tokio")]
             if run_here {
                 if let Some(reaction) = done {
                     reaction.await;
                 }
                 return None;
             }
-            #[cfg(not(feature = "tokio"))]
-            let _ = run_here;
             done
         };
         #[cfg(feature = "testing")]
@@ -771,7 +758,6 @@ where
 
 /// What a copy's publish makes of its result: the `.then` that follows a success, and for a
 /// failure the `.error` continuation, or a log line and the loss of the message without one.
-#[cfg(feature = "tokio")]
 fn copy_sent(
     sent: Result<(), Refusal>,
     reaction: Option<Reaction>,
@@ -789,20 +775,6 @@ fn copy_sent(
             publish_lost(reaction, subscription, target, input, err, || failed)
         }
     }
-}
-
-/// The failure of a copy's publish is logged and the message is lost: without the `tokio`
-/// feature no `.error` continuation is made here.
-#[cfg(not(feature = "tokio"))]
-fn copy_sent(
-    sent: Result<(), Refusal>,
-    subscription: &str,
-    target: &str,
-    input: &str,
-    payload: Bytes,
-) -> Option<Continuation> {
-    let (err, failed) = sent.err()?.into_message(target, |_, _| payload);
-    publish_lost(None, subscription, target, input, err, || failed)
 }
 
 #[cfg(test)]

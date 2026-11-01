@@ -6,8 +6,6 @@
 //! body returned. The value at index `i` belongs to the `i`-th delivery; a delivery past the end
 //! of the slice carries no value and settles by the decode-failure policy.
 
-#[cfg(feature = "testing")]
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::any::type_name;
 use core::fmt;
@@ -112,13 +110,13 @@ where
     fn unsettled(&mut self) -> Vec<Delivered> {
         self.recorded = Src::lend(&self.batch)
             .iter()
-            .map(|value| -> RecordedValue { Arc::new(value.clone()) })
+            .map(|value| -> RecordedValue { RecordedValue::of(value) })
             .collect();
         self.recorded
             .iter()
             .map(|value| Delivered {
                 raw: bytes::Bytes::new(),
-                value: Some(Arc::clone(value)),
+                value: Some(value.clone()),
                 settle: None,
             })
             .collect()

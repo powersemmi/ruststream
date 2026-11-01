@@ -12,11 +12,9 @@
 
 #[cfg(feature = "alloc")]
 use bytes::Bytes;
-#[cfg(feature = "alloc")]
 use core::time::Duration;
 use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
-#[cfg(feature = "alloc")]
 #[cfg(feature = "alloc")]
 use alloc::sync::Arc;
 #[cfg(feature = "alloc")]
@@ -77,12 +75,12 @@ use crate::{HeaderMap, Settle};
 /// deferred(&TokioTimers, Duration::from_secs(5)).await;
 /// # }
 /// ```
-pub trait Clock {
+pub trait Clock: MaybeSendSync {
     /// A point in time on this clock.
-    type Instant: Copy + Ord;
+    type Instant: Copy + Ord + MaybeSendSync;
 
     /// The future a timer of this clock is.
-    type Sleep: Future<Output = ()>;
+    type Sleep: Future<Output = ()> + MaybeSend;
 
     /// The current time on this clock.
     fn now(&self) -> Self::Instant;
@@ -363,11 +361,14 @@ impl<Host: Detach> HostDetach for Host {
 /// qualifies, and so does one with a retry route ([`Copying`]). Machinery; never named directly.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub trait SendHost<Cx>: HostDetach<Kept = NoKept, Retry: RetryCopies<Cx>> + MaybeSendSync {}
+pub trait SendHost<Cx>:
+    HostDetach<Kept: PrepareKept<Cx> + MaybeSendSync, Retry: RetryCopies<Cx>> + MaybeSendSync
+{
+}
 
 #[cfg(feature = "alloc")]
 impl<Cx, Host> SendHost<Cx> for Host where
-    Host: HostDetach<Kept = NoKept, Retry: RetryCopies<Cx>> + MaybeSendSync
+    Host: HostDetach<Kept: PrepareKept<Cx> + MaybeSendSync, Retry: RetryCopies<Cx>> + MaybeSendSync
 {
 }
 
@@ -500,7 +501,7 @@ impl<Host: Detach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept> {
 pub trait KeptCopies {
     /// A copy that leaves without a record: the mount's answer to a full store. It holds what
     /// the copy is made of until [`send_spilled`](Self::send_spilled) publishes it.
-    type Spilled;
+    type Spilled: MaybeSend;
 
     /// Takes a free record for one copy; `None` when every record holds one.
     fn take_record(&self) -> Option<usize>;
@@ -516,7 +517,7 @@ pub trait KeptCopies {
         spilled: Self::Spilled,
         destination: Option<&str>,
         reaction: Option<Reaction>,
-    ) -> impl Future<Output = Option<Continuation>>;
+    ) -> impl Future<Output = Option<Continuation>> + MaybeSend;
 
     /// A copy that would wait for its delay found every record taken: the failure of a publish
     /// that never started. The error is [`NoFreeRecordError`](crate::NoFreeRecordError); `reaction`
@@ -546,7 +547,7 @@ pub trait KeptCopies {
         record: usize,
         destination: Option<&str>,
         reaction: Option<Reaction>,
-    ) -> impl Future<Output = Option<Continuation>>;
+    ) -> impl Future<Output = Option<Continuation>> + MaybeSend;
 
     /// Frees `record` without publishing what it holds: the settle it was taken for failed.
     fn free(&self, record: usize);

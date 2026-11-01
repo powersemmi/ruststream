@@ -3,7 +3,7 @@
 //!
 //! The chain is the same `RouterWith`, so `.out(marker, policy)` and `.codec(..)` read as they do
 //! on the multi-thread runner; each slot pairs against a broker of the local family into a
-//! [`LocalSlot`](crate::LocalSlot) when the subscription opens.
+//! [`Slot`](crate::Slot) when the subscription opens.
 
 use crate::inject::InjectDef;
 use crate::input::Materialize;
@@ -12,8 +12,8 @@ use crate::publish::UnnamedCodec;
 use crate::publish::{LowerOutTransforms, NarrowToUse, SlotStackUse};
 use crate::settings::{DefMountCodec, MountsWith};
 use crate::slot::{
-    InitSlots, IntoSlotSource, LocalBindSlots, LocalHasSlots, NoReply, OutAttachment, OutSlot,
-    SlotCodec, SlotPolicy, WithSource,
+    BindSlots, HasSlots, InitSlots, IntoSlotSource, NoReply, OutAttachment, OutSlot, SlotCodec,
+    SlotPolicy, WithSource,
 };
 use crate::{Broker, Connected, LocalSourceMessage, PublishPolicy, SubscriptionSource};
 
@@ -27,14 +27,14 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def> for forms::Out
 where
     B: Broker + 'static,
-    Def: LocalHasSlots,
+    Def: HasSlots,
     Def::Markers: InitSlots,
 {
     type Out = RouterOut<
         InjectMount,
         Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>,
         Def,
-        <<Def as LocalHasSlots>::Markers as InitSlots>::Init,
+        <<Def as HasSlots>::Markers as InitSlots>::Init,
     >;
 
     fn begin(
@@ -43,10 +43,7 @@ where
     ) -> Self::Out {
         RouterWith::new(
             def,
-            (
-                NoReply,
-                <<Def as LocalHasSlots>::Markers as InitSlots>::init(),
-            ),
+            (NoReply, <<Def as HasSlots>::Markers as InitSlots>::init()),
             router,
         )
     }
@@ -128,7 +125,7 @@ macro_rules! local_inject_out_commit {
                     + SlotStackUse<SlotLive<$attach, B>>,
                 <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
             )+
-            Def: LocalBindSlots<
+            Def: BindSlots<
                 Connected<B>,
                 ($(local_slot_source!(
                     $attach, $layers, $enc, RouteCodec::Codec, LocalPipeline<Pipe>
@@ -168,7 +165,7 @@ macro_rules! local_inject_out_commit {
                 let codec = router.codec.slot_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
-                let (def, extra) = def.bind_local(($(
+                let (def, extra) = def.bind(($(
                     $attach.into_source().wire(codec.clone(), pipeline.clone()),
                 )+));
                 let source = def.source();

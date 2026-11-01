@@ -393,13 +393,9 @@ fn slot_binding_impls(
     let policies = numbered_idents("__RsPolicy", outs.len(), name);
     let codecs = numbered_idents("__RsCodec", outs.len(), name);
     let pipelines = numbered_idents("__RsPipeline", outs.len(), name);
-    let bindings = [Family::Tokio, Family::Local].map(|family| {
-        let entries = bound_slot_entries(outs, &policies, &codecs, &pipelines, family);
-        let bound_ty = sealed_ty(&quote!(::ruststream::runtime::Outs<(#(#entries,)*)>));
-        bind_slots_impl(
-            name, &policies, &codecs, &pipelines, &bound_ty, def_expr, family,
-        )
-    });
+    let entries = bound_slot_entries(outs, &policies, &codecs, &pipelines);
+    let bound_ty = sealed_ty(&quote!(::ruststream::runtime::Outs<(#(#entries,)*)>));
+    let binding = bind_slots_impl(name, &policies, &codecs, &pipelines, &bound_ty, def_expr);
     let witness_tys: Vec<&syn::Type> = outs.iter().map(|out| out.ty).collect();
     quote! {
         #caps_batches
@@ -408,11 +404,7 @@ fn slot_binding_impls(
             type Markers = (#(#markers,)*);
         }
 
-        impl ::ruststream::runtime::LocalHasSlots for #name {
-            type Markers = (#(#markers,)*);
-        }
-
-        #(#bindings)*
+        #binding
 
         const _: () = {
             #[allow(dead_code)]
@@ -421,14 +413,7 @@ fn slot_binding_impls(
     }
 }
 
-/// The two families of slot entries: the multi-thread runner's and the embedded runner's.
-#[derive(Clone, Copy)]
-enum Family {
-    Tokio,
-    Local,
-}
-
-/// One runner's slot binding: given the policy, codec and pipeline of every slot, it builds the
+/// The slot binding: given the policy, codec and pipeline of every slot, it builds the
 /// sealed arena definition around the body and hands the sources back as the extra state.
 fn bind_slots_impl(
     name: &Ident,
@@ -437,22 +422,14 @@ fn bind_slots_impl(
     pipelines: &[Ident],
     bound_ty: &TokenStream2,
     def_expr: &TokenStream2,
-    family: Family,
 ) -> TokenStream2 {
-    let span = proc_macro2::Span::call_site();
-    let (bind_slots, connected, policy, bind) = match family {
-        Family::Tokio => (
+    let (bind_slots, connected, policy, bind) = {
+        (
             quote!(::ruststream::runtime::BindSlotsBody),
             quote!(::ruststream::ConnectedBroker),
             quote!(::ruststream::PublishPolicy),
-            Ident::new("bind_body", span),
-        ),
-        Family::Local => (
-            quote!(::ruststream::runtime::LocalBindSlotsBody),
-            quote!(::ruststream::ConnectedBroker),
-            quote!(::ruststream::PublishPolicy),
-            Ident::new("bind_local_body", span),
-        ),
+            Ident::new("bind_body", proc_macro2::Span::call_site()),
+        )
     };
     quote! {
         impl<__RsBody, __RsConn, #(#policies,)* #(#codecs,)* #(#pipelines,)*>
@@ -493,17 +470,12 @@ fn bound_slot_entries(
     policies: &[Ident],
     codecs: &[Ident],
     pipelines: &[Ident],
-    family: Family,
 ) -> Vec<TokenStream2> {
-    let (slot, policy_trait) = match family {
-        Family::Tokio => (
+    let (slot, policy_trait) = {
+        (
             quote!(::ruststream::runtime::Slot),
             quote!(::ruststream::PublishPolicy),
-        ),
-        Family::Local => (
-            quote!(::ruststream::runtime::LocalSlot),
-            quote!(::ruststream::PublishPolicy),
-        ),
+        )
     };
     outs.iter()
         .zip(policies.iter().zip(codecs.iter().zip(pipelines)))

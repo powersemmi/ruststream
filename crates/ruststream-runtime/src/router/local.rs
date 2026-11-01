@@ -6,6 +6,7 @@
 //! [`Router::new`] starts keeps the mounts of the multi-thread runner, which ask for `Send` and
 //! name a source of the wrong broker in their errors.
 
+use core::error::Error as StdError;
 use core::marker::PhantomData;
 use ruststream_core::{MaybeSend, MaybeSendSync};
 
@@ -13,11 +14,10 @@ use crate::batch::BatchDef;
 use crate::handle::{AsBodyFn, AsDeclared, BodyTag};
 use crate::input::{Materialize, Provided};
 use crate::lifecycle::BoxError;
+use crate::middleware::BlanketLayer;
 use crate::middleware::Identity;
-use crate::middleware::LocalBlanketLayer;
 use crate::publish::{
-    LocalOutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough, SinkOutcome,
-    SinkRefusal,
+    OutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough, SinkOutcome, SinkRefusal,
 };
 use crate::publish_failure::Refusal;
 use crate::settings::{BatchSized, Declared, DefMountCodec, MountsWith, Sequential};
@@ -65,7 +65,7 @@ impl<B: Broker + 'static> Router<B, (), (), Identity, LocalPipeline> {
     /// ```
     /// use std::convert::Infallible;
     ///
-    /// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, local_subscriber};
+    /// use ruststream::runtime::{Context, HandlerOutcome, Handle, Router, subscriber};
     /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
     /// use ruststream_runtime::{Deserialized, Input, SoloDeserialized};
     ///
@@ -87,7 +87,7 @@ impl<B: Broker + 'static> Router<B, (), (), Identity, LocalPipeline> {
     ///
     /// struct Log;
     ///
-    /// impl LocalHandle<Reading<'_>> for Log {
+    /// impl Handle<Reading<'_>> for Log {
     ///     async fn handle(
     ///         &self,
     ///         reading: &Reading<'_>,
@@ -100,7 +100,7 @@ impl<B: Broker + 'static> Router<B, (), (), Identity, LocalPipeline> {
     /// }
     ///
     /// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
-    ///     .include(local_subscriber(LocalMemorySource::new("readings"), Log).build());
+    ///     .include(subscriber(LocalMemorySource::new("readings"), Log).build());
     /// # let _ = routes;
     /// ```
     #[must_use]
@@ -192,7 +192,7 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe> RouterPipe
 /// # use std::convert::Infallible;
 /// # use std::future::ready;
 /// use ruststream::nonzero;
-/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, Workers, local_subscriber};
+/// use ruststream::runtime::{Context, HandlerOutcome, Handle, Router, Workers, subscriber};
 /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
 /// use ruststream_runtime::{Deserialized, Input, SoloDeserialized};
 /// # struct Reading<'a>(&'a [u8]);
@@ -203,12 +203,12 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe> RouterPipe
 /// # }
 /// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
 /// # struct Log;
-/// # impl LocalHandle<Reading<'_>> for Log {
+/// # impl Handle<Reading<'_>> for Log {
 /// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
 /// #         -> impl Future<Output = Result<(), HandlerOutcome>> { let _ = r.0; ready(Ok(())) }
 /// # }
 /// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
-///     .include(local_subscriber(LocalMemorySource::new("readings"), Log).build())
+///     .include(subscriber(LocalMemorySource::new("readings"), Log).build())
 ///     .workers(Workers::pool(nonzero!(4)));
 /// ```
 ///
@@ -244,12 +244,12 @@ pub trait TakesWorkers {}
 impl<Pipe: PublishPipeline> TakesWorkers for Pipe {}
 
 /// A router-scope layer that fits the chain's runner: any layer on the multi-thread runner's
-/// chain, and a [`LocalBlanketLayer`] on a local chain. Machinery; never named directly.
+/// chain, and a [`BlanketLayer`] on a local chain. Machinery; never named directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "`{Self}` runs on the tokio runtime",
     label = "this layer does not wrap a local router's handlers",
-    note = "a layer on a router started with `Router::local()` implements `LocalBlanketLayer`"
+    note = "a layer on a router started with `Router::local()` implements `BlanketLayer`"
 )]
 pub trait LayerFits<Pipe> {}
 
@@ -257,7 +257,7 @@ pub trait LayerFits<Pipe> {}
 impl<Layer, Pipe: PublishPipeline> LayerFits<Pipe> for Layer {}
 
 #[diagnostic::do_not_recommend]
-impl<Layer: LocalBlanketLayer, Pipe> LayerFits<LocalPipeline<Pipe>> for Layer {}
+impl<Layer: BlanketLayer, Pipe> LayerFits<LocalPipeline<Pipe>> for Layer {}
 
 // A local chain's replies and slot publishes go straight to the broker: the publish layers of
 // the multi-thread runner's app do not reach it.
@@ -282,15 +282,19 @@ impl<P: Publisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
 
 // The bottom of a local slot's publish path: the leaf call, lent the message as it arrives, with
 // nothing rebuilt or copied and the leaf's own error.
-impl<W> LocalOutPipeline<W> for LocalPipeline<PublishIdentity> {
-    // The leaf's own future, which is `Send` exactly where the leaf's is.
-    #[allow(clippy::future_not_send)]
+impl<W> OutPipeline<W> for LocalPipeline<PublishIdentity> {
+    type Error<E: StdError + Send + Sync + 'static> = E;
+
+    fn from_publish_error<E: StdError + Send + Sync + 'static>(err: E) -> E {
+        err
+    }
+
     fn send<P>(
         &self,
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> impl Future<Output = SinkOutcome<P::Error>>
+    ) -> impl Future<Output = SinkOutcome<P::Error>> + MaybeSend
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,

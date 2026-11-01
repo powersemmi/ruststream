@@ -18,16 +18,16 @@ use ruststream_core::MaybeSendSync;
 use crate::coop::Cooperative;
 use crate::dispatch::{Delivery, HeadersAtOnce, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
-use crate::handler::LocalHandler;
+use crate::handler::Handler;
 use crate::host::{Detach, Halt, HostDetach, PrepareKept, ShutdownWait};
 use crate::input::{InputKind, Materialize};
 use crate::lifecycle::BoxError;
-use crate::middleware::LocalBlanketLayer;
+use crate::middleware::BlanketLayer;
 use crate::redelivery::{
     AppliesDeclaration, DeclaredOn, NoCopies, PairCopies, PrepareCopy, RetryCopies, Undeclared,
 };
 use crate::redelivery::{ScopeDelivery, open_local_subscription};
-use crate::typed::{LocalTyped, Typed};
+use crate::typed::Typed;
 use crate::{
     Broker, BuildContext, Connected, RetryDeclaration, Settle, Subscriber, SubscriptionSource,
 };
@@ -65,7 +65,7 @@ pub trait LocalDispatch {
     ) -> impl Future<Output = ()>
     where
         Sub: Subscriber,
-        Body: LocalHandler<Sub::Message, Cx, State>,
+        Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: Detach,
@@ -103,7 +103,7 @@ impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
         host: &Lent,
     ) where
         Sub: Subscriber,
-        Body: LocalHandler<Sub::Message, Cx, State>,
+        Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Lent: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
@@ -141,7 +141,7 @@ impl LocalDispatch for SequentialPlan {
         host: &Host,
     ) where
         Sub: Subscriber,
-        Body: LocalHandler<Sub::Message, Cx, State>,
+        Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: Detach,
@@ -277,7 +277,7 @@ pub trait OpenLocalRoute<B: Broker, State> {
     /// The opened subscription.
     type Sub: Subscriber;
     /// The handler each delivery runs.
-    type Body: LocalHandler<<Self::Sub as Subscriber>::Message, Self::Cx, State>;
+    type Body: Handler<<Self::Sub as Subscriber>::Message, Self::Cx, State>;
     /// The broker's typed per-delivery context the handler reads.
     type Cx: BuildContext<<Self::Sub as Subscriber>::Message> + MaybeSendSync + 'static;
 
@@ -330,17 +330,20 @@ macro_rules! open_plain {
         impl<B, State, $($param),+> OpenLayered<B, State> for $route
         where
             B: Broker,
+            State: MaybeSendSync + 'static,
             $route: OpenLocalRoute<B, State>,
+            <<$route as OpenLocalRoute<B, State>>::Sub as Subscriber>::Message: 'static,
+            <$route as OpenLocalRoute<B, State>>::Body: 'static,
             NoCopies: AppliesDeclaration<<$route as OpenLocalRoute<B, State>>::Declaration>,
         {
-            type Opened<Layers: LocalBlanketLayer + Clone> = OpenedRoute<
+            type Opened<Layers: BlanketLayer + Clone> = OpenedRoute<
                 <$route as OpenLocalRoute<B, State>>::Sub,
                 <$route as OpenLocalRoute<B, State>>::Body,
                 <$route as OpenLocalRoute<B, State>>::Cx,
                 Layers,
             >;
 
-            async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+            async fn open_layered<Layers: BlanketLayer + Clone>(
                 self,
                 connected: &Connected<B>,
                 layers: &Layers,
@@ -403,13 +406,15 @@ where
     Source::Subscriber: Subscriber<Message = M>,
     M: Settle,
     Input: Materialize<DecodeCodec, M>,
-    Inner: LocalHandler<Input::Target, Cx, State>,
+    Inner: Handler<Input::Target, Cx, State>,
+    DecodeCodec: MaybeSendSync,
+    State: MaybeSendSync,
     Cx: BuildContext<M> + MaybeSendSync + 'static,
 {
     type Source = Source;
     type Declaration = Undeclared;
     type Sub = Source::Subscriber;
-    type Body = LocalTyped<Typed<M, Input, DecodeCodec, Inner>>;
+    type Body = Typed<M, Input, DecodeCodec, Inner>;
     type Cx = Cx;
 
     fn source(&self) -> &Source {
@@ -426,7 +431,7 @@ where
             open_local_subscription::<B, _, _>(self.source, connected, scope, declaration).await?;
         Ok(LocalRoute {
             subscriber,
-            handler: LocalTyped(self.handler),
+            handler: self.handler,
             name,
             delivery,
             policies: self.policies,
@@ -444,7 +449,10 @@ macro_rules! open_dispatched {
         impl<B, State, Plan, $($param),+> OpenLayered<B, State> for Dispatched<$route, Plan>
         where
             B: Broker,
+            State: MaybeSendSync + 'static,
             $route: OpenLocalRoute<B, State> + UnboundRetry,
+            <<$route as OpenLocalRoute<B, State>>::Sub as Subscriber>::Message: 'static,
+            <$route as OpenLocalRoute<B, State>>::Body: 'static,
             Plan: LocalDispatch<
                 Copies: PairCopies<B, <$route as OpenLocalRoute<B, State>>::Source>
                     + AppliesDeclaration<<$route as OpenLocalRoute<B, State>>::Declaration>,
@@ -452,7 +460,7 @@ macro_rules! open_dispatched {
             <Plan::Copies as PairCopies<B, <$route as OpenLocalRoute<B, State>>::Source>>::Path:
                 PrepareCopy<<$route as OpenLocalRoute<B, State>>::Cx>,
         {
-            type Opened<Layers: LocalBlanketLayer + Clone> = OpenedDispatch<
+            type Opened<Layers: BlanketLayer + Clone> = OpenedDispatch<
                 <$route as OpenLocalRoute<B, State>>::Sub,
                 <$route as OpenLocalRoute<B, State>>::Body,
                 <$route as OpenLocalRoute<B, State>>::Cx,
@@ -461,7 +469,7 @@ macro_rules! open_dispatched {
                 <Plan::Copies as PairCopies<B, <$route as OpenLocalRoute<B, State>>::Source>>::Path,
             >;
 
-            async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+            async fn open_layered<Layers: BlanketLayer + Clone>(
                 self,
                 connected: &Connected<B>,
                 layers: &Layers,
@@ -500,9 +508,11 @@ impl<State, Sub, Body, Cx, Layers, Plan, Path> RunRoutes<State>
     for OpenedDispatch<Sub, Body, Cx, Layers, Plan, Path>
 where
     Sub: Subscriber,
-    Body: LocalHandler<Sub::Message, Cx, State>,
+    Sub::Message: 'static,
+    State: MaybeSendSync + 'static,
+    Body: Handler<Sub::Message, Cx, State> + 'static,
     Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
-    Layers: LocalBlanketLayer,
+    Layers: BlanketLayer,
     Plan: LocalDispatch,
     Path: PrepareCopy<Cx>,
 {
@@ -519,8 +529,7 @@ where
         } = self;
         // Applied where the loop starts, as on a plain route: the wrapped handler's type is the
         // layer's own.
-        let handler =
-            LocalBlanketLayer::apply::<Sub::Message, Cx, State, _>(&layers, route.handler);
+        let handler = BlanketLayer::apply::<Sub::Message, Cx, State, _>(&layers, route.handler);
         let route = LocalRoute {
             subscriber: route.subscriber,
             handler,

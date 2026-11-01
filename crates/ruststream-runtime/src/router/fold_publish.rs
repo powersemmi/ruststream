@@ -7,18 +7,16 @@
 #![allow(clippy::future_not_send)]
 
 use core::any::type_name;
-use ruststream_core::MaybeSendSync;
+use ruststream_core::{MaybeSendSync, MaybeSync};
 
-use crate::inject::LocalFromStartup;
+use crate::inject::FromStartup;
 use crate::input::{InputKind, Materialize};
 use crate::lifecycle::BoxError;
 use crate::publish::{
     BatchTransformIdentity, Direct, ForReply, PublishCodec, PublishIdentity, PublishTransform,
     RawReplyWiring, ReplyWiring, TypedPublisher,
 };
-use crate::publishing::{
-    EncodeReply, LocalPublishing, LocalPublishingCall, PublishingHandler, warn_ignored_reply_name,
-};
+use crate::publishing::{EncodeReply, PublishingCall, PublishingHandler, warn_ignored_reply_name};
 use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Origin;
@@ -37,7 +35,7 @@ type LocalStack<Policy, B, Enc, PL> =
 
 /// The local handler of a reply definition whose reply leaves through `Wiring`.
 type LocalReply<Def, DecodeCodec, Wiring> =
-    LocalPublishing<PublishingHandler<Def, DecodeCodec, Wiring, LocalPipeline>>;
+    PublishingHandler<Def, DecodeCodec, Wiring, LocalPipeline>;
 
 // A single-message reply runs the per-message transforms only, as on the multi-thread runner,
 // so its wiring carries no batch stack.
@@ -54,10 +52,12 @@ where
     Source: SubscriptionSource<Connected<B>>,
     Source::Subscriber: Subscriber<Message = M>,
     M: Settle,
-    Def: LocalPublishingCall<State>,
+    Def: PublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
-    Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
-    Def::Reply: EncodeReply,
+    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + MaybeSendSync,
+    DecodeCodec: MaybeSendSync,
+    State: MaybeSendSync,
+    Def::Reply: EncodeReply + MaybeSendSync,
     Def::Context: BuildContext<M> + MaybeSendSync + 'static,
     Policy: PublishPolicy<Connected<B>>,
     Policy::Live: Publisher,
@@ -101,10 +101,10 @@ where
             .pair_local(connected)
             .await
             .map_err(BoxError::from)?;
-        let injections = Def::Injections::resolve_local(extra, connected, &subscriber)
+        let injections = Def::Injections::resolve(extra, connected, &subscriber)
             .await
             .map_err(BoxError::from)?;
-        let handler = LocalPublishing(PublishingHandler {
+        let handler = PublishingHandler {
             def,
             codec,
             publisher,
@@ -113,7 +113,7 @@ where
             decode: policies.decode,
             #[cfg(feature = "testing")]
             origin: Origin::default(),
-        });
+        };
         Ok(LocalRoute {
             subscriber,
             handler,
@@ -132,10 +132,12 @@ where
     Source: SubscriptionSource<Connected<B>>,
     Source::Subscriber: Subscriber<Message = M>,
     M: Settle,
-    Def: LocalPublishingCall<State>,
+    Def: PublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
-    Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
-    Def::Reply: Serialized,
+    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + MaybeSendSync,
+    DecodeCodec: MaybeSendSync,
+    State: MaybeSendSync,
+    Def::Reply: Serialized + MaybeSendSync + MaybeSync,
     Def::Context: BuildContext<M> + MaybeSendSync + 'static,
     Policy: PublishPolicy<Connected<B>>,
     Policy::Live: Publisher,
@@ -177,10 +179,10 @@ where
             .pair_local(connected)
             .await
             .map_err(BoxError::from)?;
-        let injections = Def::Injections::resolve_local(extra, connected, &subscriber)
+        let injections = Def::Injections::resolve(extra, connected, &subscriber)
             .await
             .map_err(BoxError::from)?;
-        let handler = LocalPublishing(PublishingHandler {
+        let handler = PublishingHandler {
             def,
             codec,
             publisher,
@@ -189,7 +191,7 @@ where
             decode: policies.decode,
             #[cfg(feature = "testing")]
             origin: Origin::default(),
-        });
+        };
         Ok(LocalRoute {
             subscriber,
             handler,

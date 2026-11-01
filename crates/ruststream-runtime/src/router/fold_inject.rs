@@ -6,7 +6,7 @@
 // futures are `Send` exactly where the types they run are, and nothing here spawns them.
 #![allow(clippy::future_not_send)]
 
-use crate::inject::{InjectHandler, LocalFromStartup, LocalInject, LocalInjectCall};
+use crate::inject::{FromStartup, InjectCall, InjectHandler};
 use crate::input::{InputKind, Materialize};
 use crate::lifecycle::BoxError;
 use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
@@ -25,15 +25,17 @@ where
     Source: SubscriptionSource<Connected<B>>,
     Source::Subscriber: Subscriber<Message = M>,
     M: Settle,
-    Def: LocalInjectCall<State>,
+    Def: InjectCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
-    Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
+    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + MaybeSendSync,
+    DecodeCodec: MaybeSendSync,
+    State: MaybeSendSync,
     Def::Context: BuildContext<M> + MaybeSendSync + 'static,
 {
     type Source = Source;
     type Declaration = Undeclared;
     type Sub = Source::Subscriber;
-    type Body = LocalInject<InjectHandler<Def, DecodeCodec>>;
+    type Body = InjectHandler<Def, DecodeCodec>;
     type Cx = Def::Context;
 
     fn source(&self) -> &Source {
@@ -57,15 +59,15 @@ where
         let (name, subscriber, delivery) =
             open_local_subscription::<B, _, _>(source, connected, scope, declaration).await?;
         // Resolved before the loop starts, so every slot the body reaches is live.
-        let injections = Def::Injections::resolve_local(extra, connected, &subscriber)
+        let injections = Def::Injections::resolve(extra, connected, &subscriber)
             .await
             .map_err(BoxError::from)?;
-        let handler = LocalInject(InjectHandler {
+        let handler = InjectHandler {
             def,
             codec,
             injections,
             decode: policies.decode,
-        });
+        };
         Ok(LocalRoute {
             subscriber,
             handler,

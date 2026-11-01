@@ -68,6 +68,7 @@ otel = ["std", "dep:opentelemetry"]
 testing = [
     "std",
     "dep:inventory",
+    "dep:send_wrapper",
     "dep:tokio",
     "dep:tokio-util",
     "tokio?/macros",
@@ -90,6 +91,7 @@ thiserror = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 # The handle of the app's runtime under the `tokio` feature, and the harness's coordinator under
 # `testing`; the delivery body itself names no runtime. Only `rt`: the body spawns nothing.
+send_wrapper = { version = "0.6", optional = true }
 tokio = { version = "1.44", optional = true, default-features = false, features = ["rt"] }
 tokio-util = { workspace = true, optional = true }
 quanta = { workspace = true, optional = true }

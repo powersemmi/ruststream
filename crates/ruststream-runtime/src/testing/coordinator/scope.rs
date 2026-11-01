@@ -7,6 +7,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::any::Any;
+use core::fmt;
 use core::mem;
 use core::pin::Pin;
 use core::task::{Context, Poll};
@@ -22,6 +23,7 @@ use crate::HandlerResult;
 use crate::pairing::Origin;
 use crate::testing::attribution::{RecordedOptions, RuntimePublish, Span};
 use crate::testing::hooks::{DueCall, DuePublish};
+use crate::testing::on_thread::OnThread;
 use crate::{OutgoingMessage, RawMessage};
 
 use super::{Coordinator, LiveSubscription};
@@ -342,12 +344,24 @@ pub struct Delivered {
 }
 
 /// A carried value as the harness keeps it: cloned once, read back by its own type.
-#[cfg(feature = "tokio")]
-pub(crate) type RecordedValue = Arc<dyn Any + Send + Sync>;
+#[derive(Clone)]
+pub(crate) struct RecordedValue(Arc<dyn Any + Send + Sync>);
 
-/// See the `tokio` form: without the feature the harness runs on the test's own thread.
-#[cfg(not(feature = "tokio"))]
-pub(crate) type RecordedValue = Arc<dyn Any>;
+impl RecordedValue {
+    pub(crate) fn of<T: Clone + MaybeSendSync + 'static>(value: &T) -> Self {
+        Self(Arc::new(OnThread::new(value.clone())))
+    }
+
+    pub(crate) fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+        self.0.downcast_ref::<OnThread<T>>().map(|held| &**held)
+    }
+}
+
+impl fmt::Debug for RecordedValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RecordedValue").finish_non_exhaustive()
+    }
+}
 
 /// One recorded call into a handler: a single delivery, or a whole batch.
 pub(crate) struct Record {

@@ -7,7 +7,6 @@
 #![allow(clippy::future_not_send)]
 
 use std::convert::Infallible;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -20,9 +19,9 @@ use ruststream_core::{
 };
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
-    Context, ContextKind, Deserialized, Detach, Halt, HandlerOutcome, Input, LocalHandle,
-    LocalOutEntry, OpenRoutes, OutSlot, Outgoing, Outs, PublishTransform, PublishedThrough, Reads,
-    Router, RunRoutes, ScopeDelivery, ShutdownWait, SoloDeserialized, local_subscriber,
+    Context, ContextKind, Deserialized, Detach, Halt, Handle, HandlerOutcome, Input, OpenRoutes,
+    OutEntry, OutSlot, Outgoing, Outs, PublishTransform, PublishedThrough, Reads, Router,
+    RunRoutes, ScopeDelivery, ShutdownWait, SoloDeserialized, subscriber,
 };
 use serde::Serialize;
 use tokio::sync::Notify;
@@ -127,12 +126,12 @@ impl OutSlot for Audit {
 
 impl PublishedThrough<Audit> for Audited {}
 
-/// Audits every order through its slot, holding a value that is not `Send` across the publish.
+/// Audits every order through its slot, holding a value across the publish.
 struct Mirror;
 
-impl<A> LocalHandle<Order<'_>, (), Outs<(A,)>> for Mirror
+impl<A> Handle<Order<'_>, (), Outs<(A,)>> for Mirror
 where
-    A: LocalOutEntry<Audit, Wire: Publisher>,
+    A: OutEntry<Audit, Wire: Publisher>,
 {
     async fn handle(
         &self,
@@ -140,7 +139,7 @@ where
         outs: &Outs<(A,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
-        let held = Rc::new(order.0.len() as u64);
+        let held = Arc::new(order.0.len() as u64);
         let sent = outs
             .get(Audit)
             .message(&Audited { id: *held })
@@ -176,7 +175,7 @@ async fn a_body_publishes_through_its_slot_to_a_local_broker() {
         .await
         .expect("the audit trail subscribes");
     let opened = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
-        .include(local_subscriber(LocalMemorySource::new("orders"), Mirror).build())
+        .include(subscriber(LocalMemorySource::new("orders"), Mirror).build())
         .out(Audit, LocalMemoryPublish)
         .build()
         .open(&connected, &ScopeDelivery::new())
@@ -226,7 +225,7 @@ async fn a_slot_transform_stamps_what_the_body_publishes_through_a_local_chain()
         .await
         .expect("the audit trail subscribes");
     let opened = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
-        .include(local_subscriber(LocalMemorySource::new("orders"), Mirror).build())
+        .include(subscriber(LocalMemorySource::new("orders"), Mirror).build())
         .out(Audit, LocalMemoryPublish)
         .transform(Stamp)
         .build()

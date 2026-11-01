@@ -19,7 +19,7 @@ use tracing::warn;
 use super::batch::rejection;
 use super::context::{Context, MarkingContext};
 use super::failure::FailurePolicy;
-use super::handler::{CallHandler, Handler, HandlerOutcome, LocalCall, LocalHandler, SendCall};
+use super::handler::{Handler, HandlerOutcome};
 use super::input::{Decoded, Materialize, REPORTED};
 
 /// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
@@ -89,31 +89,7 @@ where
     St: MaybeSendSync,
     Inner: Handler<Input::Target, Cx, St>,
 {
-    fn handle(
-        &self,
-        msg: &M,
-        ctx: &mut Context<'_, Cx, St>,
-    ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
-        self.handle_local::<SendCall, Cx, St>(msg, ctx)
-    }
-}
-
-impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
-    /// Decodes `msg` and runs the inner handler on what it materialized into: the adapter's
-    /// body, for a delivery of either family. The [`Handler`] impl is this future; a runner
-    /// whose deliveries are not `Sync` reaches it through [`LocalTyped`].
-    // `Send` exactly where the delivery is `Sync`: the `Handler` impl's signature proves it there.
-    #[allow(clippy::future_not_send)]
-    pub(crate) async fn handle_local<Via, Cx, St>(
-        &self,
-        msg: &M,
-        ctx: &mut Context<'_, Cx, St>,
-    ) -> HandlerOutcome
-    where
-        M: Settle,
-        Input: Materialize<DecodeCodec, M>,
-        Via: CallHandler<Inner, Input::Target, Cx, St>,
-    {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> HandlerOutcome {
         if let Some(outcome) = refused::<Input, DecodeCodec, M, Cx, St>(msg, self.decode, ctx) {
             return outcome;
         }
@@ -124,34 +100,10 @@ impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
             Ok(held) => {
                 #[cfg(feature = "testing")]
                 Input::record(&held, ctx);
-                Via::handle(&self.inner, Input::view(&held, msg), ctx).await
+                Inner::handle(&self.inner, Input::view(&held, msg), ctx).await
             }
             Err(err) => unmaterialized::<Input, DecodeCodec, M, Cx, St>(&err, self.decode, ctx),
         }
-    }
-}
-
-/// A [`Typed`] adapter for a runner whose deliveries stay on one thread: the same body, reached
-/// through [`LocalHandler`], so the delivery need not be `Sync`.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct LocalTyped<Adapter>(pub(crate) Adapter);
-
-impl<M, Input, DecodeCodec, Inner, Cx, St> LocalHandler<M, Cx, St>
-    for LocalTyped<Typed<M, Input, DecodeCodec, Inner>>
-where
-    M: Settle,
-    Input: Materialize<DecodeCodec, M>,
-    Inner: LocalHandler<Input::Target, Cx, St>,
-{
-    // The delivery stays on the thread that polls it, which is what this twin is for.
-    #[allow(clippy::future_not_send)]
-    fn handle(
-        &self,
-        msg: &M,
-        ctx: &mut Context<'_, Cx, St>,
-    ) -> impl Future<Output = HandlerOutcome> {
-        self.0.handle_local::<LocalCall, Cx, St>(msg, ctx)
     }
 }
 

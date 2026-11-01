@@ -21,6 +21,8 @@ mod error;
 pub(crate) mod hooks;
 #[cfg(feature = "testing")]
 mod in_process;
+#[cfg(feature = "testing")]
+pub(crate) mod on_thread;
 
 #[cfg(feature = "testing")]
 pub use assertions::{PublishedAssertions, SubscriberAssertions};

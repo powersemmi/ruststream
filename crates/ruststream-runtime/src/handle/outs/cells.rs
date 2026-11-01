@@ -6,10 +6,10 @@ use crate::batch::BatchResult;
 use crate::batch_inject::{BatchInjectCall, BatchInjectDef};
 use crate::context::Context;
 use crate::handler::HandlerOutcome;
-use crate::inject::{InjectCall, InjectDef, LocalInjectCall};
+use crate::inject::{InjectCall, InjectDef};
 use crate::metadata::OutgoingMessageMetadata;
 use crate::router::IncludeDef;
-use crate::slot::{BindSlots, HasSlots, LocalBindSlots, LocalHasSlots, OutSlot};
+use crate::slot::{BindSlots, HasSlots, OutSlot};
 use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -17,14 +17,13 @@ use ruststream_core::MaybeSendSync;
 
 use super::arena::{EntryMarkers, Outs, SlotDictionary};
 use super::entry::Slot;
-use super::local_entry::{LocalEntryMarkers, LocalSlot};
+use crate::handle::Handle;
 use crate::handle::axis::{
     Axis, AxisDocs, Batch, BatchPair, BatchSet, BatchedAxis, Deserialized, Input, Message, Solo,
     SoloAxis, SoloCarried, SoloDeserialized, SoloPair, SoloSet,
 };
 use crate::handle::eager::{construct, run_batch, settle_solo};
 use crate::handle::value::{HandleValue, Sealed};
-use crate::handle::{Handle, LocalHandle};
 
 impl<A, E, C, H, Doc> IncludeDef for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
 where
@@ -37,14 +36,6 @@ where
 impl<A, E, C, H, Doc> HasSlots for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
 where
     E: EntryMarkers,
-{
-    type Markers = E::Markers;
-}
-
-#[doc(hidden)]
-impl<A, E, C, H, Doc> LocalHasSlots for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
-where
-    E: LocalEntryMarkers,
 {
     type Markers = E::Markers;
 }
@@ -85,46 +76,6 @@ macro_rules! impl_bind_slots {
 }
 
 impl_bind_slots! {
-    (M0 / P0: E0 / Pipe0 / B0)
-    (M0 / P0: E0 / Pipe0 / B0, M1 / P1: E1 / Pipe1 / B1)
-    (M0 / P0: E0 / Pipe0 / B0, M1 / P1: E1 / Pipe1 / B1, M2 / P2: E2 / Pipe2 / B2)
-}
-
-/// The local family's binding: each entry a body left generic unifies with its marker's
-/// [`LocalSlot`] over the paired live value of the local family.
-macro_rules! impl_local_bind_slots {
-    ($(($($m:ident / $p:ident: $e:ident / $pipe:ident / $b:ident),+))+) => {$(
-        #[doc(hidden)]
-        impl<Conn, A, C, H, Doc, $($m, $p, $e, $pipe, $b),+>
-            LocalBindSlots<Conn, ($(($p, $e, $pipe),)+)>
-            for Sealed<
-                HandleValue<
-                    A,
-                    (),
-                    Outs<($(LocalSlot<$m, <$p as PublishPolicy<Conn>>::Live, $e, $pipe, $b>,)+)>,
-                    C,
-                    H,
-                    Doc,
-                >,
-            >
-        where
-            Conn: ConnectedBroker,
-            $(
-                $m: OutSlot,
-                $p: PublishPolicy<Conn>,
-            )+
-        {
-            type Bound = Self;
-            type Extra = ($(($p, $e, $pipe),)+);
-
-            fn bind_local(self, sources: ($(($p, $e, $pipe),)+)) -> (Self, Self::Extra) {
-                (self, sources)
-            }
-        }
-    )+};
-}
-
-impl_local_bind_slots! {
     (M0 / P0: E0 / Pipe0 / B0)
     (M0 / P0: E0 / Pipe0 / B0, M1 / P1: E1 / Pipe1 / B1)
     (M0 / P0: E0 / Pipe0 / B0, M1 / P1: E1 / Pipe1 / B1, M2 / P2: E2 / Pipe2 / B2)
@@ -279,80 +230,6 @@ where
     E: MaybeSendSync,
 {
     async fn call(
-        &self,
-        input: &Message<Hd, P>,
-        injections: &Outs<E>,
-        ctx: &mut Context<'_, C, S>,
-    ) -> HandlerOutcome {
-        settle_solo(self.0.body.handle(input, injections, ctx).await)
-    }
-}
-
-/// The local family's single-message calls: the body is a [`LocalHandle`] and its future is
-/// awaited where the delivery is polled.
-macro_rules! impl_local_inject_call {
-    ($($axis:ident $(+ $extra:ident)?),+ $(,)?) => {$(
-        // Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
-        #[allow(clippy::future_not_send)]
-        impl<T, C, S, H, Doc, E> LocalInjectCall<S>
-            for Sealed<HandleValue<$axis<T>, (), Outs<E>, C, H, Doc>>
-        where
-            Self: InjectDef<Input = <$axis<T> as Axis>::Kind, Context = C, Injections = Outs<E>>,
-            // An input is shared with the worker tasks of the multi-thread runner, so the axes ask it
-            // of every input; the local family keeps the same axes.
-            T: Input<Axis = $axis<T>> $(+ $extra)? + MaybeSendSync + 'static,
-            H: LocalHandle<T, (), Outs<E>, C, S>,
-        {
-            async fn call_local(
-                &self,
-                input: &T,
-                injections: &Outs<E>,
-                ctx: &mut Context<'_, C, S>,
-            ) -> HandlerOutcome {
-                settle_solo(self.0.body.handle(input, injections, ctx).await)
-            }
-        }
-    )+};
-}
-
-impl_local_inject_call!(Solo, SoloSet, SoloCarried + Clone);
-
-// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
-#[allow(clippy::future_not_send)]
-impl<F, C, S, H, Doc, E> LocalInjectCall<S>
-    for Sealed<HandleValue<SoloDeserialized<F>, (), Outs<E>, C, H, Doc>>
-where
-    Self: InjectDef<Input = <SoloDeserialized<F> as Axis>::Kind, Context = C, Injections = Outs<E>>,
-    F: Deserialized + MaybeSendSync + 'static,
-    for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
-    H: for<'p> LocalHandle<F::Output<'p>, (), Outs<E>, C, S>,
-{
-    async fn call_local(
-        &self,
-        input: &[u8],
-        injections: &Outs<E>,
-        ctx: &mut Context<'_, C, S>,
-    ) -> HandlerOutcome {
-        let input = match construct::<F, C, S>(input, ctx) {
-            Ok(input) => input,
-            Err(outcome) => return outcome,
-        };
-        settle_solo(self.0.body.handle(&input, injections, ctx).await)
-    }
-}
-
-// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
-#[allow(clippy::future_not_send)]
-impl<Hd, P, C, S, H, Doc, E> LocalInjectCall<S>
-    for Sealed<HandleValue<SoloPair<Hd, P>, (), Outs<E>, C, H, Doc>>
-where
-    Self: InjectDef<Input = <SoloPair<Hd, P> as Axis>::Kind, Context = C, Injections = Outs<E>>,
-    Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
-    Hd: MaybeSendSync + 'static,
-    P: MaybeSendSync + 'static,
-    H: LocalHandle<Message<Hd, P>, (), Outs<E>, C, S>,
-{
-    async fn call_local(
         &self,
         input: &Message<Hd, P>,
         injections: &Outs<E>,

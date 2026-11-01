@@ -6,7 +6,6 @@
 //! harness therefore copies them at that hand-over, next to the message, and the assertions read
 //! them back per message.
 
-use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::any::type_name;
@@ -32,7 +31,7 @@ impl RecordedOptions {
     ) -> Self {
         Self {
             type_name: type_name::<Options>(),
-            value: options.map(|options| -> RecordedValue { Arc::new(options.clone()) }),
+            value: options.map(|options| -> RecordedValue { RecordedValue::of(options) }),
         }
     }
 
@@ -44,7 +43,7 @@ impl RecordedOptions {
     /// broker's type, and the message says which one was recorded.
     pub(crate) fn downcast<Options: 'static>(&self, channel: &str) -> Option<&Options> {
         let value = self.value.as_ref()?;
-        Some(value.as_ref().downcast_ref::<Options>().unwrap_or_else(|| {
+        Some(value.downcast_ref::<Options>().unwrap_or_else(|| {
             panic!(
                 "channel {channel:?} published with per-message options of type `{}`, not `{}`",
                 self.type_name,

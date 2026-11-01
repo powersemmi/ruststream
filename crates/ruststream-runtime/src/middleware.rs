@@ -44,7 +44,7 @@
 //! ```
 
 use super::context::Context;
-use super::handler::{Handler, HandlerOutcome, LocalHandler};
+use super::handler::{Handler, HandlerOutcome};
 use ruststream_core::{MaybeSend, MaybeSendSync};
 
 /// A function from one handler to another. Apply with [`HandlerExt::with`], or to one
@@ -169,156 +169,6 @@ pub trait HandlerExt<M, C = (), S = ()>: Handler<M, C, S> + Sized {
 
 impl<M, C, S, H> HandlerExt<M, C, S> for H where H: Handler<M, C, S> {}
 
-/// A layer that wraps every handler of a router whose deliveries stay on the thread that polls
-/// them: the [`BlanketLayer`] of the local family.
-///
-/// A runner that hosts the app on one thread (a device's embassy executor) runs every handler
-/// through [`LocalHandler`], so a router-scope middleware there wraps a [`LocalHandler`] and
-/// hands one back; neither the wrapped handler nor its future needs to be `Send`.
-/// [`Identity`], [`Stack`] and [`TracingLayer`](layers::TracingLayer) are layers of both families.
-///
-/// # Examples
-///
-/// ```
-/// use core::sync::atomic::{AtomicU32, Ordering};
-/// use std::convert::Infallible;
-///
-/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, local_subscriber};
-/// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
-/// use ruststream_runtime::{
-///     Deserialized, Input, LocalBlanketLayer, LocalHandler, SoloDeserialized,
-/// };
-///
-/// /// Counts the deliveries that reach the router's handlers.
-/// struct CountDeliveries(&'static AtomicU32);
-///
-/// struct Counted<H>(H, &'static AtomicU32);
-///
-/// impl LocalBlanketLayer for CountDeliveries {
-///     fn apply<M, C, S, H>(&self, handler: H) -> impl LocalHandler<M, C, S>
-///     where
-///         H: LocalHandler<M, C, S>,
-///     {
-///         Counted(handler, self.0)
-///     }
-/// }
-///
-/// impl<M, C, S, H: LocalHandler<M, C, S>> LocalHandler<M, C, S> for Counted<H> {
-///     fn handle(
-///         &self,
-///         msg: &M,
-///         ctx: &mut Context<'_, C, S>,
-///     ) -> impl Future<Output = HandlerOutcome> {
-///         self.1.fetch_add(1, Ordering::Relaxed);
-///         self.0.handle(msg, ctx)
-///     }
-/// }
-///
-/// /// A reading as the device's sensor bus frames it, viewed in place.
-/// struct Reading<'a>(&'a [u8]);
-///
-/// impl Deserialized for Reading<'_> {
-///     type Output<'a> = Reading<'a>;
-///     type Error = Infallible;
-///
-///     fn from_payload(payload: &[u8]) -> Result<Reading<'_>, Infallible> {
-///         Ok(Reading(payload))
-///     }
-/// }
-///
-/// impl Input for Reading<'_> {
-///     type Axis = SoloDeserialized<Reading<'static>>;
-/// }
-///
-/// struct Log;
-///
-/// impl LocalHandle<Reading<'_>> for Log {
-///     async fn handle(
-///         &self,
-///         reading: &Reading<'_>,
-///         _outs: &(),
-///         _ctx: &mut Context<'_>,
-///     ) -> Result<(), HandlerOutcome> {
-///         let _ = reading.0.len();
-///         Ok(())
-///     }
-/// }
-///
-/// static REACHED: AtomicU32 = AtomicU32::new(0);
-///
-/// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
-///     .layer(CountDeliveries(&REACHED))
-///     .include(local_subscriber(LocalMemorySource::new("readings"), Log).build());
-/// # let _ = routes;
-/// ```
-///
-/// The metrics and OpenTelemetry layers wrap the multi-thread runner's handlers only, so a local
-/// router does not take one:
-///
-/// ```compile_fail
-/// # use std::convert::Infallible;
-/// # use std::future::ready;
-/// use ruststream::metrics::Metrics;
-/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, local_subscriber};
-/// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
-/// use ruststream_runtime::{Deserialized, Input, OpenRoutes, SoloDeserialized};
-/// # struct Reading<'a>(&'a [u8]);
-/// # impl Deserialized for Reading<'_> {
-/// #     type Output<'a> = Reading<'a>;
-/// #     type Error = Infallible;
-/// #     fn from_payload(payload: &[u8]) -> Result<Reading<'_>, Infallible> { Ok(Reading(payload)) }
-/// # }
-/// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
-/// # struct Log;
-/// # impl LocalHandle<Reading<'_>> for Log {
-/// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
-/// #         -> impl Future<Output = Result<(), HandlerOutcome>> { let _ = r.0; ready(Ok(())) }
-/// # }
-/// fn routes(metrics: &Metrics) -> impl OpenRoutes<LocalMemoryBroker<4>> {
-///     Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
-///         .layer(metrics.consume_layer())
-///         .include(local_subscriber(LocalMemorySource::new("readings"), Log).build())
-/// }
-/// ```
-///
-/// ```compile_fail
-/// # use std::convert::Infallible;
-/// # use std::future::ready;
-/// use ruststream::otel::OpenTelemetryLayer;
-/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, local_subscriber};
-/// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
-/// use ruststream_runtime::{Deserialized, Input, OpenRoutes, SoloDeserialized};
-/// # struct Reading<'a>(&'a [u8]);
-/// # impl Deserialized for Reading<'_> {
-/// #     type Output<'a> = Reading<'a>;
-/// #     type Error = Infallible;
-/// #     fn from_payload(payload: &[u8]) -> Result<Reading<'_>, Infallible> { Ok(Reading(payload)) }
-/// # }
-/// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
-/// # struct Log;
-/// # impl LocalHandle<Reading<'_>> for Log {
-/// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
-/// #         -> impl Future<Output = Result<(), HandlerOutcome>> { let _ = r.0; ready(Ok(())) }
-/// # }
-/// fn routes() -> impl OpenRoutes<LocalMemoryBroker<4>> {
-///     Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
-///         .layer(OpenTelemetryLayer)
-///         .include(local_subscriber(LocalMemorySource::new("readings"), Log).build())
-/// }
-/// ```
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` does not wrap the handlers of a local router",
-    note = "a router started with `Router::local()` wraps its handlers through \
-            `LocalBlanketLayer`, which wraps a `LocalHandler`; a `BlanketLayer` wraps the handlers \
-            of the multi-thread runner"
-)]
-pub trait LocalBlanketLayer {
-    /// Wraps `handler`, handing back the handler the router runs in its place.
-    fn apply<M, C, S, H>(&self, handler: H) -> impl LocalHandler<M, C, S>
-    where
-        H: LocalHandler<M, C, S>;
-}
-
 /// The identity [`Layer`]: returns the handler unchanged. The default global stack on
 /// [`RustStream`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html).
 #[derive(Debug, Clone, Copy, Default)]
@@ -329,15 +179,6 @@ impl<H> Layer<H> for Identity {
 
     fn layer(&self, inner: H) -> H {
         inner
-    }
-}
-
-impl LocalBlanketLayer for Identity {
-    fn apply<M, C, S, H>(&self, handler: H) -> impl LocalHandler<M, C, S>
-    where
-        H: LocalHandler<M, C, S>,
-    {
-        handler
     }
 }
 
@@ -382,23 +223,6 @@ where
     }
 }
 
-impl<Inner, Outer> LocalBlanketLayer for Stack<Inner, Outer>
-where
-    Inner: LocalBlanketLayer,
-    Outer: LocalBlanketLayer,
-{
-    fn apply<M, C, S, H>(&self, handler: H) -> impl LocalHandler<M, C, S>
-    where
-        H: LocalHandler<M, C, S>,
-    {
-        // The order of the `BlanketLayer` impl: inner wraps first, outer outside.
-        LocalBlanketLayer::apply::<M, C, S, _>(
-            &self.outer,
-            LocalBlanketLayer::apply::<M, C, S, _>(&self.inner, handler),
-        )
-    }
-}
-
 impl<Inner, Outer> BlanketLayer for Stack<Inner, Outer>
 where
     Inner: BlanketLayer,
@@ -423,9 +247,7 @@ pub mod layers {
     use tracing::{debug, info, instrument, warn};
 
     use super::super::handler::HandlerResult;
-    use super::{
-        BlanketLayer, Context, Handler, HandlerOutcome, Layer, LocalBlanketLayer, LocalHandler,
-    };
+    use super::{BlanketLayer, Context, Handler, HandlerOutcome, Layer};
 
     /// Logs every delivery and its outcome via [`tracing`]. Default level is `INFO` for the
     /// outcome and `DEBUG` for arrival.
@@ -467,15 +289,6 @@ pub mod layers {
         }
     }
 
-    impl LocalBlanketLayer for TracingLayer {
-        fn apply<M, C, S, H>(&self, handler: H) -> impl LocalHandler<M, C, S>
-        where
-            H: LocalHandler<M, C, S>,
-        {
-            self.layer(handler)
-        }
-    }
-
     /// Handler produced by [`TracingLayer::layer`].
     #[derive(Debug, Clone)]
     pub struct TracingHandler<H> {
@@ -501,27 +314,7 @@ pub mod layers {
         }
     }
 
-    impl<M, C, S, H> LocalHandler<M, C, S> for TracingHandler<H>
-    where
-        H: LocalHandler<M, C, S>,
-    {
-        // The delivery stays on the thread that polls it, which is what this twin is for.
-        #[allow(clippy::future_not_send)]
-        #[instrument(level = "trace", skip(self, msg, ctx), fields(target = self.target))]
-        fn handle(
-            &self,
-            msg: &M,
-            ctx: &mut Context<'_, C, S>,
-        ) -> impl Future<Output = HandlerOutcome> {
-            // An `async move` block, so `instrument` enters its span around the whole future.
-            async move { traced(move || self.inner.handle(msg, ctx)).await }
-        }
-    }
-
-    /// Logs the delivery, runs the wrapped handler and logs its outcome: the body of both
-    /// families' [`TracingHandler`].
-    // `Send` exactly where the wrapped handler's future is: the `Handler` impl proves it there.
-    #[allow(clippy::future_not_send)]
+    /// Logs the delivery, runs the wrapped handler and logs its outcome.
     async fn traced<Handled>(handle: impl FnOnce() -> Handled) -> HandlerOutcome
     where
         Handled: Future<Output = HandlerOutcome>,
@@ -550,7 +343,6 @@ pub mod layers {
 
     #[cfg(test)]
     mod tests {
-        use core::future::ready;
         use core::time::Duration;
 
         use super::*;
@@ -567,16 +359,6 @@ pub mod layers {
             ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
                 let outcome = self.0;
                 async move { HandlerOutcome::from(outcome) }
-            }
-        }
-
-        impl LocalHandler<(), (), ()> for Fixed {
-            fn handle(
-                &self,
-                _msg: &(),
-                _ctx: &mut Context<'_, (), ()>,
-            ) -> impl Future<Output = HandlerOutcome> {
-                ready(HandlerOutcome::from(self.0))
             }
         }
 
@@ -610,16 +392,16 @@ pub mod layers {
         }
 
         #[tokio::test]
-        async fn the_local_twin_passes_the_outcome_through() {
+        async fn the_blanket_form_passes_the_outcome_through() {
             let state = ();
             let delivery = Delivery::empty();
             let headers = HeaderMap::new();
             let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
             let delayed = HandlerResult::retry_after(Duration::from_secs(3));
             let layer = TracingLayer::default();
-            let handler = LocalBlanketLayer::apply::<(), (), (), _>(&layer, Fixed(delayed));
+            let handler = BlanketLayer::apply::<(), (), (), _>(&layer, Fixed(delayed));
 
-            let settled = LocalHandler::handle(&handler, &(), &mut ctx).await;
+            let settled = Handler::handle(&handler, &(), &mut ctx).await;
 
             assert_eq!(settled.outcome(), delayed);
         }

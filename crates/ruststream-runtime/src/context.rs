@@ -11,8 +11,6 @@
 //! the headers pays neither the broker's accessor nor a clone.
 
 use alloc::boxed::Box;
-#[cfg(feature = "testing")]
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::OnceCell;
 use core::fmt;
@@ -298,7 +296,7 @@ impl<'a, C, S> Context<'a, C, S> {
     #[cfg(feature = "testing")]
     pub(crate) fn record_carried<T: Clone + MaybeSendSync + 'static>(&mut self, value: &T) {
         if self.delivery.hooks.coordinator().is_some() {
-            self.carried = Some(Arc::new(value.clone()));
+            self.carried = Some(RecordedValue::of(value));
         }
     }
 
