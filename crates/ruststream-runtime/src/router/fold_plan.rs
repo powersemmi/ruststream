@@ -432,45 +432,66 @@ where
     }
 }
 
-impl<B, State, Route, Plan> OpenLayered<B, State> for Dispatched<Route, Plan>
-where
-    B: Broker,
-    Route: OpenLocalRoute<B, State> + UnboundRetry,
-    Plan: LocalDispatch<
-        Copies: PairCopies<B, Route::Source> + AppliesDeclaration<Route::Declaration>,
-    >,
-    <Plan::Copies as PairCopies<B, Route::Source>>::Path: PrepareCopy<Route::Cx>,
-{
-    type Opened<Layers: LocalBlanketLayer + Clone> = OpenedDispatch<
-        Route::Sub,
-        Route::Body,
-        Route::Cx,
-        Layers,
-        Plan,
-        <Plan::Copies as PairCopies<B, Route::Source>>::Path,
-    >;
+// One impl per route type, not one over every route: a retried route is opened by its own impl
+// in `fold_retry`, and with a single impl that matches the compiler reports the bound that
+// route fails (a transform that names the destination, a missing store) instead of "not a route
+// this runner opens".
+macro_rules! open_dispatched {
+    ($([$($param:ident),+] $route:ty),+ $(,)?) => {$(
+        impl<B, State, Plan, $($param),+> OpenLayered<B, State> for Dispatched<$route, Plan>
+        where
+            B: Broker,
+            $route: OpenLocalRoute<B, State> + UnboundRetry,
+            Plan: LocalDispatch<
+                Copies: PairCopies<B, <$route as OpenLocalRoute<B, State>>::Source>
+                    + AppliesDeclaration<<$route as OpenLocalRoute<B, State>>::Declaration>,
+            >,
+            <Plan::Copies as PairCopies<B, <$route as OpenLocalRoute<B, State>>::Source>>::Path:
+                PrepareCopy<<$route as OpenLocalRoute<B, State>>::Cx>,
+        {
+            type Opened<Layers: LocalBlanketLayer + Clone> = OpenedDispatch<
+                <$route as OpenLocalRoute<B, State>>::Sub,
+                <$route as OpenLocalRoute<B, State>>::Body,
+                <$route as OpenLocalRoute<B, State>>::Cx,
+                Layers,
+                Plan,
+                <Plan::Copies as PairCopies<B, <$route as OpenLocalRoute<B, State>>::Source>>::Path,
+            >;
 
-    async fn open_layered<Layers: LocalBlanketLayer + Clone>(
-        self,
-        connected: &Connected<B>,
-        layers: &Layers,
-        scope: &ScopeDelivery,
-    ) -> Result<Self::Opened<Layers>, BoxError> {
-        let Self { route, plan } = self;
-        // Paired before the subscription opens, so a copy path the broker refuses fails the
-        // startup before any delivery arrives.
-        let path =
-            <Plan::Copies as PairCopies<B, Route::Source>>::pair(route.source(), connected).await?;
-        Ok(OpenedDispatch {
-            route: route
-                .open_route(connected, scope, RetryDeclaration::new())
-                .await?,
-            layers: layers.clone(),
-            plan,
-            path,
-        })
-    }
+            async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+                self,
+                connected: &Connected<B>,
+                layers: &Layers,
+                scope: &ScopeDelivery,
+            ) -> Result<Self::Opened<Layers>, BoxError> {
+                let Self { route, plan } = self;
+                // Paired before the subscription opens, so a copy path the broker refuses fails
+                // the startup before any delivery arrives.
+                let path = <Plan::Copies as PairCopies<
+                    B,
+                    <$route as OpenLocalRoute<B, State>>::Source,
+                >>::pair(route.source(), connected)
+                .await?;
+                Ok(OpenedDispatch {
+                    route: route
+                        .open_route(connected, scope, RetryDeclaration::new())
+                        .await?,
+                    layers: layers.clone(),
+                    plan,
+                    path,
+                })
+            }
+        }
+    )+};
 }
+
+open_dispatched!(
+    [S, H, Cx] SubscribeRoute<S, H, Cx>,
+    [Source, Def, DecodeCodec, Wiring, Extra] PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>,
+    [Source, Def, DecodeCodec, Wiring, Extra] RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>,
+    [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra>,
+    [Route] DeclaredRoute<Route>,
+);
 
 impl<State, Sub, Body, Cx, Layers, Plan, Path> RunRoutes<State>
     for OpenedDispatch<Sub, Body, Cx, Layers, Plan, Path>

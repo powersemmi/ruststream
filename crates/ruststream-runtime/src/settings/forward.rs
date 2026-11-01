@@ -57,7 +57,7 @@ impl<Src: Clone> CloneSource for Src {}
 macro_rules! forward_common {
     ($def:ty) => {
         fn source(&self) -> Src {
-            self.source.clone()
+            self.source.cloned()
         }
 
         fn workers(&self) -> Workers {
@@ -102,7 +102,6 @@ macro_rules! forward_outgoing {
 impl<Def, Src, State, DC> SubscriberDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: SubscriberDef,
-    Src: CloneSource,
 {
     type Input = <Def as SubscriberDef>::Input;
     type Context = <Def as SubscriberDef>::Context;
@@ -119,7 +118,6 @@ where
 impl<Def, Src, State, DC> BatchDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchDef,
-    Src: CloneSource,
 {
     type Input = <Def as BatchDef>::Input;
     type Context = <Def as BatchDef>::Context;
@@ -136,7 +134,7 @@ where
 impl<Def, Src, State, DC> InjectDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: InjectDef,
-    Src: CloneSource + Send + Sync,
+    Src: Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -152,7 +150,7 @@ where
 impl<Def, Src, State, DC, S> InjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: InjectCall<S>,
-    Src: CloneSource + Send + Sync,
+    Src: Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -169,7 +167,7 @@ where
 impl<Def, Src, State, DC, S> LocalInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: LocalInjectCall<S>,
-    Src: CloneSource + Send + Sync,
+    Src: Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -186,7 +184,7 @@ where
 impl<Def, Src, State, DC> PublishingDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: PublishingDef,
-    Src: CloneSource + Send + Sync,
+    Src: Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -211,7 +209,7 @@ where
 impl<Def, Src, State, DC, S> PublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: PublishingCall<S>,
-    Src: CloneSource + Send + Sync,
+    Src: Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -228,7 +226,7 @@ where
 impl<Def, Src, State, DC, S> LocalPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: LocalPublishingCall<S>,
-    Src: CloneSource + Send + Sync,
+    Src: Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -245,7 +243,7 @@ where
 impl<Def, Src, State, DC> BatchInjectDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectDef,
-    Src: CloneSource + Send + Sync,
+    Src: Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -261,7 +259,7 @@ where
 impl<Def, Src, State, DC, S> BatchInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectCall<S>,
-    Src: CloneSource + Send + Sync,
+    Src: Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -278,7 +276,7 @@ where
 impl<Def, Src, State, DC> BatchPublishingDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingDef,
-    Src: CloneSource + Send + Sync,
+    Src: Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
@@ -303,7 +301,7 @@ where
 impl<Def, Src, State, DC, S> BatchPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingCall<S>,
-    Src: CloneSource + Send + Sync,
+    Src: Send + Sync,
     State: Send + Sync,
     DC: Send + Sync,
 {
