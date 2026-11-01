@@ -124,7 +124,7 @@ pub use schema::{
 #[doc(hidden)]
 pub use send::{IfSend, MaybeSend, MaybeSendSync, MaybeSync};
 #[cfg(feature = "alloc")]
-pub use subscriber::Subscriber;
+pub use subscriber::{ReadyHint, Subscriber};
 #[cfg(feature = "alloc")]
 pub use subscription::{
     AddressedCopies, BrokerMoves, CopyPath, FromName, Name, NamedCopies, RedeliveryAddress,
