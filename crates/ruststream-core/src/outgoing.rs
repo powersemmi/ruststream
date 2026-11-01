@@ -53,6 +53,7 @@ pub struct Outgoing<'a> {
 ///
 /// /// Each tenant reads its answers from a queue of its own. The name is built per delivery and
 /// /// moves in owned; a name the request carried would arrive as its own buffer instead.
+/// #[derive(Clone)]
 /// struct PerTenant;
 ///
 /// impl<C, Options> PublishTransform<ForReply<C>, Options> for PerTenant {
@@ -284,6 +285,7 @@ impl<'a> Outgoing<'a> {
     ///
     /// /// Sends each answer to the inbox its request named, or to a per-tenant queue when it named
     /// /// none: the header's buffer moves in shared, the computed name moves in owned.
+    /// #[derive(Clone)]
     /// struct ToInbox;
     ///
     /// impl<C, Options> PublishTransform<ForReply<C>, Options> for ToInbox {

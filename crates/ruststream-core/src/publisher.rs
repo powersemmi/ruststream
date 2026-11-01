@@ -42,6 +42,7 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 /// # }
 ///
 /// /// A transport that packs the payload into a frame of its own reads it and keeps nothing.
+/// #[derive(Clone)]
 /// struct Framed {
 ///     socket: Socket,
 /// }
@@ -195,6 +196,7 @@ pub trait PayloadEncode {
 ///
 /// /// The client copies the bytes onto its socket, so it borrows them where the framework wrote
 /// /// them and the dispatch loop reuses that buffer for the next reply.
+/// #[derive(Clone)]
 /// struct SocketPublisher {
 ///     connection: Connection,
 /// }
@@ -237,6 +239,7 @@ pub struct Lend;
 ///
 /// /// The client queues the record and sends it later, so it keeps the buffer: `freeze` turns it
 /// /// into the `Bytes` the client speaks without a copy.
+/// #[derive(Clone)]
 /// struct QueuedPublisher {
 ///     producer: Producer,
 /// }
@@ -273,6 +276,7 @@ pub struct Take;
 ///
 /// // A handle that forwards every publish to the publisher it wraps, whichever form that one
 /// // declared.
+/// #[derive(Clone)]
 /// struct Tagged<P>(P, HeaderMap);
 ///
 /// impl<P: Publisher> Publisher for Tagged<P> {
@@ -419,6 +423,7 @@ crate::__contract_twin! {
         /// }
         ///
         /// /// The live publisher: the connection and the default the policy carried.
+        /// #[derive(Clone)]
         /// pub struct PriorityPublisher {
         ///     inner: MemoryPublisher,
         ///     default_priority: u8,
@@ -556,6 +561,7 @@ crate::__contract_twin! {
         /// use ruststream::{HeaderMap, Outgoing, OutgoingFor, Publisher, Serialized};
         ///
         /// // A handle that tags every message it sends, without touching the message itself.
+        /// #[derive(Clone)]
         /// struct Tenanted<P>(P, HeaderMap);
         ///
         /// impl<P: Publisher> Publisher for Tenanted<P> {

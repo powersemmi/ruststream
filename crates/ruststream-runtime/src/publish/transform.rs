@@ -303,6 +303,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// ```
 /// use ruststream::runtime::{ContextKind, Outgoing, PublishTransform, Reads};
 ///
+/// #[derive(Clone)]
 /// struct Envelope;
 ///
 /// impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
@@ -325,6 +326,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// ```
 /// use ruststream::runtime::{ForReply, Outgoing, PublishContext, PublishTransform, Reads};
 ///
+/// #[derive(Clone)]
 /// struct StampSource;
 ///
 /// impl<C, Options> PublishTransform<ForReply<C>, Options> for StampSource {
@@ -357,6 +359,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 ///     level: Option<u8>,
 /// }
 ///
+/// #[derive(Clone)]
 /// struct Urgent;
 ///
 /// impl PublishTransform<ForSlot, Priority> for Urgent {
@@ -402,6 +405,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// use ruststream::runtime::{ForReply, Names, Outgoing, PublishContext, PublishTransform};
 ///
 /// /// Answers where the request asked to be answered.
+/// #[derive(Clone)]
 /// struct ReplyTo;
 ///
 /// impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
@@ -596,6 +600,7 @@ impl<C, Options, L: PublishTransform<ForReply<C>, Options>> BatchPublishTransfor
 /// #     orders.iter().map(|o| Confirmation { id: o.id }).collect()
 /// # }
 ///
+/// #[derive(Clone)]
 /// struct Stamp;
 /// impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
 ///     type Destination = Reads;

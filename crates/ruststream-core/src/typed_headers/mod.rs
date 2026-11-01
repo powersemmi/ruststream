@@ -190,6 +190,7 @@ impl HeaderMap {
     /// }
     ///
     /// /// Stamps the contract onto everything the slot sends.
+    /// #[derive(Clone)]
     /// struct Stamp(Origin);
     ///
     /// impl<Options> PublishTransform<ForSlot, Options> for Stamp {

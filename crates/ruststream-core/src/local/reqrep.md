@@ -49,6 +49,7 @@ use ruststream::{HeaderMap, LocalRequestReply, OutgoingFor, Take};
 #         Ok(())
 #     }
 # }
+# #[derive(Clone)]
 # struct QueuePublisher {
 #     client: Rc<Client>,
 # }

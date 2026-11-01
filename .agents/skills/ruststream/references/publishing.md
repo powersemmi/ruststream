@@ -285,6 +285,7 @@ use ruststream::runtime::{
 };
 
 /// Reads and writes nothing, so one impl serves a reply and a slot on any broker alike.
+#[derive(Clone)]
 struct EnvelopeTransform;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for EnvelopeTransform {
@@ -304,6 +305,7 @@ impl<K: ContextKind, Options> PublishTransform<K, Options> for EnvelopeTransform
 /// only. The position starts at `None` - the policy's defaults apply - and on a slot it starts
 /// as a copy of what the call site's steps set, so this completes the call rather than
 /// replacing it.
+#[derive(Clone)]
 struct Expedite;
 
 impl PublishTransform<ForSlot, MqttOptions> for Expedite {
@@ -328,6 +330,7 @@ declaring `Destination = Names` sets the name per delivery, and it mounts with t
 `.transform(..)` step.
 
 ```rust
+#[derive(Clone)]
 struct ReplyTo;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
