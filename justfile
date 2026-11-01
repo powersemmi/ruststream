@@ -49,7 +49,7 @@ check:
     # No clippy here: this feature combination has clippy lints of its own that no gate has ever
     # run, and cleaning them is not what a benchmark change is for.
     cargo check --benches --no-default-features --features {{ bench_features }}
-    cargo check --workspace --lib --bins --tests --examples \
+    cargo check --workspace {{ embassy_tests_exclude }} --lib --bins --tests --examples \
         --all-features
     # The probe always asks for `macros`, `json` and `tokio`, and a workspace build unifies a
     # dependency's features across members, so the reduced legs leave it out and check it on its
