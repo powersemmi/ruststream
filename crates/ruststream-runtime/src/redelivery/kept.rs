@@ -2,7 +2,7 @@
 //! default publisher and the subscription's redelivery address, paired once when the
 //! registration opens, typed in the route so a copy is published with no dynamic call.
 
-// Written over the local twins of the contract for a runner that polls on one thread.
+// Written over the contract traits for a runner that polls on one thread.
 #![allow(clippy::future_not_send)]
 
 use alloc::borrow::{Cow, ToOwned};

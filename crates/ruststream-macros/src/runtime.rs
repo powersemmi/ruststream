@@ -9,61 +9,58 @@ use syn::{Path, PathSegment, Token, TypeParamBound};
 pub(crate) enum Runtime {
     /// The multi-thread runner: the bodies and the publishers they hold are `Send`.
     Tokio,
-    /// The embedded runner on embassy: every delivery is polled on the app's one task, so the
-    /// local forms carry no `Send`.
+    /// The embedded runner on embassy: every delivery is polled on the app's one task, so
+    /// nothing is asked to be `Send`.
     Embassy,
 }
 
 impl Runtime {
     /// The bounds a capability written on an `Out` parameter becomes: as written on tokio; on
-    /// embassy each publisher capability of the core maps to its local twin, so
-    /// `Out<impl Publisher>` asks for a `Publisher`.
+    /// embassy a plain `Publisher` is named through the facade (`::ruststream::Publisher`), so
+    /// the generated code does not depend on what the service imported.
     pub(crate) fn capability(
         self,
         bounds: &Punctuated<TypeParamBound, Token![+]>,
     ) -> Punctuated<TypeParamBound, Token![+]> {
         match self {
             Self::Tokio => bounds.clone(),
-            Self::Embassy => bounds.iter().map(local_bound).collect(),
+            Self::Embassy => bounds.iter().map(through_facade).collect(),
         }
     }
 }
 
-/// The publisher capabilities of the core that have a local twin, by the name a service writes.
-// Only the plain publish is mapped: its surface (the publish builder over the local sink) is the
-// same on both runners, and Send by leakage at the multi-thread mount. The transactional and
-// request capabilities keep the bounds as written, so they mount where their wire implements
-// them, which is the multi-thread runner.
-const LOCAL_TWINS: [(&str, &str); 1] = [("Publisher", "Publisher")];
+/// The publisher capabilities named through the facade, by the name a service writes.
+// Only the plain publish is named: the transactional and request capabilities keep the bounds as
+// written, so they mount where their wire implements them.
+const FACADE_CAPABILITIES: [&str; 1] = ["Publisher"];
 
-/// One bound with a core publisher capability replaced by its local twin, named through the
-/// facade and keeping the arguments it was written with (`Publisher<Options = Qos>`). Any other
-/// bound stays as written.
-fn local_bound(bound: &TypeParamBound) -> TypeParamBound {
+/// One bound with a core publisher capability named through the facade, keeping the arguments it
+/// was written with (`Publisher<Options = Qos>`). Any other bound stays as written.
+fn through_facade(bound: &TypeParamBound) -> TypeParamBound {
     let TypeParamBound::Trait(written) = bound else {
         return bound.clone();
     };
     // A parsed path has a last segment; one naming no capability stays as written.
-    let Some((last, twin)) = written.path.segments.last().and_then(|last| {
-        LOCAL_TWINS
-            .iter()
-            .find(|(core, _)| last.ident == core)
-            .map(|(_, twin)| (last, twin))
-    }) else {
+    let Some(last) = written
+        .path
+        .segments
+        .last()
+        .filter(|last| FACADE_CAPABILITIES.iter().any(|name| last.ident == name))
+    else {
         return bound.clone();
     };
-    let mut local = written.clone();
+    let mut named = written.clone();
     let mut segments: Punctuated<PathSegment, Token![::]> = Punctuated::new();
     segments.push(syn::Ident::new("ruststream", last.ident.span()).into());
     segments.push(PathSegment {
-        ident: syn::Ident::new(twin, last.ident.span()),
+        ident: last.ident.clone(),
         arguments: last.arguments.clone(),
     });
-    local.path = Path {
+    named.path = Path {
         leading_colon: Some(Token![::](last.ident.span())),
         segments,
     };
-    TypeParamBound::Trait(local)
+    TypeParamBound::Trait(named)
 }
 
 #[cfg(test)]
@@ -77,7 +74,7 @@ mod tests {
     }
 
     #[test]
-    fn a_publisher_capability_maps_to_its_local_twin_on_embassy_and_other_bounds_stay() {
+    fn a_publisher_capability_is_named_through_the_facade_on_embassy_and_other_bounds_stay() {
         let bounds: Punctuated<TypeParamBound, Token![+]> =
             syn::parse_quote!(ruststream::Publisher<Options = Qos> + Audited + 'static);
 

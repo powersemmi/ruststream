@@ -1,5 +1,5 @@
 //! A local router's mount for the `Out` form, and the commit its chain resolves through: the
-//! [`form_out`](super::form_out) twin for a chain started with [`Router::local`].
+//! [`form_out`](super::form_out) form for a chain started with [`Router::local`].
 //!
 //! The chain is the same `RouterWith`, so `.out(marker, policy)` and `.codec(..)` read as they do
 //! on the multi-thread runner; each slot pairs against a broker of the local family into a
@@ -103,7 +103,7 @@ macro_rules! local_slot_source {
 macro_rules! local_inject_out_commit {
     ($(($($marker:ident / $attach:ident / $layers:ident / $enc:ident),+))+) => {$(
         // A multi-thread chain's commit error lists the commits it could have used; the local
-        // chain's twins are not among them.
+        // chain's commits are not among them.
         #[diagnostic::do_not_recommend]
         impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def, Bound, Extra,
              $($marker, $attach, $layers, $enc),+>

@@ -640,8 +640,8 @@ impl NeutralArena {
         for (index, out) in outs.iter().enumerate() {
             let entry = Ident::new(&format!("__RsSlot{index}"), name.span());
             let marker = &out.marker;
-            // The local family's capability is the weaker one: every `Publisher` is a
-            // `Publisher`, and the multi-thread runner checks `Send` at its mount.
+            // The bound is named through the facade, and the multi-thread runner checks `Send`
+            // at its mount.
             let capability = Runtime::Embassy.capability(out.bounds);
             let body = body_ty(out.bodies.as_ref());
             bounds.push(quote! {

@@ -64,7 +64,7 @@ impl<P, C> TypedPublisher<P, C, PublishTransformIdentity, BatchTransformIdentity
     }
 }
 
-// Written over the local twin, so one body serves a publisher of either family: a runner that
+// Written over the contract trait, so one body serves either runner: a runner that
 // knows its leaf is a `Publisher` and its pipeline a `PublishPipeline` proves these futures
 // `Send` through the forwarding impls.
 #[allow(clippy::future_not_send)]

@@ -794,8 +794,8 @@ mod tests {
     use tokio_util::task::TaskTracker;
 
     use super::super::fixtures::{PlainMessage, RejectingPublisher, Settlement};
-    // Named one by one rather than globbed: the module bounds the local twins of the contract,
-    // and these tests drive the deliveries through the `Send` traits a broker implements.
+    // Named one by one rather than globbed: the module is written over the contract traits,
+    // and these tests drive the deliveries through the traits a broker implements.
     use super::{
         AckError, Arc, Bytes, Delivery, Duration, HandlerResult, HeaderMap, OutgoingMessage,
         RETRY_COUNT_HEADER, RetryDeclaration, Slot, settle_nack_after, settle_outcome,

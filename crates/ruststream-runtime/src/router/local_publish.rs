@@ -1,5 +1,5 @@
 //! A local router's mounts for the reply-publishing forms, and the commits their chains resolve
-//! through: the [`form_publish`](super::form_publish) twins for a chain started with
+//! through: the [`form_publish`](super::form_publish) forms for a chain started with
 //! [`Router::local`].
 //!
 //! The chain is the same `RouterWith` the multi-thread runner's router hands back, so
@@ -61,11 +61,11 @@ local_reply_form! {
 }
 
 /// Implements the named-policy commit of a reply form on a local router: the route the
-/// multi-thread runner's commit builds, over the local twins of the source and the message.
+/// multi-thread runner's commit builds, over the source and the message.
 macro_rules! local_reply_commit {
     ($($mount:ty => $router:ident, $mount_fn:ident;)+) => {$(
         // A multi-thread chain's commit error lists the commits it could have used; the local
-        // chain's twins are not among them.
+        // chain's commits are not among them.
         #[diagnostic::do_not_recommend]
         impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def, Policy>
             RouterCommit<$mount, Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
