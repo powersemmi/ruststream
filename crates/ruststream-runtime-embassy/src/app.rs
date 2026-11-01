@@ -9,7 +9,7 @@ use alloc::sync::Arc;
 use core::error::Error as StdError;
 use core::pin::pin;
 
-use futures::future::{Either, join, select};
+use futures::future::{Either, join3, select};
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::InProcessRun;
 use ruststream_runtime::{
@@ -578,7 +578,7 @@ where
         // Every loop has ended, so nothing detaches more work: the host finishes what it holds.
         host.close();
     };
-    let ((), startup) = join(join(serve, host.drive()).map_unit(), startup).await;
+    let ((), (), startup) = join3(serve, host.drive(), startup).await;
     hooks.on_shutdown.call_all(&state, "on_shutdown").await;
     connections.close_all().await;
     hooks
@@ -593,17 +593,6 @@ where
     }
     control.stopped();
     Ok(())
-}
-
-/// Discards the unit outputs of a joined pair.
-trait MapUnit {
-    fn map_unit(self) -> impl Future<Output = ()>;
-}
-
-impl<Pair: Future<Output = ((), ())>> MapUnit for Pair {
-    async fn map_unit(self) {
-        self.await;
-    }
 }
 
 /// Why an [`EmbeddedApp`] stopped other than on its control's request.
