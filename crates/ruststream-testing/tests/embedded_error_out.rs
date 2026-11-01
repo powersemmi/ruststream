@@ -79,7 +79,10 @@ fn a_cloned_out_publishes_from_the_error_continuation_over_the_local_bus()
         // continuation raises the alert through the cloned entry.
         tb.advance(Duration::from_secs(1)).await?;
 
-        tb.out::<Alerts>().assert_called_once().with_raw(b"two");
+        tb.broker::<Bus>()
+            .published::<()>("alerts")
+            .assert_called_once()
+            .with_raw(b"two");
         tb.shutdown().await?;
         Ok(())
     })
