@@ -495,7 +495,7 @@ fn assert_count<M: Settle>(msg: &M, expected: u64, which: &str) {
 /// use std::num::NonZeroU32;
 ///
 /// use ruststream::conformance::retry;
-/// use ruststream::{Broker, BrokerMoves, Connected, Publisher, SendBroker, SubscriptionSource, SubscriptionSource, nonzero};
+/// use ruststream::{Broker, BrokerMoves, Connected, Publisher, SendBroker, SubscriptionSource, nonzero};
 ///
 /// // A broker crate passes its production broker, its queue descriptor and its publisher.
 /// async fn check<B, Src, Pub>(
@@ -504,7 +504,7 @@ fn assert_count<M: Settle>(msg: &M, expected: u64, which: &str) {
 ///     make_publisher: impl Fn(&Connected<B>) -> Pub,
 /// ) where
 ///     B: SendBroker,
-///     Src: SubscriptionSource<Connected<B>> + SubscriptionSource<Connected<B>, Copies = BrokerMoves> + Send,
+///     Src: SubscriptionSource<Connected<B>, Copies = BrokerMoves> + Send,
 ///     Pub: Publisher,
 /// {
 ///     let attempts: NonZeroU32 = nonzero!(2u32);
@@ -525,9 +525,7 @@ pub async fn broker_moves<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>>
-        + SubscriptionSource<Connected<B>, Copies = BrokerMoves>
-        + Send,
+    Src: SubscriptionSource<Connected<B>, Copies = BrokerMoves> + Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
