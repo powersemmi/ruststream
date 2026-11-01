@@ -35,6 +35,8 @@ Without `.error` the failure is logged with the subscription, the destination, t
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
+The handler below retries once at its cap, so the retry becomes a dead letter, and the broker refuses the dead-letter copy.
+
 ```rust reference="examples/retry_error.rs#error"
 ```
 

@@ -1,5 +1,5 @@
-//! A retry copy the broker refuses: the handler's `.error` continuation learns of it and sends the
-//! message to an alert subject. Each scenario is a test.
+//! A dead-letter copy the broker refuses: the handler's `.error` continuation learns of it and
+//! records an alert. Each scenario is a test.
 //!
 //! ```text
 //! cargo test --example retry_error --features testing,macros,memory,json
@@ -83,8 +83,8 @@ mod error_continuation {
         let id = payment.id;
         let alerts = Arc::clone(ctx.state());
         HandlerOutcome::retry_after(RECHECK).error(async move |err, lost| {
-            // The copy never left: record where it was going and why, then raise the alarm.
-            tracing::error!(id, %err, destination = lost.destination(), "retry lost");
+            // The dead-letter copy never left: record where it was going and why.
+            tracing::error!(id, %err, destination = lost.destination(), "dead letter lost");
             alerts.lock().expect("alerts").push(Alert {
                 destination: lost.destination().to_owned(),
                 cause: err.to_string(),
@@ -98,22 +98,26 @@ mod error_continuation {
         RustStream::new(AppInfo::new("payments", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(alerts))
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(reconcile).out_retry(DownPublish)
+                // The first attempt is the cap, so this retry becomes a dead letter.
+                b.include(reconcile)
+                    .max_attempts(nonzero!(1u32))
+                    .dead_letter("payments.dead")
+                    .out_retry(DownPublish)
             })
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_lost_retry_copy_reaches_the_handler() -> Result<(), Box<dyn Error>> {
+    async fn a_lost_dead_letter_reaches_the_handler() -> Result<(), Box<dyn Error>> {
         let alerts = Alerts::default();
         let tb = TestApp::start(app(&alerts)).await?;
 
         tb.message(&Payment { id: 7 }).publish().await?;
-        tb.advance(Duration::from_secs(5)).await?;
+        tb.settle().await?;
 
         assert_eq!(
             *alerts.lock().expect("alerts"),
             [Alert {
-                destination: "payments".to_owned(),
+                destination: "payments.dead".to_owned(),
                 cause: "broker down".to_owned(),
             }]
         );
