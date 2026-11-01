@@ -69,15 +69,9 @@ use super::bus::Bus;
 /// assert_eq!(celsius, Ok(vec![21]));
 /// ```
 ///
-/// The bus belongs to the task that holds it: it is not `Send`, so it does not move to another
-/// thread.
-///
-/// ```compile_fail,E0277
-/// use ruststream_memory::local::LocalMemoryBroker;
-///
-/// let broker = LocalMemoryBroker::<8>::new();
-/// std::thread::spawn(move || drop(broker));
-/// ```
+/// Without the tokio runner the bus belongs to the task that holds it: it is shared by `Rc`, so
+/// it is not `Send`. Next to the tokio runner it is shared by `Arc` and its state sits behind a
+/// critical section, so it moves between threads.
 pub struct LocalMemoryBroker<const CAP: usize> {
     bus: Shared<Bus<CAP>>,
 }
