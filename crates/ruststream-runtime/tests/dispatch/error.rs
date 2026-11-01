@@ -719,3 +719,44 @@ async fn the_error_continuation_publishes_through_a_captured_out_publisher() {
             bytes: 7,
         });
 }
+
+/// Answers a job; the continuation for a lost answer takes a moment to finish.
+#[subscriber("slow-ask", reply)]
+async fn slow_ask(
+    job: &Job,
+    ctx: &mut Context,
+    State(log): State<Arc<Mutex<Vec<String>>>>,
+) -> Answer {
+    ctx.after(HandlerOutcome::ack())
+        .error(async move |err, lost| {
+            tokio::time::sleep(RETRY_DELAY).await;
+            log.lock()
+                .expect("log")
+                .push(format!("error {err} {}", lost.destination()));
+        });
+    Answer { id: job.id }
+}
+
+/// A reply that fails while the app shuts down has its `.error` run before shutdown returns, as
+/// a `.then` does.
+#[tokio::test(start_paused = true)]
+async fn the_error_continuation_of_a_failed_reply_runs_before_shutdown_returns() {
+    let events = Events::default();
+    let startup = events.clone();
+    let app = RustStream::new(AppInfo::new("errors", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(startup))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(slow_ask).out_reply(DownPublish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&Job { id: 4 })
+        .to("slow-ask")
+        .publish()
+        .await
+        .expect("publish");
+    tb.shutdown().await.expect("shutdown");
+
+    assert_eq!(events.told(), ["error broker down answers"]);
+}
