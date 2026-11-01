@@ -9,7 +9,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-#[cfg(feature = "testing")]
 use futures::future::lazy;
 #[cfg(doc)]
 use ruststream_core::IncomingMessage;

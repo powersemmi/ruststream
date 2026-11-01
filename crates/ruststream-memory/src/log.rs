@@ -13,6 +13,7 @@ use std::{
 
 #[cfg(any(feature = "testing", test))]
 use bytes::Bytes;
+#[cfg(any(feature = "testing", test))]
 use bytes_utils::Str;
 
 use super::DeliveryInner;
