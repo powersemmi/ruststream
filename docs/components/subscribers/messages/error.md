@@ -25,7 +25,7 @@ The closure runs at most once, like `and_after`, so it may own what it captures.
 
 The handler never runs again because a runtime publish failed.
 The delivery is settled before the copy is published, so a failed copy cannot make the handler repeat its side effects or run past its `max_attempts` cap.
-A failed reply no longer requeues the delivery either.
+A failed reply settles the same way: the delivery is acknowledged, and the `.error` registered from the context runs.
 
 `.error` runs for every cause: the network, a broker that is down, full or overloaded, a broker that rejected the message, a codec or a publish transform that failed, or, on the embedded runner, a store of retry copies with no free record ([`NoFreeRecordError`](api:ruststream::runtime::NoFreeRecordError)).
 `Failed::error` is the cause itself, so the continuation can tell a transient failure from a permanent one.
