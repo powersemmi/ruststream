@@ -127,6 +127,7 @@ check:
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --all-features --test suite ui::
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features macros,memory,testing,tokio --test suite ui_codec_free::
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-runtime-embassy --test ui
+    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-cli --test ui
 
 test:
     # The examples' tests are modules of one test binary, so `--tests` builds none per example;

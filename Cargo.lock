@@ -1566,14 +1566,17 @@ dependencies = [
  "clap",
  "ruststream",
  "ruststream-asyncapi",
+ "ruststream-memory",
  "ruststream-observability",
  "ruststream-runtime",
+ "ruststream-runtime-embassy",
  "ruststream-runtime-tokio",
  "serde",
  "serde_json",
  "serde_norway",
  "thiserror",
  "tokio",
+ "trybuild",
 ]
 
 [[package]]
@@ -1726,7 +1729,6 @@ dependencies = [
  "heapless",
  "pin-project-lite",
  "ruststream",
- "ruststream-cli",
  "ruststream-core",
  "ruststream-memory",
  "ruststream-runtime",

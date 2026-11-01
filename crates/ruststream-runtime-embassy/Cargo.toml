@@ -63,7 +63,6 @@ trybuild = "1"
 # The facade as a device service imports it: the embassy runtime, so the attributes emit the local
 # forms the host tests and the snapshots write.
 ruststream = { path = "../..", default-features = false, features = ["embassy", "macros", "memory", "json"] }
-ruststream-cli.workspace = true
 # The reply the codec encodes, as a device crate derives it.
 serde.workspace = true
 
