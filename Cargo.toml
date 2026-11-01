@@ -455,6 +455,10 @@ name = "retry"
 required-features = ["testing", "macros", "memory", "json"]
 
 [[example]]
+name = "retry_error"
+required-features = ["testing", "macros", "memory", "json"]
+
+[[example]]
 name = "settle_retry_destination"
 required-features = ["testing", "macros", "memory", "json", "asyncapi"]
 
