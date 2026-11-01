@@ -115,7 +115,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
-    use core::future::{Future, ready};
+    use core::future::ready;
     use core::iter;
     use core::pin::pin;
     use core::task::{Context, Poll, Waker};
