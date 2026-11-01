@@ -25,6 +25,10 @@ use super::routing::{
 };
 use super::{expect_next, expect_no_more};
 use crate::helpers::unique_subject;
+use crate::lifecycle::Unsent;
+
+/// What the refused publish carries.
+const UNSENT: &[u8] = b"lifecycle.unsent";
 
 /// How long one step of the local lifecycle may take.
 const STEP_TIMEOUT: Duration = Duration::from_secs(2);
@@ -421,6 +425,96 @@ where
                  delivery must come back",
             );
         }
+    }
+}
+
+/// Checks that a publish the broker refuses hands the unsent message back, for a broker of the
+/// local family.
+///
+/// It is [`refused_publish_returns_message`](crate::lifecycle::refused_publish_returns_message)
+/// for a broker whose types are not `Send`: the broker connects and shuts down, and a publish
+/// through a publisher paired before the shutdown must fail with the message it was handed.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[cfg(any())]
+/// # mod demo {
+/// use ruststream::conformance::harness;
+/// use ruststream::conformance::lifecycle::Unsent;
+/// use ruststream::memory::local::{ConnectedLocalMemoryBroker, LocalMemoryBroker};
+///
+/// #[tokio::test(flavor = "current_thread")]
+/// async fn the_local_bus_returns_the_unsent_message() {
+///     harness::local_refused_publish_returns_message(
+///         LocalMemoryBroker::<16>::new,
+///         |connected: &ConnectedLocalMemoryBroker<16>| connected.publisher(),
+///         Unsent::Returned,
+///     )
+///     .await;
+/// }
+/// # }
+/// ```
+///
+/// # Panics
+///
+/// Panics with a descriptive message when the publish succeeds or hangs after the shutdown, when
+/// [`Unsent::Returned`] is declared and the failure carries no message, or when the message it
+/// carries differs from the one published.
+pub async fn local_refused_publish_returns_message<B, MkBroker, Pub, MkPub>(
+    make_broker: MkBroker,
+    make_publisher: MkPub,
+    unsent: Unsent,
+) where
+    B: Broker,
+    MkBroker: Fn() -> B,
+    Pub: LocalPublisher,
+    MkPub: Fn(&B::Connected) -> Pub,
+{
+    const SCENARIO: &str = "local_refused_publish_returns_message";
+    let subject = unique_subject("conformance.local.unsent");
+    let connected = within("connect", make_broker().connect())
+        .await
+        .unwrap_or_else(|err| panic!("{SCENARIO}: connect failed: {err}"));
+    let publisher = make_publisher(&connected);
+    within("shutdown", connected.shutdown())
+        .await
+        .unwrap_or_else(|err| panic!("{SCENARIO}: shutdown failed: {err}"));
+
+    let headers: HeaderMap = [("conformance", "unsent")].into_iter().collect();
+    let published = OutgoingMessage::new(&subject, UNSENT).with_headers(headers.clone());
+    let answer = within(
+        "the publish after the shutdown",
+        publisher.publish(published, None),
+    )
+    .await;
+    let Err(failed) = answer else {
+        panic!("{SCENARIO}: a publish after the shutdown succeeded; it must be refused");
+    };
+    match failed.into_message() {
+        Some(message) => {
+            assert_eq!(
+                message.name(),
+                subject,
+                "{SCENARIO}: the returned message names another destination than the one published"
+            );
+            assert_eq!(
+                message.payload().as_ref(),
+                UNSENT,
+                "{SCENARIO}: the returned message carries other bytes than the ones published"
+            );
+            assert_eq!(
+                message.headers(),
+                &headers,
+                "{SCENARIO}: the returned message carries other headers than the ones published"
+            );
+        }
+        None => assert!(
+            unsent == Unsent::Consumed,
+            "{SCENARIO}: the refusal returned no message, and the broker declared its client \
+             gives the message back; hand the unsent message over with \
+             `PublishMessageError::with_message`"
+        ),
     }
 }
 

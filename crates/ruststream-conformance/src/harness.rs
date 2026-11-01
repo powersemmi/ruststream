@@ -43,7 +43,7 @@ use tokio::{runtime, sync::oneshot, time::timeout};
 mod local;
 mod routing;
 
-pub use local::{local_lifecycle, run_local_suite};
+pub use local::{local_lifecycle, local_refused_publish_returns_message, run_local_suite};
 
 pub(crate) use routing::unknown_backlog;
 use routing::{
