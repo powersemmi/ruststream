@@ -352,7 +352,8 @@ pub mod __private {
     /// The decode errors `#[derive(InMessages)]` returns when a set picks no variant.
     pub mod in_messages {
         pub use crate::runtime::{
-            every_variant_failed, header_missing, header_unknown, no_variant_chosen,
+            every_variant_failed, frame_names_no_variant, header_missing, header_unknown,
+            no_variant_chosen,
         };
     }
 

@@ -236,13 +236,12 @@ pub use handler::Continuation;
 #[doc(hidden)]
 pub use handler::HandlerResult;
 #[cfg(feature = "alloc")]
-pub use in_messages::{
-    CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,
-};
+pub use in_messages::{InMessages, InVariant, MessageDeclaration, VariantOf};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use in_messages::{
-    VariantLane, every_variant_failed, header_missing, header_unknown, no_variant_chosen,
+    NamedByFrame, VariantLane, every_variant_failed, frame_names_no_variant, header_missing,
+    header_unknown, no_variant_chosen,
 };
 #[cfg(feature = "alloc")]
 pub use inject::Out;

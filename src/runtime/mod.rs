@@ -95,9 +95,6 @@ pub use ruststream_runtime::{
 #[doc(hidden)]
 pub use ruststream_runtime::{CapsBatches, DefinitionInputCodec, MountsWith};
 pub use ruststream_runtime::{Clock, ShutdownWait};
-pub use ruststream_runtime::{
-    CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,
-};
 pub use ruststream_runtime::{Ctx, CtxKey, FromContext, FromRef, Headers, State};
 #[doc(hidden)]
 pub use ruststream_runtime::{
@@ -115,9 +112,15 @@ pub use ruststream_runtime::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
     OutgoingMessageMetadata,
 };
+pub use ruststream_runtime::{InMessages, InVariant, MessageDeclaration, VariantOf};
 pub use ruststream_runtime::{
     IncludeDef, LocalPipeline, MapPublisher, MountChain, Router, RouterDef, RouterHandlers,
     RouterOut, RouterPublishing, RouterPublishingOut, RouterWith, forms,
+};
+#[doc(hidden)]
+pub use ruststream_runtime::{
+    NamedByFrame, VariantLane, every_variant_failed, frame_names_no_variant, header_missing,
+    header_unknown, no_variant_chosen,
 };
 pub use ruststream_runtime::{Placement, RETRY_COUNT_HEADER, Workers};
 #[cfg(feature = "poll-diagnostics")]
@@ -125,10 +128,6 @@ pub use ruststream_runtime::{PollDiagnostics, PollReport};
 #[doc(hidden)]
 pub use ruststream_runtime::{Provided, TypedLane};
 pub use ruststream_runtime::{Typed, typed};
-#[doc(hidden)]
-pub use ruststream_runtime::{
-    VariantLane, every_variant_failed, header_missing, header_unknown, no_variant_chosen,
-};
 #[doc(hidden)]
 pub use ruststream_runtime::{batch_verdict, uniform_batch};
 

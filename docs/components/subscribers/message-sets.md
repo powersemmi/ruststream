@@ -29,13 +29,15 @@ The function returning `None` is a decode failure naming the set.
 This is the form for a rule no attribute states: a schema id, a field of the payload, a shape of the bytes.
 A broker crate may ship such a function for its own format.
 
-A rule only the decode codec can answer is a type: `#[in_messages(discriminate_with_codec = ByRecord)]` names one that implements [`CodecDiscriminator`](api:ruststream::runtime::CodecDiscriminator).
+A rule only the decode codec can answer is the codec's frame: `#[in_messages(by_codec)]` asks the codec of the scope or router which model the frame names.
 A schema registry is the case: each record carries a schema id, and only the registry codec knows which record the id stands for.
-The type's `kind(codec, msg)` reads the codec of the scope or router and the delivery, and returns the kind the way a function does; `None` is the same decode failure.
-An impl that bounds the codec makes the set mount only under codecs that satisfy the bound: a set mounted under a codec that cannot answer is a compile error at the mount site.
-The call is static, so a delivery pays only for what the type itself does.
-Such a set decodes per codec, so it does not implement `InMessages` itself: it is a handler input everywhere a set is, and a bound of your own written as `T: InMessages` does not accept it.
-A broker crate may ship the type for its own registry.
+The codec declares what it reads from a payload in its `Frame` and maps the frame to a model with [`FrameNames`](api:ruststream::codec::FrameNames), implemented once per model it can name.
+The set then decodes the first model the frame names; a frame that names none is the same decode failure as a function returning `None`.
+A set mounted under a codec that cannot answer, JSON for one, is a compile error at the mount site that names the set, the codec and the model.
+The frame is read from the payload and the codec's own state, so the rule needs no header and works on every runtime.
+The call is static, so a delivery pays only for what the codec itself does.
+A set takes the decode codec as a parameter, `InMessages<DecodeCodec>`: a bound of your own on a set writes `T: InMessages<DecodeCodec>`.
+A broker crate may ship the codec for its own registry.
 
 A set with no rule tries its variants left to right, and the first that decodes wins.
 The order of the variants is the rule, so put the strictest model first.
@@ -91,10 +93,10 @@ A rule of your own, over the generated kind enum:
 ```rust reference="examples/in_messages.rs#discriminate"
 ```
 
-A rule that asks the decode codec: the codec names records, and the set mounts under it through a router.
+A rule the decode codec answers: the codec reads a schema id from the payload, and the set mounts under it through a router.
 
-{/* single-form: the per-codec decode of such a set is machinery a hand-written set does not name */}
-```rust reference="examples/in_messages.rs#discriminate_with_codec"
+{/* single-form: the codec impl is plain Rust, and the rule is the derive alone */}
+```rust reference="examples/in_messages.rs#by_codec"
 ```
 
 Left to right, the strictest model first:

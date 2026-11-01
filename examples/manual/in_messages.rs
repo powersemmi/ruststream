@@ -75,14 +75,10 @@ enum OrderEventKind {
     Cancelled,
 }
 
-impl InMessages for OrderEvent {
+impl<DecodeCodec: Codec> InMessages<DecodeCodec> for OrderEvent {
     type Kind = OrderEventKind;
 
-    fn decode<DecodeCodec, M>(codec: &DecodeCodec, msg: &M) -> Result<Self, CodecError>
-    where
-        DecodeCodec: Codec,
-        M: IncomingMessage,
-    {
+    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<Self, CodecError> {
         let kind = match msg.headers().get("event") {
             Some(b"created") => OrderEventKind::Created,
             Some(b"cancelled") => OrderEventKind::Cancelled,
