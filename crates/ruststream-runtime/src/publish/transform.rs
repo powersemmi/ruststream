@@ -376,6 +376,9 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// }
 /// ```
 ///
+/// A transform is `Clone`, because an `Out` entry holds the stack of its slot and a handler clones
+/// the entry into a continuation; state it shares lives behind an `Arc`.
+///
 /// On a slot the position starts as a copy of what the call site's own builder steps set, so a
 /// transform completes the call rather than replacing it: it reads a field the call left alone
 /// and overrides one it filled. A reply has no call site, so there the position starts at `None`.
