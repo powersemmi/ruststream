@@ -4,3 +4,4 @@ mod batch_error;
 mod error;
 mod log_capture;
 mod out_continuation;
+mod settle;

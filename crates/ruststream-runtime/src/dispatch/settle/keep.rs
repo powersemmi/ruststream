@@ -264,14 +264,6 @@ mod tests {
     impl KeptCopies for Store {
         type Spilled = ();
 
-        fn capacity(&self) -> usize {
-            self.room
-        }
-
-        fn input(&self) -> &'static str {
-            "Order"
-        }
-
         fn take_record(&self) -> Option<usize> {
             (self.room > 0).then_some(0)
         }

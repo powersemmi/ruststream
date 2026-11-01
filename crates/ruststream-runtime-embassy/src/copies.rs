@@ -283,14 +283,6 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
 {
     type Spilled = Spilled<Path::Options>;
 
-    fn capacity(&self) -> usize {
-        CAP
-    }
-
-    fn input(&self) -> &'static str {
-        self.input
-    }
-
     fn take_record(&self) -> Option<usize> {
         let mut records = self.records.borrow_mut();
         let index = records

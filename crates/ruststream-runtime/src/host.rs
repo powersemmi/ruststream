@@ -625,13 +625,6 @@ pub trait KeptCopies {
     /// the copy is made of until [`send_spilled`](Self::send_spilled) publishes it.
     type Spilled;
 
-    /// How many records the store has.
-    fn capacity(&self) -> usize;
-
-    /// The name of the type the handler receives, which a lost copy's diagnostic calls its
-    /// message.
-    fn input(&self) -> &'static str;
-
     /// Takes a free record for one copy; `None` when every record holds one.
     fn take_record(&self) -> Option<usize>;
 
@@ -735,14 +728,6 @@ pub enum NoKept {}
 #[allow(clippy::uninhabited_references, clippy::unused_async_trait_impl)]
 impl KeptCopies for NoKept {
     type Spilled = Infallible;
-
-    fn capacity(&self) -> usize {
-        match *self {}
-    }
-
-    fn input(&self) -> &'static str {
-        match *self {}
-    }
 
     fn take_record(&self) -> Option<usize> {
         match *self {}

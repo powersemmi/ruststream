@@ -660,10 +660,29 @@ pub fn publish_lost(
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
+    use alloc::string::ToString;
+    use alloc::vec;
     use core::sync::atomic::{AtomicBool, Ordering};
     use std::io;
 
     use super::*;
+
+    /// An error whose source is the I/O error it wraps.
+    #[derive(Debug)]
+    struct Layered(io::Error);
+
+    impl fmt::Display for Layered {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("layered")
+        }
+    }
+
+    impl StdError for Layered {
+        fn source(&self) -> Option<&(dyn StdError + 'static)> {
+            Some(&self.0)
+        }
+    }
 
     fn lost() -> (BoxError, FailedMessage) {
         (
@@ -689,5 +708,62 @@ mod tests {
         assert!(!ran.load(Ordering::SeqCst));
         continuation.now_or_never().expect("ready");
         assert!(ran.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_failed_message_splits_into_its_destination_bytes_and_headers() {
+        let message = FailedMessage::new("dest", Bytes::from_static(b"body"), HeaderMap::new());
+
+        let (destination, payload, headers) = message.into_parts();
+
+        assert_eq!(
+            (destination.as_str(), payload.as_ref(), headers.len()),
+            ("dest", &b"body"[..], 0)
+        );
+    }
+
+    #[test]
+    fn the_no_free_record_error_reports_the_capacity_of_its_store() {
+        assert_eq!(NoFreeRecordError::new(3).capacity(), 3);
+    }
+
+    #[test]
+    fn the_hooks_of_a_reaction_print_without_their_closures() {
+        let hook = ErrorHook::new(|_failures: Failures| async {});
+        let reaction = Reaction::new(ErrorHook::new(|_failures: Failures| async {}), None);
+
+        assert_eq!(
+            (format!("{hook:?}"), format!("{reaction:?}")),
+            ("ErrorHook { .. }".to_owned(), "Reaction { .. }".to_owned())
+        );
+    }
+
+    /// The failures of one batch publish share a cause, and the cause's own source stays reachable
+    /// through each of them.
+    #[test]
+    fn the_failures_of_a_batch_publish_keep_the_source_of_their_shared_cause() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        let hook = ErrorHook::new(move |failures: Failures| {
+            for failed in failures {
+                let source = failed.error().source().map(ToString::to_string);
+                record.lock().expect("lock").push(source);
+            }
+            async {}
+        });
+        let cause = Layered(io::Error::other("root"));
+        let messages = vec![
+            FailedMessage::new("a", Bytes::new(), HeaderMap::new()),
+            FailedMessage::new("b", Bytes::new(), HeaderMap::new()),
+        ];
+
+        hook.react_all(Box::new(cause), messages)
+            .now_or_never()
+            .expect("ready");
+
+        assert_eq!(
+            *seen.lock().expect("lock"),
+            [Some("root".to_owned()), Some("root".to_owned())]
+        );
     }
 }
