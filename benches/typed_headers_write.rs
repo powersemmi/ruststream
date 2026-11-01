@@ -68,7 +68,7 @@ fn app(messages: usize) -> Pending {
     common::pending(messages, 0, |b| b.include(stamp).out(Stamps, Publish))
 }
 
-#[library_benchmark(config = common::config(5, 28))]
+#[library_benchmark(config = common::config(4, 28))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]

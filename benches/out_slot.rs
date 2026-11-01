@@ -23,6 +23,7 @@ use std::hint::black_box;
 
 use common::{Latch, MESSAGES, Order, Pending};
 use gungraun::{library_benchmark, library_benchmark_group, main};
+use ruststream::Bytes;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::Outgoing as OutgoingMessageView;
 use serde::Serialize;
@@ -50,7 +51,8 @@ impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
         _options: &mut Option<Options>,
         _cx: &K::View<'_>,
     ) {
-        out.headers_mut().insert("x-bench", b"1".to_vec());
+        out.headers_mut()
+            .insert(Str::from_static("x-bench"), Bytes::from_static(b"1"));
     }
 }
 
@@ -81,7 +83,7 @@ fn app(messages: usize) -> Pending {
     })
 }
 
-#[library_benchmark(config = common::config(6, 28))]
+#[library_benchmark(config = common::config(2, 28))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]

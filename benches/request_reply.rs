@@ -87,7 +87,7 @@ fn app(messages: usize) -> Requests {
     }
 }
 
-#[library_benchmark(config = common::config(13, 27))]
+#[library_benchmark(config = common::config(11, 27))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]
