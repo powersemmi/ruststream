@@ -17,6 +17,7 @@ use ruststream::memory::{ConnectedMemoryBroker, LogMode};
 use ruststream::testing::TestApp;
 use ruststream::{Lend, OutgoingMessage, PairError};
 use serde::{Deserialize, Serialize};
+use tokio::time::sleep;
 
 use crate::error::{DownPublish, Job, Queue, RETRY_DELAY};
 
@@ -267,6 +268,12 @@ macro_rules! run_uniform {
     }};
 }
 
+/// The log in a fixed order, for continuations that run beside each other.
+fn sorted(mut log: Vec<String>) -> Vec<String> {
+    log.sort();
+    log
+}
+
 /// Two of three copies fail: the `.error` runs once, with both failures in the batch's order, and
 /// the `.and_after` runs once because one copy was published.
 #[tokio::test(start_paused = true)]
@@ -277,9 +284,10 @@ async fn a_uniform_batch_outcome_runs_its_error_once_with_every_failed_copy() {
         before.is_empty(),
         "nothing has failed before the copies are due: {before:?}"
     );
+    // The two continuations run beside each other, so neither order is promised.
     assert_eq!(
-        after,
-        ["then 3", r#"error x2 {"id":1} refused {"id":2} refused"#,]
+        sorted(after),
+        [r#"error x2 {"id":1} refused {"id":2} refused"#, "then 3"]
     );
 }
 
@@ -288,7 +296,7 @@ async fn a_uniform_batch_outcome_runs_its_error_once_with_every_failed_copy() {
 async fn a_uniform_batch_outcome_runs_its_and_after_once_when_only_the_last_copy_fails() {
     let (_, after) = run_uniform!(uniform, "uniform", RefusesJobPublish(3));
 
-    assert_eq!(after, ["then 3", r#"error x1 {"id":3} refused"#]);
+    assert_eq!(sorted(after), [r#"error x1 {"id":3} refused"#, "then 3"]);
 }
 
 /// Every copy fails: the `.error` runs once with all of them and the `.and_after` never runs.
@@ -365,4 +373,52 @@ async fn a_failed_batch_reply_runs_the_context_error_with_the_lost_replies() {
         *log.lock().expect("log"),
         [r#"error receipts {"id":1} broker down receipts {"id":2} broker down"#]
     );
+}
+
+/// A uniform outcome whose `.and_after` takes an hour.
+#[subscriber(UniformQueue::new(Queue { name: "stuck" }).max_wait(Duration::from_secs(1)))]
+async fn stuck(_jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> HandlerOutcome {
+    let (then, error) = (ctx.state().clone(), ctx.state().clone());
+    HandlerOutcome::retry_after(RETRY_DELAY)
+        .and_after(async move {
+            sleep(Duration::from_secs(3600)).await;
+            then.lock().expect("log").push("then".to_owned());
+        })
+        .error(async move |failures: Failures| {
+            error
+                .lock()
+                .expect("log")
+                .push(format!("error x{}", failures.len()));
+        })
+}
+
+/// A uniform outcome whose `.and_after` panics.
+#[subscriber(UniformQueue::new(Queue { name: "panicking" }).max_wait(Duration::from_secs(1)))]
+async fn panicking(_jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> HandlerOutcome {
+    let error = ctx.state().clone();
+    HandlerOutcome::retry_after(RETRY_DELAY)
+        .and_after(async { panic!("the follow-up failed") })
+        .error(async move |failures: Failures| {
+            error
+                .lock()
+                .expect("log")
+                .push(format!("error x{}", failures.len()));
+        })
+}
+
+/// The `.error` of a uniform outcome does not wait for its `.and_after`: a slow follow-up cannot
+/// hold the failed copies back from it.
+#[tokio::test(start_paused = true)]
+async fn a_uniform_batch_error_runs_while_the_and_after_is_slow() {
+    let (_, after) = run_uniform!(stuck, "stuck", Refuses12Publish);
+
+    assert_eq!(after, ["error x2", "then"]);
+}
+
+/// A follow-up that panics cannot keep the failed copies from the `.error` either.
+#[tokio::test(start_paused = true)]
+async fn a_uniform_batch_error_runs_while_the_and_after_panics() {
+    let (_, after) = run_uniform!(panicking, "panicking", Refuses12Publish);
+
+    assert_eq!(after, ["error x2"]);
 }

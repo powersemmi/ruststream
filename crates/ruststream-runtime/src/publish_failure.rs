@@ -14,6 +14,13 @@ use core::error::Error as StdError;
 use core::fmt;
 use core::iter::FusedIterator;
 use core::mem;
+#[cfg(feature = "std")]
+use core::panic::AssertUnwindSafe;
+#[cfg(feature = "std")]
+use futures::FutureExt;
+use futures::future::join;
+#[cfg(feature = "std")]
+use std::panic::resume_unwind;
 #[cfg(feature = "tokio")]
 use std::sync::{Mutex, PoisonError};
 use thiserror::Error;
@@ -402,15 +409,33 @@ impl Gather {
         let Some((after, react, failures)) = done else {
             return Box::pin(async {});
         };
-        Box::pin(async move {
-            if let Some(after) = after {
-                after.await;
-            }
+        let error = async move {
             if let Some(react) = react {
                 let failures = failures.into_iter().map(|(_, failed)| failed).collect();
                 react.react(Failures::many(failures)).await;
             }
-        })
+        };
+        match after {
+            None => Box::pin(error),
+            Some(after) => Box::pin(alongside(error, after)),
+        }
+    }
+}
+
+/// Runs the outcome's `.error` beside its `.and_after`, `.error` polled first: a follow-up that
+/// is slow, never finishes or panics does not keep the failures from `.error`. A panic is raised
+/// again once `.error` is done.
+async fn alongside(error: impl Future<Output = ()>, after: Continuation) {
+    #[cfg(feature = "std")]
+    {
+        let ((), followed) = join(error, AssertUnwindSafe(after).catch_unwind()).await;
+        if let Err(panic) = followed {
+            resume_unwind(panic);
+        }
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        join(error, after).await;
     }
 }
 
@@ -638,7 +663,6 @@ mod tests {
     use core::sync::atomic::{AtomicBool, Ordering};
     use std::io;
 
-    use futures::FutureExt;
 
     use super::*;
 
