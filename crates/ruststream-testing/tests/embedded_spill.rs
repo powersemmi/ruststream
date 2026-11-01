@@ -40,10 +40,9 @@ struct Sent(&'static [u8]);
 async fn on_job(job: &Job<'_>, ctx: &mut Context<'_>) -> HandlerOutcome {
     let counted = ctx.headers().get_str(RETRY_COUNT_HEADER).is_some();
     match (job.0[0], counted) {
-        (b'a', false) => HandlerOutcome::retry_after(LATER),
-        (b'a', true) => HandlerOutcome::ack(),
-        (_, false) => HandlerOutcome::retry_after(Duration::ZERO),
         (_, true) => HandlerOutcome::ack(),
+        (b'a', false) => HandlerOutcome::retry_after(LATER),
+        (_, false) => HandlerOutcome::retry_after(Duration::ZERO),
     }
 }
 
@@ -79,9 +78,12 @@ fn an_immediate_retry_is_sent_while_the_store_holds_a_delayed_one() -> Result<()
 /// A bus whose subscription holds one message, waiting or in hand.
 type TightBus = LocalMemoryBroker<1>;
 
-/// What the `.error` continuations were told: where each lost copy was going, and its bytes.
+/// One lost copy the `.error` continuations were told about: where it was going, and its bytes.
+type LostCopy = (String, Vec<u8>);
+
+/// What the `.error` continuations were told.
 #[derive(Clone, Default)]
-struct Lost(Arc<Mutex<Vec<(String, Vec<u8>)>>>);
+struct Lost(Arc<Mutex<Vec<LostCopy>>>);
 
 /// Job `a` waits for a retry later and holds the store's one record; any other job asks for an
 /// immediate retry on every delivery. Each learns of a copy that is lost.
