@@ -31,9 +31,6 @@ static ALLOCATOR: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 /// Executor rounds a step yields: a round polls every task woken before it began.
 const SETTLE_ROUNDS: usize = 8;
 
-/// [`SETTLE_ROUNDS`], to compare with a count of deliveries.
-const SETTLE_ROUNDS_U32: u32 = 8;
-
 /// The delay the handler asks its retries for.
 const LATER: Duration = Duration::from_secs(5);
 
@@ -54,20 +51,13 @@ fn seen(job: u8) -> u32 {
     SEEN[usize::from(job)].load(Ordering::Relaxed)
 }
 
-/// How many deliveries of the job named `h` fail before one succeeds.
-const STUBBORN: u32 = 64;
-
 /// Fails the first delivery of a job with a retry later, and acks the next one. A job named
-/// `o` always succeeds; the job named `h` fails its first [`STUBBORN`] deliveries.
+/// `o` always succeeds.
 #[subscriber(LocalMemorySource::new("bus/jobs"))]
 async fn on_job(job: &Job<'_>) -> HandlerOutcome {
     let name = job.0[0];
     let before = SEEN[usize::from(name)].fetch_add(1, Ordering::Relaxed);
-    let failing = match name {
-        b'o' => false,
-        b'h' => before < STUBBORN,
-        _ => before == 0,
-    };
+    let failing = name != b'o' && before == 0;
     if failing {
         HandlerOutcome::retry_after(LATER)
     } else {
@@ -154,21 +144,19 @@ async fn check_retries(spawner: Spawner, stand: &'static Stand) {
     let failed = allocations_of(&stand.bus, b'f').await;
     let carried = allocations_of_the_copy_headers();
 
-    // The one record holds `f`'s copy, so `g`'s failure finds the store full and is requeued.
+    // The one record holds `f`'s copy, so `g`'s failure finds the store full: the delivery waits
+    // for a record, and the subscription, not the broker, holds it.
     publish(&stand.bus, b'g').await;
     settle().await;
-    let requeued = seen(b'g');
+    let waiting = seen(b'g');
     let kept = seen(b'f');
     advance(LATER).await;
     let fired = seen(b'f');
-
-    // With `k`'s copy in the one record, a job that fails every delivery is requeued each time,
-    // and the app lets the other tasks run between two of its deliveries.
-    publish(&stand.bus, b'k').await;
-    settle().await;
-    publish(&stand.bus, b'h').await;
-    settle().await;
-    let stubborn_in_a_settle = seen(b'h');
+    let still_waiting = seen(b'g');
+    advance(ALMOST).await;
+    let before_its_delay = seen(b'g');
+    advance(Duration::from_secs(1)).await;
+    let after_its_delay = seen(b'g');
 
     app::CONTROL.stop();
     settle().await;
@@ -186,19 +174,22 @@ async fn check_retries(spawner: Spawner, stand: &'static Stand) {
         "allocations of a failure beyond an acked delivery's, against the copy's headers alone"
     );
     passed("the store allocates nothing per failure");
-    assert_eq!(
-        requeued, 2,
-        "deliveries of `g`, requeued when the store was full"
-    );
+    assert_eq!(waiting, 1, "deliveries of `g` while the store is full");
     assert_eq!(kept, 1, "deliveries of `f` while its copy waits");
     assert_eq!(fired, 2, "deliveries of `f` once its copy fell due");
-    passed("a full store requeues the delivery");
-    assert!(
-        stubborn_in_a_settle <= SETTLE_ROUNDS_U32,
-        "deliveries of `h` within {SETTLE_ROUNDS} rounds of the executor while the store was \
-         full: {stubborn_in_a_settle}"
+    assert_eq!(
+        still_waiting, 1,
+        "deliveries of `g`, kept once a record freed"
     );
-    passed("a requeue on a full store lets the other tasks run");
+    assert_eq!(
+        before_its_delay, 1,
+        "deliveries of `g` a second before its copy is due"
+    );
+    assert_eq!(
+        after_its_delay, 2,
+        "deliveries of `g` once its own delay passed"
+    );
+    passed("a full store holds the delivery until a record frees");
 }
 
 #[embassy_executor::task]

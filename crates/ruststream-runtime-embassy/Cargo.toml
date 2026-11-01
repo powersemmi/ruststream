@@ -112,6 +112,17 @@ path = "tests/dead_letter.rs"
 harness = false
 
 [[test]]
+name = "copies"
+path = "tests/copies.rs"
+harness = false
+
+# A store saturated by refused copies, on the mock clock: a binary of its own, as above.
+[[test]]
+name = "saturated"
+path = "tests/copies/saturated.rs"
+harness = false
+
+[[test]]
 name = "out_retry"
 path = "tests/out_retry.rs"
 harness = false
