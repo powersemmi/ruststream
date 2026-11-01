@@ -14,13 +14,13 @@ use std::future::ready;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use ruststream::PublishOutcome;
 use ruststream::codec::{CborCodec, Codec};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, LogMode, MemoryPublisher};
 use ruststream::runtime::{Outgoing, for_batch};
 use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, PairError, Take};
+use ruststream::{PublishMessageError, PublishOutcome};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]
@@ -281,7 +281,10 @@ impl Publisher for Journaled {
         let mut headers = msg.headers().clone();
         headers.insert("x-transaction", open);
         let marked = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
-        self.inner.publish(marked, options).await
+        self.inner
+            .publish(marked, options)
+            .await
+            .map_err(PublishMessageError::without_message)
     }
 }
 

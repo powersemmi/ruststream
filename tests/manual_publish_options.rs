@@ -18,13 +18,13 @@
 use std::future::ready;
 
 use ruststream::OutgoingMessage;
-use ruststream::PublishOutcome;
 use ruststream::codec::CborCodec;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{PublishBuilder, PublishSink};
 use ruststream::testing::TestApp;
 use ruststream::{PairError, Take};
+use ruststream::{PublishMessageError, PublishOutcome};
 use serde::{Deserialize, Serialize};
 
 /// The broker's per-message settings. Every field optional: what a call leaves unset keeps what
@@ -85,7 +85,10 @@ impl Publisher for PriorityPublisher {
         let mut headers = msg.headers().clone();
         headers.insert("priority", priority.to_string());
         let stamped = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
-        self.inner.publish(stamped, None).await
+        self.inner
+            .publish(stamped, None)
+            .await
+            .map_err(PublishMessageError::without_message)
     }
 }
 

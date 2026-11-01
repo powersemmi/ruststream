@@ -21,13 +21,13 @@ use crate::common;
 
 use common::{Order, Receipt};
 
-use ruststream::PublishOutcome;
 use ruststream::codec::CborCodec;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{LocalPublishSink, Outgoing, PublishBuilder, SlotContext, for_batch};
 use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, PairError, Take};
+use ruststream::{PublishMessageError, PublishOutcome};
 
 /// The broker's per-message settings. Every field optional: what a call leaves unset keeps what
 /// the policy fixed. `Debug` and `PartialEq` are not part of the contract, they are what a test
@@ -102,7 +102,10 @@ impl Publisher for PriorityPublisher {
         headers.insert("priority", priority.to_string());
         headers.insert("ttl", ttl.to_string());
         let stamped = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
-        self.inner.publish(stamped, None).await
+        self.inner
+            .publish(stamped, None)
+            .await
+            .map_err(PublishMessageError::without_message)
     }
 }
 
