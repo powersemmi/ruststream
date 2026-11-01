@@ -478,7 +478,9 @@ async fn partial(jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> Vec<Receipt> {
         .error(async move |failures: Failures| {
             let each: Vec<String> = failures
                 .map(|failed| {
-                    let payload = String::from_utf8_lossy(failed.message().payload()).into_owned();
+                    let payload =
+                        String::from_utf8_lossy(failed.message().payload().expect("the bytes"))
+                            .into_owned();
                     format!(" {payload}")
                 })
                 .collect();
@@ -522,7 +524,9 @@ async fn typed_cause(jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> Vec<Receip
         .error(async move |failures: Failures| {
             let each: Vec<String> = failures
                 .map(|failed| {
-                    let payload = String::from_utf8_lossy(failed.message().payload()).into_owned();
+                    let payload =
+                        String::from_utf8_lossy(failed.message().payload().expect("the bytes"))
+                            .into_owned();
                     let kind = failed
                         .error()
                         .downcast_ref::<io::Error>()

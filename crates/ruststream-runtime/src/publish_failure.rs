@@ -970,8 +970,8 @@ mod tests {
             async {}
         });
         let messages = vec![
-            FailedMessage::new("a", Bytes::new(), HeaderMap::new()),
-            FailedMessage::new("b", Bytes::new(), HeaderMap::new()),
+            FailedMessage::new("a", Some(Bytes::new()), HeaderMap::new()),
+            FailedMessage::new("b", Some(Bytes::new()), HeaderMap::new()),
         ];
 
         hook.react_all(Box::new(Layered(io::Error::other("root"))), messages)
