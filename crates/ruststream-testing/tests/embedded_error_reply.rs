@@ -34,9 +34,12 @@ struct Verdict {
     ok: bool,
 }
 
-/// What the `.error` continuation was told: where the answer was going, and its bytes.
+/// One answer the `.error` continuation was told about: where it was going, and its bytes.
+type LostAnswer = (String, Vec<u8>);
+
+/// What the `.error` continuation was told.
 #[derive(Clone, Default)]
-struct Lost(Arc<Mutex<Vec<(String, Vec<u8>)>>>);
+struct Lost(Arc<Mutex<Vec<LostAnswer>>>);
 
 /// Answers an ask. If the answer cannot be published, the context's `.error` records it.
 #[subscriber(LocalMemorySource::new("ask"), reply)]
