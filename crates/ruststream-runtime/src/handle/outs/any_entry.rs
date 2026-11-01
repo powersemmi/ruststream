@@ -57,6 +57,30 @@ pub trait MaybeSendPublisher {}
 #[cfg(not(feature = "tokio"))]
 impl<Entry: ?Sized> MaybeSendPublisher for Entry {}
 
+/// An entry whose publish sink is the entry itself, which is what lets a body generic over its
+/// entry prove its publish future `Send` where the `tokio` feature is on. Every entry qualifies
+/// without the feature, and the bound then states nothing about the sink.
+#[cfg(feature = "tokio")]
+#[doc(hidden)]
+pub trait MaybeSendSink<M, Body = ()>:
+    for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Self>
+{
+}
+
+#[cfg(feature = "tokio")]
+impl<Entry, M, Body> MaybeSendSink<M, Body> for Entry where
+    Entry: for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Entry>
+{
+}
+
+/// See the `tokio` form: without the feature every entry qualifies.
+#[cfg(not(feature = "tokio"))]
+#[doc(hidden)]
+pub trait MaybeSendSink<M, Body = ()> {}
+
+#[cfg(not(feature = "tokio"))]
+impl<Entry: ?Sized, M, Body> MaybeSendSink<M, Body> for Entry {}
+
 /// An entry whose live value publishes: the slot itself publishes through its path, and
 /// [`message`](Self::message) starts a typed publish over the slot's codec and dictionary.
 pub trait SlotPublish<M, Body = ()>:

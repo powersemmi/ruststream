@@ -86,7 +86,8 @@ mod entry;
 mod local_entry;
 
 pub use any_entry::{
-    AnyOutPos, MaybeSendPublisher, SelectEntry, SlotAdmit, SlotEntry, SlotPublish, SlotTransactions,
+    AnyOutPos, MaybeSendPublisher, MaybeSendSink, SelectEntry, SlotAdmit, SlotEntry, SlotPublish,
+    SlotTransactions,
 };
 pub use arena::{EntryMarkers, LocalOutPos, OutPos, Outs, SelectSlot, SlotDictionary};
 pub use entry::{OutEntry, Slot};

@@ -174,7 +174,8 @@ pub use failure::{FailurePolicies, FailurePolicy};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use handle::{
-    AnyOutPos, MaybeSendPublisher, SelectEntry, SlotAdmit, SlotEntry, SlotPublish, SlotTransactions,
+    AnyOutPos, MaybeSendPublisher, MaybeSendSink, SelectEntry, SlotAdmit, SlotEntry, SlotPublish,
+    SlotTransactions,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]

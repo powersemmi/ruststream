@@ -701,11 +701,7 @@ impl NeutralArena {
                         + ::ruststream::runtime::MaybeSendPublisher
                 });
                 bounds.push(quote! {
-                    #entry: for<'__rs_sink> ::ruststream::runtime::SlotPublish<
-                        #marker,
-                        #body,
-                        Sink<'__rs_sink> = &'__rs_sink #entry,
-                    >
+                    #entry: ::ruststream::runtime::MaybeSendSink<#marker, #body>
                 });
                 bounds.push(quote! {
                     <#entry as ::ruststream::runtime::SlotPublish<#marker, #body>>::Enc:

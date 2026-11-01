@@ -80,7 +80,8 @@ pub use fn_body::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
 pub use fn_body::{AsDeclared, IntoDeclared};
 #[doc(hidden)]
 pub use outs::{
-    AnyOutPos, MaybeSendPublisher, SelectEntry, SlotAdmit, SlotEntry, SlotPublish, SlotTransactions,
+    AnyOutPos, MaybeSendPublisher, MaybeSendSink, SelectEntry, SlotAdmit, SlotEntry, SlotPublish,
+    SlotTransactions,
 };
 #[doc(hidden)]
 pub use outs::{EntryMarkers, LocalEntryMarkers, LocalOutPos, OutPos, SelectSlot, SlotDictionary};
