@@ -6,6 +6,7 @@
 #![allow(clippy::future_not_send)]
 
 use std::error::Error;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -391,4 +392,45 @@ fn a_copy_without_a_record_runs_only_error_in_every_form_of_the_pair() -> Result
         })?;
     }
     Ok(())
+}
+
+/// A continuation on the embedded runner may hold a value that is not `Send`: an `Rc` here, where
+/// the same closure is refused on the tokio runner.
+#[subscriber(LocalMemorySource::new("rc-job"))]
+async fn rc_job(job: &Job<'_>, ctx: &mut Context<'_, (), Log>) -> HandlerOutcome {
+    let _ = job.0;
+    if ctx.headers().get_str(RETRY_COUNT_HEADER).is_some() {
+        return HandlerOutcome::ack();
+    }
+    let log = Rc::new(ctx.state().clone());
+    let told = Rc::clone(&log);
+    HandlerOutcome::retry_after(LATER)
+        .error(async move |_err, _lost| told.push("error".to_owned()))
+        .and_after(async move { log.push("then".to_owned()) })
+}
+
+#[ruststream::app(runtime = embassy)]
+fn rc_app(bus: Bus) -> EmbeddedApp<impl Mounts<State = Log>> {
+    EmbeddedApp::new()
+        .with_state(Log::default())
+        .with_broker(bus, |b| b.include(rc_job).retry_capacity::<1>())
+}
+
+#[test]
+fn an_error_continuation_may_hold_a_value_that_is_not_send() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let log = Log::default();
+        let shared = log.clone();
+        let tb = TestApp::with_state(rc_app(Bus::new()), move |_| shared).await?;
+        tb.broker::<Bus>()
+            .message(&Sent(b"1"))
+            .to("rc-job")
+            .publish()
+            .await?;
+        tb.advance(LATER).await?;
+
+        assert_eq!(log.told(), ["then"]);
+        tb.shutdown().await?;
+        Ok(())
+    })
 }
