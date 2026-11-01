@@ -45,7 +45,7 @@ async fn error_renamed(job: &Job, Out(alerts): Out<impl Publisher, Alerts>) -> H
     let id = job.id;
     let mine = alerts;
     let held = mine.clone();
-    HandlerOutcome::retry_after(RETRY_DELAY).error(async move |_err, _lost| {
+    HandlerOutcome::retry_after(RETRY_DELAY).error(async move |_failures: Failures| {
         held.message(&Alert { id }).publish().await.expect("alert");
     })
 }
