@@ -481,11 +481,12 @@ pub async fn local_refused_publish_returns_message<B, MkBroker, Pub, MkPub>(
         .await
         .unwrap_or_else(|err| panic!("{SCENARIO}: shutdown failed: {err}"));
 
-    let headers: HeaderMap = [("conformance", "unsent")].into_iter().collect();
-    let published = OutgoingMessage::new(&subject, UNSENT).with_headers(headers.clone());
+    let mut headers = HeaderMap::new();
+    headers.insert("conformance", "unsent");
+    let outgoing = OutgoingMessage::new(&subject, UNSENT).with_headers(headers.clone());
     let answer = within(
         "the publish after the shutdown",
-        publisher.publish(published, None),
+        publisher.publish(outgoing, None),
     )
     .await;
     let Err(failed) = answer else {
@@ -499,7 +500,7 @@ pub async fn local_refused_publish_returns_message<B, MkBroker, Pub, MkPub>(
                 "{SCENARIO}: the returned message names another destination than the one published"
             );
             assert_eq!(
-                message.payload().as_ref(),
+                message.payload(),
                 UNSENT,
                 "{SCENARIO}: the returned message carries other bytes than the ones published"
             );

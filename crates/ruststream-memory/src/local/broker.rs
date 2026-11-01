@@ -437,7 +437,7 @@ impl<const CAP: usize> LocalPublisher for LocalMemoryPublisher<CAP> {
         ready(
             self.bus
                 .fanout(name, payload.freeze(), headers)
-                .map_err(|unsent| unsent.returned(name)),
+                .map_err(|unsent| (*unsent).returned(name)),
         )
     }
 }

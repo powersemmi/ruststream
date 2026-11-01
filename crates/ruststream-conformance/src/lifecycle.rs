@@ -818,9 +818,10 @@ pub async fn refused_publish_returns_message<B, MkBroker, Pub, MkPub>(
     let publisher = make_publisher(&connected);
     shutdown_within(connected, SCENARIO).await;
 
-    let headers: HeaderMap = [("conformance", "unsent")].into_iter().collect();
-    let published = OutgoingMessage::new(&subject, UNSENT).with_headers(headers.clone());
-    let answer = timeout(STEP_TIMEOUT, publisher.publish(published, None))
+    let mut headers = HeaderMap::new();
+    headers.insert("conformance", "unsent");
+    let outgoing = OutgoingMessage::new(&subject, UNSENT).with_headers(headers.clone());
+    let answer = timeout(STEP_TIMEOUT, publisher.publish(outgoing, None))
         .await
         .unwrap_or_else(|_| {
             panic!(
@@ -839,7 +840,7 @@ pub async fn refused_publish_returns_message<B, MkBroker, Pub, MkPub>(
                 "{SCENARIO}: the returned message names another destination than the one published"
             );
             assert_eq!(
-                message.payload().as_ref(),
+                message.payload(),
                 UNSENT,
                 "{SCENARIO}: the returned message carries other bytes than the ones published"
             );

@@ -800,7 +800,7 @@ impl Publisher for MemoryPublisher {
         ready(
             self.state
                 .fanout_unsent(name, payload.freeze(), headers)
-                .map_err(|unsent| unsent.returned(name)),
+                .map_err(|unsent| (*unsent).returned(name)),
         )
     }
 }

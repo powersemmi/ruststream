@@ -85,15 +85,15 @@ struct Unsent {
 impl Unsent {
     /// The refusal as a publisher reports it, with the message handed back in the buffer it came
     /// in.
-    fn returned<'msg>(
-        self: Box<Self>,
-        name: &'msg str,
-    ) -> PublishMessageError<MemoryError, OutgoingMessage<'msg, BytesMut>> {
+    fn returned(
+        self,
+        name: &str,
+    ) -> PublishMessageError<MemoryError, OutgoingMessage<'_, BytesMut>> {
         let Self {
             error,
             payload,
             headers,
-        } = *self;
+        } = self;
         // The publish froze the buffer it was handed and the bus refused before sharing it, so
         // the block is still unique and the buffer comes back without a copy.
         let buffer = payload

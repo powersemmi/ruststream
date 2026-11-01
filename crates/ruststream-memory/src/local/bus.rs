@@ -294,15 +294,15 @@ impl Unsent {
 
     /// The refusal as a publisher reports it, with the message handed back in the buffer it came
     /// in.
-    pub(super) fn returned<'msg>(
-        self: Box<Self>,
-        name: &'msg str,
-    ) -> PublishMessageError<LocalMemoryError, OutgoingMessage<'msg, BytesMut>> {
+    pub(super) fn returned(
+        self,
+        name: &str,
+    ) -> PublishMessageError<LocalMemoryError, OutgoingMessage<'_, BytesMut>> {
         let Self {
             error,
             payload,
             headers,
-        } = *self;
+        } = self;
         // The bus refused before sharing the block, so it is still unique and the buffer comes
         // back without a copy.
         let buffer = payload
