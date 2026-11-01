@@ -12,7 +12,10 @@ use thiserror::Error;
 use tokio::{sync::mpsc, time::timeout};
 
 use crate::{Discarding, MemoryMessage, MemoryState};
-use ruststream_core::{BytesMut, OutgoingMessage, Publisher, RequestReply, Str, Take};
+use ruststream_core::{
+    BytesMut, OutgoingMessage, PublishMessageError, PublishOutcome, Publisher, RequestReply, Str,
+    Take,
+};
 
 /// Errors returned by [`MemoryRequester`] operations.
 #[derive(Debug, Error)]
@@ -119,16 +122,16 @@ impl Publisher for MemoryRequester {
     type Error = RequestError;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Take>> {
         let (name, payload, headers) = msg.into_parts();
         ready(
             self.state
                 .fanout(name, payload.freeze(), headers)
-                .map_err(|_| RequestError::ShutDown),
+                .map_err(|_| PublishMessageError::new(RequestError::ShutDown)),
         )
     }
 }

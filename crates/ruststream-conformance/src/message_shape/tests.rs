@@ -23,9 +23,11 @@ use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish,
     MemoryPublisher, MemorySource, MemorySubscriber, PARTITION_KEY_HEADER,
 };
+use ruststream_core::PublishOutcome;
 use ruststream_core::{
     AckError, AddressedCopies, HeaderMap, IncomingMessage, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, Settle, Subscribe, Subscriber, SubscriptionSource, Take,
+    PublishMessageError, PublishPolicy, Publisher, Settle, Subscribe, Subscriber,
+    SubscriptionSource, Take,
 };
 
 /// What a double reports when it refuses, alongside what the memory broker reports.
@@ -105,7 +107,11 @@ impl Faulty {
 
     async fn forward(&self, held: Held) -> Result<(), DoubleError> {
         let msg = OutgoingMessage::produced(&held.name, held.payload).with_headers(held.headers);
-        Ok(self.inner.publish(msg, None).await?)
+        Ok(self
+            .inner
+            .publish(msg, None)
+            .await
+            .map_err(PublishMessageError::into_error)?)
     }
 
     /// Loses the first message with no headers and keeps redelivering the second one.
@@ -157,11 +163,11 @@ impl Publisher for Faulty {
     type Error = DoubleError;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), DoubleError>> + Send {
+    ) -> impl Future<Output = PublishOutcome<'msg, DoubleError, Take>> + Send {
         let (name, payload, headers) = msg.into_parts();
         let held = Held {
             name: name.to_owned(),
@@ -169,95 +175,105 @@ impl Publisher for Faulty {
             headers,
         };
         async move {
-            match self.fault {
-                Fault::Reverses { window } => {
-                    let run = {
-                        let mut queue = self.held.lock().unwrap_or_else(PoisonError::into_inner);
-                        queue.push(held);
-                        if queue.len() < window {
-                            return Ok(());
+            let outcome: Result<(), DoubleError> = async move {
+                match self.fault {
+                    Fault::Reverses { window } => {
+                        let run = {
+                            let mut queue =
+                                self.held.lock().unwrap_or_else(PoisonError::into_inner);
+                            queue.push(held);
+                            if queue.len() < window {
+                                return Ok(());
+                            }
+                            mem::take(&mut *queue)
+                        };
+                        for held in run.into_iter().rev() {
+                            self.forward(held).await?;
                         }
-                        mem::take(&mut *queue)
-                    };
-                    for held in run.into_iter().rev() {
+                        Ok(())
+                    }
+                    Fault::DropsHeaders => {
+                        self.forward(Held {
+                            headers: HeaderMap::new(),
+                            ..held
+                        })
+                        .await
+                    }
+                    Fault::RewritesAsText => {
+                        let mut text = HeaderMap::new();
+                        for (key, value) in held.headers.iter() {
+                            text.insert(
+                                key.to_owned(),
+                                String::from_utf8_lossy(value).into_owned(),
+                            );
+                        }
+                        self.forward(Held {
+                            headers: text,
+                            ..held
+                        })
+                        .await
+                    }
+                    Fault::RefusesHeaders if !held.headers.is_empty() => {
+                        Err(DoubleError::Refused("this transport carries no headers"))
+                    }
+                    Fault::RefusesAndDelivers { after: 0 } if !held.headers.is_empty() => {
                         self.forward(held).await?;
+                        Err(DoubleError::Refused("reported refused, delivered anyway"))
                     }
-                    Ok(())
-                }
-                Fault::DropsHeaders => {
-                    self.forward(Held {
-                        headers: HeaderMap::new(),
-                        ..held
-                    })
-                    .await
-                }
-                Fault::RewritesAsText => {
-                    let mut text = HeaderMap::new();
-                    for (key, value) in held.headers.iter() {
-                        text.insert(key.to_owned(), String::from_utf8_lossy(value).into_owned());
+                    Fault::RefusesAndDelivers { after } if !held.headers.is_empty() => {
+                        self.refused
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .push((held, after));
+                        Err(DoubleError::Refused("reported refused, delivered later"))
                     }
-                    self.forward(Held {
-                        headers: text,
-                        ..held
-                    })
-                    .await
-                }
-                Fault::RefusesHeaders if !held.headers.is_empty() => {
-                    Err(DoubleError::Refused("this transport carries no headers"))
-                }
-                Fault::RefusesAndDelivers { after: 0 } if !held.headers.is_empty() => {
-                    self.forward(held).await?;
-                    Err(DoubleError::Refused("reported refused, delivered anyway"))
-                }
-                Fault::RefusesAndDelivers { after } if !held.headers.is_empty() => {
-                    self.refused
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .push((held, after));
-                    Err(DoubleError::Refused("reported refused, delivered later"))
-                }
-                Fault::RefusesAndDelivers { .. } => self.forward_then_release(held).await,
-                Fault::DropsKey => {
-                    let mut held = held;
-                    held.headers.remove(PARTITION_KEY_HEADER);
-                    self.forward(held).await
-                }
-                Fault::CorruptsPayload => {
-                    let mut held = held;
-                    held.payload.extend_from_slice(b"!");
-                    self.forward(held).await
-                }
-                Fault::RefusesAll => Err(DoubleError::Refused("this transport refuses everything")),
-                Fault::SwallowsPlain if held.headers.is_empty() => Ok(()),
-                Fault::Hangs => pending().await,
-                Fault::Duplicates => {
-                    let copy = Held {
-                        name: held.name.clone(),
-                        payload: held.payload.clone(),
-                        headers: held.headers.clone(),
-                    };
-                    self.forward(held).await?;
-                    self.forward(copy).await
-                }
-                Fault::Trickles => {
-                    let turn = self.plain.fetch_add(1, Ordering::SeqCst) + 1;
-                    let delay = TRICKLE.saturating_mul(u32::try_from(turn).unwrap_or(u32::MAX));
-                    let publisher = self.inner.clone();
-                    drop(spawn(async move {
-                        sleep(delay).await;
-                        let msg = OutgoingMessage::produced(&held.name, held.payload)
-                            .with_headers(held.headers);
-                        let _delivered = publisher.publish(msg, None).await;
-                    }));
-                    Ok(())
-                }
-                Fault::RepeatsWhileLosing if held.headers.is_empty() => {
-                    self.lose_first_and_repeat_second(held).await
-                }
-                Fault::RefusesHeaders | Fault::SwallowsPlain | Fault::RepeatsWhileLosing => {
-                    self.forward(held).await
+                    Fault::RefusesAndDelivers { .. } => self.forward_then_release(held).await,
+                    Fault::DropsKey => {
+                        let mut held = held;
+                        held.headers.remove(PARTITION_KEY_HEADER);
+                        self.forward(held).await
+                    }
+                    Fault::CorruptsPayload => {
+                        let mut held = held;
+                        held.payload.extend_from_slice(b"!");
+                        self.forward(held).await
+                    }
+                    Fault::RefusesAll => {
+                        Err(DoubleError::Refused("this transport refuses everything"))
+                    }
+                    Fault::SwallowsPlain if held.headers.is_empty() => Ok(()),
+                    Fault::Hangs => pending().await,
+                    Fault::Duplicates => {
+                        let copy = Held {
+                            name: held.name.clone(),
+                            payload: held.payload.clone(),
+                            headers: held.headers.clone(),
+                        };
+                        self.forward(held).await?;
+                        self.forward(copy).await
+                    }
+                    Fault::Trickles => {
+                        let turn = self.plain.fetch_add(1, Ordering::SeqCst) + 1;
+                        let delay = TRICKLE.saturating_mul(u32::try_from(turn).unwrap_or(u32::MAX));
+                        let publisher = self.inner.clone();
+                        drop(spawn(async move {
+                            sleep(delay).await;
+                            let msg = OutgoingMessage::produced(&held.name, held.payload)
+                                .with_headers(held.headers);
+                            let _delivered = publisher.publish(msg, None).await;
+                        }));
+                        Ok(())
+                    }
+                    Fault::RepeatsWhileLosing if held.headers.is_empty() => {
+                        self.lose_first_and_repeat_second(held).await
+                    }
+                    Fault::RefusesHeaders | Fault::SwallowsPlain | Fault::RepeatsWhileLosing => {
+                        self.forward(held).await
+                    }
                 }
             }
+            .await;
+            outcome.map_err(Into::into)
         }
     }
 }
@@ -643,7 +659,11 @@ impl PriorityPublisher {
 
     async fn forward(&self, held: Held) -> Result<(), DoubleError> {
         let msg = OutgoingMessage::produced(&held.name, held.payload).with_headers(held.headers);
-        Ok(self.inner.publish(msg, None).await?)
+        Ok(self
+            .inner
+            .publish(msg, None)
+            .await
+            .map_err(PublishMessageError::into_error)?)
     }
 }
 
@@ -652,11 +672,11 @@ impl Publisher for PriorityPublisher {
     type Error = DoubleError;
     type Options = Priority;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Priority>,
-    ) -> Result<(), DoubleError> {
+    ) -> PublishOutcome<'msg, DoubleError, Take> {
         let resolved = self.resolve(options.and_then(|options| options.priority));
         let (name, payload, headers) = msg.into_parts();
         let held = Held {
@@ -668,13 +688,13 @@ impl Publisher for PriorityPublisher {
             (Ok(priority), _) => priority,
             (Err(refused), Resolve::DeliversRefused) => {
                 self.forward(held).await?;
-                return Err(refused);
+                return Err(refused.into());
             }
             (Err(refused), Resolve::DeliversRefusedLate) => {
                 *self.late.lock().unwrap_or_else(PoisonError::into_inner) = Some(held);
-                return Err(refused);
+                return Err(refused.into());
             }
-            (Err(refused), _) => return Err(refused),
+            (Err(refused), _) => return Err(refused.into()),
         };
         let mut held = held;
         held.headers.insert("priority", priority.to_string());

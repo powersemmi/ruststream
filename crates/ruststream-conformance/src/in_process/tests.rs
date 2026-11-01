@@ -18,10 +18,12 @@ use ruststream::memory::{
     ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
     MemoryPosition, MemoryPublisher, MemorySource, MemorySubscriber, Retaining, Retention,
 };
+use ruststream_core::PublishOutcome;
 use ruststream_core::{
     AckError, AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, HeaderMap,
-    IncomingMessage, Name, OutgoingFor, OutgoingMessage, PairError, PublishPolicy, Publisher,
-    RawMessage, Seekable, Seeker, Settle, Subscribe, Subscriber, Take, nonzero,
+    IncomingMessage, Name, OutgoingFor, OutgoingMessage, PairError, PublishMessageError,
+    PublishPolicy, Publisher, RawMessage, Seekable, Seeker, Settle, Subscribe, Subscriber, Take,
+    nonzero,
 };
 use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, TestableBroker};
 
@@ -517,11 +519,11 @@ impl Publisher for FaultyPublisher {
     type Error = FaultyError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         _options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         let unread = |opened: &Opened| !opened.lock().expect("opened").contains_key(msg.name());
         let refusal = if self
             .refuses_over
@@ -539,9 +541,12 @@ impl Publisher for FaultyPublisher {
         };
         if let Some(refusal) = refusal {
             if self.stores_refused {
-                self.inner.publish(msg, None).await?;
+                self.inner
+                    .publish(msg, None)
+                    .await
+                    .map_err(|failed| FaultyError::from(failed.into_error()))?;
             }
-            return Err(refusal);
+            return Err(refusal.into());
         }
         if let Some((opened, coordinator)) = &self.counts_unread
             && unread(opened)
@@ -553,11 +558,18 @@ impl Publisher for FaultyPublisher {
             let names: Vec<String> = opened.lock().expect("opened").keys().cloned().collect();
             for name in names {
                 let copy = OutgoingMessage::produced(&name, BytesMut::from(msg.payload()));
-                self.inner.publish(copy, None).await?;
+                self.inner
+                    .publish(copy, None)
+                    .await
+                    .map_err(|failed| FaultyError::from(failed.into_error()))?;
             }
             return Ok(());
         }
-        Ok(self.inner.publish(msg, None).await?)
+        Ok(self
+            .inner
+            .publish(msg, None)
+            .await
+            .map_err(|failed| FaultyError::from(failed.into_error()))?)
     }
 }
 

@@ -25,7 +25,7 @@ use futures_core::Stream;
 use ruststream_core::{
     AckError, Broker, BrokerMoves, ConnectedBroker, DefaultPublish, HeaderMap, IncomingMessage,
     Lend, LocalBatchSubscriber, LocalPublisher, LocalSettle, LocalSubscriber, OutgoingMessage,
-    PairError, PublishPolicy, SubscriptionSource,
+    PairError, PublishOutcome, PublishPolicy, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -457,11 +457,11 @@ impl LocalPublisher for FramePublisher {
     type Error = FramePublishError;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &[u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), FramePublishError>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, FramePublishError, Lend>> {
         let sent = Frame::new(msg.payload())
             .ok_or(FramePublishError::TooLong)
             .and_then(|frame| {
@@ -469,7 +469,7 @@ impl LocalPublisher for FramePublisher {
                     .try_send(frame)
                     .map_err(|_| FramePublishError::Full)
             });
-        ready(sent)
+        ready(sent.map_err(Into::into))
     }
 }
 

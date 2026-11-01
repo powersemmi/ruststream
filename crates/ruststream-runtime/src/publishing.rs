@@ -352,7 +352,7 @@ where
     if sent.is_ok() {
         recorded.sent().await;
     }
-    sent.map_err(Into::into)
+    sent.map_err(|failed| failed.into_error().into())
 }
 
 /// A subscriber definition that produces a reply to publish.
@@ -821,6 +821,7 @@ mod tests {
     use alloc::borrow::ToOwned;
     use alloc::format;
     use core::future::ready;
+    use ruststream_core::PublishOutcome;
 
     use super::{PublishingCall, PublishingDef, publishing_metadata};
     use crate::HeaderMap;
@@ -922,11 +923,11 @@ mod tests {
             type Error = MemoryError;
             type Options = ();
 
-            fn publish(
+            fn publish<'msg>(
                 &self,
-                _msg: OutgoingMessage<'_, &[u8]>,
+                _msg: OutgoingMessage<'msg, &'msg [u8]>,
                 _options: Option<&Self::Options>,
-            ) -> impl Future<Output = Result<(), Self::Error>> {
+            ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
                 ready(Err(MemoryError::ShutDown))
             }
         }

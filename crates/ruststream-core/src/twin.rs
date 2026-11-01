@@ -29,7 +29,7 @@
 //!     forward { /* the qualified path of the Send trait, `<T as Subscriber>` */ }
 //!     docs { Subscriber }
 //!     types { /* `type Name: [bounds];`, each with `#[cfg]` and docs */ }
-//!     fns { /* `fn name(params) -> [ret] where [..] ;` or `{ default body }` */ }
+//!     fns { /* `fn name(params) <'a> -> [ret] where [..] ;` or `{ default body }`; the lifetimes optional */ }
 //!     send_only { /* items of the Send trait alone, written as they are */ }
 //! }
 //! ```
@@ -113,7 +113,7 @@ macro_rules! __contract_twin {
                 $(#[cfg $fcfg:tt])*
                 $(#[must_use $($fmu:tt)*])?
                 $(#[doc = $fdoc:literal])*
-                fn $fname:ident $fparams:tt $(-> [$($fret:tt)*])? $(where [$($fwhere:tt)*])?
+                fn $fname:ident $fparams:tt $(<$($flt:lifetime),+ $(,)?>)? $(-> [$($fret:tt)*])? $(where [$($fwhere:tt)*])?
                     $(;)? $({ $($fbody:tt)* })?
             )*
         })?
@@ -130,7 +130,7 @@ macro_rules! __contract_twin {
             $($(
                 $crate::__twin_select! {
                     send [] [$($($fret)*)?] then __twin_fn {
-                        [$(#[cfg $fcfg])* $(#[must_use $($fmu)*])? $(#[doc = $fdoc])* fn $fname $fparams]
+                        [$(#[cfg $fcfg])* $(#[must_use $($fmu)*])? $(#[doc = $fdoc])* fn $fname $(<$($flt),+>)? $fparams]
                         [$(where $($fwhere)*)?]
                         [$({ $($fbody)* })?]
                     }
@@ -167,7 +167,7 @@ macro_rules! __contract_twin {
                             // The `# Errors` and `# Panics` sections live on the Send trait's
                             // method, which this documentation points to.
                             #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
-                            fn $fname $fparams
+                            fn $fname $(<$($flt),+>)? $fparams
                         ]
                         [$(where $($fwhere)*)?]
                         [$({ $($fbody)* })?]
@@ -183,7 +183,7 @@ macro_rules! __contract_twin {
             )*)?
             $($(
                 $crate::__twin_forward! {
-                    [$(#[cfg $fcfg])*] $fname $fparams [$(where $($fwhere)*)?] $forward
+                    [$(#[cfg $fcfg])*] $fname [$(<$($flt),+>)?] $fparams [$(where $($fwhere)*)?] $forward
                     [$($($fret)*)?]
                 }
             )*)?
@@ -262,36 +262,36 @@ macro_rules! __twin_forward_type {
 #[macro_export]
 macro_rules! __twin_forward {
     (
-        [$($cfg:tt)*] $name:ident (&mut $receiver:tt $(, $arg:ident: $ty:ty)* $(,)?)
+        [$($cfg:tt)*] $name:ident [$($gen:tt)*] (&mut $receiver:tt $(, $arg:ident: $ty:ty)* $(,)?)
         [$($where:tt)*] { $($forward:tt)* } [$($ret:tt)*]
     ) => {
         $crate::__twin_select! {
             local [] [$($ret)*] then __twin_forward_fn {
-                [$($cfg)* fn $name(&mut $receiver $(, $arg: $ty)*)]
+                [$($cfg)* fn $name $($gen)* (&mut $receiver $(, $arg: $ty)*)]
                 [$($where)*]
                 [{ $($forward)*::$name($receiver $(, $arg)*) }]
             }
         }
     };
     (
-        [$($cfg:tt)*] $name:ident (& $receiver:tt $(, $arg:ident: $ty:ty)* $(,)?)
+        [$($cfg:tt)*] $name:ident [$($gen:tt)*] (& $receiver:tt $(, $arg:ident: $ty:ty)* $(,)?)
         [$($where:tt)*] { $($forward:tt)* } [$($ret:tt)*]
     ) => {
         $crate::__twin_select! {
             local [] [$($ret)*] then __twin_forward_fn {
-                [$($cfg)* fn $name(& $receiver $(, $arg: $ty)*)]
+                [$($cfg)* fn $name $($gen)* (& $receiver $(, $arg: $ty)*)]
                 [$($where)*]
                 [{ $($forward)*::$name($receiver $(, $arg)*) }]
             }
         }
     };
     (
-        [$($cfg:tt)*] $name:ident ($receiver:tt $(, $arg:ident: $ty:ty)* $(,)?)
+        [$($cfg:tt)*] $name:ident [$($gen:tt)*] ($receiver:tt $(, $arg:ident: $ty:ty)* $(,)?)
         [$($where:tt)*] { $($forward:tt)* } [$($ret:tt)*]
     ) => {
         $crate::__twin_select! {
             local [] [$($ret)*] then __twin_forward_fn {
-                [$($cfg)* fn $name($receiver $(, $arg: $ty)*)]
+                [$($cfg)* fn $name $($gen)* ($receiver $(, $arg: $ty)*)]
                 [$($where)*]
                 [{ $($forward)*::$name($receiver $(, $arg)*) }]
             }

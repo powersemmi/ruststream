@@ -27,6 +27,7 @@ use std::time::Duration;
 
 use common::{Order, Receipt};
 use futures::{Stream, StreamExt};
+use ruststream::PublishOutcome;
 use ruststream::Settle;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{
@@ -369,11 +370,11 @@ impl<P: Publisher> Publisher for Stamped<P> {
     type Error = P::Error;
     type Options = P::Options;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         self.inner.publish(msg, options).await
     }
 
@@ -431,11 +432,11 @@ impl<P: Publisher> Publisher for PriorityPublisher<P> {
     type Error = P::Error;
     type Options = PriorityOptions;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         let priority = options
             .and_then(|options| options.priority)
             .unwrap_or(self.default_priority);

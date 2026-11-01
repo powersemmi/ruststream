@@ -291,7 +291,10 @@ fn a_shutdown_of_a_handler_that_keeps_waking_itself_fails() -> Result<(), Box<dy
         assert!(
             matches!(
                 published,
-                Err(PublishError::Publish(TestError::NotQuiescent { .. }))
+                Err(PublishError::Publish {
+                    source: TestError::NotQuiescent { .. },
+                    ..
+                })
             ),
             "the spinning handler keeps the publish from settling: {published:?}"
         );

@@ -33,11 +33,11 @@ impl LocalPublisher for QueuePublisher {
     type Error = Infallible;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Take>,
+        msg: OutgoingFor<'msg, Take>,
         _options: Option<&()>,
-    ) -> Result<(), Infallible> {
+    ) -> PublishOutcome<'msg, Infallible, Take> {
         let (name, payload, _headers) = msg.into_parts();
         self.client
             .outgoing

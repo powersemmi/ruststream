@@ -59,11 +59,11 @@ use ruststream::{HeaderMap, LocalRequestReply, OutgoingFor, Take};
 #     type Error = Infallible;
 #     type Options = ();
 #
-#     async fn publish(
+#     async fn publish<'msg>(
 #         &self,
-#         msg: OutgoingFor<'_, Take>,
+#         msg: OutgoingFor<'msg, Take>,
 #         _options: Option<&()>,
-#     ) -> Result<(), Infallible> {
+#     ) -> PublishOutcome<'msg, Infallible, Take> {
 #         self.client.queue.borrow_mut().push_back(msg.into_payload().to_vec());
 #         Ok(())
 #     }

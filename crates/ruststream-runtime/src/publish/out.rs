@@ -35,8 +35,8 @@ use crate::lifecycle::BoxError;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::PipelinePublish;
 use crate::{
-    ConnectedBroker, HeaderMap, LocalPublisher, OutgoingFor, PairError, PayloadForm, PublishPolicy,
-    Publisher,
+    ConnectedBroker, HeaderMap, LocalPublisher, OutgoingFor, PairError, PayloadForm,
+    PublishMessageError, PublishOutcome, PublishPolicy, Publisher,
 };
 
 /// One slot's [`PublishTransform`] stack, paired with the slot it was named on (so the transforms
@@ -200,11 +200,11 @@ impl<P: Publisher> Publisher for NamedDestinationSend<P> {
     type Error = P::Error;
     type Options = P::Options;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         self.0.publish(msg, options).await
     }
 
@@ -248,12 +248,12 @@ pub trait OutPipeline<W>: Send + Sync + Clone {
 
     /// Sends one message through the path into `leaf`, the slot's attributed publisher, with
     /// the broker's per-message settings the call site adjusted.
-    fn send<P>(
+    fn send<'msg, P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'_, W::Payload>,
+        msg: OutgoingFor<'msg, W::Payload>,
         options: Option<&P::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error<P::Error>>> + Send
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error<P::Error>, W::Payload>> + Send
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>;
@@ -268,12 +268,12 @@ impl<W> OutPipeline<W> for PublishIdentity {
 
     // Nothing composed onto this slot: the publish is the leaf call it always was, with no
     // message rebuilt and no error rewrapped.
-    async fn send<P>(
+    async fn send<'msg, P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'_, W::Payload>,
+        msg: OutgoingFor<'msg, W::Payload>,
         options: Option<&P::Options>,
-    ) -> Result<(), P::Error>
+    ) -> PublishOutcome<'msg, P::Error, W::Payload>
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
@@ -298,12 +298,12 @@ impl<W, Head: PublishLayer + Clone, Tail: PublishPipeline + Clone> OutPipeline<W
         PipelinePublishError(Box::new(err))
     }
 
-    async fn send<P>(
+    async fn send<'msg, P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'_, W::Payload>,
+        msg: OutgoingFor<'msg, W::Payload>,
         options: Option<&P::Options>,
-    ) -> Result<(), PipelinePublishError>
+    ) -> PublishOutcome<'msg, PipelinePublishError, W::Payload>
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
@@ -312,9 +312,11 @@ impl<W, Head: PublishLayer + Clone, Tail: PublishPipeline + Clone> OutPipeline<W
         // here; only a slot that actually has middleware pays for that.
         let (name, payload, headers) = msg.into_parts();
         let mut out = <W::Payload as PayloadForm>::rebuilt(name.into(), payload, headers);
+        // The middleware rewrites the message in place, so a refusal reports the pipeline's error
+        // and no message: what the stages left of it is not what the call handed in.
         self.run(&mut out, leaf, options)
             .await
-            .map_err(PipelinePublishError)
+            .map_err(|error| PublishMessageError::new(PipelinePublishError(error)))
     }
 }
 
@@ -333,12 +335,12 @@ where
         Pipeline::from_publish_error(err)
     }
 
-    async fn send<P>(
+    async fn send<'msg, P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'_, W::Payload>,
+        msg: OutgoingFor<'msg, W::Payload>,
         options: Option<&P::Options>,
-    ) -> Result<(), Self::Error<P::Error>>
+    ) -> PublishOutcome<'msg, Self::Error<P::Error>, W::Payload>
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
@@ -354,7 +356,12 @@ where
         // being copied on, and only what the transport needs alive travels with the send.
         let mut kept = <W::Payload as PayloadForm>::Spent::default();
         let sent = <W::Payload as PayloadForm>::handed_on(out, &mut kept);
-        self.pipeline.send(leaf, sent, resolved.as_ref()).await
+        // The message that failed is the one the transforms rewrote into a buffer of this call,
+        // so it cannot outlive it: the refusal reports the error alone.
+        self.pipeline
+            .send(leaf, sent, resolved.as_ref())
+            .await
+            .map_err(|failed| PublishMessageError::new(failed.into_error()))
     }
 }
 
@@ -377,12 +384,12 @@ where
 pub trait LocalOutPipeline<W>: Clone {
     /// Sends one message through the path into `leaf`, the slot's publisher, with the broker's
     /// per-message settings the call site adjusted.
-    fn send<P>(
+    fn send<'msg, P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'_, W::Payload>,
+        msg: OutgoingFor<'msg, W::Payload>,
         options: Option<&P::Options>,
-    ) -> impl Future<Output = Result<(), P::Error>>
+    ) -> impl Future<Output = PublishOutcome<'msg, P::Error, W::Payload>>
     where
         W: LocalPublisher,
         P: LocalPublisher<Options = W::Options, Payload = W::Payload>;
@@ -399,12 +406,12 @@ where
 {
     // The leaf's own future, which is `Send` exactly where the leaf's is.
     #[allow(clippy::future_not_send)]
-    async fn send<P>(
+    async fn send<'msg, P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'_, W::Payload>,
+        msg: OutgoingFor<'msg, W::Payload>,
         options: Option<&P::Options>,
-    ) -> Result<(), P::Error>
+    ) -> PublishOutcome<'msg, P::Error, W::Payload>
     where
         W: LocalPublisher,
         P: LocalPublisher<Options = W::Options, Payload = W::Payload>,
@@ -416,7 +423,12 @@ where
             .apply(&mut out, &mut resolved, &SlotContext::new(self.slot));
         let mut kept = <W::Payload as PayloadForm>::Spent::default();
         let sent = <W::Payload as PayloadForm>::handed_on(out, &mut kept);
-        self.pipeline.send(leaf, sent, resolved.as_ref()).await
+        // The message that failed is the one the transforms rewrote into a buffer of this call,
+        // so it cannot outlive it: the refusal reports the error alone.
+        self.pipeline
+            .send(leaf, sent, resolved.as_ref())
+            .await
+            .map_err(|failed| PublishMessageError::new(failed.into_error()))
     }
 }
 

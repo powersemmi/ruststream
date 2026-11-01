@@ -21,6 +21,7 @@ use crate::common;
 
 use common::{Order, Receipt};
 
+use ruststream::PublishOutcome;
 use ruststream::codec::CborCodec;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
@@ -83,11 +84,11 @@ impl Publisher for PriorityPublisher {
     type Error = MemoryError;
     type Options = PriorityOptions;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Take> {
         let priority = options
             .and_then(|options| options.priority)
             .unwrap_or(self.default_priority);

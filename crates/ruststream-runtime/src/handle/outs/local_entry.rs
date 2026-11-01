@@ -24,7 +24,7 @@ use crate::testing::coordinator::{
 };
 use crate::{
     Broker, Connected, HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, PairError,
-    PublishPolicy,
+    PublishOutcome, PublishPolicy,
 };
 
 use super::arena::SlotDictionary;
@@ -122,11 +122,11 @@ where
 
     // The publisher's own future, which is `Send` exactly where the publisher's is.
     #[allow(clippy::future_not_send)]
-    fn send(
+    fn send<'msg>(
         &mut self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> {
         #[cfg(feature = "testing")]
         let slot: &LocalSlot<M, W, E, Pipe, Body> = self;
         #[cfg(feature = "testing")]
@@ -208,11 +208,11 @@ impl<M: OutSlot, W: LocalPublisher> LocalPublisher for Attributed<'_, M, W> {
 
     // The publisher's own future, which is `Send` exactly where the publisher's is.
     #[allow(clippy::future_not_send)]
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         let recorded = PipelinePublish::capture(&msg, options);
         let hooks = record_slot_publish(M::NAME, &msg, options);
         let sent = self.0.publish(msg, options).await;

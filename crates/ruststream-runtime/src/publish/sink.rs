@@ -6,7 +6,7 @@ use core::error::Error as StdError;
 use crate::codec::Codec;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
-use crate::{HeaderMap, OutgoingFor, PayloadForm, Publisher, Transaction};
+use crate::{HeaderMap, OutgoingFor, PayloadForm, PublishOutcome, Publisher, Transaction};
 
 /// The byte sink a publish builder resolves down to.
 ///
@@ -71,17 +71,18 @@ pub trait PublishSink: Send {
     ///
     /// # Errors
     ///
-    /// Returns [`Self::Error`] when the broker (or the transaction buffer) rejects the message.
+    /// Returns the failure of the broker (or the transaction buffer) rejecting the message: its
+    /// [`Self::Error`] and, when the client gave it back, the message it did not send.
     ///
     /// # Cancel safety
     ///
     /// Inherited from the underlying publisher or transaction: dropping the future mid-flight
     /// may leave the message in an indeterminate state.
-    fn send(
+    fn send<'msg>(
         &mut self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> + Send;
 
     /// The headers the sink contributes underneath the publish's own, or `None` when it
     /// contributes nothing.
@@ -103,11 +104,11 @@ impl<P: Publisher> PublishSink for &P {
     type Error = P::Error;
     type Options = P::Options;
 
-    fn send(
+    fn send<'msg>(
         &mut self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> + Send {
         (**self).publish(msg, options)
     }
 
@@ -123,11 +124,11 @@ impl<T: Transaction> PublishSink for &mut T {
     type Error = T::Error;
     type Options = T::Options;
 
-    fn send(
+    fn send<'msg>(
         &mut self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> + Send {
         (**self).publish(msg, options)
     }
 
@@ -190,11 +191,11 @@ pub trait LocalPublishSink {
     /// # Cancel safety
     ///
     /// See [`PublishSink::send`].
-    fn send(
+    fn send<'msg>(
         &mut self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>>;
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>>;
 
     /// See [`PublishSink::base_headers`].
     fn base_headers(&self) -> Option<&HeaderMap> {
@@ -210,11 +211,11 @@ impl<Sink: PublishSink> LocalPublishSink for Sink {
     type Options = Sink::Options;
 
     #[inline]
-    fn send(
+    fn send<'msg>(
         &mut self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> {
         PublishSink::send(self, msg, options)
     }
 

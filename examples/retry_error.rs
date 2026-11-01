@@ -11,6 +11,7 @@
 use std::future::ready;
 use std::io;
 
+use ruststream::PublishOutcome;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, LogMode};
 use ruststream::{Lend, OutgoingMessage, PairError};
@@ -39,12 +40,12 @@ impl Publisher for Down {
     type Error = io::Error;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        _msg: OutgoingMessage<'_, &[u8]>,
+        _msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), io::Error>> {
-        ready(Err(io::Error::other("broker down")))
+    ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
+        ready(Err(io::Error::other("broker down").into()))
     }
 }
 

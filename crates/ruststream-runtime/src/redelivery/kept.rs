@@ -101,7 +101,7 @@ impl<Live: LocalPublisher, Stack> CopyPublisher for AddressedCopy<Live, Stack> {
         self.live
             .publish(msg, options)
             .await
-            .map_err(BoxError::from)
+            .map_err(|failed| BoxError::from(failed.into_error()))
     }
 }
 
@@ -520,6 +520,7 @@ mod tests {
     use alloc::sync::Arc;
     use alloc::vec::Vec;
     use core::future::ready;
+    use ruststream_core::PublishOutcome;
     use std::io;
     use std::sync::Mutex;
 
@@ -553,11 +554,11 @@ mod tests {
         type Error = io::Error;
         type Options = Priority;
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            msg: OutgoingMessage<'_, &[u8]>,
+            msg: OutgoingMessage<'msg, &'msg [u8]>,
             options: Option<&Priority>,
-        ) -> impl Future<Output = Result<(), io::Error>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
             let (name, payload, headers) = msg.into_parts();
             self.sent.lock().expect("one test thread").push((
                 name.to_owned(),

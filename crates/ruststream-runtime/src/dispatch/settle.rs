@@ -821,6 +821,7 @@ mod tests {
     use alloc::borrow::ToOwned;
     use core::future::ready;
     use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+    use ruststream_core::PublishOutcome;
     use std::io;
 
     use futures::{StreamExt, poll};
@@ -857,11 +858,11 @@ mod tests {
         type Error = io::Error;
         type Options = ();
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            msg: OutgoingMessage<'_, &[u8]>,
+            msg: OutgoingMessage<'msg, &'msg [u8]>,
             _options: Option<&Self::Options>,
-        ) -> impl Future<Output = Result<(), Self::Error>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
             let _ = self.0.send(msg.into_payload().as_ptr() as usize);
             ready(Ok(()))
         }

@@ -145,11 +145,11 @@ impl RawMessage {
 ///     type Error = io::Error;
 ///     type Options = ();
 ///
-///     async fn publish(
+///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingMessage<'_, BytesMut>,
+///         msg: OutgoingMessage<'msg, BytesMut>,
 ///         _options: Option<&()>,
-///     ) -> io::Result<()> {
+///     ) -> PublishOutcome<'msg, io::Error, Take> {
 ///         let (topic, payload, headers) = msg.into_parts();
 ///         self.client.send(topic, payload.freeze(), headers).await
 ///     }
@@ -200,11 +200,11 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     ///     type Error = P::Error;
     ///     type Options = P::Options;
     ///
-    ///     async fn publish(
+    ///     async fn publish<'msg>(
     ///         &self,
-    ///         msg: OutgoingMessage<'_, BytesMut>,
+    ///         msg: OutgoingMessage<'msg, BytesMut>,
     ///         options: Option<&Self::Options>,
-    ///     ) -> Result<(), Self::Error> {
+    ///     ) -> PublishOutcome<'msg, Self::Error, Take> {
     ///         let name = format!("{}.{}", self.tenant, msg.name());
     ///         let (_, payload, headers) = msg.into_parts();
     ///         let renamed = OutgoingMessage::with_payload(&name, payload).with_headers(headers);
@@ -349,11 +349,11 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     ///     type Error = io::Error;
     ///     type Options = ();
     ///
-    ///     async fn publish(
+    ///     async fn publish<'msg>(
     ///         &self,
-    ///         msg: OutgoingMessage<'_, BytesMut>,
+    ///         msg: OutgoingMessage<'msg, BytesMut>,
     ///         _options: Option<&()>,
-    ///     ) -> io::Result<()> {
+    ///     ) -> PublishOutcome<'msg, io::Error, Take> {
     ///         let topic = msg.name();
     ///         self.client.send(topic, msg.into_payload().freeze()).await
     ///     }
@@ -412,11 +412,11 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     ///     type Error = io::Error;
     ///     type Options = ();
     ///
-    ///     async fn publish(
+    ///     async fn publish<'msg>(
     ///         &self,
-    ///         msg: OutgoingMessage<'_, BytesMut>,
+    ///         msg: OutgoingMessage<'msg, BytesMut>,
     ///         _options: Option<&()>,
-    ///     ) -> io::Result<()> {
+    ///     ) -> PublishOutcome<'msg, io::Error, Take> {
     ///         // The destination, the buffer and the map the transforms filled, in one move.
     ///         let (topic, payload, headers) = msg.into_parts();
     ///         self.client.send(topic, payload.freeze(), headers).await

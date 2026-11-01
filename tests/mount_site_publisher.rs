@@ -14,6 +14,7 @@ use std::future::ready;
 
 use common::{Order, Wire};
 
+use ruststream::PublishOutcome;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{Outgoing, PublishLayer, PublishNext, PublishPipeline};
@@ -125,11 +126,11 @@ impl Publisher for PrefixedPublisher {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Take> {
         let name = format!("{}{}", self.prefix, msg.name());
         let forwarded =
             OutgoingMessage::new(name.as_str(), msg.payload()).with_headers(msg.headers().clone());

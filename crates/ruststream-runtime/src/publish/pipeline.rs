@@ -78,7 +78,10 @@ impl PublishPipeline for PublishIdentity {
         let msg = <P::Payload as PayloadForm>::leaving(out);
         #[cfg(feature = "testing")]
         let recorded = PipelinePublish::capture(&msg, options);
-        let result = send.publish(msg, options).await.map_err(BoxError::from);
+        let result = send
+            .publish(msg, options)
+            .await
+            .map_err(|failed| BoxError::from(failed.into_error()));
         #[cfg(feature = "testing")]
         if result.is_ok() {
             recorded.sent().await;

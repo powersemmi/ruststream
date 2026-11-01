@@ -37,8 +37,8 @@ use ruststream_core::ConnectedBroker;
 #[cfg(feature = "asyncapi")]
 use ruststream_core::DescribeServer;
 use ruststream_core::{
-    AckError, Connected, HeaderMap, IncomingMessage, OutgoingFor, OutgoingMessage, PublishPolicy,
-    Publisher, SendBroker, SendSource, Settle, Subscriber,
+    AckError, Connected, HeaderMap, IncomingMessage, OutgoingFor, OutgoingMessage,
+    PublishMessageError, PublishPolicy, Publisher, SendBroker, SendSource, Settle, Subscriber,
 };
 use ruststream_runtime::RETRY_COUNT_HEADER;
 #[cfg(feature = "asyncapi")]
@@ -905,7 +905,9 @@ async fn publish_within<Pub: Publisher>(
     options: Option<&Pub::Options>,
     what: &str,
 ) -> Result<(), Pub::Error> {
-    within(publisher.publish(msg, options), what).await
+    within(publisher.publish(msg, options), what)
+        .await
+        .map_err(PublishMessageError::into_error)
 }
 
 /// Awaits the next delivery, failing the check on a timeout, an ended stream or an error.

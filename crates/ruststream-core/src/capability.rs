@@ -12,8 +12,8 @@ use futures_core::Stream;
 use crate::subscription::copy_path::Sealed as CopyPathDeclares;
 use crate::{
     ConnectedBroker, CopyPath, DeclareRetryError, HeaderMap, IncomingMessage, LocalPublisher,
-    LocalSettle, LocalSubscriber, OutgoingFor, PayloadForm, Publisher, RetryDeclaration, Settle,
-    Subscriber,
+    LocalSettle, LocalSubscriber, OutgoingFor, PayloadForm, PublishOutcome, Publisher,
+    RetryDeclaration, Settle, Subscriber,
 };
 
 crate::__contract_twin! {
@@ -411,8 +411,9 @@ crate::__contract_twin! {
         /// Returns [`Self::Error`] when the message cannot be buffered. For a pure client buffer
         /// this is infallible in practice; implementations that stage broker-side state may reject
         /// here.
-        fn publish(&mut self, msg: OutgoingFor<'_, Self::Payload>, options: Option<&Self::Options>)
-            -> [impl Future<Output = Result<(), Self::Error>> @send { + Send }];
+        fn publish(&mut self, msg: OutgoingFor<'msg, Self::Payload>, options: Option<&Self::Options>)
+            <'msg>
+            -> [impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> @send { + Send }];
 
         /// Commits the transaction: the whole buffer becomes visible atomically, in publish order.
         ///
@@ -451,11 +452,11 @@ crate::__contract_twin! {
         ///     type Error = T::Error;
         ///     type Options = T::Options;
         ///
-        ///     async fn publish(
+        ///     async fn publish<'msg>(
         ///         &mut self,
-        ///         msg: OutgoingFor<'_, Self::Payload>,
+        ///         msg: OutgoingFor<'msg, Self::Payload>,
         ///         options: Option<&Self::Options>,
-        ///     ) -> Result<(), Self::Error> {
+        ///     ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         ///         self.0.publish(msg, options).await
         ///     }
         ///

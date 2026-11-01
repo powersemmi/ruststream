@@ -12,6 +12,7 @@ use std::future::ready;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use ruststream::PublishOutcome;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryMessage, MemoryPublisher};
 use ruststream::testing::TestApp;
@@ -227,11 +228,11 @@ impl Publisher for FlakyPublisher {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), MemoryError> {
+    ) -> PublishOutcome<'msg, MemoryError, Take> {
         if self.fail_next.swap(false, Ordering::SeqCst) {
             return Err(MemoryError::ShutDown);
         }

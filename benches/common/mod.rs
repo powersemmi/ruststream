@@ -89,6 +89,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::convert::Infallible;
 
 use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig};
+use ruststream::PublishOutcome;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{BrokerScope, Identity, MountChain, MountRoutes, PublishIdentity};
@@ -132,11 +133,11 @@ impl Publisher for Sink {
     type Error = Infallible;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), Infallible>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Infallible, Lend>> {
         let (name, payload, headers) = msg.into_parts();
         black_box((name.len(), payload, headers.len()));
         ready(Ok(()))

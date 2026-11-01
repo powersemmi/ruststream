@@ -13,8 +13,8 @@ use crate::harness::{expect_next, on_foreign_runtime};
 use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
-    Connected, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, RequestReply, SendBroker,
-    SendSource, Settle, Subscriber,
+    Connected, HeaderMap, IncomingMessage, OutgoingMessage, PublishMessageError, Publisher,
+    RequestReply, SendBroker, SendSource, Settle, Subscriber,
 };
 
 /// Verifies the [`RequestReply`] contract.
@@ -394,6 +394,7 @@ where
         "request_reply: the responder's reply",
     )
     .await
+    .map_err(PublishMessageError::into_error)
 }
 
 /// Settles a reply the way a caller that read it does. A reply is a delivery, and one left

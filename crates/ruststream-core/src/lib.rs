@@ -116,8 +116,8 @@ pub use message::{IncomingMessage, LocalSettle, OutgoingMessage, RawMessage, Set
 pub use publisher::PayloadEncode;
 #[cfg(feature = "alloc")]
 pub use publisher::{
-    DefaultPublish, Lend, LocalPublisher, OutgoingFor, PairError, PayloadForm, PublishPolicy,
-    Publisher, Take,
+    DefaultPublish, Lend, LocalPublisher, OutgoingFor, PairError, PayloadForm, PublishMessageError,
+    PublishOutcome, PublishPolicy, Publisher, Take,
 };
 #[cfg(feature = "alloc")]
 pub use schema::{

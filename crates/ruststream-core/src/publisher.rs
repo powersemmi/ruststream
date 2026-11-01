@@ -2,6 +2,7 @@
 
 use alloc::boxed::Box;
 use core::error::Error as StdError;
+use core::fmt;
 
 use bytes::BytesMut;
 use thiserror::Error;
@@ -53,11 +54,11 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 ///     type Error = io::Error;
 ///     type Options = ();
 ///
-///     async fn publish(
+///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingMessage<'_, &[u8]>,
+///         msg: OutgoingMessage<'msg, &[u8]>,
 ///         _options: Option<&()>,
-///     ) -> io::Result<()> {
+///     ) -> PublishOutcome<'msg, io::Error, Lend> {
 ///         self.socket.send_frame(msg.name(), msg.payload()).await
 ///     }
 /// }
@@ -208,11 +209,11 @@ pub trait PayloadEncode {
 ///     type Error = io::Error;
 ///     type Options = ();
 ///
-///     async fn publish(
+///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingMessage<'_, &[u8]>,
+///         msg: OutgoingMessage<'msg, &[u8]>,
 ///         _options: Option<&()>,
-///     ) -> io::Result<()> {
+///     ) -> PublishOutcome<'msg, io::Error, Lend> {
 ///         self.connection.write(msg.name(), msg.payload()).await
 ///     }
 /// }
@@ -252,11 +253,11 @@ pub struct Lend;
 ///     type Error = io::Error;
 ///     type Options = ();
 ///
-///     async fn publish(
+///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingMessage<'_, BytesMut>,
+///         msg: OutgoingMessage<'msg, BytesMut>,
 ///         _options: Option<&()>,
-///     ) -> io::Result<()> {
+///     ) -> PublishOutcome<'msg, io::Error, Take> {
 ///         let topic = msg.name();
 ///         self.producer.send(topic, msg.into_payload().freeze()).await
 ///     }
@@ -287,11 +288,11 @@ pub struct Take;
 ///     type Error = P::Error;
 ///     type Options = P::Options;
 ///
-///     async fn publish(
+///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingFor<'_, Self::Payload>,
+///         msg: OutgoingFor<'msg, Self::Payload>,
 ///         options: Option<&Self::Options>,
-///     ) -> Result<(), Self::Error> {
+///     ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
 ///         self.0.publish(msg, options).await
 ///     }
 ///
@@ -301,6 +302,159 @@ pub struct Take;
 /// }
 /// ```
 pub type OutgoingFor<'a, Form> = OutgoingMessage<'a, <Form as PayloadForm>::Form<'a>>;
+
+/// What a [`Publisher::publish`] returns: nothing on success, and on failure the broker's error
+/// with the message it did not send.
+///
+/// `Form` is the publisher's [`Payload`](Publisher::Payload) declaration. A broker author writes
+/// it as the return type of `publish`, naming the lifetime of the message it was handed.
+pub type PublishOutcome<'msg, Error, Form> =
+    Result<(), PublishMessageError<Error, OutgoingFor<'msg, Form>>>;
+
+/// A refused publish: the broker's own error, and the message it did not send when the client
+/// gave it back.
+///
+/// The message is `None` only where the client consumed a [`Take`] buffer and did not return it.
+/// Everything a publisher is handed by reference comes back: the destination and the headers
+/// are never consumed by a client that fails, and a [`Lend`] payload is only borrowed. Success
+/// carries nothing extra, so a publish that works costs what it did before.
+///
+/// The error converts into this type with [`From`], so `Err(error.into())` and `?` on a
+/// client call whose error is `Self::Error` hand the broker's error over with no message.
+/// [`with_message`](Self::with_message) is the form for a client that returns the message.
+///
+/// # Examples
+///
+/// A broker author's `publish` that hands the message back when its client refuses it:
+///
+/// ```
+/// use std::io;
+///
+/// use ruststream::{BytesMut, OutgoingMessage, PublishMessageError, PublishOutcome, Publisher, Take};
+/// # #[derive(Clone)]
+/// # struct Producer;
+/// # impl Producer {
+/// #     // A client that gives the buffer back when its queue is full.
+/// #     async fn try_send(&self, _topic: &str, payload: BytesMut) -> Result<(), (io::Error, BytesMut)> {
+/// #         Err((io::Error::other("queue full"), payload))
+/// #     }
+/// # }
+///
+/// #[derive(Clone)]
+/// struct QueuedPublisher {
+///     producer: Producer,
+/// }
+///
+/// impl Publisher for QueuedPublisher {
+///     type Payload = Take;
+///     type Error = io::Error;
+///     type Options = ();
+///
+///     async fn publish<'msg>(
+///         &self,
+///         msg: OutgoingMessage<'msg, BytesMut>,
+///         _options: Option<&()>,
+///     ) -> PublishOutcome<'msg, io::Error, Take> {
+///         let (name, payload, headers) = msg.into_parts();
+///         match self.producer.try_send(name, payload).await {
+///             Ok(()) => Ok(()),
+///             Err((error, payload)) => {
+///                 let unsent = OutgoingMessage::with_payload(name, payload).with_headers(headers);
+///                 Err(PublishMessageError::with_message(error, unsent))
+///             }
+///         }
+///     }
+/// }
+/// ```
+pub struct PublishMessageError<Error, Message> {
+    error: Error,
+    message: Option<Message>,
+}
+
+impl<Error, Message> PublishMessageError<Error, Message> {
+    /// A refusal whose message the client did not give back.
+    #[must_use]
+    pub const fn new(error: Error) -> Self {
+        Self {
+            error,
+            message: None,
+        }
+    }
+
+    /// A refusal that returns the message it did not send.
+    #[must_use]
+    pub const fn with_message(error: Error, message: Message) -> Self {
+        Self {
+            error,
+            message: Some(message),
+        }
+    }
+
+    /// The broker's own error.
+    #[must_use]
+    pub const fn error(&self) -> &Error {
+        &self.error
+    }
+
+    /// The message the broker did not send, when the client gave it back.
+    #[must_use]
+    pub const fn message(&self) -> Option<&Message> {
+        self.message.as_ref()
+    }
+
+    /// The broker's error, dropping the message.
+    #[must_use]
+    pub fn into_error(self) -> Error {
+        self.error
+    }
+
+    /// The message the broker did not send, dropping the error.
+    #[must_use]
+    pub fn into_message(self) -> Option<Message> {
+        self.message
+    }
+
+    /// The error and the message, both owned.
+    #[must_use]
+    pub fn into_parts(self) -> (Error, Option<Message>) {
+        (self.error, self.message)
+    }
+
+    /// The same refusal over another message type, with no message.
+    ///
+    /// What a wrapper that sends a message it built itself uses: the message the inner publisher
+    /// returns is the wrapper's, not the caller's, so it is dropped and the error travels on.
+    #[must_use]
+    pub fn without_message<Other>(self) -> PublishMessageError<Error, Other> {
+        PublishMessageError::new(self.error)
+    }
+}
+
+impl<Error, Message> From<Error> for PublishMessageError<Error, Message> {
+    fn from(error: Error) -> Self {
+        Self::new(error)
+    }
+}
+
+impl<Error: fmt::Display, Message> fmt::Display for PublishMessageError<Error, Message> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+// Transparent over the error, and the message is left out: the form a `Take` publisher is handed
+// is a buffer of any size, and the error is logged far more often than the message is read.
+impl<Error: fmt::Debug, Message> fmt::Debug for PublishMessageError<Error, Message> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl<Error: StdError + 'static, Message> StdError for PublishMessageError<Error, Message> {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.error.source()
+    }
+}
 
 mod sealed {
     /// Seals [`PayloadForm`](super::PayloadForm): a transport reads the payload or keeps it,
@@ -446,11 +600,11 @@ crate::__contract_twin! {
         ///     type Error = MemoryError;
         ///     type Options = PriorityOptions;
         ///
-        ///     async fn publish(
+        ///     async fn publish<'msg>(
         ///         &self,
-        ///         msg: OutgoingMessage<'_, BytesMut>,
+        ///         msg: OutgoingMessage<'msg, BytesMut>,
         ///         options: Option<&Self::Options>,
-        ///     ) -> Result<(), Self::Error> {
+        ///     ) -> PublishOutcome<'msg, Self::Error, Take> {
         ///         let priority = options
         ///             .and_then(|options| options.priority)
         ///             .unwrap_or(self.default_priority);
@@ -529,8 +683,9 @@ crate::__contract_twin! {
         ///
         /// Returns [`Self::Error`] when the broker rejects the message, the connection is lost, or
         /// the operation times out.
-        fn publish(&self, msg: OutgoingFor<'_, Self::Payload>, options: Option<&Self::Options>)
-            -> [impl Future<Output = Result<(), Self::Error>> @send { + Send }];
+        fn publish(&self, msg: OutgoingFor<'msg, Self::Payload>, options: Option<&Self::Options>)
+            <'msg>
+            -> [impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> @send { + Send }];
 
         /// The headers this publisher contributes to every message it sends, underneath whatever
         /// the message itself names.
@@ -572,11 +727,11 @@ crate::__contract_twin! {
         ///     type Error = P::Error;
         ///     type Options = P::Options;
         ///
-        ///     async fn publish(
+        ///     async fn publish<'msg>(
         ///         &self,
-        ///         msg: OutgoingFor<'_, Self::Payload>,
+        ///         msg: OutgoingFor<'msg, Self::Payload>,
         ///         options: Option<&Self::Options>,
-        ///     ) -> Result<(), Self::Error> {
+        ///     ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         ///         self.0.publish(msg, options).await
         ///     }
         ///

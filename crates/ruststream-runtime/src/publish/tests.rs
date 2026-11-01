@@ -38,6 +38,7 @@ use crate::Settle;
 use crate::Take;
 #[cfg(feature = "json")]
 use crate::{BytesMut, Lend, PayloadForm};
+use ruststream_core::PublishOutcome;
 
 /// Fixtures the in-memory broker cannot express: a value the codec cannot encode, a
 /// transactional publisher rigged to fail one step of the protocol, and a policy that
@@ -90,11 +91,11 @@ mod fixtures {
         type Error = RiggedError;
         type Options = ();
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            _msg: OutgoingMessage<'_, &[u8]>,
+            _msg: OutgoingMessage<'msg, &'msg [u8]>,
             _options: Option<&Self::Options>,
-        ) -> impl Future<Output = Result<(), Self::Error>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
             self.published.fetch_add(1, Ordering::SeqCst);
             ready(Ok(()))
         }
@@ -190,11 +191,11 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
         type Error = Infallible;
         type Options = ();
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            _msg: OutgoingMessage<'_, &[u8]>,
+            _msg: OutgoingMessage<'msg, &'msg [u8]>,
             _options: Option<&Self::Options>,
-        ) -> impl Future<Output = Result<(), Self::Error>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
             ready(Ok(()))
         }
     }
@@ -899,11 +900,11 @@ async fn the_options_position_starts_empty_and_reaches_the_sink() {
         type Error = Infallible;
         type Options = Settings;
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            _msg: OutgoingMessage<'_, &[u8]>,
+            _msg: OutgoingMessage<'msg, &'msg [u8]>,
             options: Option<&Settings>,
-        ) -> impl Future<Output = Result<(), Infallible>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, Infallible, Lend>> {
             self.0
                 .lock()
                 .expect("the recording publisher's mutex is poisoned")
@@ -970,11 +971,11 @@ async fn concurrent_batches_take_the_transaction_in_turn() {
         type Error = Busy;
         type Options = ();
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            _msg: OutgoingMessage<'_, &[u8]>,
+            _msg: OutgoingMessage<'msg, &'msg [u8]>,
             _options: Option<&Self::Options>,
-        ) -> impl Future<Output = Result<(), Self::Error>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
             ready(Ok(()))
         }
     }

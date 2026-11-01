@@ -19,7 +19,7 @@ use crate::settings::{BatchSized, Declared, DefMountCodec, MountsWith, Sequentia
 use crate::subscriber_def::SubscriberDef;
 use crate::{
     Broker, Connected, LocalBatchSubscriber, LocalPublisher, LocalSourceMessage, OutgoingFor,
-    PayloadForm, SourceSubscriber, SubscriptionSource,
+    PayloadForm, PublishOutcome, SourceSubscriber, SubscriptionSource,
 };
 
 use super::builder::Router;
@@ -267,7 +267,9 @@ impl<P: LocalPublisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
     ) -> Result<(), BoxError> {
         // The broker is the last reader of this message, as in `PublishIdentity`.
         let msg = <P::Payload as PayloadForm>::leaving(out);
-        send.publish(msg, options).await.map_err(BoxError::from)
+        send.publish(msg, options)
+            .await
+            .map_err(|failed| BoxError::from(failed.into_error()))
     }
 }
 
@@ -276,12 +278,12 @@ impl<P: LocalPublisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
 impl<W> LocalOutPipeline<W> for LocalPipeline<PublishIdentity> {
     // The leaf's own future, which is `Send` exactly where the leaf's is.
     #[allow(clippy::future_not_send)]
-    fn send<P>(
+    fn send<'msg, P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'_, W::Payload>,
+        msg: OutgoingFor<'msg, W::Payload>,
         options: Option<&P::Options>,
-    ) -> impl Future<Output = Result<(), P::Error>>
+    ) -> impl Future<Output = PublishOutcome<'msg, P::Error, W::Payload>>
     where
         W: LocalPublisher,
         P: LocalPublisher<Options = W::Options, Payload = W::Payload>,

@@ -24,14 +24,18 @@ use tokio::{
     time::sleep,
 };
 
-use super::{CONSTRUCTION_BUDGET, Settle, ladder, shared_handle_closes, shutdown_flushes};
+use super::{
+    CONSTRUCTION_BUDGET, Settle, Unsent, ladder, refused_publish_returns_message,
+    shared_handle_closes, shutdown_flushes,
+};
 use ruststream::memory::{
     ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
     MemoryPublisher, MemorySubscriber,
 };
+use ruststream_core::PublishOutcome;
 use ruststream_core::{
     AckError, Broker, ConnectedBroker, HeaderMap, IncomingMessage, Lend, NamedCopies,
-    OutgoingMessage, Publisher, Subscribe, Subscriber, SubscriptionSource,
+    OutgoingMessage, PublishMessageError, Publisher, Subscribe, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::testing::{Backlog, TestableBroker};
 
@@ -262,6 +266,7 @@ impl FaultyPublisher {
                 None,
             )
             .await
+            .map_err(PublishMessageError::into_error)
     }
 
     /// Publishes through a socket the first caller attaches on its own runtime.
@@ -297,16 +302,16 @@ impl Publisher for FaultyPublisher {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &[u8]>,
         _options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Lend> {
         let name = msg.name().to_owned();
         let payload = Bytes::copy_from_slice(msg.payload());
         let headers = msg.headers().clone();
         match self.fault {
-            Fault::PublishFails => Err(MemoryError::ShutDown),
+            Fault::PublishFails => Err(MemoryError::ShutDown.into()),
             Fault::PublishHangs => pending().await,
             Fault::ManglesPayload => {
                 let mangled = [payload.as_ref(), b"~"].concat();
@@ -316,14 +321,19 @@ impl Publisher for FaultyPublisher {
                         None,
                     )
                     .await
+                    .map_err(PublishMessageError::without_message)
             }
-            Fault::UntouchedReconnects => self.publish_reconnecting(&name, &payload, headers).await,
-            Fault::AttachesOnFirstCaller | Fault::AttachesOnFirstCallerAndFails => {
-                self.publish_on_socket(name, payload, headers).await
-            }
+            Fault::UntouchedReconnects => self
+                .publish_reconnecting(&name, &payload, headers)
+                .await
+                .map_err(Into::into),
+            Fault::AttachesOnFirstCaller | Fault::AttachesOnFirstCallerAndFails => self
+                .publish_on_socket(name, payload, headers)
+                .await
+                .map_err(Into::into),
             Fault::DefersPublishes => {
                 if self.closed.load(Ordering::SeqCst) {
-                    return Err(MemoryError::ShutDown);
+                    return Err(MemoryError::ShutDown.into());
                 }
                 self.deferred
                     .lock()
@@ -331,14 +341,14 @@ impl Publisher for FaultyPublisher {
                     .push((name, payload, headers));
                 Ok(())
             }
-            _ => {
-                self.paired
-                    .publish(
-                        OutgoingMessage::new(&name, &payload).with_headers(headers),
-                        None,
-                    )
-                    .await
-            }
+            _ => self
+                .paired
+                .publish(
+                    OutgoingMessage::new(&name, &payload).with_headers(headers),
+                    None,
+                )
+                .await
+                .map_err(PublishMessageError::without_message),
         }
     }
 }
@@ -875,4 +885,57 @@ async fn a_clone_whose_publish_hangs_fails() {
 #[should_panic(expected = "shared_handle_closes: subscribing through the clone hung")]
 async fn a_clone_whose_subscription_never_opens_fails() {
     shared_on(Fault::SubscribeHangs).await;
+}
+
+/// A publisher that forgets the message of the refusal it forwards, the way a client that consumed
+/// the buffer does.
+#[derive(Clone)]
+struct Forgetful(MemoryPublisher);
+
+impl Publisher for Forgetful {
+    type Payload = ruststream_core::Take;
+    type Error = MemoryError;
+    type Options = ();
+
+    async fn publish<'msg>(
+        &self,
+        msg: OutgoingMessage<'msg, ruststream_core::BytesMut>,
+        options: Option<&()>,
+    ) -> PublishOutcome<'msg, MemoryError, ruststream_core::Take> {
+        self.0
+            .publish(msg, options)
+            .await
+            .map_err(|failed| ruststream_core::PublishMessageError::new(failed.into_error()))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broker_that_returns_the_unsent_message_passes() {
+    refused_publish_returns_message(
+        MemoryBroker::new,
+        |connected: &ConnectedMemoryBroker| connected.publisher(),
+        Unsent::Returned,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_that_consumes_the_message_passes_when_it_says_so() {
+    refused_publish_returns_message(
+        MemoryBroker::new,
+        |connected: &ConnectedMemoryBroker| Forgetful(connected.publisher()),
+        Unsent::Consumed,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "the refusal returned no message")]
+async fn a_broker_that_forgets_the_message_fails() {
+    refused_publish_returns_message(
+        MemoryBroker::new,
+        |connected: &ConnectedMemoryBroker| Forgetful(connected.publisher()),
+        Unsent::Returned,
+    )
+    .await;
 }

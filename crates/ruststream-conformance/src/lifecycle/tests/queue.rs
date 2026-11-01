@@ -19,6 +19,7 @@ use thiserror::Error;
 use tokio::{sync::Notify, time::sleep};
 
 use crate::lifecycle::{ladder, shutdown_flushes};
+use ruststream_core::PublishOutcome;
 use ruststream_core::{
     AckError, Broker, ConnectedBroker, HeaderMap, IncomingMessage, Lend, NamedCopies,
     OutgoingMessage, Publisher, Settle, Subscriber, SubscriptionSource,
@@ -165,13 +166,13 @@ impl Publisher for QueuePublisher {
     type Error = LinkClosed;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> + Send {
         if self.link.closed.load(Ordering::SeqCst) {
-            return ready(Err(LinkClosed));
+            return ready(Err(LinkClosed.into()));
         }
         let payload = Bytes::copy_from_slice(msg.payload());
         if self.fault == QueueFault::LosesPublishes {

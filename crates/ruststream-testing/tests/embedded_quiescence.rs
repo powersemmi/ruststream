@@ -54,7 +54,10 @@ fn a_handler_that_retries_forever_fails_the_publish_that_set_it_off() {
     let outcome = block_on(async {
         let tb = TestApp::start(app(Bus::new()))
             .await
-            .map_err(PublishError::Publish)?;
+            .map_err(|source| PublishError::Publish {
+                source,
+                message: None,
+            })?;
         tb.broker::<Bus>().message(&Sent(b"go")).publish().await
     });
     assert!(

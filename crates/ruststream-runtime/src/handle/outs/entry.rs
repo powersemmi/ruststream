@@ -22,7 +22,7 @@ use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 use crate::testing::coordinator::{Anchor, Origin, paired, publishing_to};
 use crate::{
     Connected, HeaderMap, OutgoingDestination, OutgoingFor, OwnedTransactions, PairError,
-    PublishPolicy, Publisher, RequestReply, TransactionalPublisher,
+    PublishOutcome, PublishPolicy, Publisher, RequestReply, TransactionalPublisher,
 };
 
 /// One arena entry: the wired live value of the marker `M`, plus the publish path the include
@@ -353,11 +353,11 @@ impl<M: OutSlot, W: Publisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Bod
     // publisher's, which is what puts that broker's builder steps on this entry's `message(..)`.
     type Options = W::Options;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         let publish = self.pipeline.send(&self.wired, msg, options);
         #[cfg(feature = "testing")]
         let publish = self.anchor.scoped(publishing_to(self.origin, publish));

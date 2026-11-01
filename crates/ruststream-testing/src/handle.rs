@@ -7,7 +7,7 @@ use std::fmt;
 // The helpers that ENCODE stay gated on a codec feature, like the codec itself; the typed
 // builder entry points do not, because the value's own wire decides whether a codec is needed.
 use ruststream_core::OutgoingDestination;
-use ruststream_core::{Lend, OutgoingMessage, RawMessage};
+use ruststream_core::{Lend, OutgoingMessage, PublishMessageError, PublishOutcome, RawMessage};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use ruststream_runtime::codec::{Codec, DefaultCodec};
 use ruststream_runtime::message_of;
@@ -102,11 +102,11 @@ impl LocalPublishSink for InjectSink<'_> {
     // An injection stands in for an external producer, which reaches no broker's options type.
     type Options = ();
 
-    async fn send(
+    async fn send<'msg>(
         &mut self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Lend> {
         let Target::Broker {
             harness,
             scope_id,
@@ -114,10 +114,10 @@ impl LocalPublishSink for InjectSink<'_> {
             label,
         } = &self.0
         else {
-            return Err(TestError::Ambiguous);
+            return Err(PublishMessageError::with_message(TestError::Ambiguous, msg));
         };
         if harness.shutdown.is_cancelled() {
-            return Err(TestError::ShutDown);
+            return Err(PublishMessageError::with_message(TestError::ShutDown, msg));
         }
         // The test's own publish is part of the record: in process it is what tells a message
         // the test put on a destination from a runtime publish the broker has since evicted;
@@ -147,6 +147,7 @@ impl LocalPublishSink for InjectSink<'_> {
             .mode
             .settle(harness.coordinator, harness.brokers)
             .await
+            .map_err(Into::into)
     }
 }
 
@@ -245,6 +246,7 @@ impl BrokerHandle<'_> {
         self.sink()
             .send(OutgoingMessage::new(name, &bytes), None)
             .await
+            .map_err(PublishMessageError::into_error)
     }
 
     /// Like [`publish`](Self::publish), but with headers on the delivery: `headers` is a typed
@@ -276,7 +278,10 @@ impl BrokerHandle<'_> {
         let msg = OutgoingMessage::new(name, &bytes)
             .with_typed_headers(headers)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        self.sink().send(msg, None).await
+        self.sink()
+            .send(msg, None)
+            .await
+            .map_err(PublishMessageError::into_error)
     }
 
     /// Asserts on what the handler subscribed to `name` received and how it settled.

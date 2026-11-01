@@ -186,7 +186,9 @@ where
         let publish = self.pipeline.send(&self.live, sent, options.as_ref());
         #[cfg(feature = "testing")]
         let publish = publishing_to(self.origin, publish);
-        publish.await.map_err(BoxError::from)
+        publish
+            .await
+            .map_err(|failed| BoxError::from(failed.into_error()))
     }
 }
 

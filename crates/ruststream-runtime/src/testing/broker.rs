@@ -420,7 +420,7 @@ where
                 None,
             )
             .await
-            .map_err(BoxError::from)
+            .map_err(|failed| BoxError::from(failed.into_error()))
     })
 }
 

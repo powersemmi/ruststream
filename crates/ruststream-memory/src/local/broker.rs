@@ -10,7 +10,8 @@ use bytes::Bytes;
 use ruststream_core::RawMessage;
 use ruststream_core::{
     AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
-    LocalPublisher, OutgoingMessage, PairError, PublishPolicy, ServerSpec, Subscribe, Take,
+    LocalPublisher, OutgoingMessage, PairError, PublishOutcome, PublishPolicy, ServerSpec,
+    Subscribe, Take,
 };
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, LocalTestableBroker};
@@ -424,13 +425,17 @@ impl<const CAP: usize> LocalPublisher for LocalMemoryPublisher<CAP> {
     // The bus has no protocol field a message can differ in.
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Take>> {
         let (name, payload, headers) = msg.into_parts();
-        ready(self.bus.fanout(name, payload.freeze(), headers))
+        ready(
+            self.bus
+                .fanout(name, payload.freeze(), headers)
+                .map_err(Into::into),
+        )
     }
 }
 

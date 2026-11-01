@@ -8,7 +8,8 @@ use tracing::warn;
 
 use crate::{MemoryError, MemoryOutbound, MemoryPublisher, MemoryState};
 use ruststream_core::{
-    BytesMut, OutgoingMessage, OwnedTransactions, Take, Transaction, TransactionalPublisher,
+    BytesMut, OutgoingMessage, OwnedTransactions, PublishOutcome, Take, Transaction,
+    TransactionalPublisher,
 };
 
 /// In-process transactions: [`begin_transaction`](TransactionalPublisher::begin_transaction)
@@ -161,11 +162,11 @@ impl Transaction for MemoryTransaction {
     type Error = MemoryError;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &mut self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), MemoryError>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, MemoryError, Take>> {
         // Buffering is local to this value and never touches the bus; a commit against a
         // shut-down bus is what reports the error.
         self.buffered.push(MemoryOutbound::from(msg));

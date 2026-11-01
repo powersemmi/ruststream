@@ -146,7 +146,7 @@ where
         self.publisher
             .publish(OutgoingMessage::with_payload(name, payload), None)
             .await
-            .map_err(TransactionPublishError::Publish)
+            .map_err(|failed| TransactionPublishError::Publish(failed.into_error()))
     }
 
     /// Commits the transaction: every publish issued through the scope becomes visible at once.
@@ -317,7 +317,7 @@ where
         self.txn
             .publish(OutgoingMessage::with_payload(name, payload), None)
             .await
-            .map_err(TransactionPublishError::Publish)
+            .map_err(|failed| TransactionPublishError::Publish(failed.into_error()))
     }
 
     /// Commits the transaction: the whole buffer becomes visible atomically, in publish order.

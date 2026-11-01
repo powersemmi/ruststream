@@ -26,6 +26,7 @@ use ruststream::{
     AckError, AddressedCopies, BrokerMoves, Lend, OutgoingMessage, PairError, RedeliveryAddress,
     RedeliveryAddressed, Settle, Subscribe, Subscriber, SubscriptionSource, Take,
 };
+use ruststream_core::PublishOutcome;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -129,11 +130,11 @@ impl Publisher for Down {
     type Error = io::Error;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        _msg: OutgoingMessage<'_, &[u8]>,
+        _msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), io::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
         ready(Err(io::Error::other("broker down")))
     }
 }
@@ -422,11 +423,11 @@ impl Publisher for RefusesDeadLetter {
     type Error = io::Error;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&()>,
-    ) -> Result<(), io::Error> {
+    ) -> PublishOutcome<'msg, io::Error, Take> {
         if msg.name() == "jobs.dead" {
             return Err(io::Error::other("dead letter refused"));
         }

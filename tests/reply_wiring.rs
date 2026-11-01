@@ -14,6 +14,7 @@ use std::future::ready;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use ruststream::PublishOutcome;
 use ruststream::codec::{CborCodec, Codec};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, LogMode, MemoryPublisher};
@@ -126,11 +127,11 @@ impl Publisher for Laned {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Take> {
         self.inner.publish(msg, options).await
     }
 
@@ -267,11 +268,11 @@ impl Publisher for Journaled {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Take> {
         let open = if self.open.load(Ordering::SeqCst) {
             "open"
         } else {

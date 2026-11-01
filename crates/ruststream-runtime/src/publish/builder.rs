@@ -21,10 +21,12 @@ use thiserror::Error;
 use crate::codec::{Codec, CodecError, Encoding};
 use crate::{
     CallerName, FixedName, HeaderMap, HeadersContract, MessageHeaders, NameTemplate, NoHeaders,
-    OutgoingDestination, OutgoingMessage, PayloadForm, SerializeHeadersError, WithHeaders,
+    OutgoingDestination, OutgoingMessage, PayloadForm, PublishMessageError, SerializeHeadersError,
+    WithHeaders,
 };
 
 use super::sink::{CallCodec, LocalPublishSink, PublishCodec};
+use crate::publish_failure::FailedMessage;
 use crate::wire::Serialized;
 
 /// A publish under construction: the entry point's payload plus the positions still open.
@@ -339,8 +341,37 @@ pub enum PublishError<E> {
     #[error("serializing the typed headers failed: {0}")]
     Headers(#[source] SerializeHeadersError),
     /// The sink (the broker publisher, or the transaction) rejected the message.
-    #[error("publishing the message failed: {0}")]
-    Publish(#[source] E),
+    #[error("publishing the message failed: {source}")]
+    Publish {
+        /// The sink's own error.
+        #[source]
+        source: E,
+        /// The message the sink did not send, when its client gave it back. It is a
+        /// [`Serialized`] value, so another `Out` publishes it unchanged.
+        message: Option<FailedMessage>,
+    },
+}
+
+impl<E> PublishError<E> {
+    /// The message the sink did not send, when its client gave it back.
+    #[must_use]
+    pub const fn unsent(&self) -> Option<&FailedMessage> {
+        match self {
+            Self::Publish { message, .. } => message.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// The sink's refusal, with the message it returned made owned.
+    fn refused<Payload: AsRef<[u8]>>(
+        failed: PublishMessageError<E, OutgoingMessage<'_, Payload>>,
+    ) -> Self {
+        let (source, message) = failed.into_parts();
+        Self::Publish {
+            source,
+            message: message.map(FailedMessage::unsent),
+        }
+    }
 }
 
 impl<E> From<PayloadError> for PublishError<E> {
@@ -716,7 +747,7 @@ async fn deliver<'v, Sink: LocalPublishSink, Hdrs: PublishHeaders>(
     let mut map = sink.base_headers().cloned().unwrap_or_default();
     headers.write(&mut map).map_err(PublishError::Headers)?;
     let msg = OutgoingMessage::assembled(name, payload, map);
-    sink.send(msg, options).await.map_err(PublishError::Publish)
+    sink.send(msg, options).await.map_err(PublishError::refused)
 }
 
 /// Produces the value's wire payload and sends it, shared by the resolved and the rendered
