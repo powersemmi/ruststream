@@ -138,6 +138,12 @@ struct AfterHook {
     fut: Continuation,
 }
 
+/// The `.error` registrations of one delivery.
+#[derive(Default)]
+struct ErrorGates {
+    list: Vec<ErrorGate>,
+}
+
 /// One registered `.error` continuation and the outcome variant it is gated on.
 struct ErrorGate {
     gate: OutcomeKind,
@@ -206,7 +212,9 @@ pub struct Context<'a, C = (), S = ()> {
     cx: C,
     delivery: &'a Delivery<C>,
     after: Vec<AfterHook>,
-    errors: Vec<ErrorGate>,
+    /// The `.error` registrations of this delivery, boxed so a delivery without one carries a
+    /// pointer and nothing to drop.
+    errors: Option<Box<ErrorGates>>,
     failfast: Option<&'a dyn Halt>,
     /// The dispatch loop's encode buffer, lent to this delivery's reply. `None` where the
     /// context was built without one, and then the reply encodes into a buffer of its own.
@@ -256,7 +264,7 @@ impl<'a, C, S> Context<'a, C, S> {
             cx,
             delivery,
             after: Vec::new(),
-            errors: Vec::new(),
+            errors: None,
             failfast: None,
             encode: None,
             decode: FailurePolicy::Drop,
@@ -801,13 +809,23 @@ impl<'a, C, S> Context<'a, C, S> {
     /// `.error` registered under that kind with the `.then` beside it. Every other registration
     /// of the kind keeps its `.then` as a plain post-settle hook, and its `.error` is dropped. A
     /// delivery that registered none pays the emptiness check alone.
+    #[inline]
     pub(crate) fn take_reaction_for(&mut self, outcome: HandlerResult) -> Option<Reaction> {
-        if self.errors.is_empty() {
+        if self.errors.is_none() {
             return None;
         }
+        self.reaction_registered_for(outcome)
+    }
+
+    /// The registered case of [`take_reaction_for`](Self::take_reaction_for), off the path of a
+    /// delivery that registered nothing.
+    #[cold]
+    #[inline(never)]
+    fn reaction_registered_for(&mut self, outcome: HandlerResult) -> Option<Reaction> {
+        let gates = self.errors.take()?;
         let kind = OutcomeKind::of(outcome);
         let mut chosen = None;
-        for gate in mem::take(&mut self.errors) {
+        for gate in gates.list {
             if chosen.is_none() && gate.gate == kind {
                 chosen = Some(Reaction::new(gate.hook, gate.then));
             } else {
@@ -819,9 +837,12 @@ impl<'a, C, S> Context<'a, C, S> {
 
     /// Keeps the `.then` of every registered `.error` as a plain post-settle hook and drops the
     /// errors: the outcome the handler returned carries an `.error` of its own, which wins.
+    #[inline]
     pub(crate) fn demote_errors(&mut self) {
-        for gate in mem::take(&mut self.errors) {
-            self.demote(gate);
+        if let Some(gates) = self.errors.take() {
+            for gate in gates.list {
+                self.demote(gate);
+            }
         }
     }
 
@@ -970,10 +991,11 @@ impl<'ctx, 'a, C, S> After<'ctx, 'a, C, S> {
         React: FnOnce(BoxError, FailedMessage) -> Reaction + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
-        let at = self.ctx.errors.len();
         // The builder is always made by `Context::after`, which gates it on an outcome kind.
         let gate = self.gate.unwrap_or(OutcomeKind::Ack);
-        self.ctx.errors.push(ErrorGate {
+        let gates = self.ctx.errors.get_or_insert_with(Box::default);
+        let at = gates.list.len();
+        gates.list.push(ErrorGate {
             gate,
             hook: ErrorHook::new(react),
             then: None,
@@ -1035,11 +1057,15 @@ impl<C, S> AfterThen<'_, '_, C, S> {
         let Some(gate) = hook.gate else {
             return;
         };
-        self.ctx.errors.push(ErrorGate {
-            gate,
-            hook: ErrorHook::new(react),
-            then: Some(hook.fut),
-        });
+        self.ctx
+            .errors
+            .get_or_insert_with(Box::default)
+            .list
+            .push(ErrorGate {
+                gate,
+                hook: ErrorHook::new(react),
+                then: Some(hook.fut),
+            });
     }
 }
 
@@ -1090,7 +1116,9 @@ impl<C, S> AfterError<'_, '_, C, S> {
     /// # fn main() {}
     /// ```
     pub fn then(self, fut: impl ContinuationFuture) {
-        self.ctx.errors[self.at].then = Some(Box::pin(fut));
+        if let Some(gates) = self.ctx.errors.as_mut() {
+            gates.list[self.at].then = Some(Box::pin(fut));
+        }
     }
 }
 

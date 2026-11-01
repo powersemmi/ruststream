@@ -148,3 +148,9 @@ required-features = ["tokio", "embassy", "json"]
 name = "embedded_error"
 path = "tests/embedded_error.rs"
 required-features = ["embassy", "json"]
+
+# An `.error` continuation holding what is not `Send`, on the embedded runtime alone.
+[[test]]
+name = "embedded_error_local"
+path = "tests/embedded_error_local.rs"
+required-features = ["embassy", "json"]

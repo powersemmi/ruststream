@@ -536,6 +536,14 @@ impl HandlerOutcome {
         self
     }
 
+    /// Takes the outcome apart: its status, its post-settle continuation and its `.error`.
+    #[inline]
+    pub(crate) fn into_parts(self) -> (HandlerResult, Option<Continuation>, Option<ErrorHook>) {
+        (self.outcome, self.after, self.error)
+    }
+
+    #[allow(dead_code)]
+    #[inline]
     pub(crate) fn take_error(&mut self) -> Option<ErrorHook> {
         self.error.take()
     }

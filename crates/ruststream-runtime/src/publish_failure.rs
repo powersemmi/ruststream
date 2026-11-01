@@ -127,7 +127,7 @@ type Hook = Box<dyn FnOnce(BoxError, FailedMessage) -> Continuation>;
 /// The `.error` continuation of one [`HandlerOutcome`](crate::HandlerOutcome), until a publish
 /// the runtime makes for it fails. Machinery; never named directly.
 #[doc(hidden)]
-pub struct ErrorHook(Hook);
+pub struct ErrorHook(Box<Hook>);
 
 impl ErrorHook {
     #[must_use]
@@ -136,14 +136,16 @@ impl ErrorHook {
         React: FnOnce(BoxError, FailedMessage) -> Reaction + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
-        Self(Box::new(move |error, message| {
+        // A box around the box: the closure is a fat pointer, and an outcome that carries none
+        // pays eight bytes for it rather than sixteen.
+        Self(Box::new(Box::new(move |error, message| {
             Box::pin(react(error, message))
-        }))
+        })))
     }
 
     /// Hands the failure to the handler's continuation, which the caller runs.
     pub fn react(self, error: BoxError, message: FailedMessage) -> Continuation {
-        (self.0)(error, message)
+        (*self.0)(error, message)
     }
 }
 
@@ -161,7 +163,10 @@ impl fmt::Debug for ErrorHook {
 /// that registered no `.error` has no reaction: its `.then` runs once the delivery is settled.
 /// Machinery; never named directly.
 #[doc(hidden)]
-pub struct Reaction {
+pub struct Reaction(Box<Registered>);
+
+/// What a [`Reaction`] holds, behind the one pointer an outcome without it pays eight bytes for.
+struct Registered {
     error: ErrorHook,
     then: Option<Continuation>,
 }
@@ -173,21 +178,27 @@ impl fmt::Debug for Reaction {
 }
 
 impl Reaction {
+    /// A reaction handing a failure to `error` and a success to `then`.
     #[must_use]
-    pub const fn new(error: ErrorHook, then: Option<Continuation>) -> Self {
-        Self { error, then }
+    pub fn new(error: ErrorHook, then: Option<Continuation>) -> Self {
+        Self(Box::new(Registered { error, then }))
     }
 
     /// The continuation registered beside `.error`, which a delivery that made no publish runs
     /// once it is settled.
     pub(crate) fn into_then(self) -> Option<Continuation> {
-        self.then
+        self.0.then
     }
 
     /// What follows a publish that succeeded: the `.then` continuation, if one was registered.
     #[must_use]
     pub fn succeeded(self) -> Option<Continuation> {
-        self.then
+        self.0.then
+    }
+
+    /// What follows a publish that failed: the `.error` continuation, given the cause.
+    fn failed(self, error: BoxError, message: FailedMessage) -> Continuation {
+        self.0.error.react(error, message)
     }
 }
 
@@ -214,7 +225,7 @@ pub fn publish_lost(
     message: impl FnOnce() -> FailedMessage,
 ) -> Option<Continuation> {
     if let Some(reaction) = reaction {
-        return Some(reaction.error.react(error, message()));
+        return Some(reaction.failed(error, message()));
     }
     warn!(
         target: "ruststream::dispatch",

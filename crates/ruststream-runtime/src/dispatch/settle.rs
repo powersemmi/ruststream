@@ -720,7 +720,7 @@ where
                     });
                     #[cfg(not(feature = "tokio"))]
                     let lost = publish_lost(None, &subscription, &target, input, err, || {
-                        FailedMessage::new(&target, payload, Default::default())
+                        FailedMessage::new(&target, payload, HeaderMap::new())
                     });
                     lost
                 }
