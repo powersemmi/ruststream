@@ -14,6 +14,7 @@
 use alloc::sync::Arc;
 use core::marker::PhantomData;
 
+use crate::coop::Cooperative;
 use crate::dispatch::{Delivery, HeadersAtOnce, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::LocalHandler;
@@ -106,7 +107,7 @@ impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
         run_sequential(
-            self.subscriber,
+            Cooperative(self.subscriber),
             self.handler,
             signal,
             self.name,
