@@ -7,9 +7,10 @@ use bytes::Bytes;
 use tracing::error;
 
 use super::{BatchResult, uniform_batch};
-use crate::dispatch::{Delivery, Slot, settle_outcome};
+use crate::dispatch::{Delivery, Slot, settle_outcome, settle_reacting};
 use crate::handler::{HandlerOutcome, HandlerResult};
 use crate::host::{HostDetach, PrepareKept};
+use crate::publish_failure::Reaction;
 use crate::redelivery::RetryCopies;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator;
@@ -68,30 +69,59 @@ pub(super) async fn settle_split_batch<M, C, Host>(
             .await;
             continue;
         }
-        let mut result = accepted_results
+        let result = accepted_results
             .next()
             .unwrap_or_else(HandlerOutcome::retry);
-        let after = result.take_after();
         #[cfg(feature = "testing")]
         if let Some(log) = log.as_mut() {
             log.settled(result.outcome());
         }
-        settle_outcome(
-            &mut Slot::new(msg),
-            result.outcome(),
+        settle_element(msg, result, subscription, delivery, host).await;
+    }
+    #[cfg(feature = "testing")]
+    if let Some(log) = log {
+        log.record(subscription);
+    }
+}
+
+/// Settles one element by its own outcome, as a single delivery is settled: an `.error` registered
+/// on the outcome rides the settlement (with the `.and_after` beside it, which then follows the
+/// publish the runtime makes), and an outcome without one detaches its continuation once settled.
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
+pub(super) async fn settle_element<M, C, Host>(
+    msg: M,
+    outcome: HandlerOutcome,
+    subscription: &str,
+    delivery: &Delivery<C>,
+    host: &Host,
+) where
+    M: LocalSettle,
+    C: BuildBatchContext<M> + Send + Sync + 'static,
+    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
+{
+    let (status, after, error) = outcome.into_parts();
+    let mut slot = Slot::new(msg);
+    if let Some(error) = error {
+        let reaction = Some(Reaction::new(error, after));
+        settle_reacting(
+            &mut slot,
+            status,
+            reaction,
             subscription,
             delivery,
             host,
             C::build,
         )
         .await;
-        if let Some(after) = after {
-            host.detach_boxed(after);
-        }
+        return;
     }
-    #[cfg(feature = "testing")]
-    if let Some(log) = log {
-        log.record(subscription);
+    settle_outcome(&mut slot, status, subscription, delivery, host, C::build).await;
+    // The continuation runs after this element is settled, on the tracked set so a graceful
+    // shutdown drains it. At-most-once: a lost or panicking continuation never redelivers the
+    // already-settled message.
+    if let Some(after) = after {
+        host.detach_boxed(after);
     }
 }
 
@@ -188,52 +218,34 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
     #[cfg(not(feature = "testing"))]
     let LentValues = lent;
     match result {
-        BatchResult::Uniform(mut outcome) => {
-            let after = outcome.take_after();
+        BatchResult::Uniform(outcome) => {
             let status = outcome.outcome();
-            for msg in accepted {
+            // The one uniform outcome, with its continuations, rides the last element: they run
+            // after the whole batch is settled (at-most-once, like the per-element ones), and a
+            // copy the runtime fails to publish for that element reaches the `.error`.
+            let mut outcome = Some(outcome);
+            let last = accepted.len().saturating_sub(1);
+            for (index, msg) in accepted.into_iter().enumerate() {
                 #[cfg(feature = "testing")]
                 batch.settled(status);
-                settle_outcome(
-                    &mut Slot::new(msg),
-                    status,
-                    subscription,
-                    delivery,
-                    host,
-                    C::build,
-                )
-                .await;
-            }
-            // The one uniform continuation runs after the whole batch is settled, on the
-            // tracked set so a graceful shutdown drains it (at-most-once, like the
-            // per-element ones below).
-            if let Some(after) = after {
-                host.detach_boxed(after);
+                let own = if index == last {
+                    outcome
+                        .take()
+                        .unwrap_or_else(|| HandlerOutcome::from(status))
+                } else {
+                    HandlerOutcome::from(status)
+                };
+                settle_element(msg, own, subscription, delivery, host).await;
             }
         }
         BatchResult::PerElement(results) => {
             let mut results = checked_outcomes(results, accepted.len(), subscription).into_iter();
             for msg in accepted {
                 // An unmatched message gets retried: an extra redelivery beats losing it.
-                let mut result = results.next().unwrap_or_else(HandlerOutcome::retry);
-                let after = result.take_after();
+                let result = results.next().unwrap_or_else(HandlerOutcome::retry);
                 #[cfg(feature = "testing")]
                 batch.settled(result.outcome());
-                settle_outcome(
-                    &mut Slot::new(msg),
-                    result.outcome(),
-                    subscription,
-                    delivery,
-                    host,
-                    C::build,
-                )
-                .await;
-                // The continuation runs after this element is settled, on the tracked set so a
-                // graceful shutdown drains it. At-most-once: a lost or panicking continuation
-                // never redelivers the already-settled message.
-                if let Some(after) = after {
-                    host.detach_boxed(after);
-                }
+                settle_element(msg, result, subscription, delivery, host).await;
             }
         }
     }

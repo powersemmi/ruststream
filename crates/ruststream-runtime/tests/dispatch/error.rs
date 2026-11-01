@@ -27,12 +27,12 @@ use ruststream::{
 };
 use serde::{Deserialize, Serialize};
 
-const RETRY_DELAY: Duration = Duration::from_secs(5);
+pub(crate) const RETRY_DELAY: Duration = Duration::from_secs(5);
 
 /// The job the handlers receive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Outgoing)]
-struct Job {
-    id: u32,
+pub(crate) struct Job {
+    pub(crate) id: u32,
 }
 
 /// What the `.error` continuation sends to the alert subject.
@@ -52,8 +52,8 @@ struct Lost {
 /// A subscription of a broker that holds no delivery back for a delay: the runtime publishes the
 /// copies, to the subscription's own name.
 #[derive(Debug, Clone)]
-struct Queue {
-    name: &'static str,
+pub(crate) struct Queue {
+    pub(crate) name: &'static str,
 }
 
 impl<C: Subscribe> SubscriptionSource<C> for Queue
@@ -84,7 +84,7 @@ where
     }
 }
 
-struct ShapedSubscriber<S>(S);
+pub(crate) struct ShapedSubscriber<S>(S);
 
 impl<S: Subscriber> Subscriber for ShapedSubscriber<S> {
     type Message = ShapedMessage<S::Message>;
@@ -97,7 +97,7 @@ impl<S: Subscriber> Subscriber for ShapedSubscriber<S> {
 
 /// A delivery that settles like the broker's own and keeps the trait defaults for its delivery
 /// count and its delayed redelivery.
-struct ShapedMessage<M>(M);
+pub(crate) struct ShapedMessage<M>(M);
 
 impl<M: IncomingMessage> IncomingMessage for ShapedMessage<M> {
     fn payload(&self) -> &[u8] {
@@ -121,7 +121,7 @@ impl<M: Settle> Settle for ShapedMessage<M> {
 
 /// A publisher whose broker is down: every publish fails, and it only reads the bytes.
 #[derive(Debug, Clone, Copy)]
-struct Down;
+pub(crate) struct Down;
 
 impl Publisher for Down {
     type Payload = Lend;
@@ -139,7 +139,7 @@ impl Publisher for Down {
 
 /// The policy that pairs into [`Down`].
 #[derive(Debug, Clone, Copy)]
-struct DownPublish;
+pub(crate) struct DownPublish;
 
 impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for DownPublish {
     type Live = Down;

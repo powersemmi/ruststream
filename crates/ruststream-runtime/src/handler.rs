@@ -547,10 +547,6 @@ impl HandlerOutcome {
     pub(crate) fn take_error(&mut self) -> Option<ErrorHook> {
         self.error.take()
     }
-
-    pub(crate) fn take_after(&mut self) -> Option<Continuation> {
-        self.after.take()
-    }
 }
 
 impl fmt::Debug for HandlerOutcome {
@@ -887,8 +883,9 @@ mod tests {
         assert!(format!("{plain:?}").contains("after: false"));
     }
 
-    fn assert_outcome(mut outcome: HandlerOutcome, status: HandlerResult, has_after: bool) {
-        assert_eq!(outcome.outcome(), status);
-        assert_eq!(outcome.take_after().is_some(), has_after);
+    fn assert_outcome(outcome: HandlerOutcome, status: HandlerResult, has_after: bool) {
+        let (settled, after, _error) = outcome.into_parts();
+        assert_eq!(settled, status);
+        assert_eq!(after.is_some(), has_after);
     }
 }
