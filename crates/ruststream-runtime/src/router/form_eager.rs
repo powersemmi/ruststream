@@ -6,6 +6,7 @@
 //! the default applies).
 
 use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use crate::batch::{BatchDef, SourceCarriesBatch};
 use crate::input::{Carried, DecodeWith, Materialize, Provided};
@@ -68,8 +69,8 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
 where
     B: Broker + 'static,
     Def: SubscriberDef + MountsWith<<Def as SubscriberDef>::Input, RouteCodec, Connected<B>>,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: Send + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+    SourceSubscriber<B, Def::Source>: MaybeSend + 'static,
     Def::Input: Materialize<SoloDecoder<Def, B, RouteCodec>, SourceMessage<B, Def::Source>>,
     Def::Handler: 'static,
     RoutePipe: PublishPipeline,
@@ -98,10 +99,10 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, F>
 where
     B: Broker + 'static,
     Def: SubscriberDef<Input = Provided<F>>,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: Send + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+    SourceSubscriber<B, Def::Source>: MaybeSend + 'static,
     Def::Handler: 'static,
-    F: Send + Sync + 'static,
+    F: MaybeSendSync + 'static,
     RoutePipe: PublishPipeline,
     Routes: PoisonAt,
 {
@@ -122,8 +123,8 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
 where
     B: Broker + 'static,
     Def: BatchDef + BatchSized + MountsWith<<Def as BatchDef>::Input, RouteCodec, Connected<B>>,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+    SourceSubscriber<B, Def::Source>: BatchSubscriber + MaybeSend + 'static,
     Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchDef>::Input, RouteCodec, Connected<B>>>,
     Def::Handler: 'static,
     Routes: PoisonAt,
@@ -150,10 +151,10 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, F>
 where
     B: Broker + 'static,
     Def: BatchDef<Input = Provided<F>> + BatchSized,
-    Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+    SourceSubscriber<B, Def::Source>: BatchSubscriber + MaybeSend + 'static,
     Def::Handler: 'static,
-    F: Send + Sync + 'static,
+    F: MaybeSendSync + 'static,
     RoutePipe: PublishPipeline,
     Routes: PoisonAt,
 {
@@ -176,11 +177,13 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, T>
 where
     B: Broker + 'static,
     Def: BatchDef<Input = Carried<T>> + BatchSized,
-    Def::Source:
-        SubscriptionSource<Connected<B>> + SourceCarriesBatch<T, Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
+    Def::Source: SubscriptionSource<Connected<B>>
+        + SourceCarriesBatch<T, Connected<B>>
+        + MaybeSend
+        + 'static,
+    SourceSubscriber<B, Def::Source>: BatchSubscriber + MaybeSend + 'static,
     Def::Handler: 'static,
-    T: Clone + Send + Sync + 'static,
+    T: Clone + MaybeSendSync + 'static,
     Routes: PoisonAt,
 {
     // Read through the lent value's projection, so a subscription whose batches lend nothing

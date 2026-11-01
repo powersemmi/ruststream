@@ -7,6 +7,7 @@
 #![allow(clippy::future_not_send)]
 
 use core::any::type_name;
+use ruststream_core::MaybeSendSync;
 
 use crate::inject::LocalFromStartup;
 use crate::input::{InputKind, Materialize};
@@ -57,7 +58,7 @@ where
     Def::Input: Materialize<DecodeCodec, M>,
     Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
     Def::Reply: EncodeReply,
-    Def::Context: BuildContext<M> + Send + Sync + 'static,
+    Def::Context: BuildContext<M> + MaybeSendSync + 'static,
     Policy: PublishPolicy<Connected<B>>,
     Policy::Live: Publisher,
     Enc: PublishCodec<Codec: Clone>,
@@ -135,7 +136,7 @@ where
     Def::Input: Materialize<DecodeCodec, M>,
     Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
     Def::Reply: Serialized,
-    Def::Context: BuildContext<M> + Send + Sync + 'static,
+    Def::Context: BuildContext<M> + MaybeSendSync + 'static,
     Policy: PublishPolicy<Connected<B>>,
     Policy::Live: Publisher,
 {

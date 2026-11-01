@@ -10,6 +10,7 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::ops::Deref;
 use core::time::Duration;
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
 use crate::codec::Codec;
 use crate::inject::FromStartup;
@@ -120,7 +121,7 @@ where
 {
 }
 
-impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Pipe: OutPipeline<W>, Body>
+impl<M: OutSlot, W: Publisher, E: Codec + MaybeSendSync, Pipe: OutPipeline<W>, Body>
     Slot<M, W, E, Pipe, Body>
 {
     /// Starts a typed publish through the slot, on the message type's own wire
@@ -202,7 +203,7 @@ impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Pipe: OutPipeline<W>, Bod
 
 // The transaction openers do not travel the slot's pipeline, but the entry they borrow crosses
 // the await with them, so it still has to be shareable.
-impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: Send + Sync, Body>
+impl<M: OutSlot, W: TransactionalPublisher, E: MaybeSendSync, Pipe: MaybeSendSync, Body>
     Slot<M, W, E, Pipe, Body>
 {
     /// Opens the entry's broker transaction and returns the [`TransactionScope`] that owns it:
@@ -268,7 +269,7 @@ impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: Send + Sync, B
     }
 }
 
-impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: Send + Sync, Body>
+impl<M: OutSlot, W: OwnedTransactions, E: MaybeSendSync, Pipe: MaybeSendSync, Body>
     Slot<M, W, E, Pipe, Body>
 {
     /// Opens an independent, caller-owned broker transaction and returns the
@@ -343,7 +344,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: Send + Sync, Body>
 // stamped message. The transaction calls and the request round trip reach the leaf directly -
 // the pipeline ends in a send, and neither of those is one - and report their errors in the
 // entry's own error type.
-impl<M: OutSlot, W: Publisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> Publisher
+impl<M: OutSlot, W: Publisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body> Publisher
     for Slot<M, W, E, Pipe, Body>
 {
     // The slot is attribution, not policy: the payload travels in the wired publisher's own
@@ -385,7 +386,7 @@ impl<M: OutSlot, W: Publisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Bod
     }
 }
 
-impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
 {
     async fn begin_transaction(&self) -> Result<(), Self::Error> {
@@ -404,7 +405,7 @@ impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPip
     }
 }
 
-impl<M: OutSlot, W: OwnedTransactions, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+impl<M: OutSlot, W: OwnedTransactions, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
     OwnedTransactions for Slot<M, W, E, Pipe, Body>
 {
     type Transaction = W::Transaction;
@@ -417,7 +418,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Clone + Send + Sync, Pipe: OutPipeline
     }
 }
 
-impl<M: OutSlot, W: RequestReply, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
+impl<M: OutSlot, W: RequestReply, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body> RequestReply
     for Slot<M, W, E, Pipe, Body>
 {
     type Reply = W::Reply;
@@ -463,10 +464,10 @@ impl<B, Sub, Policy, E, Pipe, M, Body> FromStartup<B, Sub, (Policy, E, Pipe)>
     for Slot<M, <Policy as PublishPolicy<Connected<B>>>::Live, E, Pipe, Body>
 where
     B: crate::Broker,
-    Sub: Sync,
-    Policy: PublishPolicy<Connected<B>> + Send,
-    E: Send,
-    Pipe: Send,
+    Sub: MaybeSync,
+    Policy: PublishPolicy<Connected<B>> + MaybeSend,
+    E: MaybeSend,
+    Pipe: MaybeSend,
     M: OutSlot,
 {
     async fn resolve(
@@ -569,10 +570,10 @@ where
 // `Send + Sync` on the trait and on the wired value, rather than on every body's `where`: the
 // arena is built once at startup and shared by reference across the subscription's worker tasks,
 // so an entry that is not shareable never reaches a body in the first place.
-pub trait OutEntry<M, Body = ()>: Send + Sync {
+pub trait OutEntry<M, Body = ()>: MaybeSendSync {
     /// The wired live value: the bound policy's [`Live`](crate::PublishPolicy::Live) form, which
     /// a body bounds with the broker capability it needs.
-    type Wire: Send + Sync;
+    type Wire: MaybeSendSync;
 
     /// The codec the entry's typed publishes encode with: the include site's own, or the one a
     /// `.codec(..)` named for this slot.
@@ -591,7 +592,7 @@ pub trait OutEntry<M, Body = ()>: Send + Sync {
 
 impl<M, W, E, Pipe, Body> OutEntry<M, Body> for Slot<M, W, E, Pipe, Body>
 where
-    W: Send + Sync,
+    W: MaybeSendSync,
     E: Codec,
     Pipe: OutPipeline<W>,
 {

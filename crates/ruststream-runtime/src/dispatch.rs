@@ -18,6 +18,7 @@ use core::convert::Infallible;
 use core::panic::AssertUnwindSafe;
 use core::pin::Pin;
 use core::task::{Context as TaskContext, Poll};
+use ruststream_core::MaybeSendSync;
 
 #[cfg(feature = "testing")]
 use bytes::Bytes;
@@ -138,7 +139,7 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     H: LocalHandler<S::Message, C, St>,
     Headers: LendHeaders<S::Message>,
     // See `dispatch`.
-    C: BuildContext<S::Message> + Send + Sync + 'static,
+    C: BuildContext<S::Message> + MaybeSendSync + 'static,
     Signal: ShutdownWait + Halt,
     Lending: Lent<C>,
 {
@@ -322,7 +323,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     H: LocalHandler<M, C, St>,
     // A deferred retry copy carries the broker's context into the work the delivery leaves
     // behind, which may run on another thread.
-    C: BuildContext<M> + Send + Sync + 'static,
+    C: BuildContext<M> + MaybeSendSync + 'static,
     M: Settle,
     Signal: Halt,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,

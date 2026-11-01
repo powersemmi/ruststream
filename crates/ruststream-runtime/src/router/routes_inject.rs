@@ -10,6 +10,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt;
 use core::num::NonZeroUsize;
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use crate::{
     BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, Settle, SubscriptionSource,
@@ -145,22 +146,22 @@ impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, Sta
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 where
     B: Broker + 'static,
-    Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
-    Def::Context: Send + Sync + 'static,
+    Def::Context: MaybeSendSync + 'static,
     RetryPipeline: Clone,
-    Source::Subscriber: Sync + Send + 'static,
+    Source::Subscriber: MaybeSendSync + 'static,
     SourceMessage<B, Source>: Settle + 'static,
-    State: Send + Sync + 'static,
+    State: MaybeSendSync + 'static,
     Def: InjectCall<State> + 'static,
     Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
-    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
-    Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
+    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + MaybeSendSync + 'static,
+    Def::Context: BuildContext<SourceMessage<B, Source>> + MaybeSendSync + 'static,
     // Not `Codec`: `Materialize` already carries what the input asks of it, and a byte input
     // asks for nothing - its route is built with `()` there.
-    DecodeCodec: Send + Sync + 'static,
-    Extra: Send + Sync + 'static,
+    DecodeCodec: MaybeSendSync + 'static,
+    Extra: MaybeSendSync + 'static,
 {
     type Context = Def::Context;
     type Copies = Source::Copies;
@@ -173,8 +174,8 @@ where
         sink: &mut Sink,
         setup: RetrySetup<B, Def::Context, Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
         Slot: RetrySlot<B, Def::Context, Source::Copies, RetryPipeline>,
     {
@@ -225,20 +226,20 @@ impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, Sta
     for BatchInjectRoute<Source, Def, DecodeCodec, Extra>
 where
     B: Broker + 'static,
-    Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
-    Def::Context: Send + Sync + 'static,
+    Def::Context: MaybeSendSync + 'static,
     RetryPipeline: Clone,
-    Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
+    Source::Subscriber: BatchSubscriber + MaybeSendSync + 'static,
     SourceMessage<B, Source>: Settle + 'static,
-    State: Send + Sync + 'static,
+    State: MaybeSendSync + 'static,
     Def: BatchInjectCall<State> + 'static,
     Def::Input: DecodeWith<DecodeCodec>,
-    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
-    Def::Context: BuildBatchContext<SourceMessage<B, Source>> + Send + Sync + 'static,
-    DecodeCodec: Send + Sync + 'static,
-    Extra: Send + Sync + 'static,
+    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + MaybeSendSync + 'static,
+    Def::Context: BuildBatchContext<SourceMessage<B, Source>> + MaybeSendSync + 'static,
+    DecodeCodec: MaybeSendSync + 'static,
+    Extra: MaybeSendSync + 'static,
 {
     type Context = Def::Context;
     type Copies = Source::Copies;
@@ -251,8 +252,8 @@ where
         sink: &mut Sink,
         setup: RetrySetup<B, Def::Context, Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
         Slot: RetrySlot<B, Def::Context, Source::Copies, RetryPipeline>,
     {

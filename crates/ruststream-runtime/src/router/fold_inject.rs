@@ -13,6 +13,7 @@ use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
 use crate::{
     Broker, BuildContext, Connected, RetryDeclaration, Settle, Subscriber, SubscriptionSource,
 };
+use ruststream_core::MaybeSendSync;
 
 use super::fold_plan::{LocalRoute, OpenLocalRoute};
 use super::routes_inject::InjectRoute;
@@ -27,7 +28,7 @@ where
     Def: LocalInjectCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
     Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
-    Def::Context: BuildContext<M> + Send + Sync + 'static,
+    Def::Context: BuildContext<M> + MaybeSendSync + 'static,
 {
     type Source = Source;
     type Declaration = Undeclared;

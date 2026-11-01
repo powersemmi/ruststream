@@ -13,6 +13,7 @@ use alloc::string::String;
 use core::error::Error as StdError;
 use core::fmt;
 use core::marker::PhantomData;
+use ruststream_core::MaybeSync;
 
 use bytes::BytesMut;
 use serde::Serialize;
@@ -801,7 +802,7 @@ async fn wire_and_send<Sink, T, Enc, Hdrs>(
 ) -> Result<(), PublishError<Sink::Error>>
 where
     Sink: PublishSink,
-    T: MessageWire + Sync,
+    T: MessageWire + MaybeSync,
     T::Wire: WirePayload<T, Enc>,
     Hdrs: PublishHeaders,
 {
@@ -837,7 +838,7 @@ where
 impl<Sink, T, Enc, Hdrs, Dest> PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>
 where
     Sink: PublishSink,
-    T: OutgoingDestination + MessageHeaders + Sync,
+    T: OutgoingDestination + MessageHeaders + MaybeSync,
     Hdrs: PublishHeaders,
 {
     /// Publishes the value to the resolved destination, on the value's own wire
@@ -885,7 +886,7 @@ impl<Sink, T, Enc, Hdrs> PublishAt
     for PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
 where
     Sink: PublishSink,
-    T: OutgoingDestination + MessageHeaders + MessageWire + Sync,
+    T: OutgoingDestination + MessageHeaders + MessageWire + MaybeSync,
     T::Wire: WirePayload<T, Enc>,
     Hdrs: PublishHeaders + SatisfiesContract<T::Contract>,
 {

@@ -9,6 +9,7 @@
 use crate::codec::Codec;
 use crate::input::{Carried, Decoded, DecodedPair, Provided};
 use crate::publish::{RawReplyWiring, ReplyWiring};
+use ruststream_core::MaybeSendSync;
 // The default-codec resolution exists only when a codec feature supplies a default.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
@@ -38,7 +39,7 @@ pub trait IncludeDef {
 #[doc(hidden)]
 pub trait MountCodec {
     /// The resolved codec.
-    type Codec: Codec + Clone + Send + Sync + 'static;
+    type Codec: Codec + Clone + MaybeSendSync + 'static;
     /// Produces it, fresh per registration.
     fn mount_codec(&self) -> Self::Codec;
 }
@@ -51,7 +52,7 @@ impl MountCodec for () {
     }
 }
 
-impl<C: Codec + Clone + Send + Sync + 'static> MountCodec for C {
+impl<C: Codec + Clone + MaybeSendSync + 'static> MountCodec for C {
     type Codec = C;
     fn mount_codec(&self) -> Self::Codec {
         self.clone()
@@ -79,7 +80,7 @@ impl<C: Codec + Clone + Send + Sync + 'static> MountCodec for C {
 #[doc(hidden)]
 pub trait InputCodec<Input> {
     /// The resolved codec: the surface's own, or `()` where the input needs none.
-    type Codec: Clone + Send + Sync + 'static;
+    type Codec: Clone + MaybeSendSync + 'static;
     /// Produces it, fresh per registration.
     fn input_codec(&self) -> Self::Codec;
 }

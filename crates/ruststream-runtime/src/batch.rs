@@ -8,11 +8,11 @@
 //! [`Handler`](super::Handler) counterpart, and [`TypedBatch`] the [`Typed`](super::Typed) decode
 //! adapter.
 
-use crate::handler::MaybeSend;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::{any, fmt, marker::PhantomData};
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 #[cfg(feature = "otel")]
 use std::slice;
 #[cfg(feature = "otel")]
@@ -213,7 +213,7 @@ impl UniformFan {
     note = "a batch handler takes (&[T], &mut Context) and returns an IntoBatchResult value; \
             per-element header contracts ride a `&[Message<H, T>]` body instead"
 )]
-pub(crate) trait SliceHandler<T, C = (), S = ()>: Send + Sync {
+pub(crate) trait SliceHandler<T, C = (), S = ()>: MaybeSendSync {
     /// Handles one decoded batch, with the per-batch [`Context`] carrying the broker's
     /// subscription-scoped context `C` and the typed app state `S`.
     fn handle_slice(
@@ -225,8 +225,8 @@ pub(crate) trait SliceHandler<T, C = (), S = ()>: Send + Sync {
 
 impl<T, F, Fut, C, S> SliceHandler<T, C, S> for F
 where
-    F: Fn(&[T], &mut Context<'_, C, S>) -> Fut + Send + Sync,
-    Fut: Future + Send,
+    F: Fn(&[T], &mut Context<'_, C, S>) -> Fut + MaybeSendSync,
+    Fut: Future + MaybeSend,
     Fut::Output: IntoBatchResult,
 {
     fn handle_slice(
@@ -420,18 +420,18 @@ where
 /// settle every delivery. The batch counterpart of [`Handler`](super::Handler) at the
 /// raw-message level.
 #[doc(hidden)]
-pub trait BatchHandler<Batch, C = (), S = ()>: Send + Sync {
+pub trait BatchHandler<Batch, C = (), S = ()>: MaybeSendSync {
     /// The buffer the decoded batch is built in.
     ///
     /// A dispatch loop keeps one and lends it to every batch it hands over, so the slice the
     /// handler reads costs one allocation for the subscription rather than one per batch. It is
     /// `()` on the forms whose values the batch already holds or borrows, which cannot outlive
     /// the batch they came from.
-    type Scratch: Default + Send;
+    type Scratch: Default + MaybeSend;
 
     /// The batch as this handler takes it: its deliveries collected, or the broker's batch whole
     /// where the handler lends the values the batch holds.
-    type Taken: TakenBatch<C> + Send;
+    type Taken: TakenBatch<C> + MaybeSend;
 
     /// Takes one batch off the subscription.
     fn take(batch: Batch) -> Self::Taken;
@@ -460,9 +460,9 @@ pub(crate) async fn handled<H, M, C, S, Host>(
     host: &Host,
 ) where
     H: BatchHandler<Vec<M>, C, S, Taken = Vec<M>>,
-    M: Send,
-    C: Send + Sync,
-    S: Send + Sync,
+    M: MaybeSend,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     Host: SendHost<C>,
 {
     handler.handle_batch(batch, scratch, ctx, host).await;
@@ -478,7 +478,7 @@ pub(crate) fn typed_batch<M, T, C, H>(
 ) -> TypedBatch<M, super::input::Decoded<T>, C, H>
 where
     M: Settle,
-    T: DeserializeOwned + Send + Sync + 'static,
+    T: DeserializeOwned + MaybeSendSync + 'static,
     C: Codec,
 {
     TypedBatch {
@@ -540,10 +540,10 @@ where
     Batch: IntoIterator<Item = M>,
     M: Settle,
     Input: DecodeWith<DecodeCodec>,
-    DecodeCodec: Send + Sync,
+    DecodeCodec: MaybeSendSync,
     Inner: SliceHandler<Input::Owned, C, S>,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
-    S: Send + Sync,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
+    S: MaybeSendSync,
 {
     type Scratch = Vec<Input::Owned>;
     type Taken = Vec<M>;
@@ -626,10 +626,10 @@ impl<Batch, M, F, Inner, C, S> BatchHandler<Batch, C, S> for DeserializedBatch<M
 where
     Batch: IntoIterator<Item = M>,
     M: Settle,
-    F: Deserialized + Send + Sync + 'static,
+    F: Deserialized + MaybeSendSync + 'static,
     Inner: for<'p> SliceHandler<F::Output<'p>, C, S>,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
-    S: Send + Sync,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
+    S: MaybeSendSync,
 {
     // The constructed values borrow their deliveries' payloads (see the loop below), so a
     // buffer that outlived the batch could not hold them: this form builds its values vector per
@@ -674,7 +674,7 @@ impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
         M: Settle,
         F: Deserialized,
         Via: for<'p> CallSlice<Inner, F::Output<'p>, C, S>,
-        C: BuildBatchContext<M> + Send + Sync + 'static,
+        C: BuildBatchContext<M> + MaybeSendSync + 'static,
     {
         let subscription = ctx.subscription();
         if batch.is_empty() {
@@ -775,9 +775,9 @@ pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S, Host>(
 where
     M: Settle,
     Input: DecodeWith<DecodeCodec>,
-    DecodeCodec: Sync,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
-    S: Send + Sync,
+    DecodeCodec: MaybeSync,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
+    S: MaybeSendSync,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     let subscription = ctx.subscription();

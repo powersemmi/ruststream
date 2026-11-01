@@ -13,6 +13,7 @@
 
 use alloc::sync::Arc;
 use core::marker::PhantomData;
+use ruststream_core::MaybeSendSync;
 
 use crate::coop::Cooperative;
 use crate::dispatch::{Delivery, HeadersAtOnce, run_sequential};
@@ -65,7 +66,7 @@ pub trait LocalDispatch {
     where
         Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: LocalDetach,
         Path: PrepareCopy<Cx>;
@@ -103,7 +104,7 @@ impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
     ) where
         Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Lent: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
@@ -141,7 +142,7 @@ impl LocalDispatch for SequentialPlan {
     ) where
         Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: LocalDetach,
         Path: PrepareCopy<Cx>,
@@ -280,7 +281,7 @@ pub trait OpenLocalRoute<B: Broker, State> {
     /// The handler each delivery runs.
     type Body: LocalHandler<<Self::Sub as Subscriber>::Message, Self::Cx, State>;
     /// The broker's typed per-delivery context the handler reads.
-    type Cx: BuildContext<<Self::Sub as Subscriber>::Message> + Send + Sync + 'static;
+    type Cx: BuildContext<<Self::Sub as Subscriber>::Message> + MaybeSendSync + 'static;
 
     /// The descriptor, read before the registration opens.
     fn source(&self) -> &Self::Source;
@@ -405,7 +406,7 @@ where
     M: Settle,
     Input: Materialize<DecodeCodec, M>,
     Inner: LocalHandler<Input::Target, Cx, State>,
-    Cx: BuildContext<M> + Send + Sync + 'static,
+    Cx: BuildContext<M> + MaybeSendSync + 'static,
 {
     type Source = Source;
     type Declaration = Undeclared;
@@ -502,7 +503,7 @@ impl<State, Sub, Body, Cx, Layers, Plan, Path> RunRoutes<State>
 where
     Sub: Subscriber,
     Body: LocalHandler<Sub::Message, Cx, State>,
-    Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+    Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
     Layers: LocalBlanketLayer,
     Plan: LocalDispatch,
     Path: PrepareCopy<Cx>,

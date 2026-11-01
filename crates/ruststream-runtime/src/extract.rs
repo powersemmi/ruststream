@@ -8,11 +8,11 @@
 //! dependencies arrive as arguments instead of being reached for through `ctx.state()`. A failed
 //! extraction short-circuits the delivery with the rejection's [`HandlerOutcome`].
 
-use crate::handler::MaybeSend;
 use alloc::format;
 use core::any::type_name;
 use core::convert::Infallible;
 use core::fmt;
+use ruststream_core::{MaybeSend, MaybeSync};
 
 use serde::de::DeserializeOwned;
 use tracing::warn;
@@ -173,7 +173,7 @@ pub struct State<T>(pub T);
 
 impl<C, S, T> FromContext<C, S> for State<T>
 where
-    T: FromRef<S> + Send,
+    T: FromRef<S> + MaybeSend,
 {
     type Rejection = Infallible;
     fn from_context(
@@ -271,7 +271,7 @@ pub struct Ctx<K: CtxKey>(pub K::Value);
 /// ```
 pub trait CtxKey: sealed::Sealed {
     /// The owned value the extractor binds.
-    type Value: Send + 'static;
+    type Value: MaybeSend + 'static;
 }
 
 impl<K: ContextField> CtxKey for K {
@@ -308,8 +308,8 @@ where
 impl<S, K> FromContext<K::Context, S> for Ctx<K>
 where
     K: ContextField,
-    K::Context: Send,
-    S: Sync,
+    K::Context: MaybeSend,
+    S: MaybeSync,
 {
     type Rejection = Infallible;
     fn from_context(
@@ -323,8 +323,8 @@ where
 #[cfg(feature = "tokio")]
 impl<C, S> FromContext<C, S> for Ctx<MainRuntime>
 where
-    C: Send,
-    S: Sync,
+    C: MaybeSend,
+    S: MaybeSync,
 {
     type Rejection = Infallible;
     fn from_context(
@@ -418,9 +418,9 @@ impl<T: DeserializeOwned> Headers<T> {
 
 impl<C, S, T> FromContext<C, S> for Headers<T>
 where
-    T: DeserializeOwned + Send,
-    C: Send,
-    S: Sync,
+    T: DeserializeOwned + MaybeSend,
+    C: MaybeSend,
+    S: MaybeSync,
 {
     type Rejection = HandlerOutcome;
     fn from_context(

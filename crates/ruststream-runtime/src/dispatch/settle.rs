@@ -4,6 +4,7 @@
 use alloc::string::ToString;
 use alloc::sync::Arc;
 use core::time::Duration;
+use ruststream_core::MaybeSendSync;
 
 use bytes::Bytes;
 use futures::FutureExt;
@@ -53,7 +54,7 @@ pub(crate) async fn settle_outcome<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) where
     M: Settle,
-    C: Send + Sync + 'static,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     let ack_result = match outcome {
@@ -95,7 +96,7 @@ pub(crate) async fn settle_reacting<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) where
     M: Settle,
-    C: Send + Sync + 'static,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if reaction.is_some() && copy_path(host).is_none() {
@@ -210,7 +211,7 @@ async fn settle_retry<M, C, Host>(
 ) -> Result<(), AckError>
 where
     M: Settle,
-    C: Send + Sync + 'static,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if delivery.declaration.declares_nothing() {
@@ -314,7 +315,7 @@ async fn send_copy<M, C, Host>(
 ) -> Result<(), AckError>
 where
     M: Settle,
-    C: Send + Sync + 'static,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     match path {
@@ -403,7 +404,7 @@ async fn settle_nack_after<M, C, Host>(
 ) -> Result<(), AckError>
 where
     M: Settle,
-    C: Send + Sync + 'static,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if slot.get().supports_nack_after() {
@@ -551,7 +552,7 @@ async fn dead_letter<M, C, Host>(
 ) -> Result<(), AckError>
 where
     M: Settle,
-    C: Send + Sync + 'static,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if at_cap {
@@ -644,7 +645,7 @@ async fn publish_copy<M, C, Host>(
 ) -> Result<(), AckError>
 where
     M: Settle,
-    C: Send + Sync + 'static,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     let route = Arc::clone(retry);

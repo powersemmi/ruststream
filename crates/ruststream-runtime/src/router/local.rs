@@ -7,6 +7,7 @@
 //! name a source of the wrong broker in their errors.
 
 use core::marker::PhantomData;
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use crate::batch::BatchDef;
 use crate::handle::{AsBodyFn, AsDeclared, BodyTag};
@@ -136,9 +137,9 @@ impl<Settings: Sequential, Pipe> PoolFits<LocalPipeline<Pipe>> for Settings {}
 /// directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
-    message = "this handler cannot run on the multi-thread runner: its future is not `Send`",
+    message = "this handler cannot run on the multi-thread runner: its future is not `MaybeSend`",
     note = "the multi-thread runner moves a handler between threads at each `.await`; keep only \
-            `Send` values across an `.await` in the handler (an `Arc` where it holds an `Rc`), \
+            `MaybeSend` values across an `.await` in the handler (an `Arc` where it holds an `Rc`), \
             or mount it on an `EmbeddedApp`, which polls it on one thread"
 )]
 pub trait BodyFits<Pipe, Mk> {
@@ -157,7 +158,7 @@ impl<F, M, I, O, X, Fut, Pipe> BodyFits<Pipe, AsBodyFn<M, I, O, X>> for F
 where
     Pipe: PublishPipeline,
     F: Fn(BodyTag<M>, I, O, X) -> Fut,
-    Fut: Future + Send,
+    Fut: Future + MaybeSend,
 {
     type Fits = ();
 }
@@ -345,7 +346,7 @@ where
     Def: SubscriberDef<Input = Provided<F>>,
     Def::Source: SubscriptionSource<Connected<B>> + 'static,
     Def::Handler: 'static,
-    F: Send + Sync + 'static,
+    F: MaybeSendSync + 'static,
 {
     type Out = IncludedRouter<
         B,
@@ -378,7 +379,7 @@ where
     Def::Source: SubscriptionSource<Connected<B>> + 'static,
     SourceSubscriber<B, Def::Source>: BatchSubscriber,
     Def::Handler: 'static,
-    F: Send + Sync + 'static,
+    F: MaybeSendSync + 'static,
 {
     type Out = IncludedRawBatchRouter<
         B,

@@ -13,6 +13,7 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::{fmt, pin::Pin};
+use ruststream_core::{MaybeSendSync, MaybeSync};
 
 use super::context::Context;
 use super::handler::{Handler, HandlerOutcome};
@@ -27,13 +28,13 @@ type BoxFut<'a> = Pin<Box<dyn Future<Output = HandlerOutcome> + Send + 'a>>;
 type BoxFut<'a> = Pin<Box<dyn Future<Output = HandlerOutcome> + 'a>>;
 
 /// The wrapped handler at the end of the chain, erased so [`Next`] need not carry its type.
-trait ErasedHandler<I>: Send + Sync {
+trait ErasedHandler<I>: MaybeSendSync {
     fn handle_boxed<'a>(&'a self, input: &'a I, ctx: &'a mut Context<'_>) -> BoxFut<'a>;
 }
 
 impl<I, H> ErasedHandler<I> for H
 where
-    I: Sync,
+    I: MaybeSync,
     H: Handler<I>,
 {
     fn handle_boxed<'a>(&'a self, input: &'a I, ctx: &'a mut Context<'_>) -> BoxFut<'a> {
@@ -46,7 +47,7 @@ where
 /// Each middleware inspects `input` / `ctx` (and may modify the context), optionally
 /// short-circuits, and otherwise calls [`Next::run`] to continue the chain. Object-safe, so a
 /// heterogeneous list can be stored in a [`DynStack`].
-pub trait DynMiddleware<I>: Send + Sync {
+pub trait DynMiddleware<I>: MaybeSendSync {
     /// Handle `input`, calling `next` to continue to the rest of the chain.
     fn handle<'a>(
         &'a self,
@@ -116,7 +117,7 @@ impl<I> fmt::Debug for DynStack<I> {
 
 impl<I, H> Layer<H> for DynStack<I>
 where
-    I: Sync,
+    I: MaybeSync,
     H: Handler<I>,
 {
     type Handler = DynStackHandler<I, H>;
@@ -146,7 +147,7 @@ impl<I, H> fmt::Debug for DynStackHandler<I, H> {
 
 impl<I, H> Handler<I> for DynStackHandler<I, H>
 where
-    I: Sync,
+    I: MaybeSync,
     H: Handler<I>,
 {
     // The returned future captures &self, so the chain and the wrapped handler are borrowed:

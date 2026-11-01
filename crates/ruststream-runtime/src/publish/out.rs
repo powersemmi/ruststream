@@ -155,7 +155,7 @@ impl<Policy> NarrowToUse<Policy> for Names {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SendOnlyPolicy<Policy>(Policy);
 
-impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
+impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + MaybeSend> PublishPolicy<CB>
     for SendOnlyPolicy<Policy>
 {
     type Live = NamedDestinationSend<Policy::Live>;
@@ -238,7 +238,7 @@ impl<P: Publisher> Publisher for NamedDestinationSend<P> {
             writes the wired publisher's own `Publisher::Options`, so a stack written for another \
             broker's options is not this slot's path"
 )]
-pub trait OutPipeline<W>: Send + Sync + Clone {
+pub trait OutPipeline<W>: MaybeSendSync + Clone {
     /// The error a publish through this path reports, over the leaf publisher's own error
     /// `E`: the leaf's error itself when nothing runs, a [`PipelinePublishError`] once the app's
     /// middleware does.
@@ -255,7 +255,7 @@ pub trait OutPipeline<W>: Send + Sync + Clone {
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error<P::Error>>> + Send
+    ) -> impl Future<Output = SinkOutcome<Self::Error<P::Error>>> + MaybeSend
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>;

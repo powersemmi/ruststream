@@ -61,7 +61,6 @@ mod verdict;
 #[cfg(all(test, feature = "json", feature = "asyncapi"))]
 mod matrix_tests;
 
-use crate::handler::MaybeSend;
 use crate::settings::{AllOpen, SubscriberBuilder};
 use alloc::string::String;
 #[doc(hidden)]
@@ -93,6 +92,7 @@ pub use reply::{
     reply_destination,
 };
 pub use reply::{ReplyShape, Serialized};
+use ruststream_core::{MaybeSend, MaybeSendSync};
 pub use value::{
     DeclaredDest, EncodedReply, HandleValue, IsDocumented, NamedDest, ReplyValue, ResolvedDest,
     Sealed, SerializedReply, local_subscriber, subscriber,
@@ -128,7 +128,7 @@ use super::context::Context;
 /// input family's canonical verdict ([`Verdict<In, R>`]): `Result<R, HandlerOutcome>` for one
 /// message at a time, `Result<R, Vec<HandlerOutcome>>` for a batch - so the body's `async fn`
 /// signature spells the verdict out literally.
-pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: Send + Sync {
+pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: MaybeSendSync {
     /// Handles one input (a message, or a batch of them).
     fn handle(
         &self,

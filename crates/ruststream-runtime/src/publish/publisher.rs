@@ -1,6 +1,7 @@
 //! The live reply sink: a byte publisher paired with a codec and its transform stacks.
 
 use core::fmt;
+use ruststream_core::MaybeSync;
 
 #[cfg(feature = "std")]
 use futures::lock::Mutex;
@@ -90,7 +91,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
 
     /// Encodes `value`, applies the static transforms (reading the originating delivery through
     /// `cx`), then publishes to `name` through `pipeline`.
-    pub(crate) async fn publish<'e, T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish<'e, T: Serialize + MaybeSync, Cx, PP>(
         &self,
         name: &'e str,
         value: &T,
@@ -100,8 +101,8 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     ) -> Result<(), Refusal>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
-        BL: Sync,
-        Cx: Sync,
+        BL: MaybeSync,
+        Cx: MaybeSync,
         PP: SendThrough<P>,
     {
         let payload =
@@ -122,7 +123,13 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
     /// serializes into the outgoing headers before the transforms run, and the body encodes
     /// through the reply codec.
-    pub(crate) async fn publish_pair<'e, Hd: Serialize + Sync, T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish_pair<
+        'e,
+        Hd: Serialize + MaybeSync,
+        T: Serialize + MaybeSync,
+        Cx,
+        PP,
+    >(
         &self,
         name: &'e str,
         headers: &Hd,
@@ -133,8 +140,8 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     ) -> Result<(), Refusal>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
-        BL: Sync,
-        Cx: Sync,
+        BL: MaybeSync,
+        Cx: MaybeSync,
         PP: SendThrough<P>,
     {
         let payload =
@@ -157,7 +164,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// instead of the per-message [`PublishTransform`] one. Used per reply on the batch path: the
     /// per-message transforms do not run for batched replies (a transform wanted on both paths is
     /// added to each, reusing it on the batch side with [`for_batch`]).
-    pub(crate) async fn publish_batched<'e, T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish_batched<'e, T: Serialize + MaybeSync, Cx, PP>(
         &self,
         name: &'e str,
         value: &T,
@@ -166,9 +173,9 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         encode: <P::Payload as PayloadForm>::Encode<'e>,
     ) -> Result<(), Refusal>
     where
-        PL: Sync,
+        PL: MaybeSync,
         BL: BatchPublishTransform<Cx, P::Options>,
-        Cx: Sync,
+        Cx: MaybeSync,
         PP: SendThrough<P>,
     {
         let payload =

@@ -12,6 +12,7 @@
 
 use core::fmt;
 use core::marker::PhantomData;
+use ruststream_core::MaybeSend;
 
 use super::{
     BatchPublishTransformStack, BatchTransformIdentity, CallCodec, PublishCodec,
@@ -63,7 +64,7 @@ impl<Policy> RawReplyWiring<Policy> {
 
 // The wiring is transparent to the pairing: the bytes leave through the policy's own live form.
 #[doc(hidden)]
-impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
+impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + MaybeSend> PublishPolicy<CB>
     for RawReplyWiring<Policy>
 {
     type Live = Policy::Live;
@@ -368,10 +369,10 @@ impl PublishingDirectly for Direct {}
 impl<CB, Policy, Enc, PL, BL> PublishPolicy<CB> for ReplyWiring<Policy, Enc, PL, BL, Direct>
 where
     CB: ConnectedBroker,
-    Policy: PublishPolicy<CB> + Send,
-    Enc: PublishCodec<Codec: Clone> + Send,
-    PL: Send,
-    BL: Send,
+    Policy: PublishPolicy<CB> + MaybeSend,
+    Enc: PublishCodec<Codec: Clone> + MaybeSend,
+    PL: MaybeSend,
+    BL: MaybeSend,
 {
     type Live = TypedPublisher<Policy::Live, Enc::Codec, PL, BL>;
 
@@ -441,11 +442,11 @@ impl<Policy, Enc, PL, BL> ReplyWiring<Policy, Enc, PL, BL, Direct> {
 impl<CB, Policy, Enc, PL, BL> PublishPolicy<CB> for ReplyWiring<Policy, Enc, PL, BL, InTransaction>
 where
     CB: ConnectedBroker,
-    Policy: PublishPolicy<CB> + Send,
+    Policy: PublishPolicy<CB> + MaybeSend,
     Policy::Live: TransactionalPublisher,
-    Enc: PublishCodec<Codec: Clone> + Send,
-    PL: Send,
-    BL: Send,
+    Enc: PublishCodec<Codec: Clone> + MaybeSend,
+    PL: MaybeSend,
+    BL: MaybeSend,
 {
     type Live = Transactional<Policy::Live, Enc::Codec, PL, BL>;
 

@@ -6,6 +6,7 @@
 
 use alloc::vec::Vec;
 use core::fmt;
+use ruststream_core::{MaybeSend, MaybeSync};
 
 use crate::inject::{FromStartup, LocalFromStartup};
 use crate::metadata::OutgoingMessageMetadata;
@@ -159,8 +160,8 @@ impl_select_slot! {
 impl<B, Sub, Extra, E> FromStartup<B, Sub, Extra> for Outs<E>
 where
     B: Broker,
-    Sub: Sync,
-    Extra: Send,
+    Sub: MaybeSync,
+    Extra: MaybeSend,
     E: FromStartup<B, Sub, Extra>,
 {
     async fn resolve(

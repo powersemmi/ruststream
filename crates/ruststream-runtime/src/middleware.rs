@@ -45,6 +45,7 @@
 
 use super::context::Context;
 use super::handler::{Handler, HandlerOutcome, LocalHandler};
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 /// A function from one handler to another. Apply with [`HandlerExt::with`], or to one
 /// registration with the `layer` step of the chain that mounts it.
@@ -144,14 +145,14 @@ pub trait Layer<H> {
 /// # }
 /// # fn main() {}
 /// ```
-pub trait BlanketLayer: Send + Sync {
+pub trait BlanketLayer: MaybeSendSync {
     /// Wraps `handler`, returning the layered handler. `S` is the app's shared-state type, threaded
     /// so a blanket layer wraps a router handler without fixing its state type.
     fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
-        M: Send + Sync + 'static,
-        C: Send + 'static,
-        S: Send + Sync + 'static,
+        M: MaybeSendSync + 'static,
+        C: MaybeSend + 'static,
+        S: MaybeSendSync + 'static,
         H: Handler<M, C, S> + 'static;
 }
 
@@ -343,9 +344,9 @@ impl LocalBlanketLayer for Identity {
 impl BlanketLayer for Identity {
     fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
-        M: Send + Sync + 'static,
-        C: Send + 'static,
-        S: Send + Sync + 'static,
+        M: MaybeSendSync + 'static,
+        C: MaybeSend + 'static,
+        S: MaybeSendSync + 'static,
         H: Handler<M, C, S> + 'static,
     {
         handler
@@ -405,9 +406,9 @@ where
 {
     fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
-        M: Send + Sync + 'static,
-        C: Send + 'static,
-        S: Send + Sync + 'static,
+        M: MaybeSendSync + 'static,
+        C: MaybeSend + 'static,
+        S: MaybeSendSync + 'static,
         H: Handler<M, C, S> + 'static,
     {
         // Same order as the static `Layer` impl: inner wraps first (innermost), outer outside.
@@ -418,7 +419,7 @@ where
 
 /// Bundled, opinionated middleware layers ready to drop into a handler stack.
 pub mod layers {
-    use crate::handler::MaybeSend;
+    use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
     use tracing::{debug, info, instrument, warn};
 
     use super::super::handler::HandlerResult;
@@ -457,9 +458,9 @@ pub mod layers {
     impl BlanketLayer for TracingLayer {
         fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
         where
-            M: Send + Sync + 'static,
-            C: Send + 'static,
-            S: Send + Sync + 'static,
+            M: MaybeSendSync + 'static,
+            C: MaybeSend + 'static,
+            S: MaybeSendSync + 'static,
             H: Handler<M, C, S> + 'static,
         {
             self.layer(handler)
@@ -484,9 +485,9 @@ pub mod layers {
 
     impl<M, C, S, H> Handler<M, C, S> for TracingHandler<H>
     where
-        M: Sync,
-        C: Send,
-        S: Send + Sync,
+        M: MaybeSync,
+        C: MaybeSend,
+        S: MaybeSendSync,
         H: Handler<M, C, S>,
     {
         #[instrument(level = "trace", skip(self, msg, ctx), fields(target = self.target))]

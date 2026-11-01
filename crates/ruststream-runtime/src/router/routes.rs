@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use crate::{
     BatchSubscriber, Broker, BuildContext, Connected, Settle, Subscriber, SubscriptionSource,
@@ -101,8 +102,8 @@ pub(super) trait MountRoute<B: Broker, State, RetryPipeline> {
         sink: &mut Sink,
         setup: RetrySetup<B, Self::Context, Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
         Slot: RetrySlot<B, Self::Context, Self::Copies, RetryPipeline>;
 }
@@ -280,8 +281,8 @@ where
         sink: &mut Sink,
         setup: RetrySetup<B, Route::Context, Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
         Slot: RetrySlot<B, Route::Context, Route::Copies, RetryPipeline>,
     {
@@ -342,8 +343,8 @@ where
         sink: &mut Sink,
         setup: RetrySetup<B, Cx, Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
     {
         self.route.mount_one(
@@ -430,12 +431,12 @@ impl<B, S, H, Cx, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
     for SubscribeRoute<S, H, Cx>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<Connected<B>> + Send + 'static,
-    S::Subscriber: Send + 'static,
+    S: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+    S::Subscriber: MaybeSend + 'static,
     S::Copies: CopyPathPairing<B, Cx, RetryPipeline> + CopyPathAddress<Connected<B>, S>,
     SourceMessage<B, S>: Settle + 'static,
-    Cx: BuildContext<SourceMessage<B, S>> + Send + Sync + 'static,
-    State: Send + Sync + 'static,
+    Cx: BuildContext<SourceMessage<B, S>> + MaybeSendSync + 'static,
+    State: MaybeSendSync + 'static,
     H: Handler<SourceMessage<B, S>, Cx, State> + 'static,
     RetryPipeline: Clone,
 {
@@ -450,8 +451,8 @@ where
         sink: &mut Sink,
         setup: RetrySetup<B, Cx, Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
         Slot: RetrySlot<B, Cx, S::Copies, RetryPipeline>,
     {
@@ -478,12 +479,12 @@ where
 impl<B, S, H, Cx, State, RetryPipeline> MountRoute<B, State, RetryPipeline> for BatchRoute<S, H, Cx>
 where
     B: Broker + 'static,
-    S: SubscriptionSource<Connected<B>> + Send + 'static,
-    S::Subscriber: BatchSubscriber + Send + 'static,
+    S: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+    S::Subscriber: BatchSubscriber + MaybeSend + 'static,
     S::Copies: CopyPathPairing<B, Cx, RetryPipeline> + CopyPathAddress<Connected<B>, S>,
     SourceMessage<B, S>: Settle + 'static,
-    Cx: crate::BuildBatchContext<SourceMessage<B, S>> + Send + Sync + 'static,
-    State: Send + Sync + 'static,
+    Cx: crate::BuildBatchContext<SourceMessage<B, S>> + MaybeSendSync + 'static,
+    State: MaybeSendSync + 'static,
     H: BatchHandler<SourceBatch<B, S>, Cx, State> + 'static,
     RetryPipeline: Clone,
 {
@@ -498,8 +499,8 @@ where
         sink: &mut Sink,
         setup: RetrySetup<B, Cx, Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
         Slot: RetrySlot<B, Cx, S::Copies, RetryPipeline>,
     {
@@ -525,9 +526,9 @@ where
 impl<B, S, H, State, RetryPipeline> MountRoute<B, State, RetryPipeline> for HandleRoute<S, H>
 where
     B: Broker + 'static,
-    S: Subscriber + Send + 'static,
-    S::Message: Send + Sync + 'static,
-    State: Send + Sync + 'static,
+    S: Subscriber + MaybeSend + 'static,
+    S::Message: MaybeSendSync + 'static,
+    State: MaybeSendSync + 'static,
     H: Handler<S::Message, (), State> + 'static,
 {
     type Context = ();
@@ -541,8 +542,8 @@ where
         sink: &mut Sink,
         _setup: RetrySetup<B, (), Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
     {
         let handler = global.apply::<S::Message, (), State, H>(self.handler);
@@ -577,8 +578,8 @@ pub trait RouterDef<B: Broker, State = (), RetryPipeline = PublishIdentity>:
         retry_pipeline: &RetryPipeline,
         sink: &mut Sink,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>;
 }
 
@@ -600,8 +601,8 @@ impl<B: Broker + 'static, State, RetryPipeline> RouterDef<B, State, RetryPipelin
         _retry_pipeline: &RetryPipeline,
         _sink: &mut Sink,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
     {
     }
@@ -625,8 +626,8 @@ where
         retry_pipeline: &RetryPipeline,
         sink: &mut Sink,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
     {
         // Registrations are prepended, so the tail holds the earlier ones; mount it first to keep

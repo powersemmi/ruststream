@@ -19,6 +19,7 @@ use core::future::{poll_fn, ready};
 use core::num::NonZeroUsize;
 use core::pin::{Pin, pin};
 use core::task::{Context, Poll};
+use ruststream_core::MaybeSendSync;
 
 use bytes::BytesMut;
 use futures::Stream;
@@ -355,7 +356,7 @@ impl<State, Sub, Body, Cx, Layers> RunRoutes<State> for OpenedRoute<Sub, Body, C
 where
     Sub: Subscriber,
     Body: LocalHandler<Sub::Message, Cx, State>,
-    Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+    Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
     Layers: LocalBlanketLayer,
 {
     async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
@@ -533,7 +534,7 @@ where
     M: Settle,
     F: Deserialized,
     Inner: for<'p> LocalSliceHandler<F::Output<'p>, C, S>,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
 {
     type Scratch = ();
 

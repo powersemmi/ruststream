@@ -3,6 +3,7 @@
 use alloc::vec::Vec;
 use bytes::Bytes;
 use core::fmt;
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 use serde::Serialize;
 use tracing::warn;
 
@@ -119,7 +120,7 @@ impl fmt::Display for BatchRefusal {
 /// [`Transactional`] one (all replies of a batch inside one transaction). Sealed: implemented by
 /// exactly those two types. `Cx` is the originating batch handler's context type, threaded so the
 /// static [`PublishTransform`](crate::PublishTransform) reads the delivery while publishing each reply.
-pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
+pub trait ReplyPublisher<Cx = ()>: Sealed + MaybeSendSync {
     /// The payload form of the publisher underneath, so a batch's replies encode into what that
     /// form carries. See [`Publisher::Payload`].
     type Payload: PayloadForm;
@@ -142,9 +143,9 @@ pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         encode: <Self::Payload as PayloadForm>::Encode<'a>,
-    ) -> impl Future<Output = Result<(), BatchRefusal>> + Send
+    ) -> impl Future<Output = Result<(), BatchRefusal>> + MaybeSend
     where
-        T: Serialize + Sync,
+        T: Serialize + MaybeSync,
         PP: PublishPipeline;
 }
 
@@ -152,9 +153,9 @@ impl<P, C, PL, BL, Cx> ReplyPublisher<Cx> for TypedPublisher<P, C, PL, BL>
 where
     P: Publisher,
     C: Codec,
-    PL: Send + Sync,
+    PL: MaybeSendSync,
     BL: BatchPublishTransform<Cx, P::Options>,
-    Cx: Sync,
+    Cx: MaybeSync,
 {
     type Payload = P::Payload;
     type Codec = C;
@@ -174,7 +175,7 @@ where
         mut encode: <P::Payload as PayloadForm>::Encode<'a>,
     ) -> Result<(), BatchRefusal>
     where
-        T: Serialize + Sync,
+        T: Serialize + MaybeSync,
         PP: PublishPipeline,
     {
         for (index, reply) in replies.iter().enumerate() {
@@ -191,9 +192,9 @@ impl<P, C, PL, BL, Cx> ReplyPublisher<Cx> for Transactional<P, C, PL, BL>
 where
     P: TransactionalPublisher,
     C: Codec,
-    PL: Send + Sync,
+    PL: MaybeSendSync,
     BL: BatchPublishTransform<Cx, P::Options>,
-    Cx: Sync,
+    Cx: MaybeSync,
 {
     type Payload = P::Payload;
     type Codec = C;
@@ -213,7 +214,7 @@ where
         mut encode: <P::Payload as PayloadForm>::Encode<'a>,
     ) -> Result<(), BatchRefusal>
     where
-        T: Serialize + Sync,
+        T: Serialize + MaybeSync,
         PP: PublishPipeline,
     {
         let publisher = &self.inner.publisher;

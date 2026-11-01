@@ -7,6 +7,7 @@
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use ruststream_core::MaybeSendSync;
 
 use crate::context::Context;
 use crate::handle::Deserialized;
@@ -87,7 +88,7 @@ where
     M: Settle,
     F: Deserialized,
     Inner: for<'p> LocalSliceHandler<F::Output<'p>, C, S>,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
 {
     // See the `BatchHandler` impl: the values borrow the batch, so no buffer outlives it.
     type Scratch = ();

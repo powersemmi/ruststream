@@ -122,7 +122,7 @@ pub use schema::{
     NameTemplate, NoHeaders, OutgoingDestination, WithHeaders,
 };
 #[doc(hidden)]
-pub use send::{MaybeSend, MaybeSendSync};
+pub use send::{MaybeSend, MaybeSendSync, MaybeSync};
 #[cfg(feature = "alloc")]
 pub use subscriber::Subscriber;
 #[cfg(feature = "alloc")]

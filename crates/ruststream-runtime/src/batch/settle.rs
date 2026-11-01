@@ -4,6 +4,7 @@
 use alloc::vec::Vec;
 #[cfg(feature = "testing")]
 use bytes::Bytes;
+use ruststream_core::MaybeSendSync;
 use tracing::error;
 
 use super::{BatchResult, UniformFan, uniform_batch};
@@ -67,7 +68,7 @@ pub(super) async fn settle_split_batch<M, C, Host>(
     host: &Host,
 ) where
     M: Settle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if rejected.is_empty() {
@@ -129,7 +130,7 @@ async fn settle_erroring<M, C, Host>(
     host: &Host,
 ) where
     M: Settle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     let reaction = Some(Reaction::new(error, after));
@@ -157,7 +158,7 @@ pub(crate) async fn settle_batch<M, C, Host>(
     host: &Host,
 ) where
     M: Settle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     settle_lent_batch(
@@ -228,7 +229,7 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
     lent: LentValues,
 ) where
     M: Settle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     // Every batch form funnels its batch through here, which is the one place that knows both

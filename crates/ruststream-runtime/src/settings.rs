@@ -39,6 +39,7 @@ use alloc::borrow::Cow;
 use core::fmt;
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
+use ruststream_core::MaybeSendSync;
 
 use crate::codec::Codec;
 use crate::handle::{AsDeclared, IntoDeclared};
@@ -261,7 +262,7 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
 #[doc(hidden)]
 pub trait DefinitionInputCodec<Input, Surface> {
     /// The resolved codec.
-    type Codec: Clone + Send + Sync + 'static;
+    type Codec: Clone + MaybeSendSync + 'static;
 
     /// Produces it, fresh per registration.
     fn resolve(&self, surface: &Surface) -> Self::Codec;
@@ -277,7 +278,7 @@ impl<Input, Surface: InputCodec<Input>> DefinitionInputCodec<Input, Surface> for
 
 impl<T, Surface, C> DefinitionInputCodec<Decoded<T>, Surface> for C
 where
-    C: Codec + Clone + Send + Sync + 'static,
+    C: Codec + Clone + MaybeSendSync + 'static,
 {
     type Codec = C;
 
@@ -289,7 +290,7 @@ where
 // The override applies to a pair input the same way: the payload side decodes with it.
 impl<H, P, Surface, C> DefinitionInputCodec<DecodedPair<H, P>, Surface> for C
 where
-    C: Codec + Clone + Send + Sync + 'static,
+    C: Codec + Clone + MaybeSendSync + 'static,
 {
     type Codec = C;
 
@@ -320,7 +321,7 @@ impl<T, Surface, C: Codec> DefinitionInputCodec<Carried<T>, Surface> for C {
 #[doc(hidden)]
 pub trait MountsWith<Input, Surface, Conn> {
     /// What the adapter decodes with.
-    type Codec: Clone + Send + Sync + 'static;
+    type Codec: Clone + MaybeSendSync + 'static;
 
     /// Produces it, fresh per registration.
     fn mounted_codec(&self, surface: &Surface) -> Self::Codec;

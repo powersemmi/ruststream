@@ -7,6 +7,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 use core::{any, fmt};
+use ruststream_core::MaybeSendSync;
 
 use tracing::warn;
 
@@ -88,9 +89,9 @@ pub(super) fn settle_solo(verdict: Result<(), HandlerOutcome>) -> HandlerOutcome
 
 impl<T, C, S, H> Handler<T, C, S> for SoloBody<Solo<T>, C, H>
 where
-    T: Input<Axis = Solo<T>> + Send + Sync + 'static,
-    C: Send + Sync,
-    S: Send + Sync,
+    T: Input<Axis = Solo<T>> + MaybeSendSync + 'static,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<T, (), (), C, S>,
 {
     async fn handle(&self, msg: &T, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
@@ -102,9 +103,9 @@ where
 // runs and settles, like the decoded one.
 impl<T, C, S, H> Handler<T, C, S> for SoloBody<SoloSet<T>, C, H>
 where
-    T: Input<Axis = SoloSet<T>> + Send + Sync + 'static,
-    C: Send + Sync,
-    S: Send + Sync,
+    T: Input<Axis = SoloSet<T>> + MaybeSendSync + 'static,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<T, (), (), C, S>,
 {
     async fn handle(&self, msg: &T, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
@@ -114,11 +115,11 @@ where
 
 impl<F, C, S, H> Handler<[u8], C, S> for SoloBody<SoloDeserialized<F>, C, H>
 where
-    F: Deserialized + Send + Sync + 'static,
+    F: Deserialized + MaybeSendSync + 'static,
     // Pinning the axis is what normalizes the generic output's verdict family.
     for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
-    C: Send + Sync,
-    S: Send + Sync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: for<'p> Handle<F::Output<'p>, (), (), C, S>,
 {
     async fn handle(&self, msg: &[u8], ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
@@ -134,9 +135,9 @@ where
 // settles, like the decoded one.
 impl<T, C, S, H> Handler<T, C, S> for SoloBody<SoloCarried<T>, C, H>
 where
-    T: Input<Axis = SoloCarried<T>> + Clone + Send + Sync + 'static,
-    C: Send + Sync,
-    S: Send + Sync,
+    T: Input<Axis = SoloCarried<T>> + Clone + MaybeSendSync + 'static,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<T, (), (), C, S>,
 {
     async fn handle(&self, msg: &T, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
@@ -147,10 +148,10 @@ where
 impl<Hd, P, C, S, H> Handler<Message<Hd, P>, C, S> for SoloBody<SoloPair<Hd, P>, C, H>
 where
     Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
-    Hd: Send + Sync + 'static,
-    P: Send + Sync + 'static,
-    C: Send + Sync,
-    S: Send + Sync,
+    Hd: MaybeSendSync + 'static,
+    P: MaybeSendSync + 'static,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<Message<Hd, P>, (), (), C, S>,
 {
     async fn handle(&self, msg: &Message<Hd, P>, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
@@ -167,7 +168,7 @@ macro_rules! impl_local_solo {
         #[allow(clippy::future_not_send)]
         impl<T, C, S, H> LocalHandler<T, C, S> for SoloBody<$axis<T>, C, H>
         where
-            T: Input<Axis = $axis<T>> $(+ $extra)? + Send + Sync + 'static,
+            T: Input<Axis = $axis<T>> $(+ $extra)? + MaybeSendSync + 'static,
             H: LocalHandle<T, (), (), C, S>,
         {
             async fn handle(&self, msg: &T, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
@@ -183,7 +184,7 @@ impl_local_solo!(Solo, SoloSet, SoloCarried + Clone);
 #[allow(clippy::future_not_send)]
 impl<F, C, S, H> LocalHandler<[u8], C, S> for SoloBody<SoloDeserialized<F>, C, H>
 where
-    F: Deserialized + Send + Sync + 'static,
+    F: Deserialized + MaybeSendSync + 'static,
     for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
     H: for<'p> LocalHandle<F::Output<'p>, (), (), C, S>,
 {
@@ -201,8 +202,8 @@ where
 impl<Hd, P, C, S, H> LocalHandler<Message<Hd, P>, C, S> for SoloBody<SoloPair<Hd, P>, C, H>
 where
     Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
-    Hd: Send + Sync + 'static,
-    P: Send + Sync + 'static,
+    Hd: MaybeSendSync + 'static,
+    P: MaybeSendSync + 'static,
     H: LocalHandle<Message<Hd, P>, (), (), C, S>,
 {
     async fn handle(&self, msg: &Message<Hd, P>, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
@@ -322,10 +323,10 @@ pub(super) async fn run_batch<T, O, C, S, H>(
 where
     [T]: Input<Axis: BatchedAxis>,
     H: Handle<[T], (), O, C, S>,
-    T: Send + Sync,
-    O: Send + Sync,
-    C: Send + Sync,
-    S: Send + Sync,
+    T: MaybeSendSync,
+    O: MaybeSendSync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
 {
     let verdict = body.handle(batch, outs, ctx).await;
     settle_batch(verdict, batch.len(), ctx.name())
@@ -334,9 +335,9 @@ where
 impl<T, C, S, H> SliceHandler<T, C, S> for BatchBody<Batch<T>, H>
 where
     [T]: Input<Axis = Batch<T>>,
-    T: Send + Sync + 'static,
-    C: Send + Sync,
-    S: Send + Sync,
+    T: MaybeSendSync + 'static,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
@@ -347,9 +348,9 @@ where
 impl<T, C, S, H> SliceHandler<T, C, S> for BatchBody<BatchSet<T>, H>
 where
     [T]: Input<Axis = BatchSet<T>>,
-    T: Send + Sync + 'static,
-    C: Send + Sync,
-    S: Send + Sync,
+    T: MaybeSendSync + 'static,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
@@ -362,9 +363,9 @@ where
 impl<T, C, S, H> SliceHandler<T, C, S> for BatchBody<BatchCarried<T>, H>
 where
     [T]: Input<Axis = BatchCarried<T>>,
-    T: Clone + Send + Sync + 'static,
-    C: Send + Sync,
-    S: Send + Sync,
+    T: Clone + MaybeSendSync + 'static,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
@@ -375,10 +376,10 @@ where
 impl<Hd, P, C, S, H> SliceHandler<Message<Hd, P>, C, S> for BatchBody<BatchPair<Hd, P>, H>
 where
     [Message<Hd, P>]: Input<Axis = BatchPair<Hd, P>>,
-    Hd: Send + Sync + 'static,
-    P: Send + Sync + 'static,
-    C: Send + Sync,
-    S: Send + Sync,
+    Hd: MaybeSendSync + 'static,
+    P: MaybeSendSync + 'static,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<[Message<Hd, P>], (), (), C, S>,
 {
     async fn handle_slice(
@@ -397,11 +398,11 @@ where
 // normalizes the verdict family.
 impl<T, F, C, S, H> SliceHandler<T, C, S> for BatchBody<BatchDeserialized<F>, H>
 where
-    T: Send + Sync,
-    F: Deserialized + Send + Sync + 'static,
+    T: MaybeSendSync,
+    F: Deserialized + MaybeSendSync + 'static,
     [T]: Input<Axis = BatchDeserialized<F>>,
-    C: Send + Sync,
-    S: Send + Sync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<[T], (), (), C, S>,
 {
     async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
@@ -434,7 +435,7 @@ macro_rules! impl_local_batch {
         impl<T, C, S, H> LocalSliceHandler<T, C, S> for BatchBody<$axis<T>, H>
         where
             [T]: Input<Axis = $axis<T>>,
-            T: Send + Sync + 'static $(+ $extra)?,
+            T: MaybeSendSync + 'static $(+ $extra)?,
             H: LocalHandle<[T], (), (), C, S>,
         {
             fn handle_slice(
@@ -455,8 +456,8 @@ impl_local_batch!(Batch, BatchSet, BatchCarried + Clone);
 impl<Hd, P, C, S, H> LocalSliceHandler<Message<Hd, P>, C, S> for BatchBody<BatchPair<Hd, P>, H>
 where
     [Message<Hd, P>]: Input<Axis = BatchPair<Hd, P>>,
-    Hd: Send + Sync + 'static,
-    P: Send + Sync + 'static,
+    Hd: MaybeSendSync + 'static,
+    P: MaybeSendSync + 'static,
     H: LocalHandle<[Message<Hd, P>], (), (), C, S>,
 {
     fn handle_slice(
@@ -472,7 +473,7 @@ where
 #[allow(clippy::future_not_send)]
 impl<T, F, C, S, H> LocalSliceHandler<T, C, S> for BatchBody<BatchDeserialized<F>, H>
 where
-    F: Deserialized + Send + Sync + 'static,
+    F: Deserialized + MaybeSendSync + 'static,
     [T]: Input<Axis = BatchDeserialized<F>>,
     H: LocalHandle<[T], (), (), C, S>,
 {

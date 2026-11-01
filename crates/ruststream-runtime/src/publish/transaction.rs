@@ -2,6 +2,7 @@
 
 use core::fmt;
 use core::marker::PhantomData;
+use ruststream_core::MaybeSync;
 
 use bytes::BytesMut;
 use ruststream_core::KeptPayload;
@@ -133,7 +134,7 @@ where
     ///
     /// As with [`Publisher::publish`](crate::Publisher::publish), cancel safety is broker-defined: dropping the future
     /// mid-flight may leave the message in an indeterminate state inside the transaction.
-    pub async fn publish<T: Serialize + Sync>(
+    pub async fn publish<T: Serialize + MaybeSync>(
         &mut self,
         name: &str,
         value: &T,
@@ -308,7 +309,7 @@ where
         value: &T,
     ) -> Result<(), TransactionPublishError<Txn::Error>>
     where
-        T: Serialize + Sync,
+        T: Serialize + MaybeSync,
     {
         // As on the borrowed scope: the buffer is this publish's own, and only a transaction
         // that lends the payload writes into it.

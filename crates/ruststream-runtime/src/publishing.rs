@@ -9,10 +9,10 @@
 //! reply codec). The destination name comes from the macro; the publisher and codec come from
 //! the chain.
 
-use crate::handler::MaybeSend;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::{any, fmt};
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
 use bytes::{Bytes, BytesMut};
 use serde::Serialize;
@@ -45,7 +45,7 @@ use crate::publish_failure::{Refusal, publish_done, publish_lost};
 /// [`Publisher`] sends the reply's bytes as-is (no codec, no transforms, no pipeline). One
 /// [`PublishingHandler`] serves both, so the encoded and the byte reply forms differ only in
 /// what pairs at the include site.
-pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
+pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: MaybeSendSync {
     /// The payload form of the publisher this wiring ends in, so the reply encodes into what
     /// that form carries. See [`Publisher::Payload`].
     type Payload: PayloadForm;
@@ -58,7 +58,7 @@ pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + Send;
+    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend;
 
     /// The bytes of `reply` that a lending publisher was shown and that do not sit in the
     /// encode buffer: the value's own, which the reply holds. A failure path, taken only where
@@ -77,7 +77,7 @@ pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
             `Message<Headers, Payload>` pair whose halves are; reply bytes that must leave \
             unencoded ride a `#[derive(Serialized)]` reply type instead"
 )]
-pub(crate) trait EncodeReply: Send + Sync {
+pub(crate) trait EncodeReply: MaybeSendSync {
     /// Delivers `self` through the typed reply stack.
     #[doc(hidden)]
     fn deliver_typed<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
@@ -87,12 +87,12 @@ pub(crate) trait EncodeReply: Send + Sync {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + Send
+    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
-        Cx: Sync,
+        Cx: MaybeSync,
         PP: PublishPipeline;
 
     /// Delivers `self` through the typed reply stack of a publisher of either family: the body
@@ -111,7 +111,7 @@ pub(crate) trait EncodeReply: Send + Sync {
         Leaf: Publisher,
         ReplyCodec: Codec,
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
-        Cx: Sync,
+        Cx: MaybeSync,
         PP: SendThrough<Leaf>;
 
     /// The bytes this reply encodes to with `codec`, for a continuation after a failed batch.
@@ -120,7 +120,7 @@ pub(crate) trait EncodeReply: Send + Sync {
     fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> Bytes;
 }
 
-impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
+impl<Reply: Serialize + MaybeSendSync> EncodeReply for Reply {
     // The inner future is returned rather than awaited: this is a spelling of the reply's shape,
     // and a state machine of its own here would sit in every dispatch's future for nothing.
     fn deliver_typed<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
@@ -130,12 +130,12 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + Send
+    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
-        Cx: Sync,
+        Cx: MaybeSync,
         PP: PublishPipeline,
     {
         stack.publish(name, self, pipeline, cx, encode)
@@ -155,7 +155,7 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
         Leaf: Publisher,
         ReplyCodec: Codec,
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
-        Cx: Sync,
+        Cx: MaybeSync,
         PP: SendThrough<Leaf>,
     {
         stack.publish(name, self, pipeline, cx, encode)
@@ -170,8 +170,8 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
 
 impl<Hd, Pd> EncodeReply for super::Message<Hd, Pd>
 where
-    Hd: Serialize + Send + Sync,
-    Pd: Serialize + Send + Sync,
+    Hd: Serialize + MaybeSendSync,
+    Pd: Serialize + MaybeSendSync,
 {
     fn deliver_typed<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
         &self,
@@ -180,12 +180,12 @@ where
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + Send
+    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
-        Cx: Sync,
+        Cx: MaybeSync,
         PP: PublishPipeline,
     {
         stack.publish_pair(name, &self.headers, &self.body, pipeline, cx, encode)
@@ -205,7 +205,7 @@ where
         Leaf: Publisher,
         ReplyCodec: Codec,
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
-        Cx: Sync,
+        Cx: MaybeSync,
         PP: SendThrough<Leaf>,
     {
         stack.publish_pair(name, &self.headers, &self.body, pipeline, cx, encode)
@@ -225,7 +225,7 @@ impl<Reply, DeliveryCx, Pipeline, Leaf, ReplyCodec, Transforms>
     ReplySink<Reply, DeliveryCx, Pipeline> for TypedPublisher<Leaf, ReplyCodec, Transforms>
 where
     Reply: EncodeReply,
-    DeliveryCx: Sync,
+    DeliveryCx: MaybeSync,
     Pipeline: PublishPipeline,
     Leaf: Publisher,
     ReplyCodec: Codec,
@@ -242,7 +242,7 @@ where
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + Send {
+    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend {
         reply.deliver_typed(self, name, pipeline, cx, encode)
     }
 
@@ -257,9 +257,9 @@ where
 /// bytes, unencoded.
 impl<Reply, DeliveryCx, Pipeline, Bare> ReplySink<Reply, DeliveryCx, Pipeline> for Bare
 where
-    Reply: super::Serialized + Sync,
-    DeliveryCx: Sync,
-    Pipeline: Send + Sync,
+    Reply: super::Serialized + MaybeSync,
+    DeliveryCx: MaybeSync,
+    Pipeline: MaybeSendSync,
     Bare: Publisher,
 {
     type Payload = Bare::Payload;
@@ -271,7 +271,7 @@ where
         _pipeline: &Pipeline,
         _cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + Send {
+    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend {
         deliver_bare(self, name, reply, encode)
     }
 
@@ -376,7 +376,7 @@ where
             (`#[derive(Outgoing)]` with `#[outgoing(name = \"..\")]`), or name the default with \
             `reply(\"subject\")` on the attribute and `.to(\"subject\")` on the chain"
 )]
-pub trait PublishingDef: Send + Sync {
+pub trait PublishingDef: MaybeSendSync {
     /// The input kind the handler consumes ([`Decoded<T>`](super::Decoded) for a typed `&T`
     /// parameter, [`RawBytes`](super::RawBytes) for a raw `&[u8]` one).
     type Input: InputKind;
@@ -629,7 +629,7 @@ impl<Reply, DeliveryCx, Pipeline, Leaf, ReplyCodec, Transforms>
     LocalReplySink<Reply, DeliveryCx, Pipeline> for &TypedPublisher<Leaf, ReplyCodec, Transforms>
 where
     Reply: EncodeReply,
-    DeliveryCx: Sync,
+    DeliveryCx: MaybeSync,
     Pipeline: SendThrough<Leaf>,
     Leaf: Publisher,
     ReplyCodec: Codec,
@@ -687,17 +687,17 @@ where
     Msg: Settle,
     Def: PublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, Msg>,
-    Def::Injections: Send + Sync,
-    Def::Reply: Send + Sync,
-    Def::Context: Send + Sync,
+    Def::Injections: MaybeSendSync,
+    Def::Reply: MaybeSendSync,
+    Def::Context: MaybeSendSync,
     // `Send + Sync` rather than `Codec`: what the input needs of the codec is exactly what
     // `Materialize` asks for, and a raw input asks for nothing - so demanding a codec would
     // shut the byte-in/byte-out handler out of a build with no codec feature at all. The
     // thread bounds stay, because the handler is held across an await.
-    DecodeCodec: Send + Sync,
+    DecodeCodec: MaybeSendSync,
     Wiring: ReplySink<Def::Reply, Def::Context, Pipeline>,
-    Pipeline: Send + Sync,
-    State: Send + Sync,
+    Pipeline: MaybeSendSync,
+    State: MaybeSendSync,
 {
     fn handle(
         &self,

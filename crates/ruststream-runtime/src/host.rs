@@ -15,6 +15,7 @@ use bytes::Bytes;
 #[cfg(feature = "alloc")]
 use core::pin::Pin;
 use core::time::Duration;
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
@@ -190,7 +191,7 @@ pub trait ShutdownWait {
 /// its own; it is called only on a fail-fast and at the end of a stream, never per delivery. The
 /// runner implements it on its shutdown.
 #[doc(hidden)]
-pub trait Halt: Sync {
+pub trait Halt: MaybeSync {
     /// Records `reason` against `subscription` (the first one recorded wins) and starts the
     /// service's teardown.
     fn fail(&self, subscription: &str, reason: &str);
@@ -207,11 +208,11 @@ pub trait Halt: Sync {
 /// by static dispatch: the work is the caller's own future, spawned as it is, and the delayed
 /// form takes the delay rather than a timer, so the runner arms it on its own clock.
 #[doc(hidden)]
-pub trait Detach: Send + Sync {
+pub trait Detach: MaybeSendSync {
     /// Runs `work` beside the delivery that left it.
     fn detach<Work>(&self, work: Work)
     where
-        Work: Future<Output = ()> + Send + 'static;
+        Work: Future<Output = ()> + MaybeSend + 'static;
 
     /// Runs a continuation the delivery already boxed: an `and_after` continuation or a
     /// post-settle hook.
@@ -228,7 +229,7 @@ pub trait Detach: Send + Sync {
     /// call takes that reservation.
     fn detach_after<Work>(&self, delay: Duration, work: Work)
     where
-        Work: Future<Output = ()> + Send + 'static;
+        Work: Future<Output = ()> + MaybeSend + 'static;
 
     /// Runs the work `make` builds once `delay` has passed on the runner's clock.
     ///
@@ -239,8 +240,8 @@ pub trait Detach: Send + Sync {
     /// [`detach_after`](Self::detach_after).
     fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
     where
-        Make: FnOnce() -> Work + Send + 'static,
-        Work: Future<Output = ()> + Send + 'static,
+        Make: FnOnce() -> Work + MaybeSend + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static,
     {
         self.detach_after(delay, make());
     }
@@ -280,8 +281,8 @@ pub trait HostDetach {
     /// [`Detach::detach_after_with`].
     fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
     where
-        Make: FnOnce() -> Work + Send + 'static,
-        Work: Future<Output = ()> + Send + 'static;
+        Make: FnOnce() -> Work + MaybeSend + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static;
 
     /// Takes room for one delayed copy; `false` when the host has none left.
     fn reserve(&self) -> bool;
@@ -318,8 +319,8 @@ impl<Host: Detach> HostDetach for Host {
     #[inline]
     fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
     where
-        Make: FnOnce() -> Work + Send + 'static,
-        Work: Future<Output = ()> + Send + 'static,
+        Make: FnOnce() -> Work + MaybeSend + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static,
     {
         Detach::detach_after_with(self, delay, make);
     }
@@ -371,8 +372,8 @@ impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
     #[inline]
     fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
     where
-        Make: FnOnce() -> Work + Send + 'static,
-        Work: Future<Output = ()> + Send + 'static,
+        Make: FnOnce() -> Work + MaybeSend + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static,
     {
         LocalDetach::detach_after(self.0, delay, make());
     }
@@ -412,11 +413,11 @@ impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
 /// qualifies, and so does one with a retry route ([`Copying`]). Machinery; never named directly.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub trait SendHost<Cx>: HostDetach<Kept = NoKept, Retry: RetryCopies<Cx>> + Send + Sync {}
+pub trait SendHost<Cx>: HostDetach<Kept = NoKept, Retry: RetryCopies<Cx>> + MaybeSendSync {}
 
 #[cfg(feature = "alloc")]
 impl<Cx, Host> SendHost<Cx> for Host where
-    Host: HostDetach<Kept = NoKept, Retry: RetryCopies<Cx>> + Send + Sync
+    Host: HostDetach<Kept = NoKept, Retry: RetryCopies<Cx>> + MaybeSendSync
 {
 }
 
@@ -452,8 +453,8 @@ impl<Host: Detach, Retry: 'static> HostDetach for Copying<Host, Retry> {
     #[inline]
     fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
     where
-        Make: FnOnce() -> Work + Send + 'static,
-        Work: Future<Output = ()> + Send + 'static,
+        Make: FnOnce() -> Work + MaybeSend + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static,
     {
         Detach::detach_after_with(&self.host, delay, make);
     }
@@ -504,8 +505,8 @@ impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept>
     #[inline]
     fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
     where
-        Make: FnOnce() -> Work + Send + 'static,
-        Work: Future<Output = ()> + Send + 'static,
+        Make: FnOnce() -> Work + MaybeSend + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static,
     {
         LocalDetach::detach_after(self.0, delay, make());
     }

@@ -109,7 +109,7 @@ impl<M, W, E, Pipe, Body> SlotPublish<M, Body> for Slot<M, W, E, Pipe, Body>
 where
     M: OutSlot,
     W: Publisher,
-    E: Codec + Send + Sync,
+    E: Codec + MaybeSendSync,
     Pipe: OutPipeline<W>,
 {
     type Enc = E;
@@ -256,7 +256,7 @@ impl<M, W, E, Pipe, Body> SlotTransactions<M, Body> for Slot<M, W, E, Pipe, Body
 where
     M: OutSlot + 'static,
     W: Publisher + 'static,
-    E: Codec + Send + Sync + 'static,
+    E: Codec + MaybeSendSync + 'static,
     Pipe: OutPipeline<W>,
 {
     fn begin(

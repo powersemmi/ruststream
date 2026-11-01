@@ -11,10 +11,10 @@
 //! Associated types are named through the wrapped definition rather than through `Self`: the
 //! builder implements every definition form, so a bare `Self::Input` would be ambiguous.
 
-use crate::handler::MaybeSend;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use crate::ConnectedBroker;
 
@@ -135,9 +135,9 @@ where
 impl<Def, Src, State, DC> InjectDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: InjectDef,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     type Input = <Def as InjectDef>::Input;
     type Context = <Def as InjectDef>::Context;
@@ -151,9 +151,9 @@ where
 impl<Def, Src, State, DC, S> InjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: InjectCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     fn call(
         &self,
@@ -168,9 +168,9 @@ where
 impl<Def, Src, State, DC, S> LocalInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: LocalInjectCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     fn call_local(
         &self,
@@ -185,9 +185,9 @@ where
 impl<Def, Src, State, DC> PublishingDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: PublishingDef,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     type Input = <Def as PublishingDef>::Input;
     type Injections = <Def as PublishingDef>::Injections;
@@ -210,9 +210,9 @@ where
 impl<Def, Src, State, DC, S> PublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: PublishingCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     fn call(
         &self,
@@ -228,9 +228,9 @@ where
 impl<Def, Src, State, DC, S> LocalPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: LocalPublishingCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     fn call_local(
         &self,
@@ -245,9 +245,9 @@ where
 impl<Def, Src, State, DC> BatchInjectDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectDef,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     type Input = <Def as BatchInjectDef>::Input;
     type Source = Src;
@@ -261,9 +261,9 @@ where
 impl<Def, Src, State, DC, S> BatchInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     fn call(
         &self,
@@ -278,9 +278,9 @@ where
 impl<Def, Src, State, DC> BatchPublishingDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingDef,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     type Input = <Def as BatchPublishingDef>::Input;
     type Injections = <Def as BatchPublishingDef>::Injections;
@@ -303,9 +303,9 @@ where
 impl<Def, Src, State, DC, S> BatchPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     fn call(
         &self,

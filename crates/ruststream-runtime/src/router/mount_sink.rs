@@ -2,6 +2,7 @@
 
 use alloc::sync::Arc;
 use core::num::NonZeroUsize;
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use crate::batch::BatchHandler;
 use crate::dispatch::{Delivery, Workers};
@@ -36,8 +37,8 @@ pub trait MountSink<B: Broker, State> {
         meta: HandlerMetadata,
         policies: FailurePolicies,
     ) where
-        Sub: Subscriber + Send + 'static,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        Sub: Subscriber + MaybeSend + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Body: Handler<Sub::Message, Cx, State> + 'static;
 
     /// A subscription `open` opens at startup against the connected broker, dispatched under the
@@ -55,14 +56,16 @@ pub trait MountSink<B: Broker, State> {
         global: Global,
         open: Open,
     ) where
-        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
+        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening
+            + MaybeSend
+            + 'static,
         Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>>,
-        Sub: Subscriber + Send + 'static,
-        Sub::Message: Send + Sync + 'static,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
-        State: Send + Sync + 'static,
+        Sub: Subscriber + MaybeSend + 'static,
+        Sub::Message: MaybeSendSync + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
+        State: MaybeSendSync + 'static,
         Body: Handler<Sub::Message, Cx, State> + 'static,
-        Global: BlanketLayer + Send + 'static,
+        Global: BlanketLayer + MaybeSend + 'static,
         Retry: RetryCopies<Cx>;
 
     /// The batch counterpart of [`push_workers`](Self::push_workers): the loop drives
@@ -75,12 +78,14 @@ pub trait MountSink<B: Broker, State> {
         batch_size: NonZeroUsize,
         open: Open,
     ) where
-        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
+        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening
+            + MaybeSend
+            + 'static,
         Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>>,
-        Sub: BatchSubscriber + Send + 'static,
-        Sub::Message: Send + 'static,
+        Sub: BatchSubscriber + MaybeSend + 'static,
+        Sub::Message: MaybeSend + 'static,
         Sub::Batch: 'static,
-        Cx: Send + Sync + 'static,
+        Cx: MaybeSendSync + 'static,
         Body: BatchHandler<Sub::Batch, Cx, State> + 'static,
         Retry: RetryCopies<Cx>;
     /// A subscription whose handler the mount built in full, layers included: the runner takes
@@ -94,12 +99,14 @@ pub trait MountSink<B: Broker, State> {
         handler: Body,
         open: Open,
     ) where
-        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
+        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening
+            + MaybeSend
+            + 'static,
         Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>>,
-        Sub: Subscriber + Send + 'static,
-        Sub::Message: Send + Sync + 'static,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
-        State: Send + Sync + 'static,
+        Sub: Subscriber + MaybeSend + 'static,
+        Sub::Message: MaybeSendSync + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
+        State: MaybeSendSync + 'static,
         Body: Handler<Sub::Message, Cx, State> + 'static,
         Retry: RetryCopies<Cx>;
 
@@ -113,12 +120,14 @@ pub trait MountSink<B: Broker, State> {
         handler: Body,
         open: Open,
     ) where
-        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
+        Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening
+            + MaybeSend
+            + 'static,
         Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>>,
-        Sub: BatchSubscriber + Send + 'static,
-        Sub::Message: Send + 'static,
+        Sub: BatchSubscriber + MaybeSend + 'static,
+        Sub::Message: MaybeSend + 'static,
         Sub::Batch: 'static,
-        Cx: Send + Sync + 'static,
+        Cx: MaybeSendSync + 'static,
         Body: BatchHandler<Sub::Batch, Cx, State> + 'static,
         Retry: RetryCopies<Cx>;
 }

@@ -38,3 +38,20 @@ pub trait MaybeSendSync {}
 
 #[cfg(not(feature = "send"))]
 impl<Value: ?Sized> MaybeSendSync for Value {}
+
+/// `Sync` where the `send` feature is on, and nothing otherwise: what a value borrowed across a
+/// thread-crossing future must be.
+#[cfg(feature = "send")]
+#[doc(hidden)]
+pub trait MaybeSync: Sync {}
+
+#[cfg(feature = "send")]
+impl<Value: Sync + ?Sized> MaybeSync for Value {}
+
+/// See the `send` form: without the feature every type is `MaybeSync`.
+#[cfg(not(feature = "send"))]
+#[doc(hidden)]
+pub trait MaybeSync {}
+
+#[cfg(not(feature = "send"))]
+impl<Value: ?Sized> MaybeSync for Value {}

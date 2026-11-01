@@ -252,7 +252,7 @@ pub use in_messages::{
 #[cfg(feature = "alloc")]
 pub use inject::Out;
 #[doc(hidden)]
-pub use ruststream_core::{MaybeSend, MaybeSendSync};
+pub use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 // Public and hidden: a hand-written low-level def (`SubscriberDef` / `BatchDef`) names its
 // input kind, and the self-deserializing one is how such a def opts onto the byte transport.
 #[cfg(feature = "std")]

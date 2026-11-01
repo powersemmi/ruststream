@@ -6,7 +6,7 @@ use core::{convert::Infallible, fmt, pin::Pin, time::Duration};
 
 use super::context::Context;
 use crate::publish_failure::{ErrorHook, Failures};
-pub(crate) use ruststream_core::MaybeSend;
+pub(crate) use ruststream_core::{MaybeSend, MaybeSendSync};
 
 /// A boxed, owned continuation run after a message is settled: what a [`HandlerOutcome`] hands
 /// the dispatcher, and what the dispatcher hands the runner's host.
@@ -712,7 +712,7 @@ impl<E> IntoOutcome for Result<HandlerOutcome, E> {
             the settlement, or a closure `|msg: &{M}, ctx: &mut Context| async {{ .. }}` whose \
             future does not borrow its arguments"
 )]
-pub trait Handler<M: ?Sized, C = (), S = ()>: Send + Sync {
+pub trait Handler<M: ?Sized, C = (), S = ()>: MaybeSendSync {
     /// Handle one input, with the per-delivery [`Context`] (carrying the broker's typed context
     /// `C` and the shared application state `S`). The returned [`HandlerOutcome`] carries the
     /// status the dispatcher settles by and any post-settle continuation.
@@ -725,8 +725,8 @@ pub trait Handler<M: ?Sized, C = (), S = ()>: Send + Sync {
 
 impl<M: ?Sized, C, S, F, Fut> Handler<M, C, S> for F
 where
-    F: Fn(&M, &mut Context<'_, C, S>) -> Fut + Send + Sync,
-    Fut: Future + Send,
+    F: Fn(&M, &mut Context<'_, C, S>) -> Fut + MaybeSendSync,
+    Fut: Future + MaybeSend,
     Fut::Output: IntoOutcome,
 {
     fn handle(

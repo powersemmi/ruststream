@@ -7,8 +7,8 @@
 //! site ([`Handle`] for [`FnBody`]), and a runner that polls on one thread asks nothing
 //! ([`LocalHandle`] for [`FnBody`]). The expansion itself is the same for both.
 
-use crate::handler::MaybeSend;
 use core::marker::PhantomData;
+use ruststream_core::{MaybeSend, MaybeSync};
 
 use super::reply::DeclaresReply;
 use super::{Handle, Input, LocalHandle, Verdict};
@@ -89,8 +89,8 @@ impl<M, F> FnBody<M, F> {
 impl<M, F, In, R, O, C, S> Handle<In, R, O, C, S> for FnBody<M, F>
 where
     In: ?Sized + Input,
-    F: Send
-        + Sync
+    F: MaybeSend
+        + MaybeSync
         + for<'i, 'o, 'c, 'x> BodyCall<
             M,
             &'i In,
@@ -98,7 +98,8 @@ where
             &'c mut Context<'x, C, S>,
             Out = Verdict<In, R>,
         >,
-    for<'i, 'o, 'c, 'x> <F as BodyCall<M, &'i In, &'o O, &'c mut Context<'x, C, S>>>::Fut: Send,
+    for<'i, 'o, 'c, 'x> <F as BodyCall<M, &'i In, &'o O, &'c mut Context<'x, C, S>>>::Fut:
+        MaybeSend,
 {
     fn handle(
         &self,

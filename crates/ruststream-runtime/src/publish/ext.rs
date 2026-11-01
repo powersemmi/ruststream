@@ -1,6 +1,7 @@
 //! The publish builder's entry points on a bare [`Publisher`].
 
 use crate::{OutgoingDestination, OwnedTransactions, Publisher, TransactionalPublisher};
+use ruststream_core::MaybeSend;
 
 use super::builder::{HeadersUnset, MessageBody, PublishBuilder, message_of};
 use super::sink::UnnamedCodec;
@@ -122,7 +123,7 @@ pub trait PublishExt: Publisher {
         &self,
     ) -> impl Future<
         Output = Result<TransactionScope<'_, Self, UnnamedCodec, AnyDeclared>, Self::Error>,
-    > + Send
+    > + MaybeSend
     where
         Self: TransactionalPublisher + Sized,
     {
@@ -172,7 +173,7 @@ pub trait PublishExt: Publisher {
             TypedTransaction<<Self as OwnedTransactions>::Transaction, UnnamedCodec, AnyDeclared>,
             Self::Error,
         >,
-    > + Send
+    > + MaybeSend
     where
         Self: OwnedTransactions + Sized,
     {

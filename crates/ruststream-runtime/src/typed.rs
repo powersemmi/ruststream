@@ -7,9 +7,9 @@
 //! passed in here. Both use the same [`Layer`](super::Layer) / [`HandlerExt`](super::HandlerExt)
 //! machinery, just at different inputs.
 
-use crate::handler::MaybeSend;
 use alloc::format;
 use core::{fmt, marker::PhantomData};
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use crate::Settle;
 use crate::codec::{Codec, CodecError};
@@ -31,7 +31,7 @@ use super::input::{Decoded, Materialize, REPORTED};
 pub fn typed<M, T, C, H>(codec: C, inner: H) -> Typed<M, Decoded<T>, C, H>
 where
     M: Settle,
-    T: DeserializeOwned + Send + Sync + 'static,
+    T: DeserializeOwned + MaybeSendSync + 'static,
     C: Codec,
 {
     Typed::over(codec, inner)
@@ -84,9 +84,9 @@ impl<M, Input, DecodeCodec, Inner, Cx, St> Handler<M, Cx, St>
 where
     M: Settle,
     Input: Materialize<DecodeCodec, M>,
-    DecodeCodec: Send + Sync,
-    Cx: Send,
-    St: Send + Sync,
+    DecodeCodec: MaybeSendSync,
+    Cx: MaybeSend,
+    St: MaybeSendSync,
     Inner: Handler<Input::Target, Cx, St>,
 {
     fn handle(

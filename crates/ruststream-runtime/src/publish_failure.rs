@@ -552,7 +552,7 @@ impl FusedIterator for Failures {}
 
 /// The `.error` closure, erased: `Send` where the runtime crate's `tokio` feature is on.
 #[cfg(feature = "tokio")]
-trait Reactor: Send {
+trait Reactor: MaybeSend {
     fn react(self: Box<Self>, failures: Failures) -> Continuation;
 }
 
