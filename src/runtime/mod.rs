@@ -123,9 +123,7 @@ pub use ruststream_runtime::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{LocalBindSlots, LocalHasSlots};
-pub use ruststream_runtime::{
-    LocalHandle, LocalOutEntry, LocalSlot, PublishSink, local_subscriber,
-};
+pub use ruststream_runtime::{LocalHandle, LocalOutEntry, LocalSlot, local_subscriber};
 pub use ruststream_runtime::{Placement, RETRY_COUNT_HEADER, Workers};
 #[cfg(feature = "poll-diagnostics")]
 pub use ruststream_runtime::{PollDiagnostics, PollReport};

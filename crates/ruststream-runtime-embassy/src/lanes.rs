@@ -14,6 +14,7 @@ use core::array;
 use core::hash::Hasher as _;
 use core::marker::PhantomData;
 use core::pin::pin;
+use ruststream_core::MaybeSendSync;
 
 use bytes::BytesMut;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -81,7 +82,7 @@ pub trait Lanes {
     where
         Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>;
 }
@@ -97,7 +98,7 @@ impl Lanes for OneLane {
     where
         Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
@@ -116,7 +117,7 @@ impl<const WORKERS: usize> Lanes for Pool<WORKERS> {
     where
         Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
@@ -135,7 +136,7 @@ impl<const LANES: usize> Lanes for Keyed<LANES> {
     where
         Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
@@ -156,7 +157,7 @@ impl<L: Lanes> LocalDispatch for EmbeddedPlan<L, NoRoom> {
     ) where
         Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: LocalDetach,
         Path: PrepareCopy<Cx>,
@@ -180,7 +181,7 @@ impl<L: Lanes, const CAPACITY: usize> LocalDispatch for EmbeddedPlan<L, Room<CAP
     ) where
         Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
-        Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: LocalDetach,
         Path: PrepareCopy<Cx>,
@@ -219,7 +220,7 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
 ) where
     Sub: Subscriber,
     Body: LocalHandler<Sub::Message, Cx, State>,
-    Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+    Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
     Signal: ShutdownWait + Halt + Clone,
     Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
 {
@@ -326,7 +327,7 @@ async fn work<Message, Body, Cx, State, Signal, Host, const COUNT: usize>(
 ) where
     Message: Settle,
     Body: LocalHandler<Message, Cx, State>,
-    Cx: BuildContext<Message> + Send + Sync + 'static,
+    Cx: BuildContext<Message> + MaybeSendSync + 'static,
     Signal: Halt,
     Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
 {

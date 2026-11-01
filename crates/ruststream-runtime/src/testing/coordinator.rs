@@ -282,6 +282,7 @@ impl Coordinator {
     /// # Panics
     ///
     /// Panics if the internal timers mutex was poisoned by an earlier panic while it was held.
+    #[cfg(feature = "tokio")]
     pub(crate) fn schedule_redelivery_future<Fut>(&self, delay: Duration, redeliver: Fut)
     where
         Fut: Future<Output = ()> + Send + 'static,

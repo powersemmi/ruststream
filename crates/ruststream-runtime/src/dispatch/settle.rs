@@ -758,7 +758,7 @@ where
     // Under the harness the copy is scheduled through the coordinator, the way a broker schedules
     // its native delayed redelivery: `TestApp::advance` then fires it and counts it before it
     // drives the reaction, so a test sees the copy rather than a race.
-    #[cfg(feature = "testing")]
+    #[cfg(all(feature = "testing", feature = "tokio"))]
     if let Some(coordinator) = delivery.hooks.coordinator() {
         coordinator.schedule_redelivery_future(delay, republish(true).map(drop));
         return Ok(());

@@ -9,9 +9,11 @@
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::any::{Any, type_name};
+use core::any::type_name;
 use core::fmt;
+use ruststream_core::MaybeSendSync;
 
+use super::coordinator::RecordedValue;
 use crate::RawMessage;
 
 /// The broker's per-message options one publish carried, copied and type-erased so the
@@ -21,17 +23,16 @@ pub struct RecordedOptions {
     /// The broker's options type, so a `with_options` naming another one fails by name.
     pub(crate) type_name: &'static str,
     /// `None` when the publish carried no options: no step ran, the policy's defaults applied.
-    pub(crate) value: Option<Arc<dyn Any + Send + Sync>>,
+    pub(crate) value: Option<RecordedValue>,
 }
 
 impl RecordedOptions {
-    pub(crate) fn capture<Options: Clone + Send + Sync + 'static>(
+    pub(crate) fn capture<Options: Clone + MaybeSendSync + 'static>(
         options: Option<&Options>,
     ) -> Self {
         Self {
             type_name: type_name::<Options>(),
-            value: options
-                .map(|options| -> Arc<dyn Any + Send + Sync> { Arc::new(options.clone()) }),
+            value: options.map(|options| -> RecordedValue { Arc::new(options.clone()) }),
         }
     }
 

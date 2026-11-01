@@ -1635,6 +1635,7 @@ version = "0.8.0"
 dependencies = [
  "bytes",
  "bytes-utils",
+ "critical-section",
  "embassy-futures",
  "embassy-sync",
  "futures",

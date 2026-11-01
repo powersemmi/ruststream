@@ -11,11 +11,13 @@ use core::marker::PhantomData;
 use core::mem;
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, Ordering};
+use ruststream_core::{MaybeSend, MaybeSendSync};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 
 use futures::FutureExt;
+#[cfg(feature = "tokio")]
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -30,13 +32,13 @@ use super::coordinator::Coordinator;
 type HookFuture<'a> = Pin<Box<dyn Future<Output = ()> + 'a>>;
 
 /// An `on_call` hook with its closure type erased.
-pub(crate) trait CallHook: Send + Sync {
+pub(crate) trait CallHook: MaybeSendSync {
     fn call<'a>(&'a self, handle: SubscriberAssertions<'a>) -> HookFuture<'a>;
 }
 
 impl<Hook> CallHook for Hook
 where
-    Hook: AsyncFn(SubscriberAssertions<'_>) + Send + Sync,
+    Hook: AsyncFn(SubscriberAssertions<'_>) + MaybeSendSync,
 {
     fn call<'a>(&'a self, handle: SubscriberAssertions<'a>) -> HookFuture<'a> {
         Box::pin(self(handle))
@@ -45,7 +47,7 @@ where
 
 /// An `on_publish` hook with its closure and payload types erased: it builds the handle it is
 /// handed, so the registry needs neither.
-trait PublishHook: Send + Sync {
+trait PublishHook: MaybeSendSync {
     fn call<'a>(
         &'a self,
         coordinator: &Coordinator,
@@ -62,7 +64,7 @@ struct TypedPublishHook<Payload, Hook> {
 
 impl<Payload, Hook> PublishHook for TypedPublishHook<Payload, Hook>
 where
-    Hook: AsyncFn(PublishedAssertions<Payload>) + Send + Sync,
+    Hook: AsyncFn(PublishedAssertions<Payload>) + MaybeSendSync,
 {
     fn call<'a>(
         &'a self,
@@ -148,12 +150,19 @@ pub struct Hooks {
     pending: Mutex<Vec<PendingHooks>>,
 }
 
+#[cfg(feature = "tokio")]
+type PendingRun = Box<dyn for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send>;
+
+/// See the `tokio` form: without the feature the hooks run on the thread that polls the app.
+#[cfg(not(feature = "tokio"))]
+type PendingRun = Box<dyn for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c>>;
+
 /// The hooks of one event, handed to the harness that polls an app running as one future: the
 /// harness turns them into a future and polls it beside the app.
 // Machinery the harness crate drives, hidden from the docs; it holds an erased closure.
 #[allow(missing_debug_implementations)]
 pub struct PendingHooks {
-    run: Box<dyn for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send>,
+    run: PendingRun,
     done: oneshot::Sender<()>,
 }
 
@@ -228,7 +237,7 @@ impl Hooks {
     /// Registers `hook` on the calls of the subscription `name` of the broker at `scope_id`.
     pub(crate) fn on_call<Hook>(&self, scope_id: usize, name: String, hook: Hook)
     where
-        Hook: AsyncFn(SubscriberAssertions<'_>) + Send + Sync + 'static,
+        Hook: AsyncFn(SubscriberAssertions<'_>) + MaybeSendSync + 'static,
     {
         lock(&self.calls).push(OnCall {
             scope_id,
@@ -242,7 +251,7 @@ impl Hooks {
     pub(crate) fn on_publish<Payload, Hook>(&self, target: PublishTarget, hook: Hook)
     where
         Payload: 'static,
-        Hook: AsyncFn(PublishedAssertions<Payload>) + Send + Sync + 'static,
+        Hook: AsyncFn(PublishedAssertions<Payload>) + MaybeSendSync + 'static,
     {
         let hook = TypedPublishHook {
             hook,
@@ -391,10 +400,13 @@ impl DuePublish {
 /// raise for the test to raise again ([`Hooks::raise_failure`]).
 async fn run_hooks<Run>(coordinator: &Coordinator, hooks: Run)
 where
-    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send + 'static,
+    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + MaybeSend + 'static,
 {
     match coordinator.hooks().runner {
+        #[cfg(feature = "tokio")]
         HookRunner::Thread => on_hook_thread(coordinator, hooks).await,
+        #[cfg(not(feature = "tokio"))]
+        HookRunner::Thread => in_place(coordinator, hooks).await,
         HookRunner::InPlace => in_place(coordinator, hooks).await,
     }
 }
@@ -404,7 +416,7 @@ where
 /// it ([`Hooks::take_pending`]).
 async fn in_place<Run>(coordinator: &Coordinator, hooks: Run)
 where
-    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send + 'static,
+    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + MaybeSend + 'static,
 {
     let (done, finished) = oneshot::channel();
     lock(&coordinator.hooks().pending).push(PendingHooks {
@@ -427,9 +439,10 @@ where
 /// The hooks are dropped where they wait as soon as the caller stops waiting for them (a shutdown
 /// timeout aborted the dispatch that ran them) or the test ends ([`HookFailures::stop`]), so no
 /// hook outlives the harness.
+#[cfg(feature = "tokio")]
 async fn on_hook_thread<Run>(coordinator: &Coordinator, hooks: Run)
 where
-    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send + 'static,
+    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + MaybeSend + 'static,
 {
     let runtime = Handle::current();
     let owned = coordinator.clone();

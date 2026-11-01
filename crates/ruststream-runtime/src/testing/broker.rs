@@ -8,14 +8,13 @@ use alloc::vec::Vec;
 use core::any::{Any, TypeId, type_name};
 use core::fmt;
 use core::time::Duration;
+use ruststream_core::MaybeSendSync;
 
 use tokio::time;
 use tokio::time::Instant;
 
 use crate::{BoxError, InProcessConnect, LocalBoxFuture, SendBroker};
-use crate::{
-    Broker, DefaultPublish, MaybeSendSync, OutgoingMessage, PublishPolicy, Publisher, RawMessage,
-};
+use crate::{Broker, DefaultPublish, OutgoingMessage, PublishPolicy, Publisher, RawMessage};
 
 use super::Coordinator;
 

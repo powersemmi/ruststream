@@ -1,6 +1,6 @@
 //! The local broker, its connected and closed forms, and its publisher.
 
-use alloc::rc::Rc;
+use super::share::Shared;
 use core::fmt;
 use core::future::ready;
 
@@ -79,7 +79,7 @@ use super::bus::Bus;
 /// std::thread::spawn(move || drop(broker));
 /// ```
 pub struct LocalMemoryBroker<const CAP: usize> {
-    bus: Rc<Bus<CAP>>,
+    bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> LocalMemoryBroker<CAP> {
@@ -122,7 +122,7 @@ impl<const CAP: usize> LocalMemoryBroker<CAP> {
             );
         }
         Self {
-            bus: Rc::new(Bus::new()),
+            bus: Shared::new(Bus::new()),
         }
     }
 }
@@ -136,7 +136,7 @@ impl<const CAP: usize> Default for LocalMemoryBroker<CAP> {
 impl<const CAP: usize> Clone for LocalMemoryBroker<CAP> {
     fn clone(&self) -> Self {
         Self {
-            bus: Rc::clone(&self.bus),
+            bus: Shared::clone(&self.bus),
         }
     }
 }
@@ -200,7 +200,7 @@ impl<const CAP: usize> DescribeServer for LocalMemoryBroker<CAP> {
 /// # Ok::<(), LocalMemoryError>(())
 /// ```
 pub struct ConnectedLocalMemoryBroker<const CAP: usize> {
-    pub(super) bus: Rc<Bus<CAP>>,
+    pub(super) bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
@@ -232,7 +232,7 @@ impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
     #[must_use]
     pub fn publisher(&self) -> LocalMemoryPublisher<CAP> {
         LocalMemoryPublisher {
-            bus: Rc::clone(&self.bus),
+            bus: Shared::clone(&self.bus),
         }
     }
 
@@ -241,7 +241,7 @@ impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
         let subscription = self.bus.subscribe(name)?;
         Ok(LocalMemorySubscriber::new(
             subscription,
-            Rc::clone(&self.bus),
+            Shared::clone(&self.bus),
         ))
     }
 }
@@ -249,7 +249,7 @@ impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
 impl<const CAP: usize> Clone for ConnectedLocalMemoryBroker<CAP> {
     fn clone(&self) -> Self {
         Self {
-            bus: Rc::clone(&self.bus),
+            bus: Shared::clone(&self.bus),
         }
     }
 }
@@ -401,13 +401,13 @@ impl<const CAP: usize> DefaultPublish for ConnectedLocalMemoryBroker<CAP> {
 /// assert_eq!(taken, [true, false]);
 /// ```
 pub struct LocalMemoryPublisher<const CAP: usize> {
-    bus: Rc<Bus<CAP>>,
+    bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> Clone for LocalMemoryPublisher<CAP> {
     fn clone(&self) -> Self {
         Self {
-            bus: Rc::clone(&self.bus),
+            bus: Shared::clone(&self.bus),
         }
     }
 }

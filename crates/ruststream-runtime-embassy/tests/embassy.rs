@@ -20,6 +20,7 @@ use std::sync::Arc;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
+use ruststream_core::MaybeSend;
 use ruststream_core::Broker;
 use ruststream_core::IncomingMessage;
 use ruststream_core::{
@@ -76,7 +77,7 @@ impl CountDetached {
 impl Detach for CountDetached {
     fn detach<Work>(&self, _work: Work)
     where
-        Work: Future<Output = ()> + Send + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static,
     {
         self.detached.fetch_add(1, Ordering::Relaxed);
     }
@@ -87,7 +88,7 @@ impl Detach for CountDetached {
 
     fn detach_after<Work>(&self, _delay: Duration, _work: Work)
     where
-        Work: Future<Output = ()> + Send + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static,
     {
         self.detached.fetch_add(1, Ordering::Relaxed);
     }

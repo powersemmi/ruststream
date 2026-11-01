@@ -1,7 +1,7 @@
 //! The subscription descriptor of the local bus, its subscriber and one delivery.
 
+use super::share::Shared;
 use alloc::borrow::Cow;
-use alloc::rc::Rc;
 use core::convert::Infallible;
 use core::fmt;
 use core::future::ready;
@@ -173,12 +173,15 @@ impl<const CAP: usize> RedeliveryAddressed<ConnectedLocalMemoryBroker<CAP>> for 
 /// # Ok::<(), LocalMemoryError>(())
 /// ```
 pub struct LocalMemorySubscriber<const CAP: usize> {
-    subscription: Rc<Subscription<CAP>>,
-    bus: Rc<Bus<CAP>>,
+    subscription: Shared<Subscription<CAP>>,
+    bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> LocalMemorySubscriber<CAP> {
-    pub(super) const fn new(subscription: Rc<Subscription<CAP>>, bus: Rc<Bus<CAP>>) -> Self {
+    pub(super) const fn new(
+        subscription: Shared<Subscription<CAP>>,
+        bus: Shared<Bus<CAP>>,
+    ) -> Self {
         Self { subscription, bus }
     }
 
@@ -186,7 +189,7 @@ impl<const CAP: usize> LocalMemorySubscriber<CAP> {
         LocalMemoryMessage {
             delivery,
             settled: false,
-            subscription: Rc::clone(&self.subscription),
+            subscription: Shared::clone(&self.subscription),
         }
     }
 }
@@ -321,7 +324,7 @@ pub struct LocalMemoryMessage<const CAP: usize> {
     delivery: Delivery,
     // Set by a settlement, so the drop that follows it releases the place without a requeue.
     settled: bool,
-    subscription: Rc<Subscription<CAP>>,
+    subscription: Shared<Subscription<CAP>>,
 }
 
 impl<const CAP: usize> LocalMemoryMessage<CAP> {

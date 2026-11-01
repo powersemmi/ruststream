@@ -10,6 +10,7 @@ use core::any::Any;
 use core::mem;
 use core::pin::Pin;
 use core::task::{Context, Poll};
+use ruststream_core::MaybeSendSync;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
@@ -89,7 +90,7 @@ pub(crate) fn record_slot_publish<Options, Payload>(
     options: Option<&Options>,
 ) -> DuePublish
 where
-    Options: Clone + Send + Sync + 'static,
+    Options: Clone + MaybeSendSync + 'static,
     Payload: AsRef<[u8]>,
 {
     HARNESS
@@ -122,7 +123,7 @@ impl PipelinePublish {
     ) -> Self
     where
         Payload: AsRef<[u8]>,
-        Options: Clone + Send + Sync + 'static,
+        Options: Clone + MaybeSendSync + 'static,
     {
         Self(
             HARNESS
@@ -341,7 +342,12 @@ pub struct Delivered {
 }
 
 /// A carried value as the harness keeps it: cloned once, read back by its own type.
+#[cfg(feature = "tokio")]
 pub(crate) type RecordedValue = Arc<dyn Any + Send + Sync>;
+
+/// See the `tokio` form: without the feature the harness runs on the test's own thread.
+#[cfg(not(feature = "tokio"))]
+pub(crate) type RecordedValue = Arc<dyn Any>;
 
 /// One recorded call into a handler: a single delivery, or a whole batch.
 pub(crate) struct Record {

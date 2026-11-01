@@ -50,12 +50,13 @@
 //! assert_eq!(embassy_futures::block_on(firmware()), Ok(vec![21, 22]));
 //! ```
 
-// The bus is `Rc` and `RefCell` by design, so no future of the local family is `Send`, and the
+// Without `std` the bus is `Rc` and `RefCell` by design, so no future of the local family is `Send`, and the
 // nursery lint that asks for it does not apply here.
 #![allow(clippy::future_not_send)]
 
 mod broker;
 mod bus;
+mod share;
 mod subscriber;
 
 /// Reads the local bus's streams in tests without awaiting them.
