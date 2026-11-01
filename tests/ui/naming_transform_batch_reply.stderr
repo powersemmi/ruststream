@@ -1,7 +1,7 @@
 error[E0277]: `Vec<Receipt>` does not let a transform name the destination
-  --> tests/ui/naming_transform_batch_reply.rs:45:24
+  --> tests/ui/naming_transform_batch_reply.rs:46:24
    |
-45 |             .transform(ReplyTo)
+46 |             .transform(ReplyTo)
    |              --------- ^^^^^^^ the transform on this step declares `Destination = Names`
    |              |
    |              required by a bound introduced by this call

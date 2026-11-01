@@ -1,16 +1,16 @@
 error[E0277]: `Urgent` is not a publish transform for `ForReply` writing `()`
-  --> tests/ui/reply_transform_other_options.rs:50:14
+  --> tests/ui/reply_transform_other_options.rs:51:14
    |
-50 |             .transform(Urgent)
+51 |             .transform(Urgent)
    |              ^^^^^^^^^ unsatisfied trait bound
    |
    = note: a transform states its position by the kind it implements: `PublishTransform<K>` for every `K: ContextKind` mounts anywhere, `PublishTransform<ForReply<C>>` reads the delivery and mounts on a reply, `PublishTransform<ForSlot>` mounts on an `Out` slot. A slot publish is issued by the handler body, so it has no delivery to hand on
    = note: a transform also states the broker's per-message options it writes, and mounts only over a publisher whose `Publisher::Options` is that type: `()` here. One that writes none is generic over them - `impl<K: ContextKind, Options> PublishTransform<K, Options> for ..` - and mounts anywhere
 help: the trait `PublishTransform<ForReply, ()>` is not implemented for `Urgent`
       but trait `PublishTransform<ForReply, Priority>` is implemented for it
-  --> tests/ui/reply_transform_other_options.rs:28:1
+  --> tests/ui/reply_transform_other_options.rs:29:1
    |
-28 | impl<C> PublishTransform<ForReply<C>, Priority> for Urgent {
+29 | impl<C> PublishTransform<ForReply<C>, Priority> for Urgent {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `Priority`, found `()`
    = note: required for `ruststream_runtime::slot::position::ReplyProbe<SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), FnBody<confirm, for<'a, 'b, 'c, 'd> fn(BodyTag<confirm>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<Receipt, HandlerOutcome>> {confirm::<_>}>, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Open)>, MemoryPublish, MemoryBroker>` to implement `ruststream_runtime::slot::position::TransformProbe<Urgent>`

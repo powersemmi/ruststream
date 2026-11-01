@@ -1,7 +1,7 @@
 error[E0277]: `Receipt` does not let a transform name the destination
-  --> tests/ui/naming_transform_declared_reply.rs:46:24
+  --> tests/ui/naming_transform_declared_reply.rs:47:24
    |
-46 |             .transform(ReplyTo)
+47 |             .transform(ReplyTo)
    |              --------- ^^^^^^^ the transform on this step declares `Destination = Names`
    |              |
    |              required by a bound introduced by this call

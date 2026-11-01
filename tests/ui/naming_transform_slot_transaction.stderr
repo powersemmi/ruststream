@@ -1,7 +1,7 @@
 error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does not support broker-side transactions
-  --> tests/ui/naming_transform_slot_transaction.rs:63:51
+  --> tests/ui/naming_transform_slot_transaction.rs:64:51
    |
-63 |     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+64 |     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
    |                                                   ^^^^^^^^^^^ the trait `TransactionalPublisher` is not implemented for `ruststream::runtime::NamedDestinationSend<MemoryPublisher>`
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
@@ -13,7 +13,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -28,9 +28,9 @@ note: required by a bound in `ruststream::runtime::SlotTransactions::begin::{ano
    |                     ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `SlotTransactions::begin::{anon_assoc#0}`
 
 error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does not support broker-side transactions
-  --> tests/ui/naming_transform_slot_transaction.rs:64:19
+  --> tests/ui/naming_transform_slot_transaction.rs:65:19
    |
-64 |         b.include(settle)
+65 |         b.include(settle)
    |                   ^^^^^^ the trait `TransactionalPublisher` is not implemented for `ruststream::runtime::NamedDestinationSend<MemoryPublisher>`
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
@@ -42,7 +42,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -51,18 +51,18 @@ help: the following other types implement trait `TransactionalPublisher`
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
 note: required by a bound in `settle`
-  --> tests/ui/naming_transform_slot_transaction.rs:44:26
+  --> tests/ui/naming_transform_slot_transaction.rs:45:26
    |
-42 | async fn settle(
+43 | async fn settle(
    |          ------ required by a bound in this function
-43 |     order: &Order,
-44 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
+44 |     order: &Order,
+45 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
    |                          ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `settle`
 
 error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does not support broker-side transactions
-  --> tests/ui/naming_transform_slot_transaction.rs:64:9
+  --> tests/ui/naming_transform_slot_transaction.rs:65:9
    |
-64 |         b.include(settle)
+65 |         b.include(settle)
    |         ^^^^^^^^^^^^^^^^^ the trait `TransactionalPublisher` is not implemented for `ruststream::runtime::NamedDestinationSend<MemoryPublisher>`
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
@@ -74,7 +74,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -83,18 +83,18 @@ help: the following other types implement trait `TransactionalPublisher`
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
 note: required by a bound in `settle`
-  --> tests/ui/naming_transform_slot_transaction.rs:44:26
+  --> tests/ui/naming_transform_slot_transaction.rs:45:26
    |
-42 | async fn settle(
+43 | async fn settle(
    |          ------ required by a bound in this function
-43 |     order: &Order,
-44 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
+44 |     order: &Order,
+45 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
    |                          ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `settle`
 
 error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does not support broker-side transactions
-  --> tests/ui/naming_transform_slot_transaction.rs:64:11
+  --> tests/ui/naming_transform_slot_transaction.rs:65:11
    |
-64 |         b.include(settle)
+65 |         b.include(settle)
    |           ^^^^^^^ the trait `TransactionalPublisher` is not implemented for `ruststream::runtime::NamedDestinationSend<MemoryPublisher>`
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
@@ -106,7 +106,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -126,23 +126,23 @@ note: required because it's used within this `async` fn body
    | |     }
    | |_____^
 note: required because it's used within this `async` block
-  --> tests/ui/naming_transform_slot_transaction.rs:41:1
+  --> tests/ui/naming_transform_slot_transaction.rs:42:1
    |
-41 | #[subscriber("orders")]
+42 | #[subscriber("orders")]
    | ^^^^^^^^^^^^^^^^^^^^^^^
 note: required because it's used within this `async` fn body
-  --> tests/ui/naming_transform_slot_transaction.rs:41:1
+  --> tests/ui/naming_transform_slot_transaction.rs:42:1
    |
-41 | #[subscriber("orders")]
+42 | #[subscriber("orders")]
    | ^^^^^^^^^^^^^^^^^^^^^^^
    = note: required for `for<'a, 'b, 'c, 'd> fn(BodyTag<settle>, &'a Order, &'b Outs<(Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>,)>, &'c mut ruststream::prelude::Context<'d>) -> impl Future<Output = Result<(), HandlerOutcome>> {settle::<Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>, ()>}` to implement `ruststream_runtime::router::local::BodyFits<PublishIdentity, AsBodyFn<settle, &Order, &Outs<(Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>,)>, &mut ruststream::prelude::Context<'_>>>`
    = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does not support broker-side transactions
-  --> tests/ui/naming_transform_slot_transaction.rs:64:9
+  --> tests/ui/naming_transform_slot_transaction.rs:65:9
    |
-64 | /         b.include(settle)
-65 | |             .out(Audit, MemoryPublish)
+65 | /         b.include(settle)
+66 | |             .out(Audit, MemoryPublish)
    | |______________________________________^ the trait `TransactionalPublisher` is not implemented for `ruststream::runtime::NamedDestinationSend<MemoryPublisher>`
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
@@ -154,7 +154,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -163,18 +163,18 @@ help: the following other types implement trait `TransactionalPublisher`
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
 note: required by a bound in `settle`
-  --> tests/ui/naming_transform_slot_transaction.rs:44:26
+  --> tests/ui/naming_transform_slot_transaction.rs:45:26
    |
-42 | async fn settle(
+43 | async fn settle(
    |          ------ required by a bound in this function
-43 |     order: &Order,
-44 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
+44 |     order: &Order,
+45 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
    |                          ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `settle`
 
 error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does not support broker-side transactions
-  --> tests/ui/naming_transform_slot_transaction.rs:65:14
+  --> tests/ui/naming_transform_slot_transaction.rs:66:14
    |
-65 |             .out(Audit, MemoryPublish)
+66 |             .out(Audit, MemoryPublish)
    |              ^^^ the trait `TransactionalPublisher` is not implemented for `ruststream::runtime::NamedDestinationSend<MemoryPublisher>`
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
@@ -186,7 +186,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -195,18 +195,18 @@ help: the following other types implement trait `TransactionalPublisher`
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
 note: required by a bound in `settle`
-  --> tests/ui/naming_transform_slot_transaction.rs:44:26
+  --> tests/ui/naming_transform_slot_transaction.rs:45:26
    |
-42 | async fn settle(
+43 | async fn settle(
    |          ------ required by a bound in this function
-43 |     order: &Order,
-44 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
+44 |     order: &Order,
+45 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
    |                          ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `settle`
 
 error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does not support broker-side transactions
-  --> tests/ui/naming_transform_slot_transaction.rs:66:14
+  --> tests/ui/naming_transform_slot_transaction.rs:67:14
    |
-66 |             .transform(ByTenant)
+67 |             .transform(ByTenant)
    |              ^^^^^^^^^ the trait `TransactionalPublisher` is not implemented for `ruststream::runtime::NamedDestinationSend<MemoryPublisher>`
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
@@ -218,7 +218,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -227,22 +227,22 @@ help: the following other types implement trait `TransactionalPublisher`
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
 note: required by a bound in `settle`
-  --> tests/ui/naming_transform_slot_transaction.rs:44:26
+  --> tests/ui/naming_transform_slot_transaction.rs:45:26
    |
-42 | async fn settle(
+43 | async fn settle(
    |          ------ required by a bound in this function
-43 |     order: &Order,
-44 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
+44 |     order: &Order,
+45 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
    |                          ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `settle`
 
 error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does not support broker-side transactions
-  --> tests/ui/naming_transform_slot_transaction.rs:63:5
+  --> tests/ui/naming_transform_slot_transaction.rs:64:5
    |
-63 | /     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-64 | |         b.include(settle)
-65 | |             .out(Audit, MemoryPublish)
-66 | |             .transform(ByTenant)
-67 | |     });
+64 | /     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+65 | |         b.include(settle)
+66 | |             .out(Audit, MemoryPublish)
+67 | |             .transform(ByTenant)
+68 | |     });
    | |______^ the trait `TransactionalPublisher` is not implemented for `ruststream::runtime::NamedDestinationSend<MemoryPublisher>`
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
@@ -254,7 +254,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -263,10 +263,10 @@ help: the following other types implement trait `TransactionalPublisher`
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
 note: required by a bound in `settle`
-  --> tests/ui/naming_transform_slot_transaction.rs:44:26
+  --> tests/ui/naming_transform_slot_transaction.rs:45:26
    |
-42 | async fn settle(
+43 | async fn settle(
    |          ------ required by a bound in this function
-43 |     order: &Order,
-44 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
+44 |     order: &Order,
+45 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
    |                          ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `settle`

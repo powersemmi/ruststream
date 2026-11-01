@@ -1,7 +1,7 @@
 error[E0277]: this step has no publish position to apply to
-  --> tests/ui/out_transform_without_slot.rs:37:24
+  --> tests/ui/out_transform_without_slot.rs:38:24
    |
-37 |             .transform(Envelope)
+38 |             .transform(Envelope)
    |              --------- ^^^^^^^^ no `.out(marker, policy)` call precedes it in this chain
    |              |
    |              required by a bound introduced by this call
