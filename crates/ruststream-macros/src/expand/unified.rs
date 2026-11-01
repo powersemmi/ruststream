@@ -8,7 +8,7 @@
 //! the include-site value and instantiates the arena-carrying definition in `BindSlots::bind`,
 //! so the concrete publisher types are still inferred from the attached policies.
 
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{TokenStream as TokenStream2, TokenTree};
 use quote::quote;
 use syn::{Ident, ItemFn, Pat};
 
@@ -756,19 +756,20 @@ fn clones_binding(pat: &Pat, block: &syn::Block) -> bool {
     let Pat::Ident(binding) = binding else {
         return false;
     };
-    let tokens: Vec<proc_macro2::TokenTree> = block.stmts.iter().flat_map(stmt_tokens).collect();
-    contains_clone_call(tokens, &binding.ident)
+    let tokens: Vec<TokenTree> = block.stmts.iter().flat_map(stmt_tokens).collect();
+    contains_clone_call(&tokens, &binding.ident)
 }
 
-fn stmt_tokens(stmt: &syn::Stmt) -> Vec<proc_macro2::TokenTree> {
+fn stmt_tokens(stmt: &syn::Stmt) -> Vec<TokenTree> {
     quote!(#stmt).into_iter().collect()
 }
 
 /// Looks for `ident . clone` in a token sequence, descending into every group.
-fn contains_clone_call(tokens: Vec<proc_macro2::TokenTree>, ident: &Ident) -> bool {
-    use proc_macro2::TokenTree;
+fn contains_clone_call(tokens: &[TokenTree], ident: &Ident) -> bool {
     tokens.iter().enumerate().any(|(index, tree)| match tree {
-        TokenTree::Group(group) => contains_clone_call(group.stream().into_iter().collect(), ident),
+        TokenTree::Group(group) => {
+            contains_clone_call(&group.stream().into_iter().collect::<Vec<_>>(), ident)
+        }
         TokenTree::Ident(found) if found == ident => matches!(
             (tokens.get(index + 1), tokens.get(index + 2)),
             (Some(TokenTree::Punct(dot)), Some(TokenTree::Ident(method)))
