@@ -8,9 +8,9 @@ use tracing::error;
 
 use super::{BatchResult, UniformFan, uniform_batch};
 use crate::dispatch::{Delivery, Slot, settle_outcome, settle_reacting};
-use crate::handler::{HandlerOutcome, HandlerResult};
+use crate::handler::{Continuation, HandlerOutcome, HandlerResult};
 use crate::host::{HostDetach, PrepareKept};
-use crate::publish_failure::Reaction;
+use crate::publish_failure::{ErrorHook, Reaction};
 use crate::redelivery::RetryCopies;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator;
@@ -21,6 +21,37 @@ use crate::testing::coordinator::PendingRecord;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::RecordedValue;
 use crate::{BuildBatchContext, LocalSettle};
+
+/// Settles one element by its own outcome, as a single delivery is settled: an `.error` registered
+/// on the outcome rides the settlement (with the `.and_after` beside it, which then follows the
+/// publish the runtime makes), and an outcome without one detaches its continuation once settled.
+///
+/// The outcome without an `.error` is the common one and settles inline in the caller's loop, as
+/// a batch did before the hook existed; only an element that registered one calls out.
+macro_rules! settle_element {
+    ($msg:expr, $outcome:expr, $subscription:expr, $delivery:expr, $host:expr) => {{
+        let (status, after, error) = $outcome.into_parts();
+        if let Some(error) = error {
+            settle_erroring($msg, status, after, error, $subscription, $delivery, $host).await;
+        } else {
+            settle_outcome(
+                &mut Slot::new($msg),
+                status,
+                $subscription,
+                $delivery,
+                $host,
+                C::build,
+            )
+            .await;
+            // The continuation runs after this element is settled, on the tracked set so a
+            // graceful shutdown drains it. At-most-once: a lost or panicking continuation never
+            // redelivers the already-settled message.
+            if let Some(after) = after {
+                $host.detach_boxed(after);
+            }
+        }
+    }};
+}
 
 /// Settles a batch whose rejected elements were deferred past the handler call: each rejected
 /// index settles by its recorded outcome, and the accepted remainder settles by the handler's
@@ -76,7 +107,7 @@ pub(super) async fn settle_split_batch<M, C, Host>(
         if let Some(log) = log.as_mut() {
             log.settled(result.outcome());
         }
-        settle_element(msg, result, subscription, delivery, host).await;
+        settle_element!(msg, result, subscription, delivery, host);
     }
     #[cfg(feature = "testing")]
     if let Some(log) = log {
@@ -84,14 +115,15 @@ pub(super) async fn settle_split_batch<M, C, Host>(
     }
 }
 
-/// Settles one element by its own outcome, as a single delivery is settled: an `.error` registered
-/// on the outcome rides the settlement (with the `.and_after` beside it, which then follows the
-/// publish the runtime makes), and an outcome without one detaches its continuation once settled.
+/// Settles one element whose outcome registered an `.error`: the hook rides the settlement, and
+/// the continuation beside it follows the publish the runtime makes.
 // `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
-#[allow(clippy::future_not_send)]
-pub(super) async fn settle_element<M, C, Host>(
+#[allow(clippy::future_not_send, clippy::too_many_arguments)]
+async fn settle_erroring<M, C, Host>(
     msg: M,
-    outcome: HandlerOutcome,
+    status: HandlerResult,
+    after: Option<Continuation>,
+    error: ErrorHook,
     subscription: &str,
     delivery: &Delivery<C>,
     host: &Host,
@@ -100,29 +132,17 @@ pub(super) async fn settle_element<M, C, Host>(
     C: BuildBatchContext<M> + Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
-    let (status, after, error) = outcome.into_parts();
-    let mut slot = Slot::new(msg);
-    if let Some(error) = error {
-        let reaction = Some(Reaction::new(error, after));
-        settle_reacting(
-            &mut slot,
-            status,
-            reaction,
-            subscription,
-            delivery,
-            host,
-            C::build,
-        )
-        .await;
-        return;
-    }
-    settle_outcome(&mut slot, status, subscription, delivery, host, C::build).await;
-    // The continuation runs after this element is settled, on the tracked set so a graceful
-    // shutdown drains it. At-most-once: a lost or panicking continuation never redelivers the
-    // already-settled message.
-    if let Some(after) = after {
-        host.detach_boxed(after);
-    }
+    let reaction = Some(Reaction::new(error, after));
+    settle_reacting(
+        &mut Slot::new(msg),
+        status,
+        reaction,
+        subscription,
+        delivery,
+        host,
+        C::build,
+    )
+    .await;
 }
 
 /// Applies one [`BatchResult`] to the accepted deliveries behind it - uniformly, or element by
@@ -219,19 +239,44 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
     let LentValues = lent;
     match result {
         BatchResult::Uniform(outcome) => {
-            #[cfg(feature = "testing")]
-            let status = outcome.outcome();
-            // The one uniform outcome fans out: each element settles by the status and owns a
-            // share of the `.error`, which runs for a copy the runtime fails to publish for it;
-            // the continuation rides the last element and runs after the whole batch is settled
-            // (at-most-once, like the per-element ones).
-            let mut fan = UniformFan::new(outcome);
-            let last = accepted.len().saturating_sub(1);
-            for (index, msg) in accepted.into_iter().enumerate() {
-                #[cfg(feature = "testing")]
-                batch.settled(status);
-                let own = fan.element(index == last);
-                settle_element(msg, own, subscription, delivery, host).await;
+            let (status, after, error) = outcome.into_parts();
+            if let Some(error) = error {
+                // The one uniform outcome fans out: each element settles by the status and owns
+                // a share of the `.error`, which runs for a copy the runtime fails to publish
+                // for it; the continuation rides the last element and runs after the whole
+                // batch is settled (at-most-once, like the per-element ones).
+                let mut own = HandlerOutcome::from(status).error_hook(error);
+                if let Some(after) = after {
+                    own = own.and_after_boxed(after);
+                }
+                let mut fan = UniformFan::new(own);
+                let last = accepted.len().saturating_sub(1);
+                for (index, msg) in accepted.into_iter().enumerate() {
+                    #[cfg(feature = "testing")]
+                    batch.settled(status);
+                    let own = fan.element(index == last);
+                    settle_element!(msg, own, subscription, delivery, host);
+                }
+            } else {
+                for msg in accepted {
+                    #[cfg(feature = "testing")]
+                    batch.settled(status);
+                    settle_outcome(
+                        &mut Slot::new(msg),
+                        status,
+                        subscription,
+                        delivery,
+                        host,
+                        C::build,
+                    )
+                    .await;
+                }
+                // The one uniform continuation runs after the whole batch is settled, on the
+                // tracked set so a graceful shutdown drains it (at-most-once, like the
+                // per-element ones below).
+                if let Some(after) = after {
+                    host.detach_boxed(after);
+                }
             }
         }
         BatchResult::PerElement(results) => {
@@ -241,7 +286,7 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
                 let result = results.next().unwrap_or_else(HandlerOutcome::retry);
                 #[cfg(feature = "testing")]
                 batch.settled(result.outcome());
-                settle_element(msg, result, subscription, delivery, host).await;
+                settle_element!(msg, result, subscription, delivery, host);
             }
         }
     }
