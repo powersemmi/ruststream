@@ -10,10 +10,9 @@
 //! the chain.
 
 use crate::handler::MaybeSend;
-use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::{any, error, fmt};
+use core::{any, fmt};
 
 use bytes::{Bytes, BytesMut};
 use serde::Serialize;
@@ -36,9 +35,8 @@ use super::publish::{
     TypedPublisher,
 };
 use super::typed::{refused, unmaterialized};
-use crate::HeaderMap;
 use crate::lifecycle::BoxError;
-use crate::publish_failure::{FailedMessage, publish_done, publish_lost};
+use crate::publish_failure::{Refusal, publish_done, publish_lost};
 
 /// The reply-wiring axis: how a handler's reply value leaves the service.
 ///
@@ -52,10 +50,7 @@ pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
     /// that form carries. See [`Publisher::Payload`].
     type Payload: PayloadForm;
 
-    /// The error surfaced when the reply cannot be published.
-    type Error: Into<BoxError>;
-
-    /// Publishes `reply` to `name`.
+    /// Publishes `reply` to `name`. A refusal carries the message that was sent.
     fn deliver<'e>(
         &self,
         name: &'e str,
@@ -63,12 +58,12 @@ pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    ) -> impl Future<Output = Result<(), Refusal>> + Send;
 
-    /// The bytes `reply` publishes, encoded again for the handler's `.error` continuation after
-    /// a failed publish: a failure path, taken only where one is registered. Empty when the
-    /// encoder rejects the reply, which is the failure that already reached the continuation.
-    fn lost_bytes(&self, reply: &Reply) -> Bytes;
+    /// The bytes of `reply` that a lending publisher was shown and that do not sit in the
+    /// encode buffer: the value's own, which the reply holds. A failure path, taken only where
+    /// a continuation waits for the message.
+    fn own_bytes(&self, reply: &Reply) -> Bytes;
 }
 
 /// What an encoded reply value knows about leaving through a typed stack.
@@ -92,7 +87,7 @@ pub(crate) trait EncodeReply: Send + Sync {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>> + Send
+    ) -> impl Future<Output = Result<(), Refusal>> + Send
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
@@ -111,7 +106,7 @@ pub(crate) trait EncodeReply: Send + Sync {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>>
+    ) -> impl Future<Output = Result<(), Refusal>>
     where
         Leaf: LocalPublisher,
         ReplyCodec: Codec,
@@ -119,7 +114,7 @@ pub(crate) trait EncodeReply: Send + Sync {
         Cx: Sync,
         PP: SendThrough<Leaf>;
 
-    /// The bytes this reply encodes to with `codec`, for a continuation after a failed publish.
+    /// The bytes this reply encodes to with `codec`, for a continuation after a failed batch.
     /// Empty when the codec rejects it.
     #[doc(hidden)]
     fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> Bytes;
@@ -135,7 +130,7 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>> + Send
+    ) -> impl Future<Output = Result<(), Refusal>> + Send
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
@@ -155,7 +150,7 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>>
+    ) -> impl Future<Output = Result<(), Refusal>>
     where
         Leaf: LocalPublisher,
         ReplyCodec: Codec,
@@ -185,7 +180,7 @@ where
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>> + Send
+    ) -> impl Future<Output = Result<(), Refusal>> + Send
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
@@ -205,7 +200,7 @@ where
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>>
+    ) -> impl Future<Output = Result<(), Refusal>>
     where
         Leaf: LocalPublisher,
         ReplyCodec: Codec,
@@ -237,7 +232,6 @@ where
     Transforms: PublishTransform<ForReply<DeliveryCx>, Leaf::Options>,
 {
     type Payload = Leaf::Payload;
-    type Error = Box<dyn error::Error + Send + Sync>;
 
     // As in `EncodeReply`: the wiring's own step is the choice of lane, and the future it
     // hands back is the publish itself.
@@ -248,12 +242,14 @@ where
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    ) -> impl Future<Output = Result<(), Refusal>> + Send {
         reply.deliver_typed(self, name, pipeline, cx, encode)
     }
 
-    fn lost_bytes(&self, reply: &Reply) -> Bytes {
-        reply.encoded_with(self.codec())
+    // The encoded reply is written into the encode buffer or a buffer a transform wrote, and a
+    // refusal hands either back, so there are no bytes of the value's own.
+    fn own_bytes(&self, _reply: &Reply) -> Bytes {
+        Bytes::new()
     }
 }
 
@@ -267,9 +263,6 @@ where
     Bare: Publisher,
 {
     type Payload = Bare::Payload;
-    // Erased, because two unrelated failures reach this point: the reply's own encoder and the
-    // publisher. The axis only ever reports its error, so nothing downstream matches on it.
-    type Error = Box<dyn error::Error + Send + Sync>;
 
     fn deliver<'e>(
         &self,
@@ -278,11 +271,11 @@ where
         _pipeline: &Pipeline,
         _cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    ) -> impl Future<Output = Result<(), Refusal>> + Send {
         deliver_bare(self, name, reply, encode)
     }
 
-    fn lost_bytes(&self, reply: &Reply) -> Bytes {
+    fn own_bytes(&self, reply: &Reply) -> Bytes {
         serialized_bytes(reply)
     }
 }
@@ -295,7 +288,6 @@ where
     Bare: LocalPublisher,
 {
     type Payload = Bare::Payload;
-    type Error = Box<dyn error::Error + Send + Sync>;
 
     // `Send` exactly where the stack's future is: the multi-thread path proves it there.
     #[allow(clippy::future_not_send)]
@@ -306,13 +298,30 @@ where
         _pipeline: &Pipeline,
         _cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = Result<(), Refusal>> {
         deliver_bare(*self, name, reply, encode)
     }
 
-    fn lost_bytes(&self, reply: &Reply) -> Bytes {
+    fn own_bytes(&self, reply: &Reply) -> Bytes {
         serialized_bytes(reply)
     }
+}
+
+/// The bytes a lending publisher was shown, as a refused publish names them by address: the
+/// encode buffer's, moved out without a copy, or else the reply's own.
+pub(crate) fn lent_bytes(
+    buf: &mut BytesMut,
+    addr: usize,
+    len: usize,
+    own: impl FnOnce() -> Bytes,
+) -> Bytes {
+    if len == 0 {
+        return Bytes::new();
+    }
+    if addr == buf.as_ptr() as usize && len == buf.len() {
+        return buf.split().freeze();
+    }
+    own()
 }
 
 /// The bytes of a [`Serialized`](super::Serialized) reply, for a continuation: the ones it holds,
@@ -335,7 +344,7 @@ async fn deliver_bare<'e, Reply, Bare>(
     name: &'e str,
     reply: &'e Reply,
     encode: <Bare::Payload as PayloadForm>::Encode<'e>,
-) -> Result<(), Box<dyn error::Error + Send + Sync>>
+) -> Result<(), Refusal>
 where
     Reply: super::Serialized,
     Bare: LocalPublisher,
@@ -343,7 +352,8 @@ where
     // The dispatch loop's buffer, for a reply that writes its bytes rather than holding
     // them; a reply that already holds them leaves it untouched. Which of the two a
     // publisher is handed follows its own declaration, as on every other publish position.
-    let payload = <Bare::Payload as PayloadForm>::serialized(reply, encode)?;
+    let payload = <Bare::Payload as PayloadForm>::serialized(reply, encode)
+        .map_err(|err| Refusal::new(BoxError::from(err)))?;
     let msg = OutgoingMessage::with_payload(name, payload);
     #[cfg(feature = "testing")]
     let recorded = PipelinePublish::capture::<_, Bare::Options>(&msg, None);
@@ -352,7 +362,7 @@ where
     if sent.is_ok() {
         recorded.sent().await;
     }
-    sent.map_err(|failed| failed.into_error().into())
+    sent.map_err(Refusal::returned::<Bare::Payload>)
 }
 
 /// A subscriber definition that produces a reply to publish.
@@ -572,9 +582,6 @@ pub(crate) trait LocalReplySink<Reply, DeliveryCx, Pipeline> {
     /// See [`ReplySink::Payload`].
     type Payload: PayloadForm;
 
-    /// See [`ReplySink::Error`].
-    type Error: Into<BoxError>;
-
     /// See [`ReplySink::deliver`].
     fn deliver<'e>(
         &self,
@@ -583,10 +590,10 @@ pub(crate) trait LocalReplySink<Reply, DeliveryCx, Pipeline> {
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Self::Error>>;
+    ) -> impl Future<Output = Result<(), Refusal>>;
 
-    /// See [`ReplySink::lost_bytes`].
-    fn lost_bytes(&self, reply: &Reply) -> Bytes;
+    /// See [`ReplySink::own_bytes`].
+    fn own_bytes(&self, reply: &Reply) -> Bytes;
 }
 
 /// A [`ReplySink`] lent to the shared body: the forwarding call proves its future `Send`.
@@ -598,7 +605,6 @@ where
     Wiring: ReplySink<Reply, DeliveryCx, Pipeline>,
 {
     type Payload = Wiring::Payload;
-    type Error = Wiring::Error;
 
     #[inline]
     fn deliver<'e>(
@@ -608,12 +614,12 @@ where
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = Result<(), Refusal>> {
         self.0.deliver(name, reply, pipeline, cx, encode)
     }
 
-    fn lost_bytes(&self, reply: &Reply) -> Bytes {
-        self.0.lost_bytes(reply)
+    fn own_bytes(&self, reply: &Reply) -> Bytes {
+        self.0.own_bytes(reply)
     }
 }
 
@@ -630,7 +636,6 @@ where
     Transforms: PublishTransform<ForReply<DeliveryCx>, Leaf::Options>,
 {
     type Payload = Leaf::Payload;
-    type Error = Box<dyn error::Error + Send + Sync>;
 
     fn deliver<'e>(
         &self,
@@ -639,12 +644,12 @@ where
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = Result<(), Refusal>> {
         reply.deliver_local(self, name, pipeline, cx, encode)
     }
 
-    fn lost_bytes(&self, reply: &Reply) -> Bytes {
-        reply.encoded_with(self.codec())
+    fn own_bytes(&self, _reply: &Reply) -> Bytes {
+        Bytes::new()
     }
 }
 
@@ -754,7 +759,7 @@ impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline>
         let mut own = BytesMut::new();
         let encode = ctx.take_encode_buffer().unwrap_or(&mut own);
         let slot = <<Sink as LocalReplySink<Def::Reply, Def::Context, Pipeline>>::Payload as PayloadForm>::encode_slot(
-            encode,
+            &mut *encode,
         );
         let pubcx = PublishContext::new(ctx.name(), ctx.delivery_headers(), ctx.cx_ref());
         let publish = sink.deliver(name, &reply, &self.pipeline, &pubcx, slot);
@@ -766,18 +771,23 @@ impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline>
         if sent.is_ok() && reaction.is_none() {
             return HandlerOutcome::ack();
         }
-        if let Err(err) = sent {
+        if let Err(refusal) = sent {
             // The reply is published after the handler's work is done, so a failure never asks
             // the broker for the delivery again: the handler would repeat its side effects. It
             // settles by ack, and the `.error` continuation the context registered for that ack
             // is told; without one the failure is logged and the reply is lost.
+            // The message comes back as it was sent. Bytes a lending publisher was shown sit in
+            // the encode buffer, which is moved out whole, or are the reply's own.
+            let (err, failed) = refusal.into_message(name, |addr, len| {
+                lent_bytes(encode, addr, len, || sink.own_bytes(&reply))
+            });
             let follow = publish_lost(
                 reaction,
                 ctx.name(),
                 name,
                 any::type_name::<Def::Reply>(),
-                err.into(),
-                || FailedMessage::new(name, sink.lost_bytes(&reply), HeaderMap::new()),
+                err,
+                || failed,
             );
             return follow.map_or_else(HandlerOutcome::ack, |follow| {
                 HandlerOutcome::ack().and_after_boxed(follow)

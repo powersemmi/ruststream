@@ -32,6 +32,7 @@ use crate::publish::PublishIdentity;
 use crate::publish::{
     ForReply, OutPipeline, PublishContext, PublishTransform, PublishTransformIdentity,
 };
+use crate::publish_failure::Refusal;
 use crate::{
     AddressedCopies, Broker, BrokerMoves, Connected, ConnectedBroker, DeclareRetryError,
     DefaultPublish, NamedCopies, OutgoingMessage, PairError, PayloadForm, PublishPolicy, Publisher,
@@ -104,7 +105,7 @@ pub trait RetryCopies<Cx>: Send + Sync + 'static {
         &'a self,
         msg: OutgoingMessage<'a>,
         cx: &'a PublishContext<'a, Cx>,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
+    ) -> impl Future<Output = Result<(), Refusal>> + Send + 'a;
 }
 
 /// The retry publisher of a host that has none: there is none.
@@ -122,7 +123,7 @@ impl<Cx> RetryCopies<Cx> for NoRetry {
         &'a self,
         _msg: OutgoingMessage<'a>,
         _cx: &'a PublishContext<'a, Cx>,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
+    ) -> impl Future<Output = Result<(), Refusal>> + Send + 'a {
         async move { match *self {} }
     }
 }
@@ -156,7 +157,7 @@ where
         &'a self,
         msg: OutgoingMessage<'a>,
         cx: &'a PublishContext<'a, Cx>,
-    ) -> Result<(), BoxError> {
+    ) -> Result<(), Refusal> {
         // The publisher's own constants sit under the delivery's headers, as they do under
         // any publish through it; the transforms then see the message as it will be sent.
         let (name, payload, delivered) = msg.into_parts();
@@ -186,9 +187,9 @@ where
         let publish = self.pipeline.send(&self.live, sent, options.as_ref());
         #[cfg(feature = "testing")]
         let publish = publishing_to(self.origin, publish);
-        publish
-            .await
-            .map_err(|failed| BoxError::from(failed.into_error()))
+        // What comes back is the message that was sent, transforms applied: its headers, and its
+        // bytes where the leaf kept them; a buffer of this call that a transform wrote is gone.
+        publish.await.map_err(Refusal::returned::<Live::Payload>)
     }
 }
 

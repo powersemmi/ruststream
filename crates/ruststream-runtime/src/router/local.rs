@@ -15,6 +15,7 @@ use crate::lifecycle::BoxError;
 use crate::middleware::Identity;
 use crate::middleware::LocalBlanketLayer;
 use crate::publish::{LocalOutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough};
+use crate::publish_failure::Refusal;
 use crate::settings::{BatchSized, Declared, DefMountCodec, MountsWith, Sequential};
 use crate::subscriber_def::SubscriberDef;
 use crate::{
@@ -261,15 +262,17 @@ impl<P: LocalPublisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
     #[allow(clippy::future_not_send)]
     async fn send_through<'a>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
     ) -> Result<(), BoxError> {
         // The broker is the last reader of this message, as in `PublishIdentity`.
-        let msg = <P::Payload as PayloadForm>::leaving(out);
-        send.publish(msg, options)
-            .await
-            .map_err(|failed| BoxError::from(failed.into_error()))
+        let msg = <P::Payload as PayloadForm>::leaving(&mut *out);
+        let outcome = send.publish(msg, options).await;
+        // A refusal puts the message back into `out`, so the caller reads what was sent.
+        outcome
+            .map_err(Refusal::returned::<P::Payload>)
+            .map_err(|refusal| refusal.restore::<P::Payload>(out))
     }
 }
 

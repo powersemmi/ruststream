@@ -190,7 +190,7 @@ struct Tagger;
 impl PublishLayer for Tagger {
     async fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishNext<'a, N, P>,
     ) -> Result<(), Box<dyn error::Error + Send + Sync>> {
         out.headers_mut().insert("x-envelope", b"1".to_vec());

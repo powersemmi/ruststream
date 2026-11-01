@@ -11,6 +11,7 @@ use super::super::batch::handled;
 use super::super::dispatch::Delivery;
 use super::super::publish::{Transactional, TypedPublisher};
 use super::*;
+use crate::HeaderMap;
 use crate::codec::JsonCodec;
 use crate::input::Decoded;
 use crate::testkit::Tracked;

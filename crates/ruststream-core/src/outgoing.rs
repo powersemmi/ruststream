@@ -7,7 +7,7 @@ use core::hash::{Hash, Hasher};
 use core::mem;
 use core::ops::Deref;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 
 use crate::HeaderMap;
@@ -369,6 +369,19 @@ impl<'a> Outgoing<'a> {
         match mem::replace(&mut self.payload, Payload::Lent(&[])) {
             Payload::Lent(bytes) => BytesMut::from(bytes),
             Payload::Owned(buf) => buf,
+        }
+    }
+
+    /// The buffer this message owns, frozen and taken out, or `None` while it only lends the
+    /// bytes it was built from.
+    ///
+    /// What a stage that reads a refused message back calls: the buffer moves out without a
+    /// copy, and bytes that live with the lender are left for the lender to take.
+    #[doc(hidden)]
+    pub fn take_owned_payload(&mut self) -> Option<Bytes> {
+        match &mut self.payload {
+            Payload::Lent(_) => None,
+            Payload::Owned(buf) => Some(mem::take(buf).freeze()),
         }
     }
 

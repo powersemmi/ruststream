@@ -853,7 +853,7 @@ impl fmt::Debug for OtelPublishLayer {
 impl PublishLayer for OtelPublishLayer {
     fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishNext<'a, N, P>,
     ) -> impl Future<Output = Result<(), Box<dyn StdError + Send + Sync>>> + Send + 'a {
         if self.stamp_publish_time

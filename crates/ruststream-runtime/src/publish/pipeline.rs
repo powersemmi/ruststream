@@ -6,6 +6,7 @@ use core::fmt;
 
 use super::{Outgoing, PublishFut};
 use crate::lifecycle::BoxError;
+use crate::publish_failure::Refusal;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::PipelinePublish;
 use crate::{LocalPublisher, PayloadForm, Publisher};
@@ -26,7 +27,7 @@ pub trait PublishPipeline: Send + Sync {
     /// per-message settings the call site adjusted (`None` on a reply, which has no call site).
     fn run<'a, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
@@ -43,7 +44,7 @@ pub(crate) trait SendThrough<P: LocalPublisher> {
     /// Sends `out` to `send` with the per-message settings the call site adjusted.
     fn send_through<'a>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
     ) -> impl Future<Output = Result<(), BoxError>> + 'a;
@@ -53,7 +54,7 @@ impl<Pipeline: PublishPipeline, P: Publisher> SendThrough<P> for Pipeline {
     #[inline]
     fn send_through<'a>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
     ) -> impl Future<Output = Result<(), BoxError>> + 'a {
@@ -69,19 +70,21 @@ pub struct PublishIdentity;
 impl PublishPipeline for PublishIdentity {
     async fn run<'a, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
     ) -> Result<(), BoxError> {
         // The broker is the last reader of this message, so what the stages produced travels
         // into it in the form the publisher declared, and the map they filled moves with it.
-        let msg = <P::Payload as PayloadForm>::leaving(out);
+        let msg = <P::Payload as PayloadForm>::leaving(&mut *out);
         #[cfg(feature = "testing")]
         let recorded = PipelinePublish::capture(&msg, options);
+        // A refusal puts the message back into `out`, so the caller reads what was sent.
         let result = send
             .publish(msg, options)
             .await
-            .map_err(|failed| BoxError::from(failed.into_error()));
+            .map_err(Refusal::returned::<P::Payload>)
+            .map_err(|refusal| refusal.restore::<P::Payload>(out));
         #[cfg(feature = "testing")]
         if result.is_ok() {
             recorded.sent().await;
@@ -109,7 +112,7 @@ impl<Head, Tail> PublishStack<Head, Tail> {
 impl<Head: PublishLayer, Tail: PublishPipeline> PublishPipeline for PublishStack<Head, Tail> {
     fn run<'a, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
@@ -134,7 +137,7 @@ pub trait PublishLayer: Send + Sync {
     /// Handle the outgoing message, calling `next` to continue the pipeline.
     fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishNext<'a, N, P>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
 }
@@ -151,7 +154,7 @@ impl<'a, N: PublishPipeline, P: Publisher> PublishNext<'a, N, P> {
     /// Runs the rest of the pipeline (the remaining middleware, then the send).
     pub fn run(
         self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
         self.tail.run(out, self.send, self.options)
     }
@@ -174,7 +177,7 @@ pub trait PublishDynLayer: Send + Sync {
     /// Handle the outgoing message, calling `next` to continue.
     fn on_publish<'a>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishDynNext<'a>,
     ) -> PublishFut<'a>;
 }
@@ -187,12 +190,12 @@ pub struct PublishDynNext<'a> {
     rest: &'a [Arc<dyn PublishDynLayer>],
     // The surrounding static `PublishNext::run`, erased so this cursor need not carry its type. A
     // one-shot continuation: `run` is called exactly once per published message.
-    tail: Box<dyn FnOnce(&'a mut Outgoing<'a>) -> PublishFut<'a> + Send + 'a>,
+    tail: Box<dyn for<'o> FnOnce(&'a mut Outgoing<'o>) -> PublishFut<'a> + Send + 'a>,
 }
 
 impl<'a> PublishDynNext<'a> {
     /// Runs the next dynamic middleware, or the surrounding static pipeline if the list is done.
-    pub fn run(self, out: &'a mut Outgoing<'a>) -> PublishFut<'a> {
+    pub fn run(self, out: &'a mut Outgoing<'_>) -> PublishFut<'a> {
         match self.rest.split_first() {
             Some((middleware, rest)) => middleware.on_publish(
                 out,
@@ -263,7 +266,7 @@ impl fmt::Debug for PublishDynStack {
 impl PublishLayer for PublishDynStack {
     fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishNext<'a, N, P>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
         // Erase the static continuation into a one-shot closure so the object-safe walker can end

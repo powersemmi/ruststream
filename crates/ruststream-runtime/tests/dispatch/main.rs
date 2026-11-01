@@ -2,7 +2,8 @@
 
 mod batch_error;
 mod error;
+mod failed_message;
 mod log_capture;
 mod out_continuation;
-mod settle;
 mod publish_unsent;
+mod settle;

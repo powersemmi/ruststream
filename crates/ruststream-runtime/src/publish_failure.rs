@@ -29,9 +29,10 @@ use tracing::warn;
 use crate::handler::{Continuation, ContinuationFuture, MaybeSend};
 use crate::lifecycle::BoxError;
 use crate::{
-    CallerName, HeaderMap, MessageHeaders, MessageWire, NoHeaders, OutgoingDestination, Serialized,
-    SerializedWire, WireBytes,
+    CallerName, HeaderMap, MessageHeaders, MessageWire, NoHeaders, Outgoing, OutgoingDestination,
+    OutgoingFor, PayloadForm, PublishMessageError, Serialized, SerializedWire, WireBytes,
 };
+use ruststream_core::KeptPayload;
 
 /// The error of a retry copy the embedded runner has nowhere to hold: every record of the mount's
 /// store is taken.
@@ -165,6 +166,144 @@ impl OutgoingDestination for FailedMessage {
 // Its headers travel with it, as a map the call site hands over with `with_headers`.
 impl MessageHeaders for FailedMessage {
     type Contract = NoHeaders;
+}
+
+/// A publish the runtime made that failed, with whatever the publisher handed back.
+///
+/// The paths that publish for a handler (a reply, a retry copy, a dead-letter copy) return it, and
+/// the `.error` continuation's [`Failed`] is built from it: the message that comes back is the
+/// one that was sent, moved, with no copy made beforehand. Machinery; never named directly.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct Refusal {
+    error: BoxError,
+    unsent: Option<Unsent>,
+}
+
+/// The message a refused publish handed back, as its owner reads it.
+#[derive(Debug)]
+struct Unsent {
+    payload: KeptPayload,
+    headers: HeaderMap,
+}
+
+impl Refusal {
+    /// A refusal that carries no message.
+    #[must_use]
+    pub fn new(error: impl Into<BoxError>) -> Self {
+        Self {
+            error: error.into(),
+            unsent: None,
+        }
+    }
+
+    /// The refusal of a publish in the form `Form`, with the message the publisher returned.
+    ///
+    /// A lent payload stays where it was lent from; whoever owns the bytes resolves it in
+    /// [`into_message`](Self::into_message).
+    pub fn returned<Form: PayloadForm>(
+        failed: PublishMessageError<impl Into<BoxError>, OutgoingFor<'_, Form>>,
+    ) -> Self {
+        let (error, message) = failed.into_parts();
+        Self {
+            error: error.into(),
+            unsent: message.map(|message| {
+                let (_, payload, headers) = message.into_parts();
+                Unsent {
+                    payload: Form::kept(payload),
+                    headers,
+                }
+            }),
+        }
+    }
+
+    /// Puts the message the publisher returned back into `out`, which then reads as the message
+    /// that was sent, and gives the cause.
+    ///
+    /// For a path that returns its error alone and keeps `out`: the stages above read the
+    /// message from `out` once the error reaches them. A refusal with no message leaves `out`
+    /// empty.
+    pub fn restore<Form: PayloadForm>(self, out: &mut Outgoing<'_>) -> BoxError {
+        if let Some(Unsent { payload, headers }) = self.unsent {
+            Form::restored(payload, out);
+            *out.headers_mut() = headers;
+        } else {
+            // The client consumed the buffer: nothing of the message is left to read.
+            drop(out.take_owned_payload());
+            drop(mem::take(out.headers_mut()));
+        }
+        self.error
+    }
+
+    /// The refusal of a publish that failed with `error` while `out` held the message: what it
+    /// holds is the message that was sent, and moves into the refusal.
+    ///
+    /// A buffer the stages wrote moves as it is; bytes `out` only lends stay where they are, for
+    /// the owner of the lender to take in [`into_message`](Self::into_message).
+    pub fn of(error: BoxError, out: &mut Outgoing<'_>) -> Self {
+        let payload = out.take_owned_payload().map_or_else(
+            || KeptPayload::Lent {
+                addr: out.payload().as_ptr() as usize,
+                len: out.payload().len(),
+            },
+            KeptPayload::Owned,
+        );
+        Self {
+            error,
+            unsent: Some(Unsent {
+                payload,
+                headers: mem::take(out.headers_mut()),
+            }),
+        }
+    }
+
+    /// The cause.
+    #[must_use]
+    pub fn error(&self) -> &BoxError {
+        &self.error
+    }
+
+    /// The cause, without the message.
+    #[must_use]
+    pub fn into_error(self) -> BoxError {
+        self.error
+    }
+
+    /// The cause and the message that was sent to `destination`.
+    ///
+    /// `lent` takes the bytes a lending publisher was shown, given where they were: the caller
+    /// that owns them moves them out instead of copying. A refusal with no message (the client
+    /// consumed the buffer) yields an empty one.
+    #[must_use]
+    pub fn into_message(
+        self,
+        destination: &str,
+        lent: impl FnOnce(usize, usize) -> Bytes,
+    ) -> (BoxError, FailedMessage) {
+        let message = match self.unsent {
+            Some(Unsent { payload, headers }) => {
+                let payload = match payload {
+                    KeptPayload::Owned(bytes) => bytes,
+                    KeptPayload::Lent { addr, len } => lent(addr, len),
+                };
+                FailedMessage::new(destination, payload, headers)
+            }
+            None => FailedMessage::new(destination, Bytes::new(), HeaderMap::new()),
+        };
+        (self.error, message)
+    }
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.error, f)
+    }
+}
+
+impl From<BoxError> for Refusal {
+    fn from(error: BoxError) -> Self {
+        Self::new(error)
+    }
 }
 
 /// One publish the runtime made for a delivery and that failed: its cause and the message that
@@ -588,10 +727,6 @@ pub struct Reaction(Box<Registered>);
 struct Registered {
     error: ErrorHook,
     then: Option<Continuation>,
-    /// The headers of the failed copy, kept here (boxed with the registration) so the task that
-    /// publishes the copy carries one pointer for them and nothing when no `.error` was set.
-    #[cfg(feature = "tokio")]
-    headers: HeaderMap,
 }
 
 impl fmt::Debug for Reaction {
@@ -604,28 +739,11 @@ impl Reaction {
     /// A reaction handing a failure to `error` and a success to `then`.
     #[must_use]
     pub fn new(error: ErrorHook, then: Option<Continuation>) -> Self {
-        Self(Box::new(Registered {
-            error,
-            then,
-            #[cfg(feature = "tokio")]
-            headers: HeaderMap::new(),
-        }))
+        Self(Box::new(Registered { error, then }))
     }
 
     /// The continuation registered beside `.error`, which a delivery that made no publish runs
     /// once it is settled.
-    /// Keeps the headers the failed copy carries, for the [`FailedMessage`] a failure builds.
-    #[cfg(feature = "tokio")]
-    pub(crate) fn hold_headers(&mut self, headers: HeaderMap) {
-        self.0.headers = headers;
-    }
-
-    /// Takes the headers kept with [`hold_headers`](Self::hold_headers).
-    #[cfg(feature = "tokio")]
-    pub(crate) fn take_headers(&mut self) -> HeaderMap {
-        mem::take(&mut self.0.headers)
-    }
-
     pub(crate) fn into_then(self) -> Option<Continuation> {
         self.0.then
     }

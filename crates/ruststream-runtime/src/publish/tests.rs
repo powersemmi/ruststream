@@ -256,7 +256,7 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
     impl PublishDynLayer for Mark {
         fn on_publish<'a>(
             &'a self,
-            out: &'a mut Outgoing<'a>,
+            out: &'a mut Outgoing<'_>,
             next: PublishDynNext<'a>,
         ) -> PublishFut<'a> {
             self.0.fetch_add(self.1, Ordering::SeqCst);
@@ -316,7 +316,7 @@ async fn the_pipeline_cursors_render_their_position() {
     impl PublishLayer for Record {
         fn on_publish<'a, N: PublishPipeline, P: Publisher>(
             &'a self,
-            out: &'a mut Outgoing<'a>,
+            out: &'a mut Outgoing<'_>,
             next: PublishNext<'a, N, P>,
         ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
             self.0.lock().unwrap().push(format!("{next:?}"));
@@ -327,7 +327,7 @@ async fn the_pipeline_cursors_render_their_position() {
     impl PublishDynLayer for Record {
         fn on_publish<'a>(
             &'a self,
-            out: &'a mut Outgoing<'a>,
+            out: &'a mut Outgoing<'_>,
             next: PublishDynNext<'a>,
         ) -> PublishFut<'a> {
             self.0.lock().unwrap().push(format!("{next:?}"));

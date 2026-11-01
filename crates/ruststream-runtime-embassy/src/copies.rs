@@ -231,27 +231,26 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
         let target = destination
             .as_deref()
             .unwrap_or_else(|| self.path.address());
-        let failed_headers = reaction.is_some().then(|| headers.clone());
         let sent = self
             .path
             .publish_copy(target, &payload, headers, options.as_ref())
             .await;
         let follow = match sent {
             Ok(()) => publish_done(reaction),
-            Err(err) => publish_lost(
-                reaction,
-                &self.subscription,
-                target,
-                self.input,
-                err,
-                || {
-                    FailedMessage::new(
-                        target,
-                        Bytes::copy_from_slice(&payload),
-                        failed_headers.unwrap_or_default(),
-                    )
-                },
-            ),
+            Err(refusal) => {
+                // A taking publisher hands its own copy of the bytes back; a lending one is
+                // answered with the record's, which are copied because the record is reused.
+                let (err, failed) =
+                    refusal.into_message(target, |_, _| Bytes::copy_from_slice(&payload));
+                publish_lost(
+                    reaction,
+                    &self.subscription,
+                    target,
+                    self.input,
+                    err,
+                    || failed,
+                )
+            }
         };
         self.give_back(record, payload, destination);
         follow
@@ -305,27 +304,23 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
         } = spilled;
         async move {
             let target = destination.unwrap_or_else(|| self.path.address());
-            let failed_headers = reaction.is_some().then(|| headers.clone());
             let sent = self
                 .path
                 .publish_copy(target, &payload, headers, options.as_ref())
                 .await;
             match sent {
                 Ok(()) => publish_done(reaction),
-                Err(err) => publish_lost(
-                    reaction,
-                    &self.subscription,
-                    target,
-                    self.input,
-                    err,
-                    || {
-                        FailedMessage::new(
-                            target,
-                            payload.freeze(),
-                            failed_headers.unwrap_or_default(),
-                        )
-                    },
-                ),
+                Err(refusal) => {
+                    let (err, failed) = refusal.into_message(target, |_, _| payload.freeze());
+                    publish_lost(
+                        reaction,
+                        &self.subscription,
+                        target,
+                        self.input,
+                        err,
+                        || failed,
+                    )
+                }
             }
         }
     }
@@ -451,7 +446,7 @@ mod tests {
 
     use ruststream_core::HeaderMap;
     use ruststream_runtime::{
-        BoxError, Clock, CopyPublisher, ErrorHook, Failures, KeptCopies, LocalDetach, Reaction,
+        Clock, CopyPublisher, ErrorHook, Failures, KeptCopies, LocalDetach, Reaction, Refusal,
     };
 
     // The store on embassy's clock polls embassy's timer, whose queue lives in the executor.
@@ -570,7 +565,7 @@ mod tests {
             payload: &[u8],
             _headers: HeaderMap,
             _options: Option<&()>,
-        ) -> impl Future<Output = Result<(), BoxError>> {
+        ) -> impl Future<Output = Result<(), Refusal>> {
             self.0
                 .borrow_mut()
                 .push((destination.into(), payload.to_vec()));
@@ -594,8 +589,8 @@ mod tests {
             _payload: &[u8],
             _headers: HeaderMap,
             _options: Option<&()>,
-        ) -> impl Future<Output = Result<(), BoxError>> {
-            ready(Err(BoxError::from("the subscription is full")))
+        ) -> impl Future<Output = Result<(), Refusal>> {
+            ready(Err(Refusal::new("the subscription is full")))
         }
     }
 
@@ -720,10 +715,10 @@ mod tests {
             payload: &[u8],
             _headers: HeaderMap,
             _options: Option<&()>,
-        ) -> impl Future<Output = Result<(), BoxError>> {
+        ) -> impl Future<Output = Result<(), Refusal>> {
             if self.refusals.get() > 0 {
                 self.refusals.set(self.refusals.get() - 1);
-                return ready(Err(BoxError::from("the subscription is full")));
+                return ready(Err(Refusal::new("the subscription is full")));
             }
             self.sent
                 .0

@@ -16,11 +16,10 @@ use super::{Delivery, RETRY_COUNT_HEADER, Slot};
 use crate::IncomingMessage;
 use crate::handler::{Continuation, HandlerResult};
 use crate::host::{HostDetach, PrepareKept};
-use crate::lifecycle::BoxError;
 use crate::publish::PublishContext;
 #[cfg(feature = "tokio")]
 use crate::publish_failure::publish_done;
-use crate::publish_failure::{FailedMessage, Reaction, publish_lost};
+use crate::publish_failure::{Reaction, Refusal, publish_lost};
 use crate::redelivery::{RetryCopies, RetryRoute};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Coordinator, in_harness_scope};
@@ -699,12 +698,6 @@ where
     }
     // The original is gone, so the runtime publishes the copy: what its result is handed to
     // travels with the copy from here.
-    #[cfg(feature = "tokio")]
-    let reaction = reaction.take().map(|mut reaction| {
-        reaction.hold_headers(headers.clone());
-        reaction
-    });
-    #[cfg(not(feature = "tokio"))]
     let reaction = reaction.take();
 
     // The copy's future is built when it is due, not when it is scheduled: the task that waits
@@ -779,7 +772,7 @@ where
 /// failure the `.error` continuation, or a log line and the loss of the message without one.
 #[cfg(feature = "tokio")]
 fn copy_sent(
-    sent: Result<(), BoxError>,
+    sent: Result<(), Refusal>,
     reaction: Option<Reaction>,
     subscription: &str,
     target: &str,
@@ -788,12 +781,11 @@ fn copy_sent(
 ) -> Option<Continuation> {
     match sent {
         Ok(()) => publish_done(reaction),
-        Err(err) => {
-            let mut reaction = reaction;
-            let held = reaction.as_mut().map(Reaction::take_headers);
-            publish_lost(reaction, subscription, target, input, err, || {
-                FailedMessage::new(target, payload, held.unwrap_or_default())
-            })
+        Err(refusal) => {
+            // The copy's bytes are the ones this path holds, so a lending publisher's view of them
+            // is answered with them, moved; the headers come back with the message.
+            let (err, failed) = refusal.into_message(target, |_, _| payload);
+            publish_lost(reaction, subscription, target, input, err, || failed)
         }
     }
 }
@@ -802,16 +794,14 @@ fn copy_sent(
 /// feature no `.error` continuation is made here.
 #[cfg(not(feature = "tokio"))]
 fn copy_sent(
-    sent: Result<(), BoxError>,
+    sent: Result<(), Refusal>,
     subscription: &str,
     target: &str,
     input: &str,
     payload: Bytes,
 ) -> Option<Continuation> {
-    let err = sent.err()?;
-    publish_lost(None, subscription, target, input, err, || {
-        FailedMessage::new(target, payload, HeaderMap::new())
-    })
+    let (err, failed) = sent.err()?.into_message(target, |_, _| payload);
+    publish_lost(None, subscription, target, input, err, || failed)
 }
 
 #[cfg(test)]

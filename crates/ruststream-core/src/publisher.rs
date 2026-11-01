@@ -131,6 +131,12 @@ pub trait PayloadForm: sealed::Sealed {
     #[doc(hidden)]
     fn kept(payload: Self::Form<'_>) -> KeptPayload;
 
+    /// Puts back into `out` what a refused publish returned, so the stage that owns `out` reads
+    /// the message that was really sent: the buffer a taking form was handed, and nothing for a
+    /// lending one, whose bytes never left `out`.
+    #[doc(hidden)]
+    fn restored(kept: KeptPayload, out: &mut Outgoing<'_>);
+
     /// A message in this form, put back on the publish pipeline for the stages above the leaf.
     #[doc(hidden)]
     fn rebuilt<'a>(
@@ -145,7 +151,7 @@ pub trait PayloadForm: sealed::Sealed {
     /// wrote and a lending one the bytes where they are; either way the map the transforms
     /// filled moves into the message rather than being cloned into it.
     #[doc(hidden)]
-    fn leaving<'a>(out: &'a mut Outgoing<'a>) -> OutgoingMessage<'a, Self::Form<'a>>;
+    fn leaving<'a>(out: &'a mut Outgoing<'_>) -> OutgoingMessage<'a, Self::Form<'a>>;
 
     /// What a stage that owns its [`Outgoing`] has to keep alive for the length of the publish
     /// it hands on: a destination it owns, and - only where the transport reads the payload -

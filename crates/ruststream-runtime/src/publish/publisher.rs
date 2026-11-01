@@ -12,6 +12,7 @@ use super::{
 };
 use crate::codec::{Codec, Encoding};
 use crate::lifecycle::BoxError;
+use crate::publish_failure::Refusal;
 use crate::{HeaderMap, LocalPublisher, PayloadForm};
 
 /// A byte [`Publisher`](crate::Publisher) paired with a [`Codec`] and a static [`PublishTransform`] stack: what a
@@ -96,7 +97,7 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <P::Payload as PayloadForm>::Encode<'e>,
-    ) -> Result<(), BoxError>
+    ) -> Result<(), Refusal>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
         BL: Sync,
@@ -105,15 +106,17 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     {
         let payload =
             <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
-                .map_err(BoxError::from)?;
+                .map_err(|err| Refusal::new(BoxError::from(err)))?;
         let mut out = self.outgoing(name, payload);
         // A reply has no call site to adjust the broker's per-message settings, so the position
         // starts at the publish policy's own and only a transform fills it.
         let mut options = None;
         self.layers.apply(&mut out, &mut options, cx);
-        pipeline
+        let sent = pipeline
             .send_through(&mut out, &self.publisher, options.as_ref())
-            .await
+            .await;
+        // A refusal leaves the message that was sent in `out`, transforms applied.
+        sent.map_err(|err| Refusal::of(err, &mut out))
     }
 
     /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
@@ -127,7 +130,7 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <P::Payload as PayloadForm>::Encode<'e>,
-    ) -> Result<(), BoxError>
+    ) -> Result<(), Refusal>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
         BL: Sync,
@@ -136,16 +139,18 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     {
         let payload =
             <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
-                .map_err(BoxError::from)?;
+                .map_err(|err| Refusal::new(BoxError::from(err)))?;
         let mut out = self.outgoing(name, payload);
         out.headers_mut()
             .insert_typed(headers)
-            .map_err(BoxError::from)?;
+            .map_err(|err| Refusal::new(BoxError::from(err)))?;
         let mut options = None;
         self.layers.apply(&mut out, &mut options, cx);
-        pipeline
+        let sent = pipeline
             .send_through(&mut out, &self.publisher, options.as_ref())
-            .await
+            .await;
+        // A refusal leaves the message that was sent in `out`, transforms applied.
+        sent.map_err(|err| Refusal::of(err, &mut out))
     }
 
     /// Like [`publish`](Self::publish), but applies the batch-only [`BatchPublishTransform`] stack
@@ -159,7 +164,7 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <P::Payload as PayloadForm>::Encode<'e>,
-    ) -> Result<(), BoxError>
+    ) -> Result<(), Refusal>
     where
         PL: Sync,
         BL: BatchPublishTransform<Cx, P::Options>,
@@ -168,13 +173,15 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     {
         let payload =
             <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
-                .map_err(BoxError::from)?;
+                .map_err(|err| Refusal::new(BoxError::from(err)))?;
         let mut out = self.outgoing(name, payload);
         let mut options = None;
         self.batch_layers.apply(&mut out, &mut options, cx);
-        pipeline
+        let sent = pipeline
             .send_through(&mut out, &self.publisher, options.as_ref())
-            .await
+            .await;
+        // A refusal leaves the message that was sent in `out`, transforms applied.
+        sent.map_err(|err| Refusal::of(err, &mut out))
     }
 }
 

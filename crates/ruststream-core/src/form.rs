@@ -81,16 +81,19 @@ impl PayloadForm for Lend {
     }
 
     #[inline]
+    fn restored(_kept: KeptPayload, _out: &mut Outgoing<'_>) {}
+
+    #[inline]
     fn rebuilt<'a>(name: OutgoingName<'a>, payload: &'a [u8], headers: HeaderMap) -> Outgoing<'a> {
         Outgoing::rebuilding(name, Payload::Lent(payload), headers)
     }
 
     #[inline]
-    fn leaving<'a>(out: &'a mut Outgoing<'a>) -> OutgoingMessage<'a, &'a [u8]> {
+    fn leaving<'a>(out: &'a mut Outgoing<'_>) -> OutgoingMessage<'a, &'a [u8]> {
         let headers = out.take_headers();
         // The mutable borrow ends here; what is left is read, and read for as long as the
         // message that leaves lives.
-        let out: &'a Outgoing<'a> = out;
+        let out: &'a Outgoing<'_> = out;
         OutgoingMessage::assembled(out.name(), out.payload(), headers)
     }
 
@@ -169,12 +172,25 @@ impl PayloadForm for Take {
     }
 
     #[inline]
+    fn restored(kept: KeptPayload, out: &mut Outgoing<'_>) {
+        if let KeptPayload::Owned(bytes) = kept {
+            // The buffer is the one the transport handed back, frozen and still unique, so it
+            // turns into a buffer again without a copy.
+            out.set_payload(
+                bytes
+                    .try_into_mut()
+                    .unwrap_or_else(|shared| BytesMut::from(&*shared)),
+            );
+        }
+    }
+
+    #[inline]
     fn rebuilt(name: OutgoingName<'_>, payload: BytesMut, headers: HeaderMap) -> Outgoing<'_> {
         Outgoing::rebuilding(name, Payload::Owned(payload), headers)
     }
 
     #[inline]
-    fn leaving<'a>(out: &'a mut Outgoing<'a>) -> OutgoingMessage<'a, BytesMut> {
+    fn leaving<'a>(out: &'a mut Outgoing<'_>) -> OutgoingMessage<'a, BytesMut> {
         let payload = out.take_payload();
         let headers = out.take_headers();
         OutgoingMessage::assembled(out.name(), payload, headers)
