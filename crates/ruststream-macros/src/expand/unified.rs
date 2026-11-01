@@ -696,19 +696,6 @@ impl NeutralArena {
                 // needs `Send` and `'static`, publish future included. The bounds are the
                 // per-feature ones: `Send` where `tokio` is on, nothing on embassy alone.
                 bounds.push(quote!(#entry: 'static + ::ruststream::runtime::MaybeSendSync));
-                // A capability bound written on the entry itself already makes it a `Publisher`
-                // with the settings the bound names; a second `Publisher` clause would restate
-                // them as a projection the compiler cannot equate with the first.
-                let on_entry_publisher = out.bounds.iter().any(|bound| {
-                    capability_named(bound, &["TransactionalPublisher", "RequestReply"])
-                });
-                if !on_entry_publisher {
-                    bounds.push(quote! {
-                        #entry: ::ruststream::runtime::MaybeSendPublisher<
-                            <#entry as ::ruststream::Publisher>::Options
-                        >
-                    });
-                }
                 bounds.push(quote! {
                     #entry: ::ruststream::runtime::MaybeSendSink<#marker, #body>
                 });
