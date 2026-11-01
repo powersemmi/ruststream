@@ -63,9 +63,10 @@ fn a_handler_that_retries_forever_fails_the_publish_that_set_it_off() {
     assert!(
         matches!(
             outcome,
-            Err(PublishError::Publish(TestError::NotQuiescent {
-                processed: 10_000
-            }))
+            Err(PublishError::Publish {
+                source: TestError::NotQuiescent { processed: 10_000 },
+                ..
+            })
         ),
         "the publish returned {outcome:?}",
     );
