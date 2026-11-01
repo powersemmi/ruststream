@@ -1745,6 +1745,7 @@ dependencies = [
  "embassy-time",
  "futures",
  "futures-core",
+ "gungraun",
  "hash32",
  "heapless",
  "pin-project-lite",
