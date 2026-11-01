@@ -417,7 +417,9 @@ pub type PublishOutcome<'msg, Error, Form> =
 /// ```
 pub struct PublishMessageError<Error, Message> {
     error: Error,
-    message: Option<Message>,
+    // Boxed so the outcome of a publish that went out stays the size of the error: the message
+    // is moved into the box only on a refusal, which is off the hot path.
+    message: Option<Box<Message>>,
 }
 
 impl<Error, Message> PublishMessageError<Error, Message> {
@@ -432,10 +434,10 @@ impl<Error, Message> PublishMessageError<Error, Message> {
 
     /// A refusal that returns the message it did not send.
     #[must_use]
-    pub const fn with_message(error: Error, message: Message) -> Self {
+    pub fn with_message(error: Error, message: Message) -> Self {
         Self {
             error,
-            message: Some(message),
+            message: Some(Box::new(message)),
         }
     }
 
@@ -447,8 +449,8 @@ impl<Error, Message> PublishMessageError<Error, Message> {
 
     /// The message the broker did not send, when the client gave it back.
     #[must_use]
-    pub const fn message(&self) -> Option<&Message> {
-        self.message.as_ref()
+    pub fn message(&self) -> Option<&Message> {
+        self.message.as_deref()
     }
 
     /// The broker's error, dropping the message.
@@ -460,13 +462,13 @@ impl<Error, Message> PublishMessageError<Error, Message> {
     /// The message the broker did not send, dropping the error.
     #[must_use]
     pub fn into_message(self) -> Option<Message> {
-        self.message
+        self.message.map(|message| *message)
     }
 
     /// The error and the message, both owned.
     #[must_use]
     pub fn into_parts(self) -> (Error, Option<Message>) {
-        (self.error, self.message)
+        (self.error, self.message.map(|message| *message))
     }
 
     /// The same refusal over another message type, with no message.
@@ -1315,4 +1317,19 @@ impl PairError {
 pub trait DefaultPublish: ConnectedBroker {
     /// The broker's plain publish policy, constructible with its defaults.
     type Policy: PublishPolicy<Self> + Default + 'static;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::*;
+
+    #[test]
+    fn a_publish_that_went_out_returns_an_outcome_of_the_cause_alone() {
+        assert!(
+            size_of::<PublishOutcome<'_, io::Error, Take>>()
+                <= size_of::<io::Error>() + size_of::<usize>()
+        );
+    }
 }

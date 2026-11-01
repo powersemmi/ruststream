@@ -183,7 +183,9 @@ impl MessageHeaders for FailedMessage {
 #[derive(Debug)]
 pub struct Refusal {
     error: BoxError,
-    unsent: Option<Unsent>,
+    // Boxed so a publish that went out returns a pointer-sized result through every layer of the
+    // reply and the copy; the message is moved into the box only on a refusal.
+    unsent: Option<Box<Unsent>>,
 }
 
 /// The message a refused publish handed back, as its owner reads it.
@@ -215,10 +217,10 @@ impl Refusal {
             error: error.into(),
             unsent: message.map(|message| {
                 let (_, payload, headers) = message.into_parts();
-                Unsent {
+                Box::new(Unsent {
                     payload: Form::kept(payload),
                     headers,
-                }
+                })
             }),
         }
     }
@@ -229,7 +231,7 @@ impl Refusal {
         let (error, unsent) = refusal.into_parts();
         Self {
             error: error.into(),
-            unsent: unsent.map(|(_, payload, headers)| Unsent { payload, headers }),
+            unsent: unsent.map(|(_, payload, headers)| Box::new(Unsent { payload, headers })),
         }
     }
 
@@ -240,7 +242,7 @@ impl Refusal {
     /// message from `out` once the error reaches them. A refusal with no message leaves `out`
     /// empty.
     pub fn restore<Form: PayloadForm>(self, out: &mut Outgoing<'_>) -> BoxError {
-        if let Some(Unsent { payload, headers }) = self.unsent {
+        if let Some(Unsent { payload, headers }) = self.unsent.map(|unsent| *unsent) {
             Form::restored(payload, out);
             *out.headers_mut() = headers;
         } else {
@@ -268,10 +270,10 @@ impl Refusal {
         );
         Self {
             error,
-            unsent: Some(Unsent {
+            unsent: Some(Box::new(Unsent {
                 payload,
                 headers: mem::take(out.headers_mut()),
-            }),
+            })),
         }
     }
 
@@ -284,7 +286,7 @@ impl Refusal {
         wrap: impl FnOnce(BoxError) -> Error,
     ) -> SinkRefusal<Error> {
         let error = wrap(self.error);
-        match self.unsent {
+        match self.unsent.map(|unsent| *unsent) {
             Some(Unsent { payload, headers }) => {
                 SinkRefusal::with_message(error, destination, payload, headers)
             }
@@ -315,7 +317,7 @@ impl Refusal {
         destination: &str,
         lent: impl FnOnce(usize, usize) -> Bytes,
     ) -> (BoxError, FailedMessage) {
-        let message = match self.unsent {
+        let message = match self.unsent.map(|unsent| *unsent) {
             Some(Unsent { payload, headers }) => {
                 let payload = match payload {
                     KeptPayload::Owned(bytes) => bytes,
@@ -846,6 +848,11 @@ mod tests {
     use std::io;
 
     use super::*;
+
+    #[test]
+    fn a_publish_that_went_out_returns_a_result_of_the_cause_alone() {
+        assert!(size_of::<Result<(), Refusal>>() <= size_of::<BoxError>() + size_of::<usize>());
+    }
 
     /// An error whose source is the I/O error it wraps.
     #[derive(Debug)]
