@@ -94,6 +94,34 @@ on a `threads(n)` subscription, on the delivery's thread. The continuation's fut
 the tokio runtime on; with the embedded runtime alone it carries no `Send` and may hold the local
 bus's publisher or an `Rc`.
 
+## A failed runtime publish (`.error`)
+
+The runtime publishes the delayed `retry_after` copy, the copy for a declared dead letter and the
+reply of `out_reply`. When such a publish fails, `.error(async move |failures: Failures| ..)` on the
+returned `HandlerOutcome` (or `ctx.after(outcome).error(..)` from the context) learns of it: each
+`Failed` of `failures` has `error()`, the cause, and `message()`, the very message that did not go
+out (bytes and headers), which another `Out` republishes as it is. The handler never runs again
+because of it, and a failed reply no longer requeues the delivery. A `.then` chained beside it
+(`and_after(..).error(..)` on the outcome, `.then(..).error(..)` or `.error(..).then(..)` on the
+context) runs only when the publish succeeded. Without `.error` the failure is logged with the
+subscription, the destination, the message type and the error, and the copy is lost. The closure is
+one-shot. A single `HandlerOutcome` for a batch runs it once, with every failed element in
+`failures`; its `and_after` runs once when at least one copy was published.
+
+```rust
+use ruststream::prelude::*;
+
+#[subscriber("payments")]
+async fn reconcile(payment: &Payment) -> HandlerOutcome {
+    let id = payment.id;
+    HandlerOutcome::retry_after(std::time::Duration::from_secs(5)).error(async move |failures: Failures| {
+        for failed in failures {
+            tracing::error!(id, error = %failed.error(), destination = failed.message().destination(), "the retry is lost");
+        }
+    })
+}
+```
+
 ## Settings the mount site fills in
 
 A `#[subscriber]` with no source in the attribute leaves the name to the mount; the definition

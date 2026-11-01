@@ -210,12 +210,13 @@ async fn raw_reply_result_form_controls_the_publish() {
         .settled(HandlerOutcome::ack());
 }
 
-// --- a failed reply publish nacks the delivery with requeue, like the typed reply form ---
+// --- a failed reply publish loses the reply and acks the delivery, like the typed reply form ---
 
 /// A policy whose live publisher fails its first publish, then delegates to the real one:
 /// exercises the reply-publish failure path without tearing a broker down.
 struct FlakyPublish(Arc<AtomicBool>);
 
+#[derive(Clone)]
 struct FlakyPublisher {
     inner: MemoryPublisher,
     fail_next: Arc<AtomicBool>,
@@ -263,7 +264,7 @@ async fn relay_flaky_capture(_frame: &Frame<'_>) -> HandlerOutcome {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn failed_raw_reply_publish_nacks_and_redelivers() {
+async fn failed_raw_reply_publish_acks_and_loses_the_reply() {
     let publisher_flag = Arc::new(AtomicBool::new(true));
     let app =
         RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), move |b| {
@@ -280,17 +281,15 @@ async fn failed_raw_reply_publish_nacks_and_redelivers() {
         .await
         .expect("publish");
 
-    // The first delivery's reply publish fails, so it nacks with requeue; the redelivery
-    // publishes and acks. The reply reaches the capture exactly once.
+    // The delivery's reply publish fails: the handler ran once, the delivery is acknowledged,
+    // and the reply never reaches the capture.
     tb.broker::<MemoryBroker>()
         .subscriber("relay-flaky-in")
-        .assert_called(2)
+        .assert_called_once()
         .settled(HandlerOutcome::ack());
     tb.broker::<MemoryBroker>()
         .subscriber("relay-flaky-out")
-        .assert_called_once()
-        .with_raw(FRAME)
-        .settled(HandlerOutcome::ack());
+        .assert_not_called();
 }
 
 // --- a Serialized reply with a TYPED input: decode with the scope codec, reply bytes as-is ---

@@ -51,6 +51,7 @@ impl PriorityPublish {
 }
 
 /// The live publisher the policy pairs with the connected broker.
+#[derive(Clone)]
 struct PriorityPublisher {
     inner: MemoryPublisher,
     default_priority: u8,
@@ -133,6 +134,7 @@ async fn ship(
 
 // --8<-- [start:transform]
 /// A reply has no call site, so a transform sets its settings.
+#[derive(Clone)]
 struct LowPriority;
 
 impl<K: ContextKind> PublishTransform<K, PriorityOptions> for LowPriority {

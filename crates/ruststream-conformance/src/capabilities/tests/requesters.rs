@@ -1,5 +1,6 @@
 //! Requesters whose correlation or shutdown is broken.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
@@ -65,12 +66,13 @@ enum RequestFault {
     WaitsAfterShutdown,
 }
 
+#[derive(Clone)]
 struct FaultyRequester {
     connected: ConnectedMemoryBroker,
     publisher: MemoryPublisher,
     requester: MemoryRequester,
     inbox_name: String,
-    shared: AsyncMutex<Option<MemorySubscriber>>,
+    shared: Arc<AsyncMutex<Option<MemorySubscriber>>>,
     fault: RequestFault,
 }
 
@@ -81,7 +83,7 @@ impl FaultyRequester {
             publisher: connected.publisher(),
             requester: connected.requester(),
             inbox_name: unique_subject("faulty.inbox"),
-            shared: AsyncMutex::new(None),
+            shared: AsyncMutex::new(None).into(),
             fault,
         }
     }

@@ -57,6 +57,7 @@ async fn on_job(job: &Job<'_>) -> HandlerOutcome {
 static STAMPED: AtomicU32 = AtomicU32::new(0);
 
 /// A transform on the retry position: stamps every copy it sees with the header `stamped`.
+#[derive(Clone)]
 struct Stamp;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {

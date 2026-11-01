@@ -10,6 +10,7 @@ struct Chunk<'a>(&'a [u8]);
 #[derive(OutSlot)]
 struct Encoded;
 
+#[derive(Clone)]
 struct Envelope;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {

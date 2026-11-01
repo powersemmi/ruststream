@@ -13,7 +13,7 @@ help: the following other types implement trait `RequestReply`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
+   | / impl<M: OutSlot, W: RequestReply, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -45,7 +45,7 @@ help: the following other types implement trait `RequestReply`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
+   | / impl<M: OutSlot, W: RequestReply, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -77,7 +77,7 @@ help: the following other types implement trait `RequestReply`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
+   | / impl<M: OutSlot, W: RequestReply, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -109,7 +109,7 @@ help: the following other types implement trait `RequestReply`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
+   | / impl<M: OutSlot, W: RequestReply, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -141,7 +141,7 @@ help: the following other types implement trait `RequestReply`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
+   | / impl<M: OutSlot, W: RequestReply, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -175,7 +175,7 @@ help: the following other types implement trait `RequestReply`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
+   | / impl<M: OutSlot, W: RequestReply, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |

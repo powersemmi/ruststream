@@ -1,7 +1,7 @@
 error[E0271]: type mismatch resolving `<PublishTransformStack<PublishTransformIdentity, ByTenant> as PublishTransform<ForReply>>::Destination == Reads`
-  --> tests/ui/out_retry_naming_transform.rs:33:50
+  --> tests/ui/out_retry_naming_transform.rs:34:50
    |
-33 | fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
+34 | fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
    |                                                  ^^^^^^^^^^^ expected `Reads`, found `Names`
    |
    = note: required for `PublishTransformStack<PublishTransformIdentity, ByTenant>` to implement `ruststream_runtime::redelivery::kept::KeptTransforms<(), ()>`

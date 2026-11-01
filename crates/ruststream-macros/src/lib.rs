@@ -112,8 +112,8 @@ use parse::SubscriberArgs;
 /// `Result<Reply, HandlerOutcome>` to control acknowledgement: `Err(outcome)` publishes nothing
 /// and settles by `outcome`. The `Result` form is
 /// detected syntactically, so spell it out in the signature (a type alias is treated as a plain
-/// reply type). A failed reply publish nacks the delivery with requeue on both wires, so a
-/// reply is retried rather than silently lost.
+/// reply type). A failed reply publish is logged and the delivery is acknowledged on both wires:
+/// the handler already did its work, and `ctx.after(..).error(..)` learns of the loss.
 ///
 /// A `&[T]` message parameter makes the definition a batch one: the handler runs once per batch
 /// pulled from the subscription's `BatchSubscriber` (added by the mount site's buffer for

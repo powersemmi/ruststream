@@ -136,15 +136,41 @@ name = "embedded_quiescence"
 path = "tests/embedded_quiescence.rs"
 required-features = ["embassy", "json"]
 
-# What a delayed retry does when the mount's store of copies is full: panic, dead letter, or skip
-# the delay, through the embedded `TestApp`.
-[[test]]
-name = "embedded_retry_full"
-path = "tests/embedded_retry_full.rs"
-required-features = ["embassy", "json"]
-
 # One service whose handlers mount on a tokio app and on an embedded app, in one build.
 [[test]]
 name = "both_runtimes"
 path = "tests/both_runtimes.rs"
 required-features = ["tokio", "embassy", "json"]
+
+# What a handler's `.error` continuation is told when a copy the runtime publishes is lost: a
+# store with no free record, a bus that refuses the copy, through the embedded `TestApp`.
+[[test]]
+name = "embedded_error"
+path = "tests/embedded_error.rs"
+required-features = ["embassy", "json"]
+
+# An `.error` continuation holding what is not `Send`, on the embedded runtime alone.
+[[test]]
+name = "embedded_error_local"
+path = "tests/embedded_error_local.rs"
+required-features = ["embassy", "json"]
+
+[[test]]
+name = "embedded_error_out"
+path = "tests/embedded_error_out.rs"
+required-features = ["embassy", "json"]
+
+[[test]]
+name = "embedded_out_continuation"
+path = "tests/embedded_out_continuation.rs"
+required-features = ["embassy", "json"]
+
+[[test]]
+name = "embedded_error_reply"
+path = "tests/embedded_error_reply.rs"
+required-features = ["embassy", "json"]
+
+[[test]]
+name = "embedded_spill"
+path = "tests/embedded_spill.rs"
+required-features = ["embassy", "json"]

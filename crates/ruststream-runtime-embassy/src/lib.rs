@@ -11,8 +11,7 @@
 //!   builds the app returns (`EmbeddedApp<impl Mounts>`); [`RunError`] says why a run ended
 //!   other than on request.
 //! - [`MountSteps`]: the runner's mount steps with counts fixed in the registration's type:
-//!   `.pool::<N>()`, `.keyed::<N>()` and `.retry_capacity::<CAP>()`, whose full store answers as
-//!   `.when_retry_full(..)` says: [`Panic`] (the default), [`DeadLetter`] or [`SkipDelay`].
+//!   `.pool::<N>()`, `.keyed::<N>()` and `.retry_capacity::<CAP>()`.
 //!   [`Scope`] is the local
 //!   router a broker's scope starts from; [`MountChain`] finishes what the scope returns.
 //! - [`Control`] and [`Health`]: the stop device code asks for and the health it reads, both in
@@ -35,7 +34,6 @@ mod clock;
 mod control;
 mod copies;
 pub mod frames;
-mod full;
 mod hooks;
 mod host;
 #[cfg(feature = "testing")]
@@ -50,9 +48,7 @@ pub use app::{EmbeddedApp, Mounts, Parts, RunError, Scope};
 pub use bindable::{Bindable, Bound};
 pub use clock::EmbassyClock;
 pub use control::{Control, Health, Stopping};
-pub use full::{DeadLetter, Panic, SkipDelay};
 #[doc(hidden)]
-pub use full::{FullPolicy, HasRetryRoom, PolicyFits};
 #[doc(hidden)]
 pub use hooks::{HookList, Hooks, NoHooks};
 #[cfg(feature = "testing")]

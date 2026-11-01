@@ -180,4 +180,4 @@ pub trait PublishExt: Publisher {
     }
 }
 
-impl<P: Publisher + ?Sized> PublishExt for P {}
+impl<P: Publisher> PublishExt for P {}

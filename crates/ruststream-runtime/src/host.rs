@@ -11,6 +11,8 @@
 //! which the loop carries as a type parameter.
 
 #[cfg(feature = "alloc")]
+use bytes::Bytes;
+#[cfg(feature = "alloc")]
 use core::pin::Pin;
 use core::time::Duration;
 
@@ -24,7 +26,7 @@ use core::convert::Infallible;
 #[cfg(feature = "alloc")]
 use crate::handler::Continuation;
 #[cfg(feature = "alloc")]
-use crate::lifecycle::BoxError;
+use crate::publish_failure::Reaction;
 #[cfg(feature = "alloc")]
 use crate::redelivery::{NoRetry, RetryCopies, RetryRoute};
 #[cfg(feature = "alloc")]
@@ -267,22 +269,12 @@ pub trait HostDetach {
     /// [`LocalDetach::STORES_COPIES`].
     const STORES_COPIES: bool = false;
 
-    /// Runs `work` beside the delivery that left it.
-    fn detach<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static;
-
     /// Runs work the delivery already boxed: an `and_after` continuation or a post-settle hook.
     ///
     /// A runner that keeps its work boxed takes this box as it is, so a continuation costs one
     /// allocation and not a box around a box.
     #[cfg(feature = "alloc")]
     fn detach_boxed(&self, work: Continuation);
-
-    /// Runs `work` once `delay` has passed on the runner's clock.
-    fn detach_after<Work>(&self, delay: Duration, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static;
 
     /// Runs the work `make` builds once `delay` has passed on the runner's clock: see
     /// [`Detach::detach_after_with`].
@@ -317,26 +309,10 @@ pub trait HostDetach {
 }
 
 impl<Host: Detach> HostDetach for Host {
-    #[inline]
-    fn detach<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        Detach::detach(self, work);
-    }
-
     #[cfg(feature = "alloc")]
     #[inline]
     fn detach_boxed(&self, work: Continuation) {
         Detach::detach_boxed(self, work);
-    }
-
-    #[inline]
-    fn detach_after<Work>(&self, delay: Duration, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        Detach::detach_after(self, delay, work);
     }
 
     #[inline]
@@ -386,26 +362,10 @@ pub struct OnOneThread<'host, Host>(pub &'host Host);
 impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
     const STORES_COPIES: bool = Host::STORES_COPIES;
 
-    #[inline]
-    fn detach<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        LocalDetach::detach(self.0, work);
-    }
-
     #[cfg(feature = "alloc")]
     #[inline]
     fn detach_boxed(&self, work: Continuation) {
         LocalDetach::detach_boxed(self.0, work);
-    }
-
-    #[inline]
-    fn detach_after<Work>(&self, delay: Duration, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        LocalDetach::detach_after(self.0, delay, work);
     }
 
     #[inline]
@@ -485,24 +445,8 @@ impl<Host, Retry> Copying<Host, Retry> {
 #[cfg(feature = "alloc")]
 impl<Host: Detach, Retry: 'static> HostDetach for Copying<Host, Retry> {
     #[inline]
-    fn detach<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        Detach::detach(&self.host, work);
-    }
-
-    #[inline]
     fn detach_boxed(&self, work: Continuation) {
         Detach::detach_boxed(&self.host, work);
-    }
-
-    #[inline]
-    fn detach_after<Work>(&self, delay: Duration, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        Detach::detach_after(&self.host, delay, work);
     }
 
     #[inline]
@@ -551,26 +495,10 @@ pub struct Keeping<'host, Host, Kept>(pub &'host Host, pub &'host Kept);
 impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept> {
     const STORES_COPIES: bool = Host::STORES_COPIES;
 
-    #[inline]
-    fn detach<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        LocalDetach::detach(self.0, work);
-    }
-
     #[cfg(feature = "alloc")]
     #[inline]
     fn detach_boxed(&self, work: Continuation) {
         LocalDetach::detach_boxed(self.0, work);
-    }
-
-    #[inline]
-    fn detach_after<Work>(&self, delay: Duration, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        LocalDetach::detach_after(self.0, delay, work);
     }
 
     #[inline]
@@ -607,29 +535,15 @@ impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept>
     }
 }
 
-/// What a mount does with a delayed retry when its store of copies has no free record. Machinery;
-/// the mount site picks one with `.when_retry_full(..)`.
-#[cfg(feature = "alloc")]
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum WhenFull {
-    /// Panic: a device resets rather than losing a retry or spinning.
-    #[default]
-    Panic,
-    /// Send the delivery to the mount's dead-letter destination.
-    DeadLetter,
-    /// Publish the copy at once instead of holding it for its delay.
-    SkipDelay,
-}
-
 /// Retry copies kept in place: a fixed number of records, each holding one copy's bytes and
 /// headers until it is published, by the store's own driver once it is due or by the delivery
 /// body at once.
 ///
-/// The body fills a record before it settles the delivery the record copies. A store with every
-/// record taken does what the mount chose ([`WhenFull`]): it panics, or the copy leaves without
-/// a record, at once. A record reuses its buffer from one copy to the next. Machinery; never
-/// named directly.
+/// The body fills a record before it settles the delivery the record copies. A copy that would
+/// wait for its delay in a store with every record taken is a failed publish like any other
+/// ([`NoFreeRecordError`](crate::NoFreeRecordError)): the handler's `.error` continuation gets
+/// it, and without one the copy is lost with a warning. A record reuses its buffer from one copy
+/// to the next. Machinery; never named directly.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub trait KeptCopies {
@@ -637,48 +551,51 @@ pub trait KeptCopies {
     /// the copy is made of until [`send_spilled`](Self::send_spilled) publishes it.
     type Spilled;
 
-    /// How many records the store has.
-    fn capacity(&self) -> usize;
-
-    /// The name of the type the handler receives, for the diagnostic of a full store.
-    fn input(&self) -> &'static str;
-
-    /// What a delivery does when no record is free.
-    fn when_full(&self) -> WhenFull;
-
     /// Takes a free record for one copy; `None` when every record holds one.
     fn take_record(&self) -> Option<usize>;
 
     /// Publishes a copy that took no record, now, to `destination` or, without one, to the
     /// subscription.
     ///
-    /// # Errors
-    ///
-    /// What the publisher returned; the copy is lost.
+    /// A publish that fails loses the copy and hands the error to the handler's `.error`
+    /// continuation in `reaction`, or warns without one; one that succeeds hands on the `.then`
+    /// registered beside it. What follows comes back for the caller to run beside the delivery.
     fn send_spilled(
         &self,
         spilled: Self::Spilled,
         destination: Option<&str>,
-    ) -> impl Future<Output = Result<(), BoxError>>;
+        reaction: Option<Reaction>,
+    ) -> impl Future<Output = Option<Continuation>>;
+
+    /// A copy that would wait for its delay found every record taken: the failure of a publish
+    /// that never started. The error is [`NoFreeRecordError`](crate::NoFreeRecordError); `reaction`
+    /// gets it with the copy (`payload` is `Some` exactly when there is a continuation to give it
+    /// to), and without one a warning names it. What it makes of the failure
+    /// comes back for the caller to run beside the delivery.
+    fn full(
+        &self,
+        payload: Option<Bytes>,
+        headers: HeaderMap,
+        reaction: Option<Reaction>,
+    ) -> Option<Continuation>;
 
     /// Writes the copy into `record`, taken by [`take_record`](Self::take_record).
     fn fill(&self, record: usize, payload: &[u8], headers: HeaderMap);
 
     /// Publishes the copy in `record` to the subscription once `delay` has passed, and frees
-    /// the record then.
-    fn arm(&self, record: usize, delay: Duration);
+    /// the record then. A publish that fails then hands its error to `reaction`, which the record
+    /// holds until it is published.
+    fn arm(&self, record: usize, delay: Duration, reaction: Option<Reaction>);
 
     /// Publishes the copy in `record` now, to `destination` or, without one, to the
-    /// subscription, and frees the record.
-    ///
-    /// # Errors
-    ///
-    /// What the publisher returned; the copy is lost.
+    /// subscription, and frees the record. A publish that fails is handled as in
+    /// [`send_spilled`](Self::send_spilled).
     fn send_now(
         &self,
         record: usize,
         destination: Option<&str>,
-    ) -> impl Future<Output = Result<(), BoxError>>;
+        reaction: Option<Reaction>,
+    ) -> impl Future<Output = Option<Continuation>>;
 
     /// Frees `record` without publishing what it holds: the settle it was taken for failed.
     fn free(&self, record: usize);
@@ -738,18 +655,6 @@ pub enum NoKept {}
 impl KeptCopies for NoKept {
     type Spilled = Infallible;
 
-    fn capacity(&self) -> usize {
-        match *self {}
-    }
-
-    fn input(&self) -> &'static str {
-        match *self {}
-    }
-
-    fn when_full(&self) -> WhenFull {
-        match *self {}
-    }
-
     fn take_record(&self) -> Option<usize> {
         match *self {}
     }
@@ -758,7 +663,17 @@ impl KeptCopies for NoKept {
         &self,
         _spilled: Self::Spilled,
         _destination: Option<&str>,
-    ) -> Result<(), BoxError> {
+        _reaction: Option<Reaction>,
+    ) -> Option<Continuation> {
+        match *self {}
+    }
+
+    fn full(
+        &self,
+        _payload: Option<Bytes>,
+        _headers: HeaderMap,
+        _reaction: Option<Reaction>,
+    ) -> Option<Continuation> {
         match *self {}
     }
 
@@ -766,11 +681,16 @@ impl KeptCopies for NoKept {
         match *self {}
     }
 
-    fn arm(&self, _record: usize, _delay: Duration) {
+    fn arm(&self, _record: usize, _delay: Duration, _reaction: Option<Reaction>) {
         match *self {}
     }
 
-    async fn send_now(&self, _record: usize, _destination: Option<&str>) -> Result<(), BoxError> {
+    async fn send_now(
+        &self,
+        _record: usize,
+        _destination: Option<&str>,
+        _reaction: Option<Reaction>,
+    ) -> Option<Continuation> {
         match *self {}
     }
 

@@ -23,6 +23,7 @@ struct Priority {
 
 // The transform writes `Priority`, so it belongs over a publisher whose `Publisher::Options` is
 // `Priority`. The in-memory broker has no per-message setting at all (`Options = ()`).
+#[derive(Clone)]
 struct Urgent;
 
 impl<C> PublishTransform<ForReply<C>, Priority> for Urgent {

@@ -75,7 +75,7 @@ where
 
 /// A publisher that always rejects, standing in for a broker that died between the nack and
 /// the deferred republish. It counts the publishes it refused.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct RejectingPublisher {
     pub(super) attempts: Arc<AtomicUsize>,
 }

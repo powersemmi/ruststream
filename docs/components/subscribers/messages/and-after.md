@@ -21,6 +21,7 @@ With the tokio runtime on, the continuation's future is `Send` and runs on a tas
 On the embedded runtime alone it carries no `Send`, so it may hold the local bus's publisher or an `Rc`; the app's one task polls it, and it costs one allocation, the box the outcome made.
 A test waits for them with [`drain`](../../application/testing/driving/drain.md).
 A [hook](./hooks.md) on the context runs after the settlement too, gated by which settlement it was.
+[`.error`](./error.md) beside it reacts to a failed publish the runtime made for the outcome; with both, `and_after` follows a publish that succeeded.
 
 ## Example
 

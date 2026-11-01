@@ -31,6 +31,7 @@ mod mount {
 
     // --8<-- [start:mount]
     /// Stamps every copy with the subscription its delivery came from.
+    #[derive(Clone)]
     struct RetriedFrom;
 
     impl<C, Options> PublishTransform<ForReply<C>, Options> for RetriedFrom {

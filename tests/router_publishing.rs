@@ -225,6 +225,7 @@ impl Field<TraceCtx> for Correlation {
     }
 }
 
+#[derive(Clone)]
 struct PropagateCorrelation;
 
 impl<Options> PublishTransform<ForReply<TraceCtx>, Options> for PropagateCorrelation {

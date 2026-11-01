@@ -1,0 +1,51 @@
+error[E0277]: `Rc<u32>` cannot be sent between threads safely
+  --> tests/ui/error_not_send_on_tokio.rs:17:33
+   |
+17 |       HandlerOutcome::ack().error(async move |failures: Failures| {
+   |  ___________________________-----_^
+   | |                           |
+   | |                           required by a bound introduced by this call
+18 | |         for failed in failures {
+19 | |             let (_err, _lost) = failed.into_parts();
+20 | |         drop(held);
+21 | |         }
+22 | |     })
+   | |_____^ `Rc<u32>` cannot be sent between threads safely
+   |
+   = help: within `{async closure@$DIR/tests/ui/error_not_send_on_tokio.rs:17:33: 17:64}`, the trait `Send` is not implemented for `Rc<u32>`
+   = note: required because it appears within the type `(Rc<u32>,)`
+note: required because it's used within this closure
+  --> tests/ui/error_not_send_on_tokio.rs:17:33
+   |
+17 |     HandlerOutcome::ack().error(async move |failures: Failures| {
+   |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `{async closure@$DIR/tests/ui/error_not_send_on_tokio.rs:17:33: 17:64}` to implement `ruststream_runtime::handler::MaybeSend`
+note: required by a bound in `HandlerOutcome::error`
+  --> crates/ruststream-runtime/src/handler.rs
+   |
+   |     pub fn error<React, Reaction>(mut self, react: React) -> Self
+   |            ----- required by a bound in this associated function
+   |     where
+   |         React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
+   |                                               ^^^^^^^^^ required by this bound in `HandlerOutcome::error`
+
+error: future cannot be sent between threads safely
+  --> tests/ui/error_not_send_on_tokio.rs:17:27
+   |
+17 |     HandlerOutcome::ack().error(async move |failures: Failures| {
+   |                           ^^^^^ future created by async closure is not `Send`
+   |
+   = help: within `{async closure body@$DIR/tests/ui/error_not_send_on_tokio.rs:17:65: 22:6}`, the trait `Send` is not implemented for `Rc<u32>`
+note: captured value is not `Send`
+  --> tests/ui/error_not_send_on_tokio.rs:20:14
+   |
+20 |         drop(held);
+   |              ^^^^ has type `Rc<u32>` which is not `Send`
+note: required by a bound in `HandlerOutcome::error`
+  --> crates/ruststream-runtime/src/handler.rs
+   |
+   |     pub fn error<React, Reaction>(mut self, react: React) -> Self
+   |            ----- required by a bound in this associated function
+...
+   |         Reaction: ContinuationFuture,
+   |                   ^^^^^^^^^^^^^^^^^^ required by this bound in `HandlerOutcome::error`

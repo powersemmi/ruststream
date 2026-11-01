@@ -120,6 +120,7 @@ impl RawMessage {
 /// use std::io;
 ///
 /// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take};
+/// # #[derive(Clone)]
 /// # struct Client;
 /// # impl Client {
 /// #     async fn send(
@@ -134,6 +135,7 @@ impl RawMessage {
 ///
 /// /// A transport whose client keeps the message: it takes the buffer, so the framework hands it
 /// /// over instead of lending it.
+/// #[derive(Clone)]
 /// struct ClientPublisher {
 ///     client: Client,
 /// }
@@ -187,6 +189,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     ///
     /// /// A publisher that files every message under the tenant's namespace. The buffer the
     /// /// publish handed over moves across as it is, never downgraded to a borrow.
+    /// #[derive(Clone)]
     /// struct Namespaced<P> {
     ///     inner: P,
     ///     tenant: String,
@@ -327,6 +330,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// use std::io;
     ///
     /// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take};
+    /// # #[derive(Clone)]
     /// # struct Client;
     /// # impl Client {
     /// #     async fn send(&self, _topic: &str, _payload: Bytes) -> io::Result<()> {
@@ -335,6 +339,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// # }
     ///
     /// /// A transport that carries no headers: it takes the payload buffer and nothing else.
+    /// #[derive(Clone)]
     /// struct BarePublisher {
     ///     client: Client,
     /// }
@@ -384,6 +389,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// use std::io;
     ///
     /// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take};
+    /// # #[derive(Clone)]
     /// # struct Client;
     /// # impl Client {
     /// #     async fn send(
@@ -396,6 +402,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// #     }
     /// # }
     ///
+    /// #[derive(Clone)]
     /// struct ClientPublisher {
     ///     client: Client,
     /// }

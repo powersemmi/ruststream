@@ -517,6 +517,7 @@ mod tests {
     use crate::Settle;
     use alloc::borrow::ToOwned;
     use alloc::string::String;
+    use alloc::sync::Arc;
     use alloc::vec::Vec;
     use core::future::ready;
     use std::io;
@@ -541,9 +542,10 @@ mod tests {
     type Sent = (String, Vec<u8>, HeaderMap, Option<Priority>);
 
     /// A publisher with a constant header of its own, recording what it is handed.
+    #[derive(Clone)]
     struct Recording {
         base: HeaderMap,
-        sent: Mutex<Vec<Sent>>,
+        sent: Arc<Mutex<Vec<Sent>>>,
     }
 
     impl Publisher for Recording {
@@ -601,6 +603,7 @@ mod tests {
     struct JobContext;
 
     /// Reads the delivery it retries, and raises the copy's priority.
+    #[derive(Clone)]
     struct Escalate;
 
     impl PublishTransform<ForReply<JobContext>, Priority> for Escalate {
@@ -627,7 +630,7 @@ mod tests {
         let copy = AddressedCopy {
             live: Recording {
                 base,
-                sent: Mutex::new(Vec::new()),
+                sent: Arc::new(Mutex::new(Vec::new())),
             },
             address: "jobs".to_owned(),
             stack: PublishTransformStack {
@@ -662,7 +665,7 @@ mod tests {
             .await
             .expect("the broker takes the copy");
 
-        let sent = copy.live.sent.into_inner().expect("one test thread");
+        let sent = copy.live.sent.lock().expect("one test thread").clone();
         let [(name, payload, headers, options)] = sent.as_slice() else {
             panic!("one publish, got {sent:?}");
         };

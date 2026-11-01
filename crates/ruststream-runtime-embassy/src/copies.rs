@@ -14,12 +14,12 @@ use core::pin::Pin;
 use core::task::{Poll, Waker};
 use core::time::Duration;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use ruststream_core::{HeaderMap, LocalSettle};
 use ruststream_runtime::{
-    BoxError, Clock, CopyPublisher, KeptCopies, KeptDelivery, PrepareCopy, PrepareKept, WhenFull,
+    Clock, Continuation, CopyPublisher, FailedMessage, KeptCopies, KeptDelivery, LocalDetach,
+    NoFreeRecordError, PrepareCopy, PrepareKept, Reaction, publish_done, publish_lost,
 };
-use tracing::{debug, warn};
 
 use crate::clock::{EmbassyClock, Schedule};
 
@@ -44,39 +44,35 @@ pub(crate) struct Spilled<Options> {
     options: Option<Options>,
 }
 
-/// How long a copy its broker refused waits before it is published again: nothing tells the store
-/// when room appears, so it asks on a timer, short enough to be invisible to a retry delay.
-const REFUSED_RETRY: Duration = Duration::from_millis(50);
-
-/// One copy: its bytes in a buffer the record keeps from copy to copy, its headers, and the
-/// per-message settings the mount site's transforms wrote on it.
+/// One copy: its bytes in a buffer the record keeps from copy to copy, its headers, the
+/// per-message settings the mount site's transforms wrote on it, and the handler's `.error`
+/// continuation when the outcome that made the copy carried one.
 struct Record<At, Options> {
     held: Held<At>,
     payload: BytesMut,
     headers: HeaderMap,
     options: Option<Options>,
-    /// The headers as they were before the last publish took them, so a refused publish can put
-    /// them back: overwritten in place per publish, which allocates only while it grows.
-    backup: HeaderMap,
     /// Where the copy is bound when it is not the subscription: the buffer is reused from copy
     /// to copy, like the payload's.
     destination: String,
     /// Whether the copy is bound for `destination`.
     to_destination: bool,
+    /// What a failed publish of this copy is handed to.
+    reaction: Option<Reaction>,
 }
 
 /// The retry copies of one registration, in `CAP` records.
 ///
-/// A failing delivery takes a record and fills it before the delivery settles; a full store does
-/// what the mount chose (see [`WhenFull`]). [`drive`](Self::drive), joined with the
-/// registration's lanes, publishes each copy once it is due: it waits for the earliest one on a
-/// single timer, so a wake costs one timer poll however many copies wait. A record reuses its
-/// buffer, so once a buffer has grown to the largest copy, keeping one allocates nothing.
+/// A failing delivery takes a record and fills it before the delivery settles; a copy that finds
+/// every record taken is the "no free record" failure (see [`KeptCopies::full`]).
+/// [`drive`](Self::drive), joined with the registration's lanes, publishes each copy once it is
+/// due: it waits for the earliest one on a single timer, so a wake costs one timer poll however
+/// many copies wait. A record reuses its buffer, so once a buffer has grown to the largest copy,
+/// keeping one allocates nothing.
 ///
-/// A copy the broker refuses when it is due (a subscription holding every message it has room
-/// for) stays in its record and is published again after a short wait, so it is never dropped
-/// while the store is open. The store's size and the broker's capacity are the service's to size
-/// for its load.
+/// A copy the broker refuses is lost, and its record is free again at once: the failure goes to
+/// the handler's `.error` continuation, or to a warning without one. The store's size and the
+/// broker's capacity are the service's to size for its load.
 pub(crate) struct CopyStore<Path: CopyPublisher, const CAP: usize, Timers: Clock = EmbassyClock> {
     path: Path,
     /// The subscription the copies are of, for diagnostics.
@@ -88,9 +84,8 @@ pub(crate) struct CopyStore<Path: CopyPublisher, const CAP: usize, Timers: Clock
     closed: Cell<bool>,
     waker: RefCell<Option<Waker>>,
     clock: Timers,
-    /// What a delivery that finds no free record does.
-    when_full: WhenFull,
-    /// The name of the type the handler receives, for the panic of a full store.
+    /// The name of the type the handler receives, which a lost copy's diagnostic calls its
+    /// message.
     input: &'static str,
 }
 
@@ -112,20 +107,13 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             closed: Cell::new(false),
             waker: RefCell::new(None),
             clock,
-            when_full: WhenFull::Panic,
             input: "message",
         }
     }
 
-    /// Names the type the handler receives, as the panic of a full store calls its messages.
+    /// Names the type the handler receives, as the diagnostic of a lost copy calls its messages.
     pub(crate) fn input(mut self, input: &'static str) -> Self {
         self.input = input;
-        self
-    }
-
-    /// Sets what a delivery that finds no free record does.
-    pub(crate) fn when_full(mut self, when_full: WhenFull) -> Self {
-        self.when_full = when_full;
         self
     }
 
@@ -135,9 +123,9 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             payload: BytesMut::new(),
             headers: HeaderMap::new(),
             options: None,
-            backup: HeaderMap::new(),
             destination: String::new(),
             to_destination: false,
+            reaction: None,
         }
     }
 
@@ -157,17 +145,13 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
     }
 
     /// Publishes every copy once it is due, until [`close`](Self::close) and the last copy sent.
-    pub(crate) async fn drive(&self) {
+    /// What a failed publish's `.error` continuation makes of it runs on `host`, beside the
+    /// driver.
+    pub(crate) async fn drive<Host: LocalDetach>(&self, host: &Host) {
         let mut timer: Option<(Timers::Instant, Timers::Sleep)> = None;
         while let Some(record) = self.next_due(&mut timer).await {
-            if let Err(err) = self.send(record).await {
-                warn!(
-                    target: "ruststream::dispatch",
-                    subscription = %self.subscription,
-                    destination = %self.path.address(),
-                    error = %err,
-                    "publishing the retry copy failed; message lost",
-                );
+            if let Some(reaction) = self.send(record).await {
+                host.detach_boxed(reaction);
             }
         }
     }
@@ -229,68 +213,48 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
     /// Publishes the copy in `record` to the destination it is bound for, the subscription
     /// unless [`send_now`](KeptCopies::send_now) bound it elsewhere, and frees the record.
     ///
-    /// A copy that its broker refuses stays in the record and is tried again after
-    /// [`REFUSED_RETRY`], unless the store is closed; the call then returns `Ok`. The headers are
-    /// kept in the record for that, overwritten in place, so a refusal does not lose them and a
-    /// publish allocates nothing once the record has held headers of that size.
-    async fn send(&self, record: usize) -> Result<(), BoxError> {
-        let (payload, headers, options, destination) = self.record(record, |held| {
+    /// A copy that its broker refuses is lost: what the handler's `.error` continuation makes of
+    /// the failure is returned for the caller to run, and without a continuation a warning names
+    /// the failure. The headers are copied for the continuation only where one is registered.
+    async fn send(&self, record: usize) -> Option<Continuation> {
+        let (payload, headers, options, destination, reaction) = self.record(record, |held| {
             held.held = Held::Sending;
-            held.backup.clone_from(&held.headers);
             (
                 mem::take(&mut held.payload),
                 mem::take(&mut held.headers),
                 held.options.take(),
                 held.to_destination
                     .then(|| mem::take(&mut held.destination)),
+                held.reaction.take(),
             )
         });
         let target = destination
             .as_deref()
             .unwrap_or_else(|| self.path.address());
+        let failed_headers = reaction.is_some().then(|| headers.clone());
         let sent = self
             .path
             .publish_copy(target, &payload, headers, options.as_ref())
             .await;
-        match sent {
-            Err(err) if !self.closed.get() => {
-                debug!(
-                    target: "ruststream::dispatch",
-                    subscription = %self.subscription,
-                    destination = %target,
-                    error = %err,
-                    "the retry copy was refused; keeping it for another try",
-                );
-                self.keep_refused(record, payload, options, destination);
-                Ok(())
-            }
-            sent => {
-                self.give_back(record, payload, destination);
-                sent
-            }
-        }
-    }
-
-    /// Puts a refused copy back in `record`, due again shortly.
-    fn keep_refused(
-        &self,
-        record: usize,
-        payload: BytesMut,
-        options: Option<Path::Options>,
-        destination: Option<String>,
-    ) {
-        let retry_at = self.clock.deadline(REFUSED_RETRY);
-        self.record(record, |held| {
-            held.payload = payload;
-            mem::swap(&mut held.headers, &mut held.backup);
-            held.options = options;
-            if let Some(destination) = destination {
-                held.destination = destination;
-            }
-            held.held = Held::Due(retry_at);
-        });
-        self.armed.set(true);
-        self.wake();
+        let follow = match sent {
+            Ok(()) => publish_done(reaction),
+            Err(err) => publish_lost(
+                reaction,
+                &self.subscription,
+                target,
+                self.input,
+                err,
+                || {
+                    FailedMessage::new(
+                        target,
+                        Bytes::copy_from_slice(&payload),
+                        failed_headers.unwrap_or_default(),
+                    )
+                },
+            ),
+        };
+        self.give_back(record, payload, destination);
+        follow
     }
 
     /// Frees `record`, keeping `payload`'s buffer for the next copy.
@@ -319,18 +283,6 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
 {
     type Spilled = Spilled<Path::Options>;
 
-    fn capacity(&self) -> usize {
-        CAP
-    }
-
-    fn input(&self) -> &'static str {
-        self.input
-    }
-
-    fn when_full(&self) -> WhenFull {
-        self.when_full
-    }
-
     fn take_record(&self) -> Option<usize> {
         let mut records = self.records.borrow_mut();
         let index = records
@@ -344,7 +296,8 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
         &self,
         spilled: Spilled<Path::Options>,
         destination: Option<&str>,
-    ) -> impl Future<Output = Result<(), BoxError>> {
+        reaction: Option<Reaction>,
+    ) -> impl Future<Output = Option<Continuation>> {
         let Spilled {
             payload,
             headers,
@@ -352,10 +305,46 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
         } = spilled;
         async move {
             let target = destination.unwrap_or_else(|| self.path.address());
-            self.path
+            let failed_headers = reaction.is_some().then(|| headers.clone());
+            let sent = self
+                .path
                 .publish_copy(target, &payload, headers, options.as_ref())
-                .await
+                .await;
+            match sent {
+                Ok(()) => publish_done(reaction),
+                Err(err) => publish_lost(
+                    reaction,
+                    &self.subscription,
+                    target,
+                    self.input,
+                    err,
+                    || {
+                        FailedMessage::new(
+                            target,
+                            payload.freeze(),
+                            failed_headers.unwrap_or_default(),
+                        )
+                    },
+                ),
+            }
         }
+    }
+
+    fn full(
+        &self,
+        payload: Option<Bytes>,
+        headers: HeaderMap,
+        reaction: Option<Reaction>,
+    ) -> Option<Continuation> {
+        let target = self.path.address();
+        publish_lost(
+            reaction,
+            &self.subscription,
+            target,
+            self.input,
+            NoFreeRecordError::new(CAP).into(),
+            || FailedMessage::new(target, payload.unwrap_or_default(), headers),
+        )
     }
 
     fn fill(&self, record: usize, payload: &[u8], headers: HeaderMap) {
@@ -367,9 +356,12 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
         });
     }
 
-    fn arm(&self, record: usize, delay: Duration) {
+    fn arm(&self, record: usize, delay: Duration, reaction: Option<Reaction>) {
         let due = self.clock.deadline(delay);
-        self.record(record, |held| held.held = Held::Due(due));
+        self.record(record, |held| {
+            held.reaction = reaction;
+            held.held = Held::Due(due);
+        });
         self.armed.set(true);
         self.wake();
     }
@@ -378,8 +370,10 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
         &self,
         record: usize,
         destination: Option<&str>,
-    ) -> impl Future<Output = Result<(), BoxError>> {
+        reaction: Option<Reaction>,
+    ) -> impl Future<Output = Option<Continuation>> {
         self.record(record, |held| {
+            held.reaction = reaction;
             held.to_destination = destination.is_some();
             if let Some(destination) = destination {
                 held.destination.clear();
@@ -390,7 +384,10 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
     }
 
     fn free(&self, record: usize) {
-        let payload = self.record(record, |held| mem::take(&mut held.payload));
+        let payload = self.record(record, |held| {
+            held.reaction = None;
+            mem::take(&mut held.payload)
+        });
         self.give_back(record, payload, None);
     }
 }
@@ -441,7 +438,8 @@ impl<Cx, Path: PrepareCopy<Cx>, const CAP: usize, Timers: Schedule> PrepareKept<
 
 #[cfg(test)]
 mod tests {
-    use alloc::string::String;
+    use alloc::boxed::Box;
+    use alloc::string::{String, ToString};
     use alloc::sync::Arc;
     use alloc::vec::Vec;
     use core::cell::{Cell, RefCell};
@@ -452,7 +450,9 @@ mod tests {
     use core::time::Duration;
 
     use ruststream_core::HeaderMap;
-    use ruststream_runtime::{BoxError, Clock, CopyPublisher, KeptCopies};
+    use ruststream_runtime::{
+        BoxError, Clock, CopyPublisher, ErrorHook, Failures, KeptCopies, LocalDetach, Reaction,
+    };
 
     // The store on embassy's clock polls embassy's timer, whose queue lives in the executor.
     use embassy_executor as _;
@@ -529,6 +529,30 @@ mod tests {
         }
     }
 
+    /// The app's host beside the store, counting the continuations a failed publish leaves.
+    #[derive(Default)]
+    struct Beside {
+        boxed: Cell<usize>,
+    }
+
+    impl LocalDetach for Beside {
+        fn detach_boxed(&self, _work: Pin<Box<dyn Future<Output = ()>>>) {
+            self.boxed.set(self.boxed.get() + 1);
+        }
+
+        fn detach<Work>(&self, _work: Work)
+        where
+            Work: Future<Output = ()> + 'static,
+        {
+        }
+
+        fn detach_after<Work>(&self, _delay: Duration, _work: Work)
+        where
+            Work: Future<Output = ()> + 'static,
+        {
+        }
+    }
+
     /// A copy path that records what it publishes.
     #[derive(Default)]
     struct Recorded(RefCell<Vec<(String, Vec<u8>)>>);
@@ -575,6 +599,11 @@ mod tests {
         }
     }
 
+    /// A reaction that only needs to exist.
+    fn reaction() -> Reaction {
+        Reaction::new(ErrorHook::new(async move |_failures: Failures| {}), None)
+    }
+
     fn keep<Path: CopyPublisher, const CAP: usize>(
         store: &CopyStore<Path, CAP, Probe>,
         payload: &[u8],
@@ -582,7 +611,7 @@ mod tests {
     ) {
         let record = store.take_record().expect("a free record");
         store.fill(record, payload, HeaderMap::new());
-        store.arm(record, Duration::from_millis(delay));
+        store.arm(record, Duration::from_millis(delay), None);
     }
 
     #[test]
@@ -593,7 +622,8 @@ mod tests {
         for (payload, delay) in [(b"a", 10), (b"b", 20), (b"c", 30)] {
             keep(&store, payload, delay);
         }
-        let mut driver = pin!(store.drive());
+        let beside = Beside::default();
+        let mut driver = pin!(store.drive(&beside));
         let mut cx = Context::from_waker(Waker::noop());
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
         let (polled, read) = (clock.polls(), clock.reads());
@@ -632,7 +662,8 @@ mod tests {
         let sent = Recorded::default();
         let store = CopyStore::<_, 3, _>::on_clock(&sent, Arc::from("jobs"), clock.clone());
         keep(&store, b"a", 5);
-        let mut driver = pin!(store.drive());
+        let beside = Beside::default();
+        let mut driver = pin!(store.drive(&beside));
         let mut cx = Context::from_waker(Waker::noop());
         store.close();
         assert_eq!(
@@ -660,7 +691,8 @@ mod tests {
         store.free(taken[0]);
         assert_eq!(store.take_record(), Some(taken[0]), "the freed record");
         store.close();
-        let mut driver = pin!(store.drive());
+        let beside = Beside::default();
+        let mut driver = pin!(store.drive(&beside));
         let mut cx = Context::from_waker(Waker::noop());
         for record in taken {
             store.free(record);
@@ -702,84 +734,25 @@ mod tests {
     }
 
     #[test]
-    fn a_copy_its_broker_refuses_stays_kept_and_leaves_once_the_broker_takes_it() {
-        let clock = Probe::default();
-        let flaky = Flaky {
-            refusals: Cell::new(2),
-            sent: Recorded::default(),
-        };
-        let store = CopyStore::<_, 3, _>::on_clock(&flaky, Arc::from("jobs"), clock.clone());
-        keep(&store, b"a", 5);
-        let mut driver = pin!(store.drive());
-        let mut cx = Context::from_waker(Waker::noop());
-        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
-        clock.advance_to(5);
-        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
-        assert!(flaky.sent.0.borrow().is_empty(), "refused once");
-        assert!(
-            [(); 3]
-                .map(|()| store.take_record())
-                .iter()
-                .filter(|taken| taken.is_some())
-                .count()
-                == 2,
-            "the refused copy keeps its record"
-        );
-        clock.advance_to(100);
-        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
-        clock.advance_to(200);
-        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
-        assert_eq!(
-            *flaky.sent.0.borrow(),
-            [("jobs".into(), b"a".to_vec())],
-            "published once the broker took it"
-        );
-    }
-
-    #[test]
-    fn a_dead_letter_copy_the_broker_refuses_stays_kept_for_its_destination() {
+    fn a_copy_its_broker_refuses_is_lost_and_its_record_is_free_at_once() {
         let clock = Probe::default();
         let flaky = Flaky {
             refusals: Cell::new(1),
             sent: Recorded::default(),
         };
         let store = CopyStore::<_, 3, _>::on_clock(&flaky, Arc::from("jobs"), clock.clone());
-        let record = store.take_record().expect("a free record");
-        store.fill(record, b"a", HeaderMap::new());
-        let mut driver = pin!(store.drive());
-        let mut cx = Context::from_waker(Waker::noop());
-        let mut sending = pin!(store.send_now(record, Some("jobs.dead")));
-        assert!(
-            matches!(sending.as_mut().poll(&mut cx), Poll::Ready(Ok(()))),
-            "a refused copy is kept, not reported lost"
-        );
-        assert!(flaky.sent.0.borrow().is_empty(), "refused once");
-        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
-        clock.advance_to(100);
-        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
-        assert_eq!(
-            *flaky.sent.0.borrow(),
-            [("jobs.dead".into(), b"a".to_vec())],
-            "published to the destination it was bound for"
-        );
-    }
-
-    #[test]
-    fn a_copy_refused_after_the_store_closed_is_lost_and_its_record_freed() {
-        let clock = Probe::default();
-        let store = CopyStore::<_, 3, _>::on_clock(Refusing, Arc::from("jobs"), clock.clone());
         keep(&store, b"a", 5);
-        let mut driver = pin!(store.drive());
+        let beside = Beside::default();
+        let mut driver = pin!(store.drive(&beside));
         let mut cx = Context::from_waker(Waker::noop());
-        store.close();
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
         clock.advance_to(5);
-
-        assert_eq!(
-            driver.as_mut().poll(&mut cx),
-            Poll::Ready(()),
-            "a closed store holds nothing once the refused copy is gone"
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+        assert!(
+            flaky.sent.0.borrow().is_empty(),
+            "refused, and not tried again"
         );
+        assert_eq!(beside.boxed.get(), 0, "no continuation was registered");
         assert!(
             [(); 3]
                 .map(|()| store.take_record())
@@ -790,12 +763,123 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_copy_hands_its_error_to_the_continuation_its_record_held() {
+        let clock = Probe::default();
+        let store = CopyStore::<_, 3, _>::on_clock(Refusing, Arc::from("jobs"), clock.clone());
+        let record = store.take_record().expect("a free record");
+        store.fill(record, b"a", HeaderMap::new());
+        store.arm(record, Duration::from_millis(5), Some(reaction()));
+        let beside = Beside::default();
+        let mut driver = pin!(store.drive(&beside));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+        clock.advance_to(5);
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+        assert_eq!(
+            beside.boxed.get(),
+            1,
+            "the continuation runs beside the driver"
+        );
+    }
+
+    #[test]
+    fn a_dead_letter_copy_the_broker_refuses_hands_its_error_to_the_continuation() {
+        let store = CopyStore::<_, 3, _>::on_clock(Refusing, Arc::from("jobs"), Probe::default());
+        let record = store.take_record().expect("a free record");
+        store.fill(record, b"a", HeaderMap::new());
+        let mut sending = pin!(store.send_now(record, Some("jobs.dead"), Some(reaction()),));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(
+            matches!(sending.as_mut().poll(&mut cx), Poll::Ready(Some(_))),
+            "the failure comes back as a continuation for the caller to run"
+        );
+    }
+
+    #[test]
+    fn a_full_store_reports_no_free_record_with_the_copy_it_could_not_keep() {
+        let store = CopyStore::<_, 1, _>::on_clock(Refusing, Arc::from("jobs"), Probe::default());
+        assert!(store.take_record().is_some());
+        assert!(store.take_record().is_none(), "every record is taken");
+        let reaction = store.full(
+            Some(bytes::Bytes::from_static(b"a")),
+            HeaderMap::new(),
+            Some(Reaction::new(
+                ErrorHook::new(async move |failures: Failures| {
+                    for failed in failures {
+                        assert_eq!(
+                            failed.error().to_string(),
+                            "no free record in the store of retry copies (capacity 1)"
+                        );
+                        assert_eq!(failed.message().payload().as_ref(), b"a");
+                        assert_eq!(failed.message().destination(), "jobs");
+                    }
+                }),
+                None,
+            )),
+        );
+        embassy_futures::block_on(reaction.expect("a continuation"));
+        assert!(
+            store.full(None, HeaderMap::new(), None).is_none(),
+            "without a continuation the failure is a warning and nothing runs"
+        );
+    }
+
+    /// The allocations of publishing one warm copy of `payload` with two headers through `path`,
+    /// with a reaction registered or none.
+    fn allocations_of_a_send<Path: CopyPublisher>(path: Path, with_reaction: bool) -> u64 {
+        let store = CopyStore::<_, 1, _>::on_clock(path, Arc::from("jobs"), Probe::default());
+        let mut headers = HeaderMap::new();
+        headers.insert("a", "1");
+        headers.insert("b", "2");
+        let mut measured = 0;
+        // The first pass warms the record's buffers; the second is the one read.
+        for pass in 0..2 {
+            let record = store.take_record().expect("a free record");
+            store.fill(record, &[7; 64], headers.clone());
+            let reaction = with_reaction.then(reaction);
+            let info = allocation_counter::measure(|| {
+                let follow = embassy_futures::block_on(store.send_now(record, None, reaction));
+                drop(follow);
+            });
+            if pass == 1 {
+                measured = info.count_total;
+            }
+        }
+        measured
+    }
+
+    #[test]
+    fn a_failed_publish_copies_the_message_only_for_a_registered_error() {
+        let plain = allocations_of_a_send(Refusing, false);
+        let watched = allocations_of_a_send(Refusing, true);
+        assert!(
+            watched >= plain + 2,
+            "the failed message (payload and headers) is copied for the continuation alone: \
+             {plain} against {watched}"
+        );
+    }
+
+    #[test]
+    fn a_published_copy_costs_a_registered_reaction_one_header_map_and_no_payload() {
+        let sent = Recorded::default();
+        let plain = allocations_of_a_send(&sent, false);
+        let watched = allocations_of_a_send(&sent, true);
+        assert_eq!(
+            watched,
+            plain + 1,
+            "a publish consumes the headers, so a registered reaction keeps one map; the payload \
+             is copied only once the publish failed"
+        );
+    }
+
+    #[test]
     fn a_closed_store_waits_for_a_record_a_settle_has_taken() {
         let clock = Probe::default();
         let sent = Recorded::default();
         let store = CopyStore::<_, 3, _>::on_clock(&sent, Arc::from("jobs"), clock);
         let taken = store.take_record().expect("a free record");
-        let mut driver = pin!(store.drive());
+        let beside = Beside::default();
+        let mut driver = pin!(store.drive(&beside));
         let mut cx = Context::from_waker(Waker::noop());
         store.close();
 

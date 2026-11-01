@@ -15,6 +15,7 @@ A post-settle hook registered on the [context](../context/delivery-context.md) r
 [`ctx.after(outcome)`](api:ruststream::runtime::Context::after) returns an [`After`](api:ruststream::runtime::After), and its [`then(fut)`](api:ruststream::runtime::After::then) runs only when the settlement matches that outcome by kind; `retry_after` matches any delay.
 [`ctx.after_settle(fut)`](api:ruststream::runtime::Context::after_settle) runs whatever the settlement.
 Hooks accumulate, and every matching one runs.
+[`After::error`](api:ruststream::runtime::After::error) registers the continuation of a failed publish the runtime makes for that settlement, and a `then` chained with it follows a publish that succeeded: see [error](./error.md).
 A hook's future is `Send` with the tokio runtime on; on the embedded runtime alone it carries no `Send`, as for [`and_after`](./and-after.md).
 On a batch the context belongs to the whole batch: only `after_settle` hooks run there, once, after every element is settled.
 A hook is at most once, like a continuation of [`and_after`](./and-after.md): a lost or panicking hook never brings the delivery back.

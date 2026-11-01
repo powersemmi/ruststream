@@ -43,6 +43,12 @@ One outcome settles the whole batch.
 </TabItem>
 </Tabs>
 
+## A failed runtime publish
+
+A single `HandlerOutcome` for the whole batch takes a one-shot `.error`: it runs once, with a `Failures` holding every element whose copy failed, in the batch's order.
+The `and_after` beside it runs once, after the batch, when at least one copy was published.
+A `Vec<HandlerOutcome>` gives each element its own one-shot `.error`.
+
 ## One outcome per element
 
 A `Vec<HandlerOutcome>` settles element `i` with outcome `i`.

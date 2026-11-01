@@ -183,13 +183,14 @@ impl HeaderMap {
     /// use serde::{Deserialize, Serialize};
     ///
     /// /// The deployment every message of the slot came from, as a header contract.
-    /// #[derive(Serialize)]
+    /// #[derive(Clone, Serialize)]
     /// struct Origin {
     ///     region: &'static str,
     ///     canary: bool,
     /// }
     ///
     /// /// Stamps the contract onto everything the slot sends.
+    /// #[derive(Clone)]
     /// struct Stamp(Origin);
     ///
     /// impl<Options> PublishTransform<ForSlot, Options> for Stamp {

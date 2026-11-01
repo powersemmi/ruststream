@@ -72,6 +72,9 @@ pub struct RetryRoute<Retry> {
     /// The subscription's name, which a copy's context and its diagnostics carry; shared, so a
     /// copy takes a reference count rather than a string of its own.
     pub(crate) subscription: Arc<str>,
+    /// The name of the type the handler receives, which a lost copy's diagnostic calls its
+    /// message.
+    pub(crate) input: &'static str,
 }
 
 impl<Retry> RetryRoute<Retry> {
@@ -83,6 +86,7 @@ impl<Retry> RetryRoute<Retry> {
             publisher,
             destination: Some(Arc::from(destination)),
             subscription: Arc::from(destination),
+            input: "message",
         }
     }
 }
@@ -362,6 +366,8 @@ pub struct RetrySetup<B: Broker, Cx, Slot = UnnamedRetry> {
     /// subscription owes none of its own.
     named_per_delivery: bool,
     declaration: RetryDeclaration,
+    /// The name of the type the handler receives, read off the metadata when the slot resolves.
+    input: &'static str,
     _registration: PhantomData<fn() -> (B, Cx)>,
 }
 
@@ -382,6 +388,7 @@ impl<B: Broker, Cx> Default for RetrySetup<B, Cx> {
             destination: None,
             named_per_delivery: false,
             declaration: RetryDeclaration::new(),
+            input: "message",
             _registration: PhantomData,
         }
     }
@@ -451,6 +458,7 @@ impl<B: Broker + 'static, Cx, Slot> RetrySetup<B, Cx, Slot> {
             destination,
             named_per_delivery,
             declaration: self.declaration,
+            input: self.input,
             _registration: PhantomData,
         }
     }
@@ -483,6 +491,7 @@ impl<B: Broker + 'static, Cx, Slot> RetrySetup<B, Cx, Slot> {
             destination: self.destination,
             named_per_delivery: self.named_per_delivery,
             declaration: self.declaration,
+            input: meta.input_type,
             _registration: PhantomData,
         }
     }
@@ -795,6 +804,7 @@ where
         destination,
         named_per_delivery,
         declaration,
+        input,
         ..
     } = setup;
     // A descriptor takes the declaration into itself below; a bare name has nothing to take it
@@ -838,6 +848,7 @@ where
                 publisher,
                 destination,
                 subscription: Arc::from(subscription),
+                input,
             })
         }
         None => None,

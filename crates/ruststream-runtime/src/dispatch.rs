@@ -27,6 +27,7 @@ use futures::FutureExt;
 use futures::Stream;
 use tracing::error;
 
+use crate::publish_failure::Reaction;
 use crate::redelivery::RetryCopies;
 use crate::{BuildContext, HeaderMap, LocalSettle, LocalSubscriber};
 
@@ -35,7 +36,6 @@ use super::context::Context;
 use super::failure::DispatchFailure;
 #[cfg(feature = "std")]
 use super::failure::{FailurePolicy, panic_reason};
-#[cfg(feature = "std")]
 use super::handler::HandlerOutcome;
 #[cfg(doc)]
 use super::handler::HandlerResult;
@@ -49,7 +49,7 @@ use crate::testing::coordinator::{
 use crate::testing::hooks::DueCall;
 pub use delivery::{Delivery, Lent, Slot};
 pub use headers::{HeadersAtOnce, HeadersOnDemand, LendHeaders};
-pub(crate) use settle::settle_outcome;
+pub(crate) use settle::{settle_outcome, settle_reacting};
 pub use workers::{Placement, Workers};
 
 /// Header carrying the framework's own retry count.
@@ -346,7 +346,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     // The hooks a test registered on this subscription, owed by this call once it is settled.
     #[cfg(feature = "testing")]
     let mut due_calls = None;
-    let (settle, continuations) = {
+    let (settle, after, continuations, reaction) = {
         let msg = slot.get();
         let cx = C::build(msg);
         // The delivery itself where it can be shared, not its header map: a handler that reads no
@@ -385,7 +385,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         #[cfg(feature = "testing")]
         let panicked = result.is_err();
         // Resolve into a `HandlerOutcome` regardless of whether the handler panicked.
-        let settle = match result {
+        let settled = match result {
             Ok(s) => Some(s),
             #[cfg(feature = "std")]
             Err(payload) => outcome_after_panic(payload.as_ref(), name, failure),
@@ -395,8 +395,20 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         // settlement) runs no hooks. Most deliveries register none, and those pay the branch alone:
         // the list, its scan and the drop glue of both belong to the deliveries that did register
         // one.
-        let continuations = match settle.as_ref() {
-            Some(s) if ctx.has_hooks() => Some(ctx.take_hooks_for(s.outcome())),
+        // What a publish made for this settlement hands its result to: the `.error` of the outcome
+        // (with the `.and_after` beside it, which then follows the publish), else the one the
+        // context registered. Most deliveries carry neither, and pay the two checks.
+        // The outcome is taken apart here, so none of it is left to drop once it is settled.
+        let (settle, after, reaction) = match settled.map(HandlerOutcome::into_parts) {
+            Some((status, after, Some(error))) => {
+                ctx.demote_errors();
+                (Some(status), None, Some(Reaction::new(error, after)))
+            }
+            Some((status, after, None)) => (Some(status), after, ctx.take_reaction_for(status)),
+            None => (None, None, None),
+        };
+        let continuations = match settle {
+            Some(status) if ctx.has_hooks() => Some(ctx.take_hooks_for(status)),
             _ => None,
         };
         // The harness records what the handler saw and how it settled, BEFORE settling the
@@ -409,7 +421,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
             let deliveries = vec![Delivered {
                 raw: Bytes::copy_from_slice(msg.payload()),
                 value: ctx.take_carried(),
-                settle: settle.as_ref().map(HandlerOutcome::outcome),
+                settle,
             }];
             due_calls = record_call(
                 coordinator,
@@ -420,17 +432,22 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
                 ctx.took_decode_failed(),
             );
         }
-        (settle, continuations)
+        (settle, after, continuations, reaction)
     };
-    if let Some(mut s) = settle {
+    if let Some(status) = settle {
         // Named for the same reason as the delivery's own future above: the settle path is
         // built where it is polled instead of being copied into this future's state.
-        let settling = settle_outcome(slot, s.outcome(), name, delivery, host, C::build);
-        settling.await;
+        if reaction.is_some() {
+            let settling = settle_reacting(slot, status, reaction, name, delivery, host, C::build);
+            settling.await;
+        } else {
+            let settling = settle_outcome(slot, status, name, delivery, host, C::build);
+            settling.await;
+        }
         // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
-        if let Some(after) = s.take_after() {
+        if let Some(after) = after {
             host.detach_boxed(after);
         }
     } else {

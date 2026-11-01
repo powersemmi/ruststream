@@ -14,6 +14,7 @@ struct Order {
 #[derive(OutSlot)]
 struct Audit;
 
+#[derive(Clone)]
 struct Stamp;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {

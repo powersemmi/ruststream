@@ -217,6 +217,7 @@ mod stamp {
         canary: bool,
     }
 
+    #[derive(Clone)]
     struct Stamp(Origin);
 
     impl<Options> PublishTransform<ForSlot, Options> for Stamp {

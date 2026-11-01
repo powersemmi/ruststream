@@ -1,7 +1,7 @@
 error[E0277]: `ruststream::prelude::Retry` does not let a transform name the destination
-  --> tests/ui/naming_transform_retry_slot.rs:38:51
+  --> tests/ui/naming_transform_retry_slot.rs:39:51
    |
-38 |     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+39 |     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
    |                                                   ^^^^^^^^^^^ the transform on this step declares `Destination = Names`
    |
    = help: the trait `ruststream::runtime::NamingOffered<ruststream::prelude::Retry>` is not implemented for `Reads`

@@ -5,6 +5,7 @@ use alloc::sync::Arc;
 use core::{convert::Infallible, fmt, pin::Pin, time::Duration};
 
 use super::context::Context;
+use crate::publish_failure::{ErrorHook, Failures};
 
 /// A boxed, owned continuation run after a message is settled: what a [`HandlerOutcome`] hands
 /// the dispatcher, and what the dispatcher hands the runner's host.
@@ -39,6 +40,23 @@ pub trait MaybeSend {}
 
 #[cfg(not(feature = "tokio"))]
 impl<Value: ?Sized> MaybeSend for Value {}
+
+/// `Send + Sync` where the runtime crate's `tokio` feature is on, and nothing otherwise: what an
+/// arena entry a body clones into a continuation, and borrows across a publish, must be.
+#[cfg(feature = "tokio")]
+#[doc(hidden)]
+pub trait MaybeSendSync: Send + Sync {}
+
+#[cfg(feature = "tokio")]
+impl<Value: Send + Sync + ?Sized> MaybeSendSync for Value {}
+
+/// See the `tokio` form: without the feature every type is `MaybeSendSync`.
+#[cfg(not(feature = "tokio"))]
+#[doc(hidden)]
+pub trait MaybeSendSync {}
+
+#[cfg(not(feature = "tokio"))]
+impl<Value: ?Sized> MaybeSendSync for Value {}
 
 /// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: `Send` where the
 /// runtime crate's `tokio` feature is on.
@@ -250,8 +268,26 @@ impl HandlerResult {
 /// ```
 #[must_use]
 pub struct HandlerOutcome {
-    outcome: HandlerResult,
+    outcome: Settlement,
     after: Option<Continuation>,
+}
+
+/// How the outcome settles the message: the status alone, or the status with the `.error`
+/// continuation of the publish the runtime makes for it. The registered case is boxed, so an
+/// outcome without `.error` is no larger than one with nothing to add: the status keeps the
+/// room it had.
+enum Settlement {
+    Plain(HandlerResult),
+    Erroring(Box<(HandlerResult, ErrorHook)>),
+}
+
+impl Settlement {
+    const fn status(&self) -> HandlerResult {
+        match self {
+            Self::Plain(status) => *status,
+            Self::Erroring(registered) => registered.0,
+        }
+    }
 }
 
 impl HandlerOutcome {
@@ -280,7 +316,7 @@ impl HandlerOutcome {
     /// ```
     pub const fn ack() -> Self {
         Self {
-            outcome: HandlerResult::Ack,
+            outcome: Settlement::Plain(HandlerResult::Ack),
             after: None,
         }
     }
@@ -295,7 +331,7 @@ impl HandlerOutcome {
     /// no longer a broker requeue.
     pub const fn retry() -> Self {
         Self {
-            outcome: HandlerResult::retry(),
+            outcome: Settlement::Plain(HandlerResult::retry()),
             after: None,
         }
     }
@@ -353,7 +389,7 @@ impl HandlerOutcome {
     /// ```
     pub const fn retry_after(delay: Duration) -> Self {
         Self {
-            outcome: HandlerResult::retry_after(delay),
+            outcome: Settlement::Plain(HandlerResult::retry_after(delay)),
             after: None,
         }
     }
@@ -361,7 +397,7 @@ impl HandlerOutcome {
     /// Negatively acknowledge the message without asking for redelivery.
     pub const fn drop() -> Self {
         Self {
-            outcome: HandlerResult::drop(),
+            outcome: Settlement::Plain(HandlerResult::drop()),
             after: None,
         }
     }
@@ -417,17 +453,140 @@ impl HandlerOutcome {
         }
     }
 
+    /// Reacts to a failed publish the runtime makes for this outcome: the delayed retry copy of a
+    /// [`retry_after`](Self::retry_after), and the dead-letter copy the mount's
+    /// `max_attempts(..).dead_letter(..)` turns this retry into at the cap.
+    ///
+    /// The continuation receives the [`Failures`]: one [`Failed`](crate::Failed) per message that
+    /// failed to go out, each with its error and the very message the runtime tried to send
+    /// (bytes and headers), which another `Out` republishes as it is. It returns nothing and runs
+    /// after the delivery is settled, as an [`and_after`](Self::and_after) continuation does; the
+    /// handler never runs again because of the failure. Whatever the reaction needs (a client,
+    /// state, a counter) the handler moves into the closure. Attaching a second one replaces the
+    /// first.
+    ///
+    /// The closure is one-shot, like an [`and_after`](Self::and_after) continuation, so it may
+    /// own what it captures. A single delivery's `Failures` holds one failure. An outcome returned
+    /// for a whole batch runs the closure once, with the failure of every element whose copy
+    /// failed, in the batch's order; its `and_after` runs once, when at least one element's copy
+    /// was published. A batch handler that needs a reaction per element returns one outcome per
+    /// element instead.
+    ///
+    /// Without `.error` a failed copy is logged with the subscription, the destination, the
+    /// message type and the error, and is lost. On a mount whose broker retries and dead-letters
+    /// natively the runtime publishes nothing, so the continuation never runs; a warning names the
+    /// subscription each time such an outcome is returned. With the Tokio runner on, the closure
+    /// and its future are `Send`; on the embedded runtime alone they carry no `Send`.
+    ///
+    /// # Cancel safety
+    ///
+    /// At-most-once, like [`and_after`](Self::and_after): the message is already settled when the
+    /// continuation runs.
+    ///
+    /// # Examples
+    ///
+    /// A retry copy that cannot be published is logged with the bytes it carried instead of
+    /// being lost silently:
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Payment {
+    ///     settled: bool,
+    /// }
+    ///
+    /// #[subscriber("payments")]
+    /// async fn reconcile(payment: &Payment) -> HandlerOutcome {
+    ///     if payment.settled {
+    ///         return HandlerOutcome::ack();
+    ///     }
+    ///     HandlerOutcome::retry_after(Duration::from_secs(5)).error(async move |failures: Failures| {
+    ///         for failed in failures {
+    ///             tracing::error!(
+    ///                 error = %failed.error(),
+    ///                 destination = failed.message().destination(),
+    ///                 "the retry is lost",
+    ///             );
+    ///         }
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    ///
+    /// A lost copy goes to a dead-letter destination through an `Out` publisher the handler clones
+    /// into the closure (`Out<impl Publisher>`), as it was, with its headers:
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(
+    ///     _order: &Order,
+    ///     Out(dead): Out<impl Publisher>,
+    /// ) -> HandlerOutcome {
+    ///     let dead = dead.clone();
+    ///     HandlerOutcome::retry_after(Duration::from_secs(5)).error(async move |failures: Failures| {
+    ///         for failed in failures {
+    ///             let lost = failed.into_message();
+    ///             // The republish may fail too; there is nobody left to tell.
+    ///             let _ = dead
+    ///                 .message(&lost)
+    ///                 .to("orders.dead")
+    ///                 .with_headers(lost.headers().clone())
+    ///                 .publish()
+    ///                 .await;
+    ///         }
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    pub fn error<React, Reaction>(mut self, react: React) -> Self
+    where
+        React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
+        Reaction: ContinuationFuture,
+    {
+        let status = self.outcome.status();
+        self.outcome = Settlement::Erroring(Box::new((status, ErrorHook::new(react))));
+        self
+    }
+
+    /// Attaches an `.error` hook the dispatcher already holds, as [`error`](Self::error) does a
+    /// closure.
+    pub(crate) fn error_hook(mut self, hook: ErrorHook) -> Self {
+        let status = self.outcome.status();
+        self.outcome = Settlement::Erroring(Box::new((status, hook)));
+        self
+    }
+
     /// Whether this outcome acknowledges the message.
     #[must_use]
     pub const fn is_ack(&self) -> bool {
-        matches!(self.outcome, HandlerResult::Ack)
+        matches!(self.outcome.status(), HandlerResult::Ack)
     }
 
     /// Whether this outcome asks for redelivery (an immediate or a delayed retry).
     #[must_use]
     pub const fn is_retry(&self) -> bool {
         matches!(
-            self.outcome,
+            self.outcome.status(),
             HandlerResult::Nack { requeue: true } | HandlerResult::NackAfter { .. }
         )
     }
@@ -435,14 +594,17 @@ impl HandlerOutcome {
     /// Whether this outcome drops the message (a negative acknowledgement without redelivery).
     #[must_use]
     pub const fn is_drop(&self) -> bool {
-        matches!(self.outcome, HandlerResult::Nack { requeue: false })
+        matches!(
+            self.outcome.status(),
+            HandlerResult::Nack { requeue: false }
+        )
     }
 
     /// The redelivery delay of a [`retry_after`](Self::retry_after) outcome; `None` for every
     /// other status.
     #[must_use]
     pub const fn retry_delay(&self) -> Option<Duration> {
-        match self.outcome {
+        match self.outcome.status() {
             HandlerResult::NackAfter { delay } => Some(delay),
             HandlerResult::Ack | HandlerResult::Nack { .. } => None,
         }
@@ -452,7 +614,7 @@ impl HandlerOutcome {
     #[doc(hidden)]
     #[must_use]
     pub const fn outcome(&self) -> HandlerResult {
-        self.outcome
+        self.outcome.status()
     }
 
     /// Takes the post-settle continuation out of this settlement, leaving none. The dispatcher
@@ -462,16 +624,31 @@ impl HandlerOutcome {
         self.after.is_some()
     }
 
-    pub(crate) fn take_after(&mut self) -> Option<Continuation> {
-        self.after.take()
+    /// Attaches an already boxed continuation, as [`and_after`](Self::and_after) does a future.
+    pub(crate) fn and_after_boxed(mut self, after: Continuation) -> Self {
+        self.after = Some(after);
+        self
+    }
+
+    /// Takes the outcome apart: its status, its post-settle continuation and its `.error`.
+    #[inline]
+    pub(crate) fn into_parts(self) -> (HandlerResult, Option<Continuation>, Option<ErrorHook>) {
+        match self.outcome {
+            Settlement::Plain(status) => (status, self.after, None),
+            Settlement::Erroring(registered) => {
+                let (status, error) = *registered;
+                (status, self.after, Some(error))
+            }
+        }
     }
 }
 
 impl fmt::Debug for HandlerOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HandlerOutcome")
-            .field("outcome", &self.outcome)
+            .field("outcome", &self.outcome.status())
             .field("after", &self.after.is_some())
+            .field("error", &matches!(self.outcome, Settlement::Erroring(_)))
             .finish()
     }
 }
@@ -479,7 +656,7 @@ impl fmt::Debug for HandlerOutcome {
 impl From<HandlerResult> for HandlerOutcome {
     fn from(outcome: HandlerResult) -> Self {
         Self {
-            outcome,
+            outcome: Settlement::Plain(outcome),
             after: None,
         }
     }
@@ -799,8 +976,16 @@ mod tests {
         assert!(format!("{plain:?}").contains("after: false"));
     }
 
-    fn assert_outcome(mut outcome: HandlerOutcome, status: HandlerResult, has_after: bool) {
-        assert_eq!(outcome.outcome(), status);
-        assert_eq!(outcome.take_after().is_some(), has_after);
+    #[test]
+    fn an_outcome_with_an_error_continuation_is_no_larger_than_one_without() {
+        // Every message pays the size of the outcome it returns, whether or not it uses `.error`.
+        assert_eq!(size_of::<HandlerOutcome>(), 32);
+        assert_eq!(size_of::<super::Settlement>(), size_of::<HandlerResult>());
+    }
+
+    fn assert_outcome(outcome: HandlerOutcome, status: HandlerResult, has_after: bool) {
+        let (settled, after, _error) = outcome.into_parts();
+        assert_eq!(settled, status);
+        assert_eq!(after.is_some(), has_after);
     }
 }

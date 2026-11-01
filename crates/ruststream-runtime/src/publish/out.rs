@@ -236,7 +236,7 @@ impl<P: Publisher> Publisher for NamedDestinationSend<P> {
             writes the wired publisher's own `Publisher::Options`, so a stack written for another \
             broker's options is not this slot's path"
 )]
-pub trait OutPipeline<W>: Send + Sync {
+pub trait OutPipeline<W>: Send + Sync + Clone {
     /// The error a publish through this path reports, over the leaf publisher's own error
     /// `E`: the leaf's error itself when nothing runs, a [`PipelinePublishError`] once the app's
     /// middleware does.
@@ -289,7 +289,9 @@ impl<W> OutPipeline<W> for PublishIdentity {
     }
 }
 
-impl<W, Head: PublishLayer, Tail: PublishPipeline> OutPipeline<W> for PublishStack<Head, Tail> {
+impl<W, Head: PublishLayer + Clone, Tail: PublishPipeline + Clone> OutPipeline<W>
+    for PublishStack<Head, Tail>
+{
     type Error<E: StdError + Send + Sync + 'static> = PipelinePublishError;
 
     fn from_publish_error<E: StdError + Send + Sync + 'static>(err: E) -> PipelinePublishError {
@@ -372,7 +374,7 @@ where
             publisher's own `Options`, so a stack written for another broker's options is not \
             this slot's path"
 )]
-pub trait LocalOutPipeline<W> {
+pub trait LocalOutPipeline<W>: Clone {
     /// Sends one message through the path into `leaf`, the slot's publisher, with the broker's
     /// per-message settings the call site adjusted.
     fn send<P>(

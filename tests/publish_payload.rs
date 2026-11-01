@@ -9,6 +9,7 @@
 
 use std::convert::Infallible;
 use std::future::{Future, ready};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -95,16 +96,17 @@ struct Seen {
 
 /// A publisher whose client keeps the payload, and reports what it saw without allocating
 /// anything of its own.
+#[derive(Clone)]
 struct Probe {
     claim: Claim,
-    seen: Mutex<Option<Seen>>,
+    seen: Arc<Mutex<Option<Seen>>>,
 }
 
 impl Probe {
     fn taking(claim: Claim) -> Self {
         Self {
             claim,
-            seen: Mutex::new(None),
+            seen: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -160,8 +162,8 @@ impl Publisher for Probe {
 
 /// A publisher that only reads the payload, as every transport that packs it into a frame of its
 /// own does: it declares [`Lend`] and is handed the bytes where they already are.
-#[derive(Default)]
-struct Reading(Mutex<Option<Seen>>);
+#[derive(Clone, Default)]
+struct Reading(Arc<Mutex<Option<Seen>>>);
 
 impl Reading {
     /// What the last publish handed it.
@@ -202,9 +204,12 @@ impl Publisher for Reading {
 /// what every broker crate used to clone the whole map for.
 const STAMP: &str = "x-stamp";
 
+/// What a publisher was handed: the destination, the bytes and the headers.
+type Handed = (String, Vec<u8>, HeaderMap);
+
 /// A publisher that keeps everything it was handed, for the assertions about contents.
-#[derive(Default)]
-struct Keeper(Mutex<Option<(String, Vec<u8>, HeaderMap)>>);
+#[derive(Clone, Default)]
+struct Keeper(Arc<Mutex<Option<Handed>>>);
 
 impl Keeper {
     /// The destination, the payload and the headers of the last publish.
@@ -245,8 +250,8 @@ struct SeenHeaders {
 }
 
 /// A publisher that takes the map and reports what it is, without allocating anything of its own.
-#[derive(Default)]
-struct Taker(Mutex<Option<SeenHeaders>>);
+#[derive(Clone, Default)]
+struct Taker(Arc<Mutex<Option<SeenHeaders>>>);
 
 impl Taker {
     /// What the last publish handed it.

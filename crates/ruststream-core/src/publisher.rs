@@ -34,6 +34,7 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 /// use std::io;
 ///
 /// use ruststream::{Lend, OutgoingMessage, Publisher};
+/// # #[derive(Clone)]
 /// # struct Socket;
 /// # impl Socket {
 /// #     async fn send_frame(&self, _name: &str, _payload: &[u8]) -> io::Result<()> {
@@ -42,6 +43,7 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 /// # }
 ///
 /// /// A transport that packs the payload into a frame of its own reads it and keeps nothing.
+/// #[derive(Clone)]
 /// struct Framed {
 ///     socket: Socket,
 /// }
@@ -186,6 +188,7 @@ pub trait PayloadEncode {
 /// use std::io;
 ///
 /// use ruststream::{Lend, OutgoingMessage, Publisher};
+/// # #[derive(Clone)]
 /// # struct Connection;
 /// # impl Connection {
 /// #     async fn write(&self, _subject: &str, _payload: &[u8]) -> io::Result<()> {
@@ -195,6 +198,7 @@ pub trait PayloadEncode {
 ///
 /// /// The client copies the bytes onto its socket, so it borrows them where the framework wrote
 /// /// them and the dispatch loop reuses that buffer for the next reply.
+/// #[derive(Clone)]
 /// struct SocketPublisher {
 ///     connection: Connection,
 /// }
@@ -228,6 +232,7 @@ pub struct Lend;
 /// use std::io;
 ///
 /// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take};
+/// # #[derive(Clone)]
 /// # struct Producer;
 /// # impl Producer {
 /// #     async fn send(&self, _topic: &str, _payload: Bytes) -> io::Result<()> {
@@ -237,6 +242,7 @@ pub struct Lend;
 ///
 /// /// The client queues the record and sends it later, so it keeps the buffer: `freeze` turns it
 /// /// into the `Bytes` the client speaks without a copy.
+/// #[derive(Clone)]
 /// struct QueuedPublisher {
 ///     producer: Producer,
 /// }
@@ -273,6 +279,7 @@ pub struct Take;
 ///
 /// // A handle that forwards every publish to the publisher it wraps, whichever form that one
 /// // declared.
+/// #[derive(Clone)]
 /// struct Tagged<P>(P, HeaderMap);
 ///
 /// impl<P: Publisher> Publisher for Tagged<P> {
@@ -308,9 +315,10 @@ crate::__contract_twin! {
     send {
         /// A producer that sends messages into the broker.
         ///
-        /// `Publisher` is `Send + Sync` so a single instance can be shared across tasks.
-        /// Implementations are expected to be cheap to clone; expensive shared state (connection
-        /// pool, batch buffers) should live behind an [`Arc`].
+        /// `Publisher` is `Send + Sync` so a single instance can be shared across tasks, and
+        /// `Clone` so a handler can move its `Out` publisher into a continuation such as
+        /// `.error(..)`. A clone is another handle on the same connection: expensive shared state
+        /// (connection pool, batch buffers) lives behind an [`Arc`].
         ///
         /// # Examples
         ///
@@ -330,7 +338,7 @@ crate::__contract_twin! {
             note = "for an `Out<impl Publisher, _>` slot, the type comes from the policy attached \
                     at the include site: attach one whose live form publishes"
         )]
-        pub trait Publisher: Send + Sync
+        pub trait Publisher: Send + Sync + Clone
     }
     local {
         #[doc = include_str!("local/publisher.md")]
@@ -340,9 +348,9 @@ crate::__contract_twin! {
                     holds `Rc` or `RefCell`; every `Publisher` is a `LocalPublisher` through the \
                     blanket impl"
         )]
-        pub trait LocalPublisher
+        pub trait LocalPublisher: Clone
     }
-    blanket { impl<T: ?Sized + Publisher> LocalPublisher for T }
+    blanket { impl<T: Publisher> LocalPublisher for T }
     forward { <T as Publisher> }
     docs { Publisher }
     types {
@@ -418,6 +426,7 @@ crate::__contract_twin! {
         /// }
         ///
         /// /// The live publisher: the connection and the default the policy carried.
+        /// #[derive(Clone)]
         /// pub struct PriorityPublisher {
         ///     inner: MemoryPublisher,
         ///     default_priority: u8,
@@ -555,6 +564,7 @@ crate::__contract_twin! {
         /// use ruststream::{HeaderMap, Outgoing, OutgoingFor, Publisher, Serialized};
         ///
         /// // A handle that tags every message it sends, without touching the message itself.
+        /// #[derive(Clone)]
         /// struct Tenanted<P>(P, HeaderMap);
         ///
         /// impl<P: Publisher> Publisher for Tenanted<P> {

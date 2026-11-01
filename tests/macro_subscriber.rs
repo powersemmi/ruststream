@@ -123,6 +123,7 @@ fn derive_message_metadata() {
 }
 
 /// A static (zero-cost) publish transform composed onto the reply wiring.
+#[derive(Clone)]
 struct StaticEnvelope;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for StaticEnvelope {

@@ -38,6 +38,7 @@ impl<C, Options> BatchPublishTransform<C, Options> for Batched {
 }
 
 /// A per-message transform, reused on the batch path through `for_batch`.
+#[derive(Clone)]
 struct Service(&'static str);
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Service {

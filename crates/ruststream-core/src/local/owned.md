@@ -19,6 +19,7 @@ use ruststream::LocalOwnedTransactions;
 #     queue: RefCell<VecDeque<Vec<u8>>>,
 # }
 #
+# #[derive(Clone)]
 # pub struct QueuePublisher {
 #     client: Rc<Client>,
 # }

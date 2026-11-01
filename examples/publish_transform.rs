@@ -35,6 +35,7 @@ struct Audit {
 // --8<-- [start:reply]
 /// Carries the request's correlation id onto its reply. `ForReply` reads the delivery being
 /// answered, so this transform mounts on a reply position.
+#[derive(Clone)]
 struct Correlate;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for Correlate {
@@ -57,6 +58,7 @@ impl<C, Options> PublishTransform<ForReply<C>, Options> for Correlate {
 // --8<-- [start:slot]
 /// Stamps the schema version on what leaves a slot. `ForSlot` reads the slot's name and nothing
 /// else: the body that publishes has already read its delivery.
+#[derive(Clone)]
 struct SchemaVersion(&'static str);
 
 impl<Options> PublishTransform<ForSlot, Options> for SchemaVersion {

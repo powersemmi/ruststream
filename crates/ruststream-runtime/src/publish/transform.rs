@@ -303,6 +303,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// ```
 /// use ruststream::runtime::{ContextKind, Outgoing, PublishTransform, Reads};
 ///
+/// #[derive(Clone)]
 /// struct Envelope;
 ///
 /// impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
@@ -325,6 +326,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// ```
 /// use ruststream::runtime::{ForReply, Outgoing, PublishContext, PublishTransform, Reads};
 ///
+/// #[derive(Clone)]
 /// struct StampSource;
 ///
 /// impl<C, Options> PublishTransform<ForReply<C>, Options> for StampSource {
@@ -357,6 +359,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 ///     level: Option<u8>,
 /// }
 ///
+/// #[derive(Clone)]
 /// struct Urgent;
 ///
 /// impl PublishTransform<ForSlot, Priority> for Urgent {
@@ -372,6 +375,9 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 ///     }
 /// }
 /// ```
+///
+/// A transform is `Clone`, because an `Out` entry holds the stack of its slot and a handler clones
+/// the entry into a continuation; state it shares lives behind an `Arc`.
 ///
 /// On a slot the position starts as a copy of what the call site's own builder steps set, so a
 /// transform completes the call rather than replacing it: it reads a field the call left alone
@@ -402,6 +408,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// use ruststream::runtime::{ForReply, Names, Outgoing, PublishContext, PublishTransform};
 ///
 /// /// Answers where the request asked to be answered.
+/// #[derive(Clone)]
 /// struct ReplyTo;
 ///
 /// impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
@@ -432,7 +439,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
             writes none is generic over them - `impl<K: ContextKind, Options> \
             PublishTransform<K, Options> for ..` - and mounts anywhere"
 )]
-pub trait PublishTransform<K: ContextKind, Options = ()>: Send + Sync {
+pub trait PublishTransform<K: ContextKind, Options = ()>: Send + Sync + Clone {
     /// What this transform does to the destination: [`Reads`] or [`Names`].
     type Destination: DestinationUse;
 
@@ -596,6 +603,7 @@ impl<C, Options, L: PublishTransform<ForReply<C>, Options>> BatchPublishTransfor
 /// #     orders.iter().map(|o| Confirmation { id: o.id }).collect()
 /// # }
 ///
+/// #[derive(Clone)]
 /// struct Stamp;
 /// impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
 ///     type Destination = Reads;

@@ -273,7 +273,7 @@ impl ciborium_io::Write for BufWriter<'_> {
 /// # Ok(())
 /// # }
 /// ```
-pub trait Codec: Send + Sync {
+pub trait Codec: Send + Sync + Clone {
     /// The media type of the bytes this codec produces, reported as the `contentType` of every
     /// message it encodes or decodes in the generated `AsyncAPI` document.
     ///

@@ -66,6 +66,7 @@ async fn price(order: &Order, Out(pricing): Out<impl RequestReply, Pricing>) -> 
 // --8<-- [end:requester]
 
 /// Answers on the inbox the request named in its `reply-to` header.
+#[derive(Clone)]
 struct ToInbox;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for ToInbox {

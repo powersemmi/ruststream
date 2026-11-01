@@ -58,6 +58,7 @@ impl PriorityPublish {
 }
 
 /// The live publisher: the connection, plus the defaults the policy carried.
+#[derive(Clone)]
 struct PriorityPublisher {
     inner: MemoryPublisher,
     default_priority: u8,
@@ -504,6 +505,7 @@ async fn defaults_asserted_on_a_stepped_publish_name_the_options() {
 /// A transform that writes this broker's per-message settings. It names the options type, so it
 /// mounts over this broker's publisher and nowhere else; the position it reads is still free, so
 /// it goes on a reply and on a slot alike.
+#[derive(Clone)]
 struct Expedite;
 
 impl<K: ContextKind> PublishTransform<K, PriorityOptions> for Expedite {
@@ -521,6 +523,7 @@ impl<K: ContextKind> PublishTransform<K, PriorityOptions> for Expedite {
 // --8<-- [end:transform]
 
 /// A transform that writes a field the call site also writes, to show which one wins.
+#[derive(Clone)]
 struct Downgrade;
 
 impl PublishTransform<ForSlot, PriorityOptions> for Downgrade {

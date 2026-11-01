@@ -71,6 +71,9 @@ Each rule names the trait it concerns; the rustdoc of that trait is the referenc
   `DefaultPublish` on the connected form when the plain policy works as-is (so `b.include(def)`
   compiles with no `.out_reply(..)`). Make mode selection a policy type transition, not a runtime
   flag: only the transactional policy's live form implements `TransactionalPublisher`.
+- A live publisher is `Clone` (a handle on the same connection; shared state behind an `Arc`), so
+  a handler moves its `Out` entry into an `.error` continuation. A publisher that holds a client
+  directly clones the handle or wraps it in an `Arc`.
 - Per-message settings (a QoS, a priority, an ordering key, an expiration) are `Publisher::Options`,
   a type you own with every field optional (`()` when you have none). The policy holds the defaults,
   `publish(msg, options)` resolves the call's fields over them, and `options` is `None` on every

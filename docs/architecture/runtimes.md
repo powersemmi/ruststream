@@ -39,10 +39,9 @@ The tokio runner offers `workers(n)`, `threads(n)`, the signals, metrics, OpenTe
 The embassy runner offers constant-count workers (`.pool::<N>()` and `.keyed::<N>()`), a retry store with a capacity declared at the mount site (`.retry_capacity::<CAP>()`), continuations after the settlement, and shutdown and health through `Control` and `Health`.
 An item one runner does not offer is a compile error on the other.
 
-When a delayed retry finds the embassy store full, the mount site chooses what happens.
-By default the run panics: a device resets rather than losing the retry, and the message names the subscription, the message type and the capacity.
-`.when_retry_full(DeadLetter)` sends the delivery to the destination `.dead_letter(..)` declared and settles the original.
-`.when_retry_full(SkipDelay)` publishes the copy at once, without the delay, and still counts the attempt toward `max_attempts`.
+When a delayed retry finds the embassy store full, the copy has nowhere to wait.
+That is a failed publish like any other, with its own error, "no free record": the handler's `.error` continuation is told, and without one the failure is logged and the copy is lost.
+The delivery is settled either way, so the handler never runs again because the store was full.
 
 ## Testing
 

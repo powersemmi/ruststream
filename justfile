@@ -43,13 +43,13 @@ check:
     # The benchmarks are left out of the workspace legs on purpose: they are built with the
     # production feature set, and the harness feature is a compile error in them. Their own leg
     # follows.
-    cargo clippy --workspace --lib --bins --tests --examples \
+    cargo clippy --workspace {{ embassy_tests_exclude }} --lib --bins --tests --examples \
         --all-features \
         -- -D warnings
     # No clippy here: this feature combination has clippy lints of its own that no gate has ever
     # run, and cleaning them is not what a benchmark change is for.
     cargo check --benches --no-default-features --features {{ bench_features }}
-    cargo check --workspace --lib --bins --tests --examples \
+    cargo check --workspace {{ embassy_tests_exclude }} --lib --bins --tests --examples \
         --all-features
     # The probe always asks for `macros`, `json` and `tokio`, and a workspace build unifies a
     # dependency's features across members, so the reduced legs leave it out and check it on its
@@ -127,6 +127,7 @@ check:
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --all-features --test suite ui::
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features macros,memory,testing,tokio --test suite ui_codec_free::
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-runtime-embassy --test ui
+    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-cli --test ui
 
 test:
     # The examples' tests are modules of one test binary, so `--tests` builds none per example;
@@ -138,6 +139,8 @@ test:
     cargo test -p ruststream-runtime-embassy
     cargo test -p ruststream-memory --no-default-features --features embassy
     cargo test -p ruststream-testing --features embassy,json
+    # The same crate on the tokio runner alone: every embedded target gates itself on embassy.
+    cargo test -p ruststream-testing --features tokio,json
     # The reduced-feature legs CI runs, in CI's order. A module compiled only with a feature off
     # is invisible to the workspace run above, so an API a refactor removed can survive there
     # until CI says otherwise: `codec_free_lanes` and `ui_codec_free` build only where no codec

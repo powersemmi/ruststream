@@ -19,7 +19,7 @@ use crate::publish::{
 };
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 #[cfg(feature = "testing")]
-use crate::testing::coordinator::{Origin, paired, publishing_to};
+use crate::testing::coordinator::{Anchor, Origin, paired, publishing_to};
 use crate::{
     Connected, HeaderMap, OutgoingDestination, OutgoingFor, OwnedTransactions, PairError,
     PublishPolicy, Publisher, RequestReply, TransactionalPublisher,
@@ -66,6 +66,27 @@ pub struct Slot<M, W, E, Pipe = PublishIdentity, Body = ()> {
     /// broker the handler holding it consumes from.
     #[cfg(feature = "testing")]
     origin: Origin,
+    /// The harness the entry was cloned under, which records the publishes of a clone that
+    /// outlives the handler's call.
+    #[cfg(feature = "testing")]
+    anchor: Anchor,
+}
+
+/// A clone is another handle on the same wired value, as the publisher's own clone is: a body
+/// moves one into a continuation (`Out<impl Publisher>`).
+impl<M, W: Clone, E: Clone, Pipe: Clone, Body> Clone for Slot<M, W, E, Pipe, Body> {
+    fn clone(&self) -> Self {
+        Self {
+            wired: SlotPublisher::new(self.wired.inner().clone()),
+            codec: self.codec.clone(),
+            pipeline: self.pipeline.clone(),
+            _declared: PhantomData,
+            #[cfg(feature = "testing")]
+            origin: self.origin,
+            #[cfg(feature = "testing")]
+            anchor: self.anchor.current_or(),
+        }
+    }
 }
 
 impl<M, W, E, Pipe, Body> fmt::Debug for Slot<M, W, E, Pipe, Body> {
@@ -321,7 +342,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: Send + Sync, Body>
 // stamped message. The transaction calls and the request round trip reach the leaf directly -
 // the pipeline ends in a send, and neither of those is one - and report their errors in the
 // entry's own error type.
-impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline<W>, Body> Publisher
+impl<M: OutSlot, W: Publisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> Publisher
     for Slot<M, W, E, Pipe, Body>
 {
     // The slot is attribution, not policy: the payload travels in the wired publisher's own
@@ -339,7 +360,7 @@ impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline<W>, Body> Publi
     ) -> Result<(), Self::Error> {
         let publish = self.pipeline.send(&self.wired, msg, options);
         #[cfg(feature = "testing")]
-        let publish = publishing_to(self.origin, publish);
+        let publish = self.anchor.scoped(publishing_to(self.origin, publish));
         publish.await
     }
 
@@ -348,7 +369,7 @@ impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline<W>, Body> Publi
     }
 }
 
-impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
+impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
 {
     async fn begin_transaction(&self) -> Result<(), Self::Error> {
@@ -367,8 +388,8 @@ impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>
     }
 }
 
-impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline<W>, Body> OwnedTransactions
-    for Slot<M, W, E, Pipe, Body>
+impl<M: OutSlot, W: OwnedTransactions, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+    OwnedTransactions for Slot<M, W, E, Pipe, Body>
 {
     type Transaction = W::Transaction;
 
@@ -380,7 +401,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline<W>, Bod
     }
 }
 
-impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
+impl<M: OutSlot, W: RequestReply, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
     for Slot<M, W, E, Pipe, Body>
 {
     type Reply = W::Reply;
@@ -392,7 +413,7 @@ impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> Re
     ) -> Result<Self::Reply, Self::Error> {
         let request = self.wired.request(msg, timeout);
         #[cfg(feature = "testing")]
-        let request = publishing_to(self.origin, request);
+        let request = self.anchor.scoped(publishing_to(self.origin, request));
         request.await.map_err(Pipe::from_publish_error)
     }
 }
@@ -412,6 +433,8 @@ impl<M, W, E, Pipe, Body> Slot<M, W, E, Pipe, Body> {
             _declared: PhantomData,
             #[cfg(feature = "testing")]
             origin: Origin::default(),
+            #[cfg(feature = "testing")]
+            anchor: Anchor::default(),
         }
     }
 }
@@ -453,6 +476,8 @@ where
             _declared: PhantomData,
             #[cfg(feature = "testing")]
             origin,
+            #[cfg(feature = "testing")]
+            anchor: Anchor::default(),
         })
     }
 }

@@ -56,12 +56,13 @@ ruststream-memory = { workspace = true, features = ["embassy"] }
 # Counts the process's allocations so the test reads what one delivery made: four atomic
 # counters per allocation, in the test binary only.
 stats_alloc = "0.1.10"
+# Counts the allocations of one call, so a unit test reads what a failed publish copies.
+allocation-counter = "0.8.1"
 # The compile-fail snapshots, and the tokio-only surface they hold this runner apart from.
 trybuild = "1"
 # The facade as a device service imports it: the embassy runtime, so the attributes emit the local
 # forms the host tests and the snapshots write.
 ruststream = { path = "../..", default-features = false, features = ["embassy", "macros", "memory", "json"] }
-ruststream-cli.workspace = true
 # The reply the codec encodes, as a device crate derives it.
 serde.workspace = true
 

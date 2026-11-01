@@ -136,6 +136,7 @@ impl HeaderMap {
     /// use serde::{Deserialize, Serialize};
     ///
     /// /// Stamps everything a slot sends with the region this instance runs in.
+    /// #[derive(Clone)]
     /// struct Region(&'static str);
     ///
     /// impl<Options> PublishTransform<ForSlot, Options> for Region {
@@ -238,6 +239,7 @@ impl HeaderMap {
     ///
     /// /// Sends each reply to the inbox its request named. The header's bytes become the
     /// /// destination as they are: one check that they are UTF-8, no copy.
+    /// #[derive(Clone)]
     /// struct ToInbox;
     ///
     /// impl<C, Options> PublishTransform<ForReply<C>, Options> for ToInbox {

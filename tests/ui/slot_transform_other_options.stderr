@@ -1,16 +1,16 @@
 error[E0277]: `Urgent` is not a publish transform for `ForSlot` writing `()`
-  --> tests/ui/slot_transform_other_options.rs:63:14
+  --> tests/ui/slot_transform_other_options.rs:64:14
    |
-63 |             .transform(Urgent)
+64 |             .transform(Urgent)
    |              ^^^^^^^^^ unsatisfied trait bound
    |
    = note: a transform states its position by the kind it implements: `PublishTransform<K>` for every `K: ContextKind` mounts anywhere, `PublishTransform<ForReply<C>>` reads the delivery and mounts on a reply, `PublishTransform<ForSlot>` mounts on an `Out` slot. A slot publish is issued by the handler body, so it has no delivery to hand on
    = note: a transform also states the broker's per-message options it writes, and mounts only over a publisher whose `Publisher::Options` is that type: `()` here. One that writes none is generic over them - `impl<K: ContextKind, Options> PublishTransform<K, Options> for ..` - and mounts anywhere
 help: the trait `PublishTransform<ForSlot, ()>` is not implemented for `Urgent`
       but trait `PublishTransform<ForSlot, Priority>` is implemented for it
-  --> tests/ui/slot_transform_other_options.rs:33:1
+  --> tests/ui/slot_transform_other_options.rs:34:1
    |
-33 | impl PublishTransform<ForSlot, Priority> for Urgent {
+34 | impl PublishTransform<ForSlot, Priority> for Urgent {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = help: for that trait implementation, expected `Priority`, found `()`
    = note: required for `ruststream_runtime::slot::position::SlotProbe<MemoryPublish, MemoryBroker>` to implement `ruststream_runtime::slot::position::TransformProbe<Urgent>`

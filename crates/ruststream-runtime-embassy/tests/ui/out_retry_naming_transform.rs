@@ -8,6 +8,7 @@ use ruststream::{Deserialized, subscriber};
 #[derive(Deserialized)]
 struct Job<'a>(&'a [u8]);
 
+#[derive(Clone)]
 struct ByTenant;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for ByTenant {

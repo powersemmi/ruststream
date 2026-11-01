@@ -12,7 +12,6 @@ use crate::handler::MaybeSend;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::iter;
 use core::{any, fmt, marker::PhantomData};
 #[cfg(feature = "otel")]
 use std::slice;
@@ -36,10 +35,11 @@ use super::context::Context;
 use super::dispatch::{Slot, Workers, settle_outcome};
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handle::Deserialized;
-use super::handler::{HandlerOutcome, HandlerResult, LocalCall, SendCall};
+use super::handler::{Continuation, HandlerOutcome, HandlerResult, LocalCall, SendCall};
 use super::host::{HostDetach, PrepareKept, SendHost};
 use super::input::{DecodeWith, InputKind, REPORTED};
 use super::metadata::HandlerMetadata;
+use super::publish_failure::Fan;
 #[cfg(all(test, feature = "json"))]
 use crate::codec::Codec;
 #[cfg(feature = "testing")]
@@ -142,21 +142,64 @@ pub fn batch_verdict<O: IntoBatchResult>(
 }
 
 /// Fans one uniform outcome out to a batch-length settlement vector: the status repeats per
-/// element and the continuation rides the last one. The failure-path half of [`batch_verdict`],
-/// also how the `#[subscriber]` expansion lowers a batch reply body's uniform `Err`. Machinery;
-/// not part of the public API.
+/// element, the `.error` is shared by every element (it runs once, with the failure of each
+/// element whose copy fails, after the last element's publish is reported) and, when an `.error`
+/// is registered, the continuation runs once after the batch when at least one publish succeeded;
+/// without one it rides the last element. The failure-path half of [`batch_verdict`], also how the
+/// `#[subscriber]` expansion lowers a batch reply body's uniform `Err`. Machinery; not part of the
+/// public API.
 #[doc(hidden)]
 #[must_use]
 pub fn uniform_batch(outcome: HandlerOutcome, batch_len: usize) -> Vec<HandlerOutcome> {
-    if batch_len == 0 {
-        return Vec::new();
+    let mut fan = UniformFan::new(outcome, batch_len);
+    (0..batch_len)
+        .map(|index| fan.element(index + 1 == batch_len))
+        .collect()
+}
+
+/// A uniform outcome handed out element by element: the status and a share of the `.error` to
+/// each, the continuation to the last.
+pub(crate) struct UniformFan {
+    status: HandlerResult,
+    share: Share,
+}
+
+/// Where a uniform outcome's `.error` and continuation go. With an `.error` registered every
+/// element reports its publish to one rendezvous, which runs both once. Without one the
+/// continuation rides the last element.
+enum Share {
+    Gathered(Fan),
+    Last(Option<Continuation>),
+}
+
+impl UniformFan {
+    pub(crate) fn new(outcome: HandlerOutcome, batch_len: usize) -> Self {
+        let (status, after, error) = outcome.into_parts();
+        let share = match error {
+            Some(error) => Share::Gathered(error.fan_out(batch_len, after)),
+            None => Share::Last(after),
+        };
+        Self { status, share }
     }
-    let status = outcome.outcome();
-    let mut settles: Vec<HandlerOutcome> = iter::repeat_with(|| HandlerOutcome::from(status))
-        .take(batch_len - 1)
-        .collect();
-    settles.push(outcome);
-    settles
+
+    /// The outcome of the next element.
+    #[inline]
+    pub(crate) fn element(&mut self, last: bool) -> HandlerOutcome {
+        let own = HandlerOutcome::from(self.status);
+        match &mut self.share {
+            Share::Gathered(fan) => {
+                let (error, sent) = fan.element();
+                own.error_hook(error).and_after_boxed(sent)
+            }
+            Share::Last(after) => match after.take() {
+                Some(after) if last => own.and_after_boxed(after),
+                other => {
+                    *after = other;
+                    own
+                }
+            },
+        }
+    }
 }
 
 /// A handler invoked with one whole decoded batch.

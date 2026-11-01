@@ -26,11 +26,14 @@ use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
-use super::handler::HandlerOutcome;
+use super::handler::{HandlerOutcome, HandlerResult};
 use super::host::SendHost;
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
+use super::publish_failure::{FailedMessage, publish_done};
+use super::publishing::EncodeReply;
+use crate::HeaderMap;
 
 /// A batch subscriber definition that produces replies to publish.
 ///
@@ -250,19 +253,47 @@ where
                         .publish_batch(name, &replies, &self.pipeline, &pubcx, slot);
                 #[cfg(feature = "testing")]
                 let publish = publishing_to(self.origin, publish);
-                match publish.await {
-                    Ok(()) => BatchResult::Uniform(HandlerOutcome::ack()),
-                    Err(err) => {
-                        warn!(
-                            target: "ruststream::dispatch",
-                            subscription = %subscription,
-                            reply = %name,
-                            reply_type = any::type_name::<D::Reply>(),
-                            error = %err,
-                            "batch reply publish failed",
-                        );
-                        BatchResult::Uniform(HandlerOutcome::retry())
-                    }
+                let sent = publish.await;
+                let reaction = ctx.take_reaction_for(HandlerResult::Ack);
+                // The replies left and nothing waits on them: the common case ends here.
+                if sent.is_ok() && reaction.is_none() {
+                    BatchResult::Uniform(HandlerOutcome::ack())
+                } else {
+                    // The batch is acknowledged either way: the handler already did its work, and
+                    // a requeue would run it again for the same elements.
+                    let follow = match (sent, reaction) {
+                        (Ok(()), reaction) => publish_done(reaction),
+                        // The `.error` the context registered is told of every reply.
+                        (Err(err), Some(reaction)) => {
+                            let codec = self.publisher.reply_codec();
+                            // A plain publish stops at the first failure: the replies before
+                            // it went out and are not lost.
+                            let sent = err.sent();
+                            let err = err.into_error();
+                            let lost = replies[sent..]
+                                .iter()
+                                .map(|reply| {
+                                    let bytes = reply.encoded_with(codec);
+                                    FailedMessage::new(name, bytes, HeaderMap::new())
+                                })
+                                .collect();
+                            Some(reaction.failed_all(err, lost))
+                        }
+                        (Err(err), None) => {
+                            warn!(
+                                target: "ruststream::dispatch",
+                                subscription = %subscription,
+                                reply = %name,
+                                reply_type = any::type_name::<D::Reply>(),
+                                error = %err,
+                                "batch reply publish failed; replies lost",
+                            );
+                            None
+                        }
+                    };
+                    BatchResult::Uniform(follow.map_or_else(HandlerOutcome::ack, |follow| {
+                        HandlerOutcome::ack().and_after_boxed(follow)
+                    }))
                 }
             }
             Err(result) => result,

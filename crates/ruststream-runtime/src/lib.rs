@@ -102,6 +102,8 @@ pub(crate) mod poll_diagnostics;
 #[cfg(feature = "alloc")]
 mod publish;
 #[cfg(feature = "alloc")]
+mod publish_failure;
+#[cfg(feature = "alloc")]
 mod publishing;
 #[cfg(feature = "alloc")]
 // The redelivery path serves the local contract, whose futures carry no Send.
@@ -151,7 +153,7 @@ pub use batch::{
     BatchHandler, LocalBatch, LocalBatchHandler, TakenBatch, batch_verdict, uniform_batch,
 };
 #[cfg(feature = "alloc")]
-pub use context::{After, Context};
+pub use context::{After, AfterError, AfterThen, Context};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use dispatch::{
@@ -171,7 +173,10 @@ pub use failure::DispatchFailure;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use handle::{AnyOutPos, SelectEntry, SlotAdmit, SlotEntry, SlotPublish, SlotTransactions};
+pub use handle::{
+    AnyOutPos, MaybeSendPublisher, MaybeSendSink, SelectEntry, SlotAdmit, SlotEntry, SlotPublish,
+    SlotTransactions,
+};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use handle::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
@@ -214,9 +219,14 @@ pub use host::{Copying, SendHost};
 pub use host::{Detach, Halt, HostDetach, LocalDetach, OnOneThread};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept, WhenFull};
+pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept};
 #[cfg(feature = "tokio")]
 pub use main_runtime::MainRuntime;
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use publish_failure::{ErrorHook, Reaction, publish_done, publish_lost};
+#[cfg(feature = "alloc")]
+pub use publish_failure::{Failed, FailedMessage, Failures, NoFreeRecordError};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use slot::{BindSlotsBody, LocalBindSlotsBody};
@@ -224,9 +234,13 @@ pub use slot::{BindSlotsBody, LocalBindSlotsBody};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use handler::Continuation;
+// The bound a body that clones its entry into a continuation asks of it.
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 #[doc(hidden)]
 pub use handler::HandlerResult;
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use handler::MaybeSendSync;
 #[cfg(feature = "alloc")]
 pub use in_messages::{
     CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,
@@ -277,9 +291,9 @@ pub use publish::{
     DestinationSettled, DestinationUse, Direct, Either, EncodeOutcome, FitsOffer, FitsTaken,
     InTransaction, LocalOutPipeline, LowerOutTransforms, MapReplyPolicy, NameReplyCodec,
     NamedDestinationSend, NamesDestination, NamingOffered, NamingUntaken, NarrowToUse,
-    PayloadError, PublishingDirectly, RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy,
-    SlotStackUse, SlotTransforms, Transactional, TransactionalReply, TypedPublisher, WireBytes,
-    WirePayload,
+    PayloadError, PublishBatchError, PublishingDirectly, RawReplyWiring, ReplyPublisher,
+    ReplyWiring, SendOnlyPolicy, SlotStackUse, SlotTransforms, Transactional, TransactionalReply,
+    TypedPublisher, WireBytes, WirePayload,
 };
 #[cfg(feature = "alloc")]
 pub use publish::{
@@ -331,8 +345,8 @@ pub use retry::{
 #[doc(hidden)]
 pub use router::{
     AttachDeclaration, AttachRetry, Balance, BatchPublishInjectMount, BatchPublishMount, BodyFits,
-    ChainHead, DeadLetterDeclared, DefaultReply, LayerFits, MountSink, OpenLayered, OpenRoutes,
-    Opened, OpenedBatchRoute, OpenedRoute, Plain, Poison, PoisonAt, PoisonMode, Poisoned, PoolFits,
+    ChainHead, DefaultReply, LayerFits, MountSink, OpenLayered, OpenRoutes, Opened,
+    OpenedBatchRoute, OpenedRoute, Plain, Poison, PoisonAt, PoisonMode, Poisoned, PoolFits,
     PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
     RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker, RouterCommit,
     RouterMount, RouterPipe, RunRoutes, RunsBatches, SplitHead, TakesWorkers,

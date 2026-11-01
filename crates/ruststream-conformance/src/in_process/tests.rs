@@ -497,6 +497,7 @@ enum Refuses {
     Payload(&'static [u8]),
 }
 
+#[derive(Clone)]
 struct FaultyPublisher {
     inner: MemoryPublisher,
     /// Refuses a publish to a name with no subscription in this map.

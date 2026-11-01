@@ -27,10 +27,11 @@ use crate::{Field, FieldMut, HeaderMap, LocalSettle};
 
 use super::dispatch::Delivery;
 use super::failure::FailurePolicy;
-use super::handler::{Continuation, ContinuationFuture, HandlerOutcome, HandlerResult};
+use super::handler::{Continuation, ContinuationFuture, HandlerOutcome, HandlerResult, MaybeSend};
 use crate::host::Halt;
 #[cfg(feature = "tokio")]
 use crate::main_runtime::MainRuntime;
+use crate::publish_failure::{ErrorHook, Failures, Reaction};
 
 /// Where one delivery's header map comes from.
 ///
@@ -130,11 +131,14 @@ impl OutcomeKind {
     }
 }
 
-/// One registered post-settle hook: the future to run, and the outcome variant it is gated on
-/// (`None` means it runs regardless of how the message settled).
+/// One registered post-settle hook: the future to run, the outcome variant it is gated on
+/// (`None` means it runs regardless of how the message settled) and the `.error` registered
+/// beside it. A hook with an `.error` runs its future after the publish the runtime makes for
+/// the settlement; a hook with an `.error` and no future only reacts to a failed publish.
 struct AfterHook {
     gate: Option<OutcomeKind>,
-    fut: Continuation,
+    fut: Option<Continuation>,
+    error: Option<ErrorHook>,
 }
 
 /// Per-delivery context, threaded through middleware and into the handler.
@@ -693,7 +697,8 @@ impl<'a, C, S> Context<'a, C, S> {
     pub fn after_ack(&mut self, fut: impl ContinuationFuture) {
         self.after.push(AfterHook {
             gate: Some(OutcomeKind::Ack),
-            fut: Box::pin(fut),
+            fut: Some(Box::pin(fut)),
+            error: None,
         });
     }
 
@@ -741,7 +746,8 @@ impl<'a, C, S> Context<'a, C, S> {
     pub fn after_settle(&mut self, fut: impl ContinuationFuture) {
         self.after.push(AfterHook {
             gate: None,
-            fut: Box::pin(fut),
+            fut: Some(Box::pin(fut)),
+            error: None,
         });
     }
 
@@ -759,7 +765,7 @@ impl<'a, C, S> Context<'a, C, S> {
         let mut kept = Vec::new();
         for hook in self.after.drain(..) {
             if hook.gate.is_none_or(|gate| gate == kind) {
-                runnable.push(hook.fut);
+                runnable.extend(hook.fut);
             } else {
                 kept.push(hook);
             }
@@ -776,13 +782,63 @@ impl<'a, C, S> Context<'a, C, S> {
         let mut kept = Vec::new();
         for hook in self.after.drain(..) {
             if hook.gate.is_none() {
-                runnable.push(hook.fut);
+                runnable.extend(hook.fut);
             } else {
                 kept.push(hook);
             }
         }
         self.after = kept;
         runnable
+    }
+
+    /// Takes the reaction registered for a delivery that settles by `outcome`: the first
+    /// `.error` registered under that kind with the `.then` beside it. Every other registration
+    /// of the kind keeps its `.then` as a plain post-settle hook, and its `.error` is dropped. A
+    /// delivery that registered no hook pays the emptiness check alone.
+    #[inline]
+    pub(crate) fn take_reaction_for(&mut self, outcome: HandlerResult) -> Option<Reaction> {
+        if self.after.is_empty() {
+            return None;
+        }
+        self.reaction_registered_for(outcome)
+    }
+
+    /// The registered case of [`take_reaction_for`](Self::take_reaction_for), off the path of a
+    /// delivery that registered nothing.
+    #[cold]
+    #[inline(never)]
+    fn reaction_registered_for(&mut self, outcome: HandlerResult) -> Option<Reaction> {
+        let kind = OutcomeKind::of(outcome);
+        let mut chosen = None;
+        let mut at = 0;
+        while at < self.after.len() {
+            let hook = &mut self.after[at];
+            let Some(error) = hook.error.take() else {
+                at += 1;
+                continue;
+            };
+            if chosen.is_none() && hook.gate == Some(kind) {
+                chosen = Some(Reaction::new(error, hook.fut.take()));
+                self.after.remove(at);
+            } else if hook.fut.is_none() {
+                self.after.remove(at);
+            } else {
+                at += 1;
+            }
+        }
+        chosen
+    }
+
+    /// Keeps the `.then` of every registered `.error` as a plain post-settle hook and drops the
+    /// errors: the outcome the handler returned carries an `.error` of its own, which wins.
+    #[inline]
+    pub(crate) fn demote_errors(&mut self) {
+        if !self.after.is_empty() {
+            self.after.retain_mut(|hook| {
+                hook.error = None;
+                hook.fut.is_some()
+            });
+        }
     }
 
     /// Returns the subscription's delivery context: the task tracker post-settle
@@ -823,7 +879,7 @@ impl<C, S> fmt::Debug for After<'_, '_, C, S> {
     }
 }
 
-impl<C, S> After<'_, '_, C, S> {
+impl<'ctx, 'a, C, S> After<'ctx, 'a, C, S> {
     /// Registers `fut` to run after the message settles, if the settlement matches the gate this
     /// builder was created with (see [`Context::after`]).
     ///
@@ -859,11 +915,198 @@ impl<C, S> After<'_, '_, C, S> {
     /// # }
     /// # fn main() {}
     /// ```
-    pub fn then(self, fut: impl ContinuationFuture) {
+    pub fn then(self, fut: impl ContinuationFuture) -> AfterThen<'ctx, 'a, C, S> {
+        let at = self.ctx.after.len();
         self.ctx.after.push(AfterHook {
             gate: self.gate,
-            fut: Box::pin(fut),
+            fut: Some(Box::pin(fut)),
+            error: None,
         });
+        AfterThen { ctx: self.ctx, at }
+    }
+
+    /// Registers `react` to run if a publish the runtime makes for this delivery fails while it
+    /// settles by the outcome this builder was created with: the reply of `out_reply`, the
+    /// delayed retry copy, or the dead-letter copy.
+    ///
+    /// It is [`HandlerOutcome::error`] for a handler that returns no outcome of its own, or whose
+    /// reply has none to carry it. The continuation receives the
+    /// [`Failures`], one [`Failed`](crate::Failed) holding the error and the message that did not
+    /// go out, runs after the delivery is settled, and the
+    /// handler never runs again because of the failure. The first one registered for the kind
+    /// wins; an outcome that carries its own `.error` takes precedence over it. Without any, the
+    /// failure is logged with the subscription, the destination, the message type and the error,
+    /// and the message is lost.
+    ///
+    /// A [`then`](AfterError::then) chained after it becomes the success half: it runs once the
+    /// publish succeeded, and never when it failed, where `.error` runs on a failure only.
+    ///
+    /// The closure and its future are `Send` with the Tokio runner on; on the embedded runtime
+    /// alone they carry no `Send`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use ruststream::prelude::*;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Deserialize)]
+    /// struct QuoteRequest {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Outgoing, Serialize)]
+    /// #[outgoing(name = "quotes")]
+    /// struct Quote {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("prices", reply)]
+    /// async fn quote(req: &QuoteRequest, ctx: &mut Context<'_>) -> Quote {
+    ///     let id = req.id;
+    ///     // The reply is published after the ack; if that fails, the log says which quote.
+    ///     ctx.after(HandlerOutcome::ack())
+    ///         .error(async move |failures: Failures| {
+    ///             for failed in failures {
+    ///                 tracing::warn!(id, error = %failed.error(), "the quote was not sent");
+    ///             }
+    ///         });
+    ///     Quote { id }
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    pub fn error<React, Reaction>(self, react: React) -> AfterError<'ctx, 'a, C, S>
+    where
+        React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
+        Reaction: ContinuationFuture,
+    {
+        // The builder is always made by `Context::after`, which gates it on an outcome kind.
+        let gate = self.gate.unwrap_or(OutcomeKind::Ack);
+        let at = self.ctx.after.len();
+        self.ctx.after.push(AfterHook {
+            gate: Some(gate),
+            fut: None,
+            error: Some(ErrorHook::new(react)),
+        });
+        AfterError { ctx: self.ctx, at }
+    }
+}
+
+/// What [`After::then`] returns: the registered post-settle hook, which [`error`](Self::error)
+/// can still tie to the outcome of the runtime's publish.
+#[derive(Debug)]
+pub struct AfterThen<'ctx, 'a, C = (), S = ()> {
+    ctx: &'ctx mut Context<'a, C, S>,
+    at: usize,
+}
+
+impl<C, S> AfterThen<'_, '_, C, S> {
+    /// Registers `react` to run if a publish the runtime makes for this delivery fails, as
+    /// [`After::error`] does, and makes the `.then` just registered its success half: it runs
+    /// once the publish succeeded and never when it failed. Where the runtime makes no publish
+    /// for the delivery, the `.then` runs once the delivery is settled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use ruststream::prelude::*;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Deserialize)]
+    /// struct QuoteRequest {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Outgoing, Serialize)]
+    /// #[outgoing(name = "quotes")]
+    /// struct Quote {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("prices", reply)]
+    /// async fn quote(req: &QuoteRequest, ctx: &mut Context<'_>) -> Quote {
+    ///     let id = req.id;
+    ///     ctx.after(HandlerOutcome::ack())
+    ///         .then(async move { tracing::info!(id, "the quote was sent") })
+    ///         .error(async move |failures: Failures| {
+    ///             for failed in failures {
+    ///                 tracing::warn!(id, error = %failed.error(), "the quote was not sent");
+    ///             }
+    ///         });
+    ///     Quote { id }
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    pub fn error<React, Reaction>(self, react: React)
+    where
+        React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
+        Reaction: ContinuationFuture,
+    {
+        let hook = &mut self.ctx.after[self.at];
+        if hook.gate.is_some() {
+            hook.error = Some(ErrorHook::new(react));
+        }
+    }
+}
+
+/// What [`After::error`] returns: the registered `.error`, which [`then`](Self::then) can still
+/// give a success half.
+#[derive(Debug)]
+pub struct AfterError<'ctx, 'a, C = (), S = ()> {
+    ctx: &'ctx mut Context<'a, C, S>,
+    at: usize,
+}
+
+impl<C, S> AfterError<'_, '_, C, S> {
+    /// Registers `fut` as the success half of the `.error` just registered: it runs once the
+    /// publish the runtime makes for this delivery succeeded, and never when it failed. Where the
+    /// runtime makes no publish for the delivery, it runs once the delivery is settled.
+    ///
+    /// The future is `Send` with the Tokio runner on; on the embedded runtime alone it carries
+    /// no `Send`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use ruststream::prelude::*;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Deserialize)]
+    /// struct QuoteRequest {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Outgoing, Serialize)]
+    /// #[outgoing(name = "quotes")]
+    /// struct Quote {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("prices", reply)]
+    /// async fn quote(req: &QuoteRequest, ctx: &mut Context<'_>) -> Quote {
+    ///     let id = req.id;
+    ///     ctx.after(HandlerOutcome::ack())
+    ///         .error(async move |failures: Failures| {
+    ///             for failed in failures {
+    ///                 tracing::warn!(id, error = %failed.error(), "the quote was not sent");
+    ///             }
+    ///         })
+    ///         .then(async move { tracing::info!(id, "the quote was sent") });
+    ///     Quote { id }
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    pub fn then(self, fut: impl ContinuationFuture) {
+        self.ctx.after[self.at].fut = Some(Box::pin(fut));
     }
 }
 

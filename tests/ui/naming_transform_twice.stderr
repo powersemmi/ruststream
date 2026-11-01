@@ -1,7 +1,7 @@
 error[E0277]: this position has already given the naming right away
-  --> tests/ui/naming_transform_twice.rs:60:24
+  --> tests/ui/naming_transform_twice.rs:62:24
    |
-60 |             .transform(Inbox)
+62 |             .transform(Inbox)
    |              --------- ^^^^^ an earlier transform on this position declares `Destination = Names`
    |              |
    |              required by a bound introduced by this call

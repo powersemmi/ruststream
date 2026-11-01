@@ -22,6 +22,7 @@ struct Audited {
 #[publishes(Audited)]
 struct Audit;
 
+#[derive(Clone)]
 struct ByTenant;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for ByTenant {

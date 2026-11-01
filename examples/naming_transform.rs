@@ -26,6 +26,7 @@ struct Answer {
 // --8<-- [start:transform]
 /// Answers on the inbox the question named in its `reply-to` header. The header's bytes become
 /// the destination as they are: one UTF-8 check, no copy.
+#[derive(Clone)]
 struct ToInbox;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for ToInbox {

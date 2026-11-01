@@ -20,7 +20,7 @@ use crate::router::LocalPipeline;
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
-    Origin, PipelinePublish, paired, publishing_to, record_slot_publish,
+    Anchor, Origin, PipelinePublish, paired, publishing_to, record_slot_publish,
 };
 use crate::{
     Broker, Connected, HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, PairError,
@@ -50,6 +50,26 @@ pub struct LocalSlot<M, W, E, Pipe = LocalPipeline, Body = ()> {
     /// The broker the slot's publisher was paired against, which its publishes go to.
     #[cfg(feature = "testing")]
     origin: Origin,
+    /// The harness the entry was cloned under, which records the publishes of a clone that
+    /// outlives the handler's call.
+    #[cfg(feature = "testing")]
+    anchor: Anchor,
+}
+
+/// A clone is another handle on the same wired value, as the publisher's own clone is.
+impl<M, W: Clone, E: Clone, Pipe: Clone, Body> Clone for LocalSlot<M, W, E, Pipe, Body> {
+    fn clone(&self) -> Self {
+        Self {
+            wired: self.wired.clone(),
+            codec: self.codec.clone(),
+            pipeline: self.pipeline.clone(),
+            _declared: PhantomData,
+            #[cfg(feature = "testing")]
+            origin: self.origin,
+            #[cfg(feature = "testing")]
+            anchor: self.anchor.current_or(),
+        }
+    }
 }
 
 impl<M, W, E, Pipe, Body> fmt::Debug for LocalSlot<M, W, E, Pipe, Body> {
@@ -110,10 +130,10 @@ where
         #[cfg(feature = "testing")]
         let slot: &LocalSlot<M, W, E, Pipe, Body> = self;
         #[cfg(feature = "testing")]
-        return publishing_to(slot.origin, async move {
+        return slot.anchor.scoped(publishing_to(slot.origin, async move {
             let leaf = Attributed::<M, W>(&slot.wired, PhantomData);
             slot.pipeline.send(&leaf, msg, options).await
-        });
+        }));
         #[cfg(not(feature = "testing"))]
         self.pipeline.send(&self.wired, msg, options)
     }
@@ -158,6 +178,8 @@ where
             _declared: PhantomData,
             #[cfg(feature = "testing")]
             origin,
+            #[cfg(feature = "testing")]
+            anchor: Anchor::default(),
         })
     }
 }
@@ -170,6 +192,13 @@ where
 /// with the slot's name, then hands it on.
 #[cfg(feature = "testing")]
 struct Attributed<'a, M, W>(&'a W, PhantomData<fn() -> M>);
+
+#[cfg(feature = "testing")]
+impl<M, W> Clone for Attributed<'_, M, W> {
+    fn clone(&self) -> Self {
+        Self(self.0, PhantomData)
+    }
+}
 
 #[cfg(feature = "testing")]
 impl<M: OutSlot, W: LocalPublisher> LocalPublisher for Attributed<'_, M, W> {
@@ -213,10 +242,10 @@ impl<C: Codec> SlotEncoding for C {}
 /// [`UnnamedCodec`](crate::UnnamedCodec), and an encoded publish names the missing codec.
 #[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
 #[doc(hidden)]
-pub trait SlotEncoding {}
+pub trait SlotEncoding: Clone {}
 
 #[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
-impl<C> SlotEncoding for C {}
+impl<C: Clone> SlotEncoding for C {}
 
 /// [`OutEntry`](super::OutEntry) for a [`LocalHandle`](crate::LocalHandle) body: what one arena
 /// entry is, stated as the mount's choices, with no `Send` or `Sync` demanded of it.

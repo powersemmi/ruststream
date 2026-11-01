@@ -61,7 +61,7 @@ or any of these on a `Serialized` (byte-for-byte) reply, is a compile error.
 Return `Result<Reply, HandlerOutcome>` to control acknowledgement: `Ok(reply)` publishes and acks,
 `Err(outcome)` publishes nothing and the dispatcher acts on the returned `HandlerOutcome`. Spell the
 `Result` out in the signature (a type alias is treated as a plain reply type). A failed reply
-publish nacks the incoming message with `requeue = true`.
+publish is logged and the delivery is acked: register `ctx.after(HandlerOutcome::ack()).error(async move |failures: Failures| ..)` to learn of it.
 
 The `reply(..)` clause takes a string literal, and a name template does not resolve here.
 Answering somewhere else per delivery (a direct `reply-to`, a `ROUTER` peer identity) is a
@@ -285,6 +285,7 @@ use ruststream::runtime::{
 };
 
 /// Reads and writes nothing, so one impl serves a reply and a slot on any broker alike.
+#[derive(Clone)]
 struct EnvelopeTransform;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for EnvelopeTransform {
@@ -304,6 +305,7 @@ impl<K: ContextKind, Options> PublishTransform<K, Options> for EnvelopeTransform
 /// only. The position starts at `None` - the policy's defaults apply - and on a slot it starts
 /// as a copy of what the call site's steps set, so this completes the call rather than
 /// replacing it.
+#[derive(Clone)]
 struct Expedite;
 
 impl PublishTransform<ForSlot, MqttOptions> for Expedite {
@@ -328,6 +330,7 @@ declaring `Destination = Names` sets the name per delivery, and it mounts with t
 `.transform(..)` step.
 
 ```rust
+#[derive(Clone)]
 struct ReplyTo;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {

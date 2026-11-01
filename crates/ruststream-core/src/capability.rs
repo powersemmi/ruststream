@@ -290,7 +290,7 @@ crate::__contract_twin! {
         )]
         pub trait LocalTransactionalPublisher: LocalPublisher
     }
-    blanket { impl<T: ?Sized + TransactionalPublisher> LocalTransactionalPublisher for T }
+    blanket { impl<T: TransactionalPublisher> LocalTransactionalPublisher for T }
     forward { <T as TransactionalPublisher> }
     docs { TransactionalPublisher }
     fns {
@@ -540,7 +540,7 @@ crate::__contract_twin! {
         )]
         pub trait LocalOwnedTransactions: LocalPublisher
     }
-    blanket { impl<T: ?Sized + OwnedTransactions> LocalOwnedTransactions for T }
+    blanket { impl<T: OwnedTransactions> LocalOwnedTransactions for T }
     forward { <T as OwnedTransactions> }
     docs { OwnedTransactions }
     types {
@@ -586,7 +586,7 @@ crate::__contract_twin! {
         )]
         pub trait LocalRequestReply: LocalPublisher
     }
-    blanket { impl<T: ?Sized + RequestReply> LocalRequestReply for T }
+    blanket { impl<T: RequestReply> LocalRequestReply for T }
     forward { <T as RequestReply> }
     docs { RequestReply }
     types {

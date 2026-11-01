@@ -61,6 +61,7 @@ impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C,
 /// time with `.transform(..)` - zero-cost and scoped to that reply, unlike the dynamic, app-wide
 /// metrics middleware added with `RustStream::publish_layer`. [`routes`](crate::routes) chains it
 /// onto the confirmations reply, so every confirmation carries the header.
+#[derive(Clone)]
 pub(crate) struct StampSource;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for StampSource {

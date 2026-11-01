@@ -45,6 +45,7 @@ use crate::{BytesMut, Lend, PayloadForm};
 #[cfg(feature = "json")]
 mod fixtures {
     use alloc::boxed::Box;
+    use alloc::sync::Arc;
     use core::future::ready;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::collections::HashMap;
@@ -68,13 +69,13 @@ mod fixtures {
 
     /// A transactional publisher whose protocol steps fail on demand: the memory broker's
     /// transactions always succeed, so the batch path's error handling needs this.
-    #[derive(Debug, Default)]
+    #[derive(Clone, Debug, Default)]
     pub(super) struct Rigged {
         pub(super) fail_begin: bool,
         pub(super) fail_commit: bool,
         pub(super) fail_abort: bool,
-        pub(super) published: AtomicUsize,
-        pub(super) aborted: AtomicUsize,
+        pub(super) published: Arc<AtomicUsize>,
+        pub(super) aborted: Arc<AtomicUsize>,
     }
 
     impl Rigged {
@@ -181,6 +182,7 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
 
     use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
 
+    #[derive(Clone)]
     struct PendingCommit;
 
     impl Publisher for PendingCommit {
@@ -889,8 +891,8 @@ async fn the_options_position_starts_empty_and_reaches_the_sink() {
     }
 
     /// Records the settings of every message it is handed, which is the whole subject here.
-    #[derive(Default)]
-    struct Recording(Mutex<Vec<Option<Settings>>>);
+    #[derive(Clone, Default)]
+    struct Recording(Arc<Mutex<Vec<Option<Settings>>>>);
 
     impl Publisher for Recording {
         type Payload = Lend;
@@ -936,4 +938,92 @@ async fn the_options_position_starts_empty_and_reaches_the_sink() {
         .expect("the recording publisher's mutex is poisoned")
         .clone();
     assert_eq!(recorded, [Some(Settings { priority: 7 }), None]);
+}
+
+/// Batches of a pool publish their replies through one transactional handle, and a broker's
+/// producer has one open transaction at a time: the second batch waits for the first to commit
+/// instead of failing its begin.
+#[cfg(feature = "json")]
+#[tokio::test]
+async fn concurrent_batches_take_the_transaction_in_turn() {
+    use core::future::ready;
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use crate::codec::JsonCodec;
+    use thiserror::Error;
+    use tokio::task::yield_now;
+
+    use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
+
+    #[derive(Debug, Error)]
+    #[error("a transaction is already open")]
+    struct Busy;
+
+    #[derive(Clone, Default)]
+    struct OneAtATime {
+        open: Arc<AtomicBool>,
+        committed: Arc<AtomicUsize>,
+    }
+
+    impl Publisher for OneAtATime {
+        type Payload = Lend;
+        type Error = Busy;
+        type Options = ();
+
+        fn publish(
+            &self,
+            _msg: OutgoingMessage<'_, &[u8]>,
+            _options: Option<&Self::Options>,
+        ) -> impl Future<Output = Result<(), Self::Error>> {
+            ready(Ok(()))
+        }
+    }
+
+    impl TransactionalPublisher for OneAtATime {
+        async fn begin_transaction(&self) -> Result<(), Self::Error> {
+            if self.open.swap(true, Ordering::SeqCst) {
+                return Err(Busy);
+            }
+            // The window a pool's other batch gets: this one is open and has not committed.
+            yield_now().await;
+            Ok(())
+        }
+
+        fn commit(&self) -> impl Future<Output = Result<(), Self::Error>> {
+            self.open.store(false, Ordering::SeqCst);
+            self.committed.fetch_add(1, Ordering::SeqCst);
+            ready(Ok(()))
+        }
+
+        fn abort(&self) -> impl Future<Output = Result<(), Self::Error>> {
+            self.open.store(false, Ordering::SeqCst);
+            ready(Ok(()))
+        }
+    }
+
+    let wiring = Transactional::live(TypedPublisher::with_codec(OneAtATime::default(), JsonCodec));
+    let headers = HeaderMap::new();
+    let cx = PublishContext::new("in", &headers, &());
+    let (mut first, mut second) = (BytesMut::new(), BytesMut::new());
+
+    let (first, second) = futures::join!(
+        wiring.publish_batch(
+            "out",
+            &[1_u32],
+            &PublishIdentity,
+            &cx,
+            <Lend as PayloadForm>::encode_slot(&mut first),
+        ),
+        wiring.publish_batch(
+            "out",
+            &[2_u32],
+            &PublishIdentity,
+            &cx,
+            <Lend as PayloadForm>::encode_slot(&mut second),
+        ),
+    );
+
+    first.expect("the first batch commits");
+    second.expect("the second batch waits for its turn");
+    assert_eq!(wiring.inner.publisher.committed.load(Ordering::SeqCst), 2);
 }

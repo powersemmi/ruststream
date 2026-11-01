@@ -20,6 +20,7 @@ use ruststream::LocalTransactionalPublisher;
 #     open: RefCell<Option<Vec<Vec<u8>>>>,
 # }
 #
+# #[derive(Clone)]
 # struct QueuePublisher {
 #     client: Rc<Client>,
 # }

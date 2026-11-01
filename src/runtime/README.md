@@ -223,6 +223,6 @@ and clock; an app picks it with `#[ruststream::app(runtime = embassy)]`, and the
 same for both runners. The embedded runner's items: its application object, `EmbeddedApp`, with the mount steps `MountSteps`, its
 shutdown and health, `Control`, `Health` and `Stopping`, and its clock, `EmbassyClock`, are
 re-exported in this module. A delayed retry waits in a store the mount sizes with
-`retry_capacity`; when the store is full the run panics, unless the mount chose
-`when_retry_full(DeadLetter)` or `when_retry_full(SkipDelay)`. Their reference is the documentation of
-[`ruststream-runtime-embassy`](https://docs.rs/ruststream-runtime-embassy).
+`retry_capacity`; a retry that finds the store full is a failed publish like any other, with its
+own error, and the handler's `.error` continuation is told (see
+[`HandlerOutcome::error`](crate::runtime::HandlerOutcome::error)).

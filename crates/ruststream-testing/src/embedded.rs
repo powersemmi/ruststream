@@ -502,6 +502,8 @@ impl TestApp {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(not(feature = "tokio"))]
+    /// # mod demo {
     /// use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
     /// use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out};
     /// use ruststream::testing::embedded::TestApp;
@@ -548,9 +550,14 @@ impl TestApp {
     ///     tb.shutdown().await?;
     ///     Ok(())
     /// }
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// #     embassy_futures::block_on(raises_the_alarm())
     /// # }
+    /// # }
+    /// # #[cfg(not(feature = "tokio"))]
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> { demo::run() }
+    /// # #[cfg(feature = "tokio")]
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub fn out<M: OutSlot>(&self) -> PublishedAssertions<()> {

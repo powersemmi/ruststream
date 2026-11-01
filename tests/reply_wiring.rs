@@ -36,6 +36,7 @@ struct Receipt {
 
 /// Stamps a provenance header, so a reply that went through the chain's transform is
 /// distinguishable from one that did not.
+#[derive(Clone)]
 struct Stamp;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
@@ -114,6 +115,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePublish {
 }
 
 /// The live half of [`LanePublish`]: the broker's own publisher plus the base it contributes.
+#[derive(Clone)]
 struct Laned {
     inner: MemoryPublisher,
     base: HeaderMap,
@@ -252,9 +254,10 @@ async fn confirm_batch(orders: &[Order]) -> Vec<Receipt> {
 /// A transactional publisher that marks every message with whether a transaction was open when
 /// it was published, so a test tells a reply sent inside the batch's transaction from one sent
 /// outside it.
+#[derive(Clone)]
 struct Journaled {
     inner: MemoryPublisher,
-    open: AtomicBool,
+    open: Arc<AtomicBool>,
     /// How many transactions it began, shared with the test through its policy.
     begins: Arc<AtomicUsize>,
 }
@@ -315,7 +318,7 @@ impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for JournaledPublis
     ) -> impl Future<Output = Result<Journaled, PairError>> {
         ready(Ok(Journaled {
             inner: connected.publisher(),
-            open: AtomicBool::new(false),
+            open: AtomicBool::new(false).into(),
             begins: self.begins,
         }))
     }

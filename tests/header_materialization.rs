@@ -289,6 +289,7 @@ impl Handle<Order, Receipt> for Confirm {
 }
 
 /// Copies the delivery's tenant onto the reply: a transform that reads the delivery's headers.
+#[derive(Clone)]
 struct CarryTenant;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for CarryTenant {

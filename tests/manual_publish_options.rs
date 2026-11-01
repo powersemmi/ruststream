@@ -48,6 +48,7 @@ impl PriorityPublish {
 }
 
 /// The live publisher: the connection, plus the defaults the policy carried.
+#[derive(Clone)]
 struct PriorityPublisher {
     inner: MemoryPublisher,
     default_priority: u8,

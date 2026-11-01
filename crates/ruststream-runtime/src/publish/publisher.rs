@@ -2,6 +2,8 @@
 
 use core::fmt;
 
+#[cfg(feature = "std")]
+use futures::lock::Mutex;
 use serde::Serialize;
 
 use super::{
@@ -187,14 +189,25 @@ impl<P, C, PL, BL> fmt::Debug for TypedPublisher<P, C, PL, BL> {
 /// What a `.transactional()` wiring pairs into. Per batch, the runtime begins a transaction,
 /// publishes every reply, then commits before the incoming batch is acked; any failure aborts the
 /// transaction and the batch is retried, so replies are never half-visible.
+///
+/// A broker's publisher has one open transaction at a time, so batches that reach it together
+/// (a pool runs several) take their turns: each waits for the transaction before it to end.
 pub struct Transactional<P, C, PL = PublishTransformIdentity, BL = BatchTransformIdentity> {
     pub(super) inner: TypedPublisher<P, C, PL, BL>,
+    // Held from begin to commit or abort. Only a runner with a pool of batches has a second
+    // batch to wait; the `std` runners are the ones with a lock to wait on.
+    #[cfg(feature = "std")]
+    pub(super) turn: Mutex<()>,
 }
 
 impl<P, C, PL, BL> Transactional<P, C, PL, BL> {
     /// The live transactional sink a paired wiring produces.
-    pub(crate) const fn live(inner: TypedPublisher<P, C, PL, BL>) -> Self {
-        Self { inner }
+    pub(crate) fn live(inner: TypedPublisher<P, C, PL, BL>) -> Self {
+        Self {
+            inner,
+            #[cfg(feature = "std")]
+            turn: Mutex::new(()),
+        }
     }
 }
 

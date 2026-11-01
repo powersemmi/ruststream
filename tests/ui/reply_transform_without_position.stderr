@@ -1,7 +1,7 @@
 error[E0277]: this step has no publish position to apply to
-  --> tests/ui/reply_transform_without_position.rs:34:76
+  --> tests/ui/reply_transform_without_position.rs:35:76
    |
-34 |         .with_broker(MemoryBroker::new(), |b| b.include(confirm).transform(Stamp));
+35 |         .with_broker(MemoryBroker::new(), |b| b.include(confirm).transform(Stamp));
    |                                                                  --------- ^^^^^ no `.out(marker, policy)` call precedes it in this chain
    |                                                                  |
    |                                                                  required by a bound introduced by this call

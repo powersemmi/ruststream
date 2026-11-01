@@ -116,6 +116,7 @@ impl LocalHandle<Request<'_>, String> for Echo {
 }
 
 /// A reply transform: stamps every reply it sees with the header `stamped`.
+#[derive(Clone)]
 struct Stamp;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {

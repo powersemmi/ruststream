@@ -8,10 +8,14 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::any::Any;
 use core::mem;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use bytes::Bytes;
+use pin_project_lite::pin_project;
+use tokio::task::futures::TaskLocalFuture;
 
 use crate::HandlerResult;
 use crate::pairing::Origin;
@@ -203,6 +207,62 @@ impl Drop for PendingRecord {
     fn drop(&mut self) {
         if let Some(coordinator) = &self.0 {
             coordinator.consumed();
+        }
+    }
+}
+
+/// The harness a slot entry was cloned under, so a clone moved into a continuation (a `.then`, an
+/// `.error`, a task of the body's own) still records its publishes where the original would.
+/// Empty when the entry was cloned outside a harness-driven handler.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Anchor(Option<(Coordinator, usize, usize)>);
+
+impl Anchor {
+    /// The anchor of the harness driving the current task; this entry's own when there is none.
+    pub(crate) fn current_or(&self) -> Self {
+        HARNESS
+            .try_with(|scope| {
+                Self(Some((
+                    scope.coordinator.clone(),
+                    scope.scope_id,
+                    scope.subscription,
+                )))
+            })
+            .unwrap_or_else(|_| self.clone())
+    }
+
+    /// Runs `fut` under the anchored harness unless the task already runs under one. A future of
+    /// its own rather than an `async fn`, so a publish nested in a device service's task does not
+    /// deepen the layout query of that task's future.
+    pub(crate) fn scoped<F: Future>(&self, fut: F) -> Anchored<F> {
+        match &self.0 {
+            Some((coordinator, scope_id, subscription)) if HARNESS.try_with(|_| ()).is_err() => {
+                let scope = HarnessScope::new(coordinator.clone(), *scope_id, *subscription);
+                Anchored::Scoped {
+                    fut: HARNESS.scope(scope, fut),
+                }
+            }
+            _ => Anchored::Plain { fut },
+        }
+    }
+}
+
+pin_project! {
+    /// A publish future under the harness its entry was anchored to, or as it came.
+    #[project = AnchoredProj]
+    pub(crate) enum Anchored<F: Future> {
+        Plain { #[pin] fut: F },
+        Scoped { #[pin] fut: TaskLocalFuture<HarnessScope, F> },
+    }
+}
+
+impl<F: Future> Future for Anchored<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+        match self.project() {
+            AnchoredProj::Plain { fut } => fut.poll(cx),
+            AnchoredProj::Scoped { fut } => fut.poll(cx),
         }
     }
 }

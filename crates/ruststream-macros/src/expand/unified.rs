@@ -689,6 +689,33 @@ impl NeutralArena {
                 bounds.push(quote! {
                     #entry: ::ruststream::runtime::SlotPublish<#marker, #body>
                 });
+
+                // An entry that publishes is a `Publisher`, hence `Clone`.
+                bounds.push(quote!(#entry: ::core::clone::Clone));
+                // The entry may be cloned into a continuation, which the multi-thread runner
+                // needs `Send` and `'static`, publish future included. The bounds are the
+                // per-feature ones: `Send` where `tokio` is on, nothing on embassy alone.
+                bounds.push(quote!(#entry: 'static + ::ruststream::runtime::MaybeSendSync));
+                // A capability bound written on the entry itself already makes it a `Publisher`
+                // with the settings the bound names; a second `Publisher` clause would restate
+                // them as a projection the compiler cannot equate with the first.
+                let on_entry_publisher = out.bounds.iter().any(|bound| {
+                    capability_named(bound, &["TransactionalPublisher", "RequestReply"])
+                });
+                if !on_entry_publisher {
+                    bounds.push(quote! {
+                        #entry: ::ruststream::runtime::MaybeSendPublisher<
+                            <#entry as ::ruststream::LocalPublisher>::Options
+                        >
+                    });
+                }
+                bounds.push(quote! {
+                    #entry: ::ruststream::runtime::MaybeSendSink<#marker, #body>
+                });
+                bounds.push(quote! {
+                    <#entry as ::ruststream::runtime::SlotPublish<#marker, #body>>::Enc:
+                        ::ruststream::runtime::MaybeSendSync
+                });
             }
             // Every other capability also sits on the entry itself, which forwards it through
             // the slot (a broker grafts its own capability traits onto the entry types), so the

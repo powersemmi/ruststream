@@ -575,6 +575,13 @@ impl<P, M> SlotPublisher<P, M> {
     }
 }
 
+// By hand, so the marker `M`, a type that is never held, stays free of the bound a derive adds.
+impl<P: Clone, M> Clone for SlotPublisher<P, M> {
+    fn clone(&self) -> Self {
+        Self::new(self.inner.clone())
+    }
+}
+
 impl<P: Publisher, M: OutSlot> Publisher for SlotPublisher<P, M> {
     type Payload = P::Payload;
     type Error = P::Error;

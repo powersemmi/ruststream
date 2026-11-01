@@ -1,7 +1,7 @@
 error[E0277]: `Audit` does not let a transform name the destination
-  --> tests/ui/naming_transform_declared_slot.rs:57:24
+  --> tests/ui/naming_transform_declared_slot.rs:58:24
    |
-57 |             .transform(ByTenant)
+58 |             .transform(ByTenant)
    |              --------- ^^^^^^^^ the transform on this step declares `Destination = Names`
    |              |
    |              required by a bound introduced by this call

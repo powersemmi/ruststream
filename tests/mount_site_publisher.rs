@@ -114,6 +114,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for Prefixed {
     }
 }
 
+#[derive(Clone)]
 struct PrefixedPublisher {
     prefix: &'static str,
     inner: MemoryPublisher,

@@ -181,7 +181,7 @@ impl ConnectedFaulty {
             connected: self.inner.clone(),
             paired: self.inner.publisher(),
             lazy: OnceLock::new(),
-            socket: Mutex::new(None),
+            socket: Mutex::new(None).into(),
             closed: Arc::clone(&self.closed),
             deferred: Arc::clone(&self.deferred),
         }
@@ -228,13 +228,14 @@ fn attach_socket(publisher: MemoryPublisher) -> mpsc::UnboundedSender<Frame> {
     frames
 }
 
+#[derive(Clone)]
 struct FaultyPublisher {
     fault: Fault,
     bus: MemoryBroker,
     connected: ConnectedMemoryBroker,
     paired: MemoryPublisher,
     lazy: OnceLock<MemoryPublisher>,
-    socket: Mutex<Option<mpsc::UnboundedSender<Frame>>>,
+    socket: Arc<Mutex<Option<mpsc::UnboundedSender<Frame>>>>,
     closed: Arc<AtomicBool>,
     deferred: Deferred,
 }
