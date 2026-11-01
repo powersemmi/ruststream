@@ -14,8 +14,9 @@ use super::harness_scope;
 use super::{Delivery, RETRY_COUNT_HEADER, Slot};
 #[cfg(doc)]
 use crate::IncomingMessage;
-use crate::handler::HandlerResult;
+use crate::handler::{Continuation, HandlerResult};
 use crate::host::{HostDetach, PrepareKept};
+use crate::lifecycle::BoxError;
 use crate::publish::PublishContext;
 #[cfg(feature = "tokio")]
 use crate::publish_failure::publish_done;
@@ -725,39 +726,23 @@ where
             let copy =
                 OutgoingMessage::new(target.as_ref(), payload.as_ref()).with_headers(headers);
             let sent = route.publisher.publish_copy(copy, &cx).await;
-            let done = match sent {
-                Ok(()) => {
-                    #[cfg(feature = "tokio")]
-                    let done = publish_done(reaction);
-                    #[cfg(not(feature = "tokio"))]
-                    let done = None;
-                    done
-                }
-                Err(err) => {
-                    #[cfg(feature = "tokio")]
-                    let lost = {
-                        let mut reaction = reaction;
-                        let held = reaction.as_mut().map(Reaction::take_headers);
-                        let input = route.input;
-                        publish_lost(reaction, &subscription, &target, input, err, || {
-                            FailedMessage::new(&target, payload, held.unwrap_or_default())
-                        })
-                    };
-                    #[cfg(not(feature = "tokio"))]
-                    let lost = publish_lost(None, &subscription, &target, route.input, err, || {
-                        FailedMessage::new(&target, payload, HeaderMap::new())
-                    });
-                    lost
-                }
-            };
+            #[cfg(feature = "tokio")]
+            let done = copy_sent(sent, reaction, &subscription, &target, route.input, payload);
+            #[cfg(not(feature = "tokio"))]
+            let done = copy_sent(sent, &subscription, &target, route.input, payload);
             // A delayed copy runs the continuation in its own task; an immediate one hands it back.
-            match done {
-                Some(reaction) if run_here => {
+            // Without the `tokio` feature no continuation is made here, and a `!Send` one could
+            // not be awaited in a task that must be `Send`.
+            #[cfg(feature = "tokio")]
+            if run_here {
+                if let Some(reaction) = done {
                     reaction.await;
-                    None
                 }
-                other => other,
+                return None;
             }
+            #[cfg(not(feature = "tokio"))]
+            let _ = run_here;
+            done
         };
         #[cfg(feature = "testing")]
         let republish = in_harness_scope(scope, republish);
@@ -788,6 +773,46 @@ where
     // graceful shutdown waits for it and the copy leaves before the broker closes.
     host.detach_after_with(delay, move || republish(true).map(drop));
     Ok(())
+}
+
+/// What a copy's publish makes of its result: the `.then` that follows a success, and for a
+/// failure the `.error` continuation, or a log line and the loss of the message without one.
+#[cfg(feature = "tokio")]
+fn copy_sent(
+    sent: Result<(), BoxError>,
+    reaction: Option<Reaction>,
+    subscription: &str,
+    target: &str,
+    input: &str,
+    payload: Bytes,
+) -> Option<Continuation> {
+    match sent {
+        Ok(()) => publish_done(reaction),
+        Err(err) => {
+            let mut reaction = reaction;
+            let held = reaction.as_mut().map(Reaction::take_headers);
+            publish_lost(reaction, subscription, target, input, err, || {
+                FailedMessage::new(target, payload, held.unwrap_or_default())
+            })
+        }
+    }
+}
+
+/// The failure of a copy's publish is logged and the message is lost: without the `tokio`
+/// feature no `.error` continuation is made here.
+#[cfg(not(feature = "tokio"))]
+fn copy_sent(
+    sent: Result<(), BoxError>,
+    subscription: &str,
+    target: &str,
+    input: &str,
+    payload: Bytes,
+) -> Option<Continuation> {
+    sent.err().and_then(|err| {
+        publish_lost(None, subscription, target, input, err, || {
+            FailedMessage::new(target, payload, HeaderMap::new())
+        })
+    })
 }
 
 #[cfg(test)]

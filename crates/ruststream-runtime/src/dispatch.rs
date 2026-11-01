@@ -36,7 +36,6 @@ use super::context::Context;
 use super::failure::DispatchFailure;
 #[cfg(feature = "std")]
 use super::failure::{FailurePolicy, panic_reason};
-#[cfg(feature = "std")]
 use super::handler::HandlerOutcome;
 #[cfg(doc)]
 use super::handler::HandlerResult;

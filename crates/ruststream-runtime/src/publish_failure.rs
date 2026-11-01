@@ -7,6 +7,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use bytes::Bytes;
 use core::fmt;
+#[cfg(feature = "tokio")]
 use core::mem;
 #[cfg(feature = "tokio")]
 use std::sync::{Mutex, PoisonError};
@@ -286,6 +287,7 @@ struct Registered {
     then: Option<Continuation>,
     /// The headers of the failed copy, kept here (boxed with the registration) so the task that
     /// publishes the copy carries one pointer for them and nothing when no `.error` was set.
+    #[cfg(feature = "tokio")]
     headers: HeaderMap,
 }
 
@@ -302,6 +304,7 @@ impl Reaction {
         Self(Box::new(Registered {
             error,
             then,
+            #[cfg(feature = "tokio")]
             headers: HeaderMap::new(),
         }))
     }
@@ -309,11 +312,13 @@ impl Reaction {
     /// The continuation registered beside `.error`, which a delivery that made no publish runs
     /// once it is settled.
     /// Keeps the headers the failed copy carries, for the [`FailedMessage`] a failure builds.
+    #[cfg(feature = "tokio")]
     pub(crate) fn hold_headers(&mut self, headers: HeaderMap) {
         self.0.headers = headers;
     }
 
     /// Takes the headers kept with [`hold_headers`](Self::hold_headers).
+    #[cfg(feature = "tokio")]
     pub(crate) fn take_headers(&mut self) -> HeaderMap {
         mem::take(&mut self.0.headers)
     }
