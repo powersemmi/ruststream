@@ -11,8 +11,9 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::num::NonZeroUsize;
 use core::{any, fmt};
-use ruststream_core::{MaybeSend, MaybeSendSync};
+use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync};
 
 use bytes::{Bytes, BytesMut};
 use serde::Serialize;
@@ -197,7 +198,7 @@ impl<D: BatchPublishingDef, C, R, PP> fmt::Debug for BatchPublishingHandler<D, C
 impl<Batch, M, D, C, R, PP, S> BatchHandler<Batch, D::Context, S>
     for BatchPublishingHandler<D, C, R, PP>
 where
-    Batch: IntoIterator<Item = M>,
+    Batch: BatchSlot<Message = M>,
     M: Settle,
     D: BatchPublishingCall<S>,
     D::Input: DecodeWith<C>,
@@ -212,19 +213,23 @@ where
     type Scratch = Vec<<D::Input as InputKind>::Owned>;
     type Taken = Vec<M>;
 
-    fn take(batch: Batch) -> Vec<M> {
-        batch.into_iter().collect()
+    fn taken(size: NonZeroUsize) -> Vec<M> {
+        Vec::with_capacity(size.get())
+    }
+
+    fn load(taken: &mut Vec<M>, slot: &mut Batch) {
+        taken.extend(slot.drain());
     }
 
     async fn handle_batch<Host: SendHost<D::Context>>(
         &self,
-        batch: Vec<M>,
+        batch: &mut Vec<M>,
         values: &mut Self::Scratch,
         ctx: &mut Context<'_, D::Context, S>,
         host: &Host,
     ) {
         let subscription = ctx.subscription();
-        let accepted = decode_batch::<M, D::Input, C, D::Context, S, Host>(
+        decode_batch::<M, D::Input, C, D::Context, S, Host>(
             batch,
             values,
             &self.codec,
@@ -233,7 +238,7 @@ where
             host,
         )
         .await;
-        if accepted.is_empty() {
+        if batch.is_empty() {
             return;
         }
         // The batch the broker delivered is the batch the handler answers for, whole: the size it
@@ -294,7 +299,7 @@ where
             Err(result) => result,
         };
         values.clear();
-        settle_batch(accepted, result, subscription, ctx.delivery(), host).await;
+        settle_batch(batch, result, subscription, ctx.delivery(), host).await;
     }
 }
 

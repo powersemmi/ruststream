@@ -1,12 +1,15 @@
 //! Subscriptions whose settlement or seek is broken, and a broker whose connect hangs.
 
 use std::{
+    convert::Infallible,
     future::pending,
     num::NonZeroUsize,
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU8, Ordering},
     },
+    task::{Context, Poll, ready},
 };
 
 use futures::{Stream, StreamExt, stream};
@@ -19,8 +22,8 @@ use ruststream::memory::{
     MemorySeeker, MemorySource, MemorySubscriber, Retaining, Retention,
 };
 use ruststream_core::{
-    AckError, AddressedCopies, BatchSubscriber, Broker, HeaderMap, IncomingMessage, Positioned,
-    Seekable, Seeker, Settle, Subscribe, Subscriber, SubscriptionSource, nonzero,
+    AckError, AddressedCopies, BatchStream, BatchSubscriber, Broker, HeaderMap, IncomingMessage,
+    Positioned, Seekable, Seeker, Settle, Subscribe, Subscriber, SubscriptionSource, nonzero,
 };
 
 // The in-memory reference passes the opt-in suites; the others run in `tests/conformance_self.rs`.
@@ -74,6 +77,8 @@ enum BatchFault {
     Oversized,
     /// One element per batch, whatever is waiting.
     Singletons,
+    /// Every fill reports a failure with the batch it collected still in the slot.
+    FailsWithMessages,
 }
 
 /// A seek fault of [`FaultySeeker`].
@@ -241,21 +246,58 @@ impl<Log: LogMode> BatchSubscriber for FaultySubscriber<Log> {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, Self::Error>> + Send + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = Self::Error> + Send + '_ {
         self.streamed.store(true, Ordering::SeqCst);
         let settle = self.settle;
         let size = match self.batch {
             Some(BatchFault::Oversized) => size.saturating_add(1),
             Some(BatchFault::Singletons) => NonZeroUsize::MIN,
-            None => size,
+            Some(BatchFault::FailsWithMessages) | None => size,
         };
-        self.inner.batches(size).map(move |item| match item {
-            Ok(batch) => Ok(batch
-                .into_iter()
-                .map(|inner| FaultyMessage { inner, settle })
-                .collect()),
-            Err(never) => match never {},
-        })
+        Wrapping {
+            fails: matches!(self.batch, Some(BatchFault::FailsWithMessages)),
+            inner: Box::pin(self.inner.batches(size)),
+            lent: Vec::new(),
+            settle,
+        }
+    }
+}
+
+/// The inner subscriber's batches, every message wrapped in the fault the test chose.
+struct Wrapping<Inner, Log> {
+    inner: Pin<Box<Inner>>,
+    /// The inner stream's own slot, emptied into the one the caller lends.
+    lent: Vec<MemoryMessage<Log>>,
+    settle: Option<SettleFault>,
+    fails: bool,
+}
+
+// Boxed and owned parts only; nothing is pinned in place.
+impl<Inner, Log> Unpin for Wrapping<Inner, Log> {}
+
+impl<Inner, Log: LogMode> BatchStream<Vec<FaultyMessage<Log>>> for Wrapping<Inner, Log>
+where
+    Inner: BatchStream<Vec<MemoryMessage<Log>>, Error = Infallible>,
+{
+    type Error = StreamError;
+
+    fn poll_fill(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        slot: &mut Vec<FaultyMessage<Log>>,
+    ) -> Poll<Option<Result<(), StreamError>>> {
+        let this = &mut *self;
+        let step = ready!(this.inner.as_mut().poll_fill(cx, &mut this.lent));
+        let settle = this.settle;
+        slot.extend(
+            this.lent
+                .drain(..)
+                .map(|inner| FaultyMessage { inner, settle }),
+        );
+        if this.fails {
+            return Poll::Ready(Some(Err(StreamError)));
+        }
+        Poll::Ready(step.map(|filled| filled.map_err(|never| match never {})))
     }
 }
 
@@ -543,6 +585,17 @@ async fn batches_catch_a_batch_past_its_size() {
     batches(
         MemoryBroker::new,
         |name| FaultySource::batching(name, BatchFault::Oversized),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "a failed fill must leave the slot empty")]
+async fn batches_catch_a_failed_fill_that_leaves_messages_in_the_slot() {
+    batches(
+        MemoryBroker::new,
+        |name| FaultySource::batching(name, BatchFault::FailsWithMessages),
         |broker| broker.publisher(),
     )
     .await;

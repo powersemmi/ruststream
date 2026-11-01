@@ -94,9 +94,9 @@ pub use bytes_utils::Str;
 pub use broker::{Broker, Connected, ConnectedBroker, SendBroker};
 #[cfg(feature = "alloc")]
 pub use capability::{
-    ApiKeyLocation, BatchSubscriber, Carries, CarriesBatch, DescribeServer, HttpApiKeyLocation,
-    OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker,
-    ServerSpec, Subscribe, Transaction, TransactionalPublisher,
+    ApiKeyLocation, BatchSlot, BatchStream, BatchSubscriber, Carries, CarriesBatch, DescribeServer,
+    HttpApiKeyLocation, OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme,
+    Seekable, Seeker, ServerSpec, Subscribe, Transaction, TransactionalPublisher,
 };
 #[cfg(feature = "alloc")]
 pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};

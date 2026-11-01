@@ -383,8 +383,9 @@ async fn a_refused_ack_does_not_abort_the_batch() {
         UnsettleableMessage(Arc::clone(&attempts)),
     ];
 
+    let mut batch = batch;
     settle_batch(
-        batch,
+        &mut batch,
         BatchResult::Uniform(HandlerOutcome::ack()),
         "refusing",
         &Delivery::<()>::empty(),
@@ -407,8 +408,9 @@ async fn outcome_count_mismatch_is_logged_with_both_counts() {
         UnsettleableMessage(Arc::clone(&attempts)),
         UnsettleableMessage(Arc::clone(&attempts)),
     ];
+    let mut batch = batch;
     settle_batch(
-        batch,
+        &mut batch,
         BatchResult::PerElement(vec![HandlerOutcome::ack()]),
         "short-batch",
         &Delivery::<()>::empty(),
@@ -451,7 +453,7 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
     handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     settle_batch(
-        vec![UnsettleableMessage(Arc::new(AtomicUsize::new(0)))],
+        &mut vec![UnsettleableMessage(Arc::new(AtomicUsize::new(0)))],
         BatchResult::Uniform(HandlerOutcome::ack()),
         "diag-batch",
         &Delivery::<()>::empty(),
@@ -886,7 +888,7 @@ fn recording_the_batch_size_allocates_nothing_per_batch() {
     let headers = HeaderMap::new();
     let mut ctx = Context::new("sized", &headers, &state, (), &delivery);
     let mut values = Vec::new();
-    let mut decode = |batch| {
+    let mut decode = |batch: &mut Vec<_>| {
         decode_batch::<_, Decoded<u32>, _, _, _, _>(
             batch,
             &mut values,
@@ -900,10 +902,9 @@ fn recording_the_batch_size_allocates_nothing_per_batch() {
     };
 
     // The first batch gives the scratch buffer its room; what follows is the steady state.
-    drop(decode(batch()));
-    let next = batch();
-    let mut accepted = Vec::new();
-    let counted = measure(|| accepted = decode(next));
+    decode(&mut batch());
+    let mut accepted = batch();
+    let counted = measure(|| decode(&mut accepted));
 
     assert_eq!(accepted.len(), 4, "every element decodes");
     assert_eq!(

@@ -10,7 +10,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
-use ruststream_core::{MaybeSend, MaybeSendSync};
+use core::num::NonZeroUsize;
+use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync};
 
 use crate::{BuildBatchContext, Settle};
 
@@ -136,7 +137,7 @@ impl<Def: BatchInjectDef, DecodeCodec> fmt::Debug for BatchInjectHandler<Def, De
 impl<Batch, Msg, Def, DecodeCodec, State> BatchHandler<Batch, Def::Context, State>
     for BatchInjectHandler<Def, DecodeCodec>
 where
-    Batch: IntoIterator<Item = Msg>,
+    Batch: BatchSlot<Message = Msg>,
     Msg: Settle,
     Def: BatchInjectCall<State>,
     Def::Input: DecodeWith<DecodeCodec>,
@@ -148,19 +149,23 @@ where
     type Scratch = Vec<<Def::Input as InputKind>::Owned>;
     type Taken = Vec<Msg>;
 
-    fn take(batch: Batch) -> Vec<Msg> {
-        batch.into_iter().collect()
+    fn taken(size: NonZeroUsize) -> Vec<Msg> {
+        Vec::with_capacity(size.get())
+    }
+
+    fn load(taken: &mut Vec<Msg>, slot: &mut Batch) {
+        taken.extend(slot.drain());
     }
 
     async fn handle_batch<Host: SendHost<Def::Context>>(
         &self,
-        batch: Vec<Msg>,
+        batch: &mut Vec<Msg>,
         values: &mut Self::Scratch,
         ctx: &mut Context<'_, Def::Context, State>,
         host: &Host,
     ) {
         let subscription = ctx.subscription();
-        let accepted = decode_batch::<Msg, Def::Input, DecodeCodec, Def::Context, State, Host>(
+        decode_batch::<Msg, Def::Input, DecodeCodec, Def::Context, State, Host>(
             batch,
             values,
             &self.codec,
@@ -169,13 +174,13 @@ where
             host,
         )
         .await;
-        if accepted.is_empty() {
+        if batch.is_empty() {
             return;
         }
         let delivery = ctx.delivery();
         let result = self.def.call(values, &self.injections, ctx).await;
         values.clear();
-        settle_batch(accepted, result, subscription, delivery, host).await;
+        settle_batch(batch, result, subscription, delivery, host).await;
     }
 }
 

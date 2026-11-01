@@ -296,11 +296,10 @@ pub(crate) mod delivery {
 #[cfg(feature = "json")]
 pub(crate) mod batch {
     use alloc::vec::Vec;
+    use core::future::poll_fn;
     use core::num::NonZeroUsize;
 
-    use futures::StreamExt;
-
-    use crate::{BatchSubscriber, OutgoingMessage, Publisher};
+    use crate::{BatchStream, BatchSubscriber, OutgoingMessage, Publisher};
     use ruststream::memory::{LogMode, MemoryBroker, MemoryMessage, MemorySubscriber};
 
     /// Publishes each number as its JSON encoding, so a `Decoded<u32>` handler sees them.
@@ -338,6 +337,11 @@ pub(crate) mod batch {
     ) -> Vec<MemoryMessage<Log>> {
         let mut stream =
             core::pin::pin!(sub.batches(NonZeroUsize::new(64).expect("64 is nonzero")));
-        stream.next().await.unwrap().unwrap()
+        let mut slot = Vec::new();
+        poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot))
+            .await
+            .unwrap()
+            .unwrap();
+        slot
     }
 }

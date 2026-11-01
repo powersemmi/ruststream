@@ -19,10 +19,9 @@ use core::future::{poll_fn, ready};
 use core::num::NonZeroUsize;
 use core::pin::{Pin, pin};
 use core::task::{Context, Poll};
-use ruststream_core::MaybeSendSync;
+use ruststream_core::{BatchSlot, BatchStream, MaybeSendSync};
 
 use bytes::BytesMut;
-use futures::Stream;
 use futures::future::MaybeDone;
 use pin_project_lite::pin_project;
 use tracing::error;
@@ -449,8 +448,10 @@ where
             YIELD_AFTER
         ));
         let mut cancelled = pin!(signal.cancelled());
-        // One decode buffer and one encode buffer for the whole loop, as on the multi-thread
-        // runner's sequential batch loop.
+        // One slot, one taken batch, one decode buffer and one encode buffer for the whole loop,
+        // as on the multi-thread runner's sequential batch loop.
+        let mut slot = <Sub::Batch as BatchSlot>::with_capacity(self.batch_size);
+        let mut taken = <Body as RunsBatches<Sub::Batch, Cx, State>>::taken(self.batch_size);
         let mut scratch = Body::Scratch::default();
         let mut encode = BytesMut::new();
         loop {
@@ -458,17 +459,18 @@ where
                 break;
             }
             // The stream first, the token only where the stream has nothing.
-            let pulled = poll_fn(|cx| match stream.as_mut().poll_next(cx) {
+            let pulled = poll_fn(|cx| match stream.as_mut().poll_fill(cx, &mut slot) {
                 Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
                 Poll::Ready(None) => Poll::Ready(Turn::Ended),
                 Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
             })
             .await;
             match pulled {
-                Turn::Delivery(Ok(batch)) => {
+                Turn::Delivery(Ok(())) => {
                     self.handler
                         .run_one(
-                            batch,
+                            &mut slot,
+                            &mut taken,
                             &mut scratch,
                             &mut encode,
                             &self.name,
@@ -480,6 +482,9 @@ where
                         .await;
                 }
                 Turn::Delivery(Err(err)) => {
+                    // A failed fill leaves the slot empty; draining it keeps that true of a
+                    // broker that left a message behind.
+                    slot.drain().for_each(drop);
                     error!(
                         target: "ruststream::dispatch",
                         subscription = %self.name,
@@ -504,11 +509,18 @@ pub trait RunsBatches<Batch, C, S> {
     /// The decode buffer one subscription's loop keeps.
     type Scratch: Default;
 
+    /// The batch as the body takes it, which one subscription's loop keeps.
+    type Taken;
+
+    /// Allocates the loop's [`Taken`](Self::Taken) for batches of `size`.
+    fn taken(size: NonZeroUsize) -> Self::Taken;
+
     /// Runs one batch through the shared body.
     #[allow(clippy::too_many_arguments)]
     fn run_one<Signal, Host>(
         &self,
-        batch: Batch,
+        slot: &mut Batch,
+        taken: &mut Self::Taken,
         scratch: &mut Self::Scratch,
         encode: &mut BytesMut,
         name: &str,
@@ -527,10 +539,16 @@ where
     Handler: BatchHandler<Batch, C, S>,
 {
     type Scratch = Handler::Scratch;
+    type Taken = Handler::Taken;
+
+    fn taken(size: NonZeroUsize) -> Self::Taken {
+        Handler::taken(size)
+    }
 
     fn run_one<Signal, Host>(
         &self,
-        batch: Batch,
+        slot: &mut Batch,
+        taken: &mut Handler::Taken,
         scratch: &mut Handler::Scratch,
         encode: &mut BytesMut,
         name: &str,
@@ -544,7 +562,7 @@ where
         Host: SendHost<C>,
     {
         run_batch::<Self, Batch, C, S, Signal, Host>(
-            self, batch, scratch, encode, name, state, delivery, host, failure,
+            self, slot, taken, scratch, encode, name, state, delivery, host, failure,
         )
     }
 }

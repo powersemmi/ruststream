@@ -11,6 +11,7 @@ use std::time::Duration;
 use futures::{Stream, StreamExt};
 use tokio::time::timeout;
 
+use super::slots::Handed;
 use super::{
     DEFAULT_TIMEOUT, REDELIVERY_TIMEOUT, SubscriberMessage, ack_or_unsupported, expect_within,
     nack_requeue, within,
@@ -18,8 +19,9 @@ use super::{
 use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
-    AckError, AddressedCopies, BatchSubscriber, BrokerMoves, Carries, CarriesBatch, Connected,
-    NamedCopies, OutgoingMessage, Publisher, SendBroker, Settle, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, BatchSlot, BatchSubscriber, BrokerMoves, Carries, CarriesBatch,
+    Connected, NamedCopies, OutgoingMessage, Publisher, SendBroker, Settle, Subscriber,
+    SubscriptionSource,
 };
 
 /// How many rounds the batch suite gives the broker to put two waiting values in one batch.
@@ -461,7 +463,8 @@ pub async fn carries_batch<
         .await
         .expect("publishing a value failed");
     }
-    let mut stream = std::pin::pin!(subscriber.batches(BATCH));
+    let batches = std::pin::pin!(subscriber.batches(BATCH));
+    let mut stream = Handed::<_, <Src::Subscriber as BatchSubscriber>::Batch>::new(batches, BATCH);
     let mut unseen: Vec<&Value> = values.iter().collect();
     while !unseen.is_empty() {
         let (lent, deliveries) = next_page(
@@ -588,7 +591,7 @@ async fn a_batch_copy_lends_the_value<
     Publish: AsyncFn(&Conn, &str, &Value) -> Result<(), PublishError>,
     PublishError: fmt::Debug,
     S: Stream<Item = Result<Batch, E>> + Unpin,
-    Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
+    Batch: CarriesBatch<Value> + BatchSlot<Message = M>,
     M: Settle,
     E: fmt::Debug,
     Value: PartialEq + Clone + fmt::Debug,
@@ -660,7 +663,7 @@ async fn pages_keep_their_order<Conn, Value, Publish, PublishError, S, Batch, M,
     Publish: AsyncFn(&Conn, &str, &Value) -> Result<(), PublishError>,
     PublishError: fmt::Debug,
     S: Stream<Item = Result<Batch, E>> + Unpin,
-    Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
+    Batch: CarriesBatch<Value> + BatchSlot<Message = M>,
     M: Settle,
     E: fmt::Debug,
     Value: PartialEq + Clone + fmt::Debug,
@@ -765,7 +768,7 @@ async fn values_go_before_deliveries_without_one<
     Gone: AsyncFn(&Conn, &str) -> Result<(), GoneError>,
     GoneError: fmt::Debug,
     S: Stream<Item = Result<Batch, E>> + Unpin,
-    Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
+    Batch: CarriesBatch<Value> + BatchSlot<Message = M>,
     M: Settle,
     E: fmt::Debug,
     Value: PartialEq + Clone + fmt::Debug,
@@ -865,7 +868,7 @@ async fn next_page<S, Batch, M, E, Value>(
 ) -> (Vec<Value>, Vec<M>)
 where
     S: Stream<Item = Result<Batch, E>> + Unpin,
-    Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
+    Batch: CarriesBatch<Value> + BatchSlot<Message = M>,
     E: fmt::Debug,
     Value: Clone + fmt::Debug,
 {
@@ -874,8 +877,9 @@ where
         .unwrap_or_else(|_| panic!("{label}: nothing arrived within {within:?}; {expected}"))
         .unwrap_or_else(|| panic!("{label}: the batch stream ended; {expected}"))
         .unwrap_or_else(|err| panic!("{label}: the batch stream yielded an error: {err:?}"));
+    let mut batch = batch;
     let lent = batch.carried().to_vec();
-    let deliveries: Vec<M> = batch.into_iter().collect();
+    let deliveries: Vec<M> = batch.drain().collect();
     assert!(
         !deliveries.is_empty(),
         "{label}: a yielded batch must not be empty; {expected}",

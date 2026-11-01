@@ -3,6 +3,8 @@
 //! subscriber.
 #![cfg(feature = "memory")]
 
+use crate::common;
+
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
@@ -53,9 +55,9 @@ async fn the_batch_size_closes_a_full_batch() {
 
     // The wait bound is far away; only the size can close these batches.
     let mut stream = std::pin::pin!(sub.batches(batch(2)));
-    let first = stream.next().await.unwrap().unwrap();
+    let first = common::filled(&mut stream).await.unwrap().unwrap();
     assert_eq!(first.len(), 2);
-    let second = stream.next().await.unwrap().unwrap();
+    let second = common::filled(&mut stream).await.unwrap().unwrap();
     assert_eq!(second.len(), 2);
     for msg in first.into_iter().chain(second) {
         msg.ack().await.unwrap();
@@ -75,7 +77,7 @@ async fn deadline_flushes_a_partial_batch() {
         .unwrap();
 
     let mut stream = std::pin::pin!(sub.batches(batch(64)));
-    let batch = stream.next().await.unwrap().unwrap();
+    let batch = common::filled(&mut stream).await.unwrap().unwrap();
     assert_eq!(batch.len(), 1);
     assert_eq!(batch[0].payload(), b"only");
     for msg in batch {
@@ -103,7 +105,7 @@ async fn the_seeker_reaches_through_the_buffer() {
         .expect("the in-memory log replays from the start");
 
     let mut stream = std::pin::pin!(sub.batches(batch(8)));
-    let replayed = stream.next().await.unwrap().unwrap();
+    let replayed = common::filled(&mut stream).await.unwrap().unwrap();
     let payloads: Vec<&[u8]> = replayed.iter().map(IncomingMessage::payload).collect();
     assert_eq!(payloads, [[0].as_slice(), [1].as_slice()]);
     for msg in replayed {

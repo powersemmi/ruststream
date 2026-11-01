@@ -14,7 +14,7 @@ use core::task::{Context, Poll};
 use futures::Stream;
 use pin_project_lite::pin_project;
 
-use crate::Subscriber;
+use crate::{BatchStream, Subscriber};
 
 /// How many consecutive ready items a subscription's stream hands out before it yields once to
 /// the executor.
@@ -67,6 +67,34 @@ impl<Inner: Stream> Stream for Bounded<Inner> {
             return Poll::Pending;
         }
         let next = this.inner.poll_next(cx);
+        if next.is_ready() {
+            *this.ready += 1;
+        } else {
+            *this.ready = 0;
+        }
+        next
+    }
+}
+
+/// A batch stream bounded the same way: one fill counts as one ready item.
+impl<Inner, Slot> BatchStream<Slot> for Bounded<Inner>
+where
+    Inner: BatchStream<Slot>,
+{
+    type Error = Inner::Error;
+
+    fn poll_fill(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        slot: &mut Slot,
+    ) -> Poll<Option<Result<(), Self::Error>>> {
+        let this = self.project();
+        if *this.ready >= *this.limit {
+            *this.ready = 0;
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
+        let next = this.inner.poll_fill(cx, slot);
         if next.is_ready() {
             *this.ready += 1;
         } else {
