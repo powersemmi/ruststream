@@ -115,6 +115,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
+    use core::future::{Future, ready};
     use core::iter;
     use core::pin::pin;
     use core::task::{Context, Poll, Waker};
@@ -197,12 +198,15 @@ mod tests {
     }
 
     impl Settle for Waiting {
-        async fn ack(self) -> Result<(), ruststream_core::AckError> {
-            Ok(())
+        fn ack(self) -> impl Future<Output = Result<(), ruststream_core::AckError>> {
+            ready(Ok(()))
         }
 
-        async fn nack(self, _requeue: bool) -> Result<(), ruststream_core::AckError> {
-            Ok(())
+        fn nack(
+            self,
+            _requeue: bool,
+        ) -> impl Future<Output = Result<(), ruststream_core::AckError>> {
+            ready(Ok(()))
         }
     }
 
