@@ -4,11 +4,13 @@
 // A test drives the app on its own task; the app's cold path carries no Send.
 #![allow(clippy::future_not_send)]
 
+use std::convert::Infallible;
 use std::future::ready;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, ready};
+use std::time::Duration;
 
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryMessage, MemorySubscriber};
@@ -18,6 +20,7 @@ use ruststream::{
     Seekable, Subscribe, Subscriber, SubscriptionSource,
 };
 use serde::{Deserialize, Serialize};
+use tokio::time::timeout;
 
 /// The message the batches carry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Outgoing)]
@@ -258,4 +261,51 @@ async fn threads_settle_every_batch_and_return_its_slot() {
         .assert_batch_sizes(&[2, 2, 2])
         .settled(HandlerOutcome::ack());
     assert_eq!(storage.lock().expect("storage").len(), 3);
+}
+
+/// Every batch the handler saw, as the ids it carried.
+#[derive(Clone, Default, FromRef)]
+struct Calls {
+    seen: Arc<Mutex<Vec<Vec<u32>>>>,
+}
+
+/// Panics on its first batch, which `panic = drop` logs and skips, and acks every later one.
+#[subscriber("panicky", on_failure(panic = drop))]
+async fn panicky(jobs: &[Job], ctx: &mut Context<'_, (), Calls>) -> HandlerOutcome {
+    let first = {
+        let mut seen = ctx.state().seen.lock().expect("calls");
+        seen.push(jobs.iter().map(|job| job.id).collect());
+        seen.len() == 1
+    };
+    assert!(!first, "the first batch panics");
+    HandlerOutcome::ack()
+}
+
+/// A batch that panics leaves its worker's storage empty: the delivery that went back to the
+/// subscription arrives alone in the next batch, with nothing of the first one beside it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_after_a_panicked_one_holds_only_its_own_deliveries() {
+    let calls = Calls::default();
+    let app = RustStream::new(AppInfo::new("slots", "0.1.0"))
+        .on_startup({
+            let calls = calls.clone();
+            async move |()| Ok::<_, Infallible>(calls.clone())
+        })
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(panicky.batch(nonzero!(4)))
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    timeout(Duration::from_secs(5), async {
+        tb.message(&Job { id: 1 })
+            .to("panicky")
+            .publish()
+            .await
+            .expect("publish");
+        tb.settle().await.expect("settle");
+    })
+    .await
+    .expect("the batch after a panicked one settles");
+
+    assert_eq!(*calls.seen.lock().expect("calls"), [vec![1], vec![1]]);
 }
