@@ -6,6 +6,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use bytes::Bytes;
 use core::fmt;
+use core::mem;
 use thiserror::Error;
 use tracing::warn;
 
@@ -200,7 +201,7 @@ impl Reaction {
 
     /// Takes the headers kept with [`hold_headers`](Self::hold_headers).
     pub(crate) fn take_headers(&mut self) -> HeaderMap {
-        core::mem::take(&mut self.0.headers)
+        mem::take(&mut self.0.headers)
     }
 
     pub(crate) fn into_then(self) -> Option<Continuation> {

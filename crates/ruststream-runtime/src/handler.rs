@@ -252,9 +252,26 @@ impl HandlerResult {
 /// ```
 #[must_use]
 pub struct HandlerOutcome {
-    outcome: HandlerResult,
+    outcome: Settlement,
     after: Option<Continuation>,
-    error: Option<ErrorHook>,
+}
+
+/// How the outcome settles the message: the status alone, or the status with the `.error`
+/// continuation of the publish the runtime makes for it. The registered case is boxed, so an
+/// outcome without `.error` is no larger than one with nothing to add: the status keeps the
+/// room it had.
+enum Settlement {
+    Plain(HandlerResult),
+    Erroring(Box<(HandlerResult, ErrorHook)>),
+}
+
+impl Settlement {
+    const fn status(&self) -> HandlerResult {
+        match self {
+            Self::Plain(status) => *status,
+            Self::Erroring(registered) => registered.0,
+        }
+    }
 }
 
 impl HandlerOutcome {
@@ -283,9 +300,8 @@ impl HandlerOutcome {
     /// ```
     pub const fn ack() -> Self {
         Self {
-            outcome: HandlerResult::Ack,
+            outcome: Settlement::Plain(HandlerResult::Ack),
             after: None,
-            error: None,
         }
     }
 
@@ -299,9 +315,8 @@ impl HandlerOutcome {
     /// no longer a broker requeue.
     pub const fn retry() -> Self {
         Self {
-            outcome: HandlerResult::retry(),
+            outcome: Settlement::Plain(HandlerResult::retry()),
             after: None,
-            error: None,
         }
     }
 
@@ -358,18 +373,16 @@ impl HandlerOutcome {
     /// ```
     pub const fn retry_after(delay: Duration) -> Self {
         Self {
-            outcome: HandlerResult::retry_after(delay),
+            outcome: Settlement::Plain(HandlerResult::retry_after(delay)),
             after: None,
-            error: None,
         }
     }
 
     /// Negatively acknowledge the message without asking for redelivery.
     pub const fn drop() -> Self {
         Self {
-            outcome: HandlerResult::drop(),
+            outcome: Settlement::Plain(HandlerResult::drop()),
             after: None,
-            error: None,
         }
     }
 
@@ -421,7 +434,6 @@ impl HandlerOutcome {
         Self {
             outcome: self.outcome,
             after: Some(Box::pin(fut)),
-            error: self.error,
         }
     }
 
@@ -481,21 +493,22 @@ impl HandlerOutcome {
         React: FnOnce(BoxError, FailedMessage) -> Reaction + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
-        self.error = Some(ErrorHook::new(react));
+        let status = self.outcome.status();
+        self.outcome = Settlement::Erroring(Box::new((status, ErrorHook::new(react))));
         self
     }
 
     /// Whether this outcome acknowledges the message.
     #[must_use]
     pub const fn is_ack(&self) -> bool {
-        matches!(self.outcome, HandlerResult::Ack)
+        matches!(self.outcome.status(), HandlerResult::Ack)
     }
 
     /// Whether this outcome asks for redelivery (an immediate or a delayed retry).
     #[must_use]
     pub const fn is_retry(&self) -> bool {
         matches!(
-            self.outcome,
+            self.outcome.status(),
             HandlerResult::Nack { requeue: true } | HandlerResult::NackAfter { .. }
         )
     }
@@ -503,14 +516,14 @@ impl HandlerOutcome {
     /// Whether this outcome drops the message (a negative acknowledgement without redelivery).
     #[must_use]
     pub const fn is_drop(&self) -> bool {
-        matches!(self.outcome, HandlerResult::Nack { requeue: false })
+        matches!(self.outcome.status(), HandlerResult::Nack { requeue: false })
     }
 
     /// The redelivery delay of a [`retry_after`](Self::retry_after) outcome; `None` for every
     /// other status.
     #[must_use]
     pub const fn retry_delay(&self) -> Option<Duration> {
-        match self.outcome {
+        match self.outcome.status() {
             HandlerResult::NackAfter { delay } => Some(delay),
             HandlerResult::Ack | HandlerResult::Nack { .. } => None,
         }
@@ -520,7 +533,7 @@ impl HandlerOutcome {
     #[doc(hidden)]
     #[must_use]
     pub const fn outcome(&self) -> HandlerResult {
-        self.outcome
+        self.outcome.status()
     }
 
     /// Takes the post-settle continuation out of this settlement, leaving none. The dispatcher
@@ -539,22 +552,22 @@ impl HandlerOutcome {
     /// Takes the outcome apart: its status, its post-settle continuation and its `.error`.
     #[inline]
     pub(crate) fn into_parts(self) -> (HandlerResult, Option<Continuation>, Option<ErrorHook>) {
-        (self.outcome, self.after, self.error)
-    }
-
-    #[allow(dead_code)]
-    #[inline]
-    pub(crate) fn take_error(&mut self) -> Option<ErrorHook> {
-        self.error.take()
+        match self.outcome {
+            Settlement::Plain(status) => (status, self.after, None),
+            Settlement::Erroring(registered) => {
+                let (status, error) = *registered;
+                (status, self.after, Some(error))
+            }
+        }
     }
 }
 
 impl fmt::Debug for HandlerOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HandlerOutcome")
-            .field("outcome", &self.outcome)
+            .field("outcome", &self.outcome.status())
             .field("after", &self.after.is_some())
-            .field("error", &self.error.is_some())
+            .field("error", &matches!(self.outcome, Settlement::Erroring(_)))
             .finish()
     }
 }
@@ -562,9 +575,8 @@ impl fmt::Debug for HandlerOutcome {
 impl From<HandlerResult> for HandlerOutcome {
     fn from(outcome: HandlerResult) -> Self {
         Self {
-            outcome,
+            outcome: Settlement::Plain(outcome),
             after: None,
-            error: None,
         }
     }
 }
@@ -881,6 +893,13 @@ mod tests {
 
         let plain = HandlerOutcome::retry();
         assert!(format!("{plain:?}").contains("after: false"));
+    }
+
+    #[test]
+    fn an_outcome_with_an_error_continuation_is_no_larger_than_one_without() {
+        // Every message pays the size of the outcome it returns, whether or not it uses `.error`.
+        assert_eq!(size_of::<HandlerOutcome>(), 32);
+        assert_eq!(size_of::<super::Settlement>(), size_of::<HandlerResult>());
     }
 
     fn assert_outcome(outcome: HandlerOutcome, status: HandlerResult, has_after: bool) {
