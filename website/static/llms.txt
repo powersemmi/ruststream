@@ -62,7 +62,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 
 ## Module overviews on docs.rs
 
-- [Cargo features](https://docs.rs/ruststream/latest/ruststream/index.html#cargo-features): the two runtimes, `tokio` (the default) and `embassy`, which exclude each other, the codecs and the optional modules
+- [Cargo features](https://docs.rs/ruststream/latest/ruststream/index.html#cargo-features): the two runtimes, `tokio` (the default) and `embassy`, which build together and are picked per app, the codecs and the optional modules
 - [Subscribers](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers): handlers, subscription sources, mount-site settings, broker steps that read them, batches, values a broker's deliveries already hold, message sets (several message types on one subscription), workers, dedicated threads for handlers that compute, finding handlers that compute (the `poll-diagnostics` feature), delayed redelivery and its cap
 - [Publishing](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#publishing): replies, `Out` slots, publish transforms and the publish pipeline
 - [Routing](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing): routers, per-router codecs and layers
@@ -107,6 +107,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Design](https://powersemmi.github.io/ruststream/latest/architecture/design/): the broker-agnostic core, the traits a broker crate implements, and where broker settings live
 - [Path](https://powersemmi.github.io/ruststream/latest/architecture/path/): the stages of one delivery, from the broker's stream through layers, decode, handler and reply to its settlement
 - [Async](https://powersemmi.github.io/ruststream/latest/architecture/async/): the Tokio runtime, the tasks of each dispatch form (`workers(n)`, `threads(n)`), one delivery's timeline and the order of a graceful shutdown
+- [Runtimes](https://powersemmi.github.io/ruststream/latest/architecture/runtimes/): the `tokio` and `embassy` features add up, the app picks its runner with `#[ruststream::app]` or `#[ruststream::app(runtime = embassy)]`, and what each runner asks of a handler
 - [Lifecycle](https://powersemmi.github.io/ruststream/latest/architecture/lifecycle/): the broker's states as types, `new`, `connect(self)`, `shutdown(self)`, and the app's start and shutdown
 - [Settlement](https://powersemmi.github.io/ruststream/latest/architecture/settlement/): how a delivery is settled: outcomes, failure policies, retries, the attempt cap and the dead letter
 - [Guarantees](https://powersemmi.github.io/ruststream/latest/architecture/guarantees/): the mistakes that do not compile, with the compiler's message for each

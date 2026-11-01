@@ -12,7 +12,7 @@ use embassy_futures::block_on;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::nonzero;
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts};
-use ruststream::testing::TestApp;
+use ruststream::testing::embedded::TestApp;
 use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
 
 /// The board's bus: each subscription holds four messages.
@@ -43,7 +43,7 @@ async fn on_dead(job: &Job<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_dead)

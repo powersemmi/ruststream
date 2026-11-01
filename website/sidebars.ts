@@ -74,6 +74,7 @@ const sidebars: SidebarsConfig = {
     'architecture/design',
     'architecture/path',
     'architecture/async',
+    'architecture/runtimes',
     'architecture/lifecycle',
     'architecture/settlement',
     'architecture/guarantees',

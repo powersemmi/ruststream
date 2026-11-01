@@ -1,8 +1,5 @@
-// The refused items expand to nothing, so the imports they would use stay unused.
-#![allow(unused_imports)]
-
-use ruststream::memory::local::LocalMemorySource;
-use ruststream::runtime::{HandlerOutcome, Out};
+use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
+use ruststream::runtime::{EmbeddedApp, Mounts, Out};
 use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 
 #[derive(Deserialized)]
@@ -15,15 +12,15 @@ struct Answer(Vec<u8>);
 #[derive(OutSlot)]
 struct Audit;
 
-#[subscriber(LocalMemorySource::new("readings"))]
-async fn bill(readings: &[Reading<'_>], Out(_audit): Out<impl Publisher, Audit>) -> HandlerOutcome {
-    let _ = readings.len();
-    HandlerOutcome::ack()
-}
-
+// A handler with an `Out` slot cannot reply on the embedded runner.
 #[subscriber(LocalMemorySource::new("questions"), reply)]
 async fn answer(question: &Reading<'_>, Out(_audit): Out<impl Publisher, Audit>) -> Answer {
     Answer(question.0.to_vec())
+}
+
+#[ruststream::app(runtime = embassy)]
+fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.include(answer).out(Audit, LocalMemoryPublish))
 }
 
 fn main() {}

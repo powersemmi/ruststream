@@ -1,4 +1,4 @@
-error[E0277]: `SubscriberBuilder<log, LocalMemorySource, (Fixed, Open, Open, Open)>` sets a worker count, which the embedded runner fixes at the mount site
+error[E0277]: `SubscriberBuilder<FnBody<log, for<'a, '__rs, 'b, 'c, 'd> fn(BodyTag<log>, &'a Reading<'__rs>, &'b Outs<(_,)>, &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {log::<_, _>}>, LocalMemorySource, (Fixed, Open, Open, Open)>` sets a worker count, which the embedded runner fixes at the mount site
   --> tests/ui/attribute_takes_workers.rs:19:19
    |
 19 |         b.include(log.name("readings")).out(Audit, LocalMemoryPublish)
@@ -6,20 +6,20 @@ error[E0277]: `SubscriberBuilder<log, LocalMemorySource, (Fixed, Open, Open, Ope
    |           |
    |           required by a bound introduced by this call
    |
-   = help: the trait `ruststream_runtime::router::local::PoolFits<LocalPipeline>` is not implemented for `SubscriberBuilder<log, LocalMemorySource, (Fixed, Open, Open, Open)>`
+   = help: the trait `ruststream_runtime::router::local::PoolFits<LocalPipeline>` is not implemented for `SubscriberBuilder<FnBody<log, for<'a, '__rs, 'b, 'c, 'd> fn(BodyTag<log>, &'a Reading<'__rs>, &'b Outs<(_,)>, &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {log::<_, _>}>, LocalMemorySource, (Fixed, Open, Open, Open)>`
    = note: on EmbeddedApp write `.include(def).pool::<N>()` or `.keyed::<N>()`; `threads(n)` runs only on the tokio runtime
 note: the method call chain might not have had the expected associated types
   --> tests/ui/attribute_takes_workers.rs:19:23
    |
 19 |         b.include(log.name("readings")).out(Audit, LocalMemoryPublish)
-   |                   --- ^^^^^^^^^^^^^^^^ `Declared::Settings` is `SubscriberBuilder<log, LocalMemorySource, (Fixed, Open, Open, Open)>` here
+   |                   --- ^^^^^^^^^^^^^^^^ `Declared::Settings` is `SubscriberBuilder<FnBody<log, fn(BodyTag<log>, &Reading<'__rs>, &Outs<(_,)>, &mut Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {log::<_, _>}>, LocalMemorySource, (Fixed, Open, Open, Open)>` here
    |                   |
-   |                   this expression has type `log`
+   |                   this expression has type `fn(BodyTag<log>, &Reading<'__rs>, &Outs<(_,)>, &mut Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {log::<_, _>}`
 note: required by a bound in `ruststream_runtime::router::include::<impl Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>>::include`
   --> $WORKSPACE/crates/ruststream-runtime/src/router/include.rs
    |
-   |     pub fn include<D>(self, def: D) -> <D::Form as RouterMount<Self, D::Settings>>::Out
+   |     pub fn include<D, Mk>(
    |            ------- required by a bound in this associated function
 ...
-   |         D::Settings: PoolFits<RoutePipe>,
-   |                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `ruststream_runtime::router::include::<impl Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>>::include`
+   |         <D::Decl as Declared>::Settings: PoolFits<RoutePipe>,
+   |                                          ^^^^^^^^^^^^^^^^^^^ required by this bound in `ruststream_runtime::router::include::<impl Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>>::include`

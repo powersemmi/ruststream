@@ -4,7 +4,7 @@ error[E0277]: this registration is not ready to mount
 27 |     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
    |                                                   ^^^^^^^^^^^ the attachment `(ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Encoded, MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>))` has an unfilled position
    |
-   = help: the trait `ruststream::runtime::RouterCommit<ruststream_runtime::router::mount::InjectMount, Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<transcode, Name, (Open, Open, Open, Open)>>` is not implemented for `(ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Encoded, MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>))`
+   = help: the trait `ruststream::runtime::RouterCommit<ruststream_runtime::router::mount::InjectMount, Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<FnBody<transcode, for<'a, '__rs, 'b, 'c, 'd> fn(BodyTag<transcode>, &'a Chunk<'__rs>, &'b Outs<(_, _)>, &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {transcode::<_, _, _>}>, Name, (Open, Open, Open, Open)>>` is not implemented for `(ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Encoded, MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>))`
    = note: bind every Out slot the handler declares with .out(marker, policy) before .build(); an unbound one shows as `MissingSlot<..>` naming its marker
    = help: the following other types implement trait `ruststream::runtime::RouterCommit<Mount, R, Def>`:
              `(ruststream::runtime::DefaultReply, ())` implements `ruststream::runtime::RouterCommit<ruststream::runtime::BatchPublishMount, Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>`
@@ -16,7 +16,7 @@ error[E0277]: this registration is not ready to mount
              `(ruststream::runtime::NoReply, ())` implements `ruststream::runtime::RouterCommit<ruststream::runtime::DeclareMount, R, ()>`
              `(ruststream::runtime::NoReply, ())` implements `ruststream::runtime::RouterCommit<ruststream::runtime::RetryMount, R, ()>`
            and $N others
-   = note: required for `RouterWith<ruststream_runtime::router::mount::InjectMount, Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<transcode, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Encoded, MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>)), ruststream::runtime::SlotPos<0>>` to implement `MountChain`
+   = note: required for `RouterWith<ruststream_runtime::router::mount::InjectMount, Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<FnBody<transcode, for<'a, '__rs, 'b, 'c, 'd> fn(BodyTag<transcode>, &'a Chunk<'__rs>, &'b Outs<(_, _)>, &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {transcode::<_, _, _>}>, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Encoded, MemoryPublish>>, ruststream::runtime::MissingSlot<Audit>)), ruststream::runtime::SlotPos<0>>` to implement `MountChain`
 note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
   --> crates/ruststream-runtime-tokio/src/app/service.rs
    |

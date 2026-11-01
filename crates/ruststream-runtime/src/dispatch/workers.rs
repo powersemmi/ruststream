@@ -43,20 +43,24 @@ pub struct Workers {
 /// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
-/// use ruststream::runtime::{Declared, Placement, SubscriberBuilder};
+/// use ruststream::runtime::{AsDeclared, Declared, IntoDeclared, Placement, SubscriberBuilder};
 ///
 /// /// A broker crate's mount step: a thread opens a pool of its own, a delivery on the app's
 /// /// runtime shares one, and the database grants `limit` connections in all.
-/// pub trait Pools: Declared {
-///     fn pools(self, per_pool: usize, limit: usize) -> Result<Self::Settings, TooManyConnections>
+/// pub trait Pools<Mk = AsDeclared>: IntoDeclared<Mk> {
+///     fn pools(
+///         self,
+///         per_pool: usize,
+///         limit: usize,
+///     ) -> Result<<Self::Decl as Declared>::Settings, TooManyConnections>
 ///     where
-///         Self::Settings: PoolStep,
+///         <Self::Decl as Declared>::Settings: PoolStep,
 ///     {
-///         self.declare().apply_pools(per_pool, limit)
+///         self.into_declared().declare().apply_pools(per_pool, limit)
 ///     }
 /// }
 ///
-/// impl<Def: Declared> Pools for Def {}
+/// impl<Def: IntoDeclared<Mk>, Mk> Pools<Mk> for Def {}
 ///
 /// pub trait PoolStep: Sized {
 ///     fn apply_pools(self, per_pool: usize, limit: usize) -> Result<Self, TooManyConnections>;
@@ -87,7 +91,7 @@ pub struct Workers {
 ///
 /// fn app() -> Result<RustStream, TooManyConnections> {
 ///     // Four threads, two connections each: eight of the database's sixteen.
-///     let mounted = scan.pools(2, 16)?;
+///     let mounted = scan::<()>.pools(2, 16)?;
 ///     Ok(RustStream::new(AppInfo::new("scans", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
 ///         b.include(mounted)
 ///     }))
@@ -242,7 +246,7 @@ impl Workers {
     /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
-    /// use ruststream::runtime::{Declared, SubscriberBuilder};
+    /// use ruststream::runtime::{AsDeclared, Declared, IntoDeclared, SubscriberBuilder};
     ///
     /// /// A broker crate's mount step: one prefetch window per delivery in flight.
     /// pub trait Prefetch: Declared {
@@ -300,20 +304,20 @@ impl Workers {
     /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
-    /// use ruststream::runtime::{Declared, SubscriberBuilder};
+    /// use ruststream::runtime::{AsDeclared, Declared, IntoDeclared, SubscriberBuilder};
     ///
     /// /// A broker crate's mount step: keyed lanes keep a key's order, so the broker can ask the
     /// /// server for unordered delivery only when nothing reads the key.
-    /// pub trait Ordering: Declared {
-    ///     fn log_ordering(self) -> Self::Settings
+    /// pub trait Ordering<Mk = AsDeclared>: IntoDeclared<Mk> {
+    ///     fn log_ordering(self) -> <Self::Decl as Declared>::Settings
     ///     where
-    ///         Self::Settings: OrderingStep,
+    ///         <Self::Decl as Declared>::Settings: OrderingStep,
     ///     {
-    ///         self.declare().apply_log_ordering()
+    ///         self.into_declared().declare().apply_log_ordering()
     ///     }
     /// }
     ///
-    /// impl<Def: Declared> Ordering for Def {}
+    /// impl<Def: IntoDeclared<Mk>, Mk> Ordering<Mk> for Def {}
     ///
     /// pub trait OrderingStep: Sized {
     ///     fn apply_log_ordering(self) -> Self;
@@ -337,7 +341,7 @@ impl Workers {
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(audit.log_ordering())
+    ///         b.include(audit::<()>.log_ordering())
     ///     })
     /// }
     /// # }
@@ -357,19 +361,19 @@ impl Workers {
     /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
-    /// use ruststream::runtime::{Declared, Placement, SubscriberBuilder};
+    /// use ruststream::runtime::{AsDeclared, Declared, IntoDeclared, Placement, SubscriberBuilder};
     ///
     /// /// A broker crate's mount step: a dedicated thread keeps a connection of its own.
-    /// pub trait Sessions: Declared {
-    ///     fn sessions(self) -> Self::Settings
+    /// pub trait Sessions<Mk = AsDeclared>: IntoDeclared<Mk> {
+    ///     fn sessions(self) -> <Self::Decl as Declared>::Settings
     ///     where
-    ///         Self::Settings: SessionStep,
+    ///         <Self::Decl as Declared>::Settings: SessionStep,
     ///     {
-    ///         self.declare().apply_sessions()
+    ///         self.into_declared().declare().apply_sessions()
     ///     }
     /// }
     ///
-    /// impl<Def: Declared> Sessions for Def {}
+    /// impl<Def: IntoDeclared<Mk>, Mk> Sessions<Mk> for Def {}
     ///
     /// pub trait SessionStep: Sized {
     ///     fn apply_sessions(self) -> Self;
@@ -393,7 +397,7 @@ impl Workers {
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(resize.sessions())
+    ///         b.include(resize::<()>.sessions())
     ///     })
     /// }
     /// # }

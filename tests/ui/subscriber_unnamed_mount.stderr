@@ -7,19 +7,10 @@ error[E0277]: `Unnamed<Name>` does not open a subscription on `ConnectedMemoryBr
    = help: the trait `SubscriptionSource<ConnectedMemoryBroker>` is not implemented for `Unnamed<Name>`
    = note: a subscriber left unnamed carries `Unnamed<..>` until the mount site names it: `b.include(handle.name("orders"))`
    = note: otherwise the source belongs to a different broker than the one being mounted on
-help: the following other types implement trait `SubscriptionSource<C>`
-  --> crates/ruststream-memory/src/pattern.rs
-   |
-   | impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemoryPattern {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPattern` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
-   |
-  ::: crates/ruststream-memory/src/subscriber.rs
-   |
-   | impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySource` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
-   |
-  ::: crates/ruststream-core/src/subscription/sources.rs
-   |
-   | impl<C: Subscribe> SubscriptionSource<C> for Name {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Name` implements `SubscriptionSource<C>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`
+   = help: the following other types implement trait `SubscriptionSource<C>`:
+             `LocalMemorySource` implements `SubscriptionSource<ConnectedLocalMemoryBroker<CAP>>`
+             `MemoryPattern` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
+             `MemorySource` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
+             `Name` implements `SubscriptionSource<C>`
+             `ruststream_runtime_embassy::frames::FrameSource` implements `SubscriptionSource<ruststream_runtime_embassy::frames::FrameConnected>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {handle::<_>}>, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`

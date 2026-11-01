@@ -53,7 +53,7 @@ impl<'a> TestBrokers<'a> {
     ///     OutgoingMessage,
     /// };
     /// use ruststream::runtime::{Context, EmbeddedApp, HandlerOutcome, Mounts};
-    /// use ruststream::testing::TestApp;
+    /// use ruststream::testing::embedded::TestApp;
     /// use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
     ///
     /// type Bus = LocalMemoryBroker<4>;

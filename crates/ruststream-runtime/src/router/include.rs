@@ -15,11 +15,13 @@
 use crate::Broker;
 
 use super::builder::Router;
-use super::local::PoolFits;
+use super::head::{PoisonAt, ScopeOut};
+use super::local::{BodyFits, PoolFits};
 use super::mount::RouterMount;
+use crate::handle::IntoDeclared;
 use crate::settings::Declared;
 
-impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
+impl<B: Broker + 'static, Routes: PoisonAt, RouteCodec, RouteLayers, RoutePipe>
     Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Mounts a `#[subscriber]` definition of any form, on the source the definition names: a
@@ -60,12 +62,25 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// }
     /// # }
     /// ```
-    pub fn include<D>(self, def: D) -> <D::Form as RouterMount<Self, D::Settings>>::Out
+    #[allow(clippy::type_complexity)] // the mount's own output; an alias would hide it
+    pub fn include<D, Mk>(
+        self,
+        def: D,
+    ) -> ScopeOut<
+        Routes,
+        <D as BodyFits<RoutePipe, Mk>>::Fits,
+        <<D::Decl as Declared>::Form as RouterMount<Self, <D::Decl as Declared>::Settings>>::Out,
+    >
     where
-        D: Declared,
-        D::Settings: PoolFits<RoutePipe>,
-        D::Form: RouterMount<Self, D::Settings>,
+        D: IntoDeclared<Mk> + BodyFits<RoutePipe, Mk>,
+        <D::Decl as Declared>::Settings: PoolFits<RoutePipe>,
+        <D::Decl as Declared>::Form: RouterMount<Self, <D::Decl as Declared>::Settings>,
     {
-        <D::Form as RouterMount<Self, D::Settings>>::begin(def.declare(), self)
+        Routes::poison::<<D as BodyFits<RoutePipe, Mk>>::Fits, _>(
+            <<D::Decl as Declared>::Form as RouterMount<Self, <D::Decl as Declared>::Settings>>::begin(
+                def.into_declared().declare(),
+                self,
+            ),
+        )
     }
 }

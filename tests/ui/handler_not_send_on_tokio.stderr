@@ -1,0 +1,22 @@
+error: future cannot be sent between threads safely
+  --> tests/ui/handler_not_send_on_tokio.rs:25:19
+   |
+25 |         b.include(on_order)
+   |                   ^^^^^^^^ future returned by `on_order` is not `Send`
+   |
+   = help: within `impl Future<Output = Result<(), HandlerOutcome>>`, the trait `Send` is not implemented for `Rc<u32>`
+note: future is not `Send` as this value is used across an await
+  --> tests/ui/handler_not_send_on_tokio.rs:18:30
+   |
+17 |     let held = Rc::new(order.id);
+   |         ---- has type `Rc<u32>` which is not `Send`
+18 |     tokio::task::yield_now().await;
+   |                              ^^^^^ await occurs here, with `held` maybe used later
+note: required by a bound in `ruststream_runtime_tokio::app::include::<impl BrokerScope<B, Layers, C, State, Pipeline, Pre>>::include`
+  --> crates/ruststream-runtime-tokio/src/app/include/mod.rs
+   |
+   |     pub fn include<D, Mk>(
+   |            ------- required by a bound in this associated function
+...
+   |         D: IntoDeclared<Mk> + BodyFits<Pipeline, Mk>,
+   |                               ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `ruststream_runtime_tokio::app::include::<impl BrokerScope<B, Layers, C, State, Pipeline, Pre>>::include`

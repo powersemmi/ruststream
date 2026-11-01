@@ -15,12 +15,6 @@ categories = ["asynchronous", "development-tools::procedural-macro-helpers"]
 [lib]
 proc-macro = true
 
-[features]
-# The runtime the generated code targets, chosen once per crate through the facade. `tokio` emits
-# the `Send` forms; `embassy` emits the local forms.
-tokio = []
-embassy = []
-
 [dependencies]
 proc-macro2 = "1"
 quote = "1"

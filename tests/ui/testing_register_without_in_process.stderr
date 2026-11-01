@@ -10,11 +10,16 @@ help: the trait `InProcess` is not implemented for `Networked`
  8 | struct Networked;
    | ^^^^^^^^^^^^^^^^
    = note: a broker crate implements `InProcess` under its `testing` feature: a service enables that feature in `[dev-dependencies]`, a broker author implements the trait there
-help: the trait `InProcess` is implemented for `MemoryBroker<Log>`
+help: the following other types implement trait `InProcess`
   --> crates/ruststream-memory/src/broker.rs
    |
    | impl<Log: LogMode> InProcess for MemoryBroker<Log> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryBroker<Log>`
+   |
+  ::: crates/ruststream-memory/src/local/broker.rs
+   |
+   | impl<const CAP: usize> InProcess for LocalMemoryBroker<CAP> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `LocalMemoryBroker<CAP>`
 note: required by a bound in `TestableRegistration::of`
   --> crates/ruststream-runtime/src/testing/broker.rs
    |
@@ -61,11 +66,21 @@ help: the trait `DefaultPublish` is not implemented for `ConnectedNetworked`
    |
 10 | struct ConnectedNetworked;
    | ^^^^^^^^^^^^^^^^^^^^^^^^^
-help: the trait `DefaultPublish` is implemented for `ConnectedMemoryBroker<Log>`
+help: the following other types implement trait `DefaultPublish`
   --> crates/ruststream-memory/src/broker.rs
    |
    | impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ConnectedMemoryBroker<Log>`
+   |
+  ::: crates/ruststream-memory/src/local/broker.rs
+   |
+   | impl<const CAP: usize> DefaultPublish for ConnectedLocalMemoryBroker<CAP> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ConnectedLocalMemoryBroker<CAP>`
+   |
+  ::: crates/ruststream-runtime-embassy/src/frames.rs
+   |
+   | impl DefaultPublish for FrameConnected {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime_embassy::frames::FrameConnected`
 note: required by a bound in `TestableRegistration::of`
   --> crates/ruststream-runtime/src/testing/broker.rs
    |

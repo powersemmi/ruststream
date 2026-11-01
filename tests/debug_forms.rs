@@ -67,9 +67,9 @@ fn the_router_types_render_their_debug_forms() {
     let router = Router::<MemoryBroker>::new();
     assert_eq!(format!("{router:?}"), "Router { .. }");
 
-    let chain = router.include(slot);
+    let chain = router.include(answer::<()>);
     assert_eq!(format!("{chain:?}"), "RouterWith { .. }");
-    let _ = chain.out(DefaultSlot, Publish).build();
+    let _ = chain.build();
 }
 
 /// The memory module: the handles show the name they are bound to and elide the shared bus, and

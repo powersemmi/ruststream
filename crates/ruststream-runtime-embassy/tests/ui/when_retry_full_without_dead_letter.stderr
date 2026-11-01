@@ -6,7 +6,7 @@ error[E0277]: `DeadLetter` sends a delivery to the destination `.dead_letter(..)
    |              |
    |              required by a bound introduced by this call
    |
-   = help: the trait `ruststream_runtime::router::routes::DeadLetterDeclared` is not implemented for `ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>`
+   = help: the trait `ruststream_runtime::router::routes::DeadLetterDeclared` is not implemented for `ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), FnBody<on_job, for<'a, '__rs, 'b, 'c, 'd> fn(BodyTag<on_job>, &'a Job<'__rs>, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {on_job::<_>}>>>>`
    = note: declare it right after `include(..)`, before `.retry_capacity::<CAP>()`: `b.include(job).max_attempts(nonzero!(3u32)).dead_letter("jobs.dead").retry_capacity::<4>().when_retry_full(DeadLetter)`
 help: the following other types implement trait `ruststream_runtime::router::routes::DeadLetterDeclared`
   --> $WORKSPACE/crates/ruststream-runtime/src/router/fold_plan.rs
@@ -27,7 +27,7 @@ help: the following other types implement trait `ruststream_runtime::router::rou
    |
    |   impl<Route: DeadLetterDeclared> DeadLetterDeclared for DeclaredRoute<Route, Absent> {}
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime::router::routes::DeclaredRoute<Route>`
-   = note: required for `ruststream::runtime::DeadLetter` to implement `ruststream::runtime::PolicyFits<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>>`
+   = note: required for `ruststream::runtime::DeadLetter` to implement `ruststream::runtime::PolicyFits<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), FnBody<on_job, for<'a, '__rs, 'b, 'c, 'd> fn(BodyTag<on_job>, &'a Job<'__rs>, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {on_job::<_>}>>>>>`
 note: required by a bound in `when_retry_full`
   --> src/lanes.rs
    |

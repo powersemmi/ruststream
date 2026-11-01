@@ -432,7 +432,7 @@ pub struct Pending {
     pub runtime: Runtime,
     pub latch: Latch,
     pub broker: MemoryBroker,
-    start: Box<dyn FnOnce(&Runtime) -> RunningApp>,
+    pub start: Box<dyn FnOnce(&Runtime) -> RunningApp>,
     pub messages: usize,
     pub size: usize,
     /// Handler calls to wait for, which is the message count except where a delivery is handled
@@ -548,7 +548,7 @@ impl Pending {
         Ready {
             runtime: self.runtime,
             latch: self.latch,
-            _app: running,
+            app: running,
         }
     }
 
@@ -562,12 +562,12 @@ impl Pending {
         let running = (self.start)(&self.runtime);
         self.latch.expect(self.expected);
         Started {
+            runtime: self.runtime,
+            latch: self.latch,
             publisher: self.broker.publisher(),
             body: json_body(self.size),
             messages: self.messages,
-            runtime: self.runtime,
-            latch: self.latch,
-            _app: running,
+            app: running,
         }
     }
 }
@@ -575,12 +575,12 @@ impl Pending {
 /// A started service whose queue the measured body fills itself.
 pub struct Started {
     pub runtime: Runtime,
-    latch: Latch,
-    publisher: MemoryPublisher,
-    body: Vec<u8>,
-    messages: usize,
+    pub latch: Latch,
+    pub publisher: MemoryPublisher,
+    pub body: Vec<u8>,
+    pub messages: usize,
     // Held so the service outlives the run.
-    _app: RunningApp,
+    pub app: RunningApp,
 }
 
 impl Started {
@@ -606,7 +606,7 @@ pub struct Ready {
     pub runtime: Runtime,
     pub latch: Latch,
     // Held so the service outlives the run.
-    _app: RunningApp,
+    pub app: RunningApp,
 }
 
 /// Starts the service, fills its queue, and drains it: the shape of every scenario here.

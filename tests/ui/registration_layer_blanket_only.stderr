@@ -1,4 +1,4 @@
-error[E0277]: `Observe` cannot wrap `Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), handle>>`
+error[E0277]: `Observe` cannot wrap `Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {handle::<_>}>>>`
   --> tests/ui/registration_layer_blanket_only.rs:37:71
    |
 37 |     let _router = Router::<MemoryBroker>::new().include(handle).layer(Observe);
@@ -6,7 +6,7 @@ error[E0277]: `Observe` cannot wrap `Typed<MemoryMessage, ruststream_runtime::in
    |                                                                 |
    |                                                                 required by a bound introduced by this call
    |
-help: the trait `Layer<Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), handle>>>` is not implemented for `Observe`
+help: the trait `Layer<Typed<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<Solo<Order>, (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Order, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), HandlerOutcome>> {handle::<_>}>>>>` is not implemented for `Observe`
   --> tests/ui/registration_layer_blanket_only.rs:19:1
    |
 19 | struct Observe;

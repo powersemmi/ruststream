@@ -11,7 +11,7 @@ use embassy_futures::block_on;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER};
 use ruststream::testing::Outcome;
-use ruststream::testing::TestApp;
+use ruststream::testing::embedded::TestApp;
 use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
 
 /// The board's bus: each subscription holds four messages.
@@ -42,7 +42,7 @@ async fn on_job(job: &Job<'_>, ctx: &mut Context<'_>) -> HandlerOutcome {
     }
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| b.include(on_job).retry_capacity::<1>())
 }

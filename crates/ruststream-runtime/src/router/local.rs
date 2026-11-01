@@ -9,12 +9,13 @@
 use core::marker::PhantomData;
 
 use crate::batch::BatchDef;
+use crate::handle::{AsBodyFn, AsDeclared, BodyTag};
 use crate::input::{Materialize, Provided};
 use crate::lifecycle::BoxError;
 use crate::middleware::Identity;
 use crate::middleware::LocalBlanketLayer;
 use crate::publish::{LocalOutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough};
-use crate::settings::{BatchSized, DefMountCodec, MountsWith, Sequential};
+use crate::settings::{BatchSized, Declared, DefMountCodec, MountsWith, Sequential};
 use crate::subscriber_def::SubscriberDef;
 use crate::{
     Broker, Connected, LocalBatchSubscriber, LocalPublisher, LocalSourceMessage, OutgoingFor,
@@ -124,6 +125,42 @@ pub trait PoolFits<Pipe> {}
 impl<Settings, Pipe: PublishPipeline> PoolFits<Pipe> for Settings {}
 
 impl<Settings: Sequential, Pipe> PoolFits<LocalPipeline<Pipe>> for Settings {}
+
+/// Whether a definition's body runs where the chain mounts it: a body function on a multi-thread
+/// chain returns a `Send` future; a local chain asks nothing of it; a definition that is its own
+/// body (`subscriber(..)`, a `Handle` impl) carries its own bound. Machinery; never named
+/// directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this handler cannot run on the multi-thread runner: its future is not `Send`",
+    note = "the multi-thread runner moves a handler between threads at each `.await`; keep only \
+            `Send` values across an `.await` in the handler (an `Arc` where it holds an `Rc`), \
+            or mount it on an `EmbeddedApp`, which polls it on one thread"
+)]
+pub trait BodyFits<Pipe, Mk> {
+    /// What a scope's chain reads the mount's output through: when the body does not fit, the
+    /// output has no type and the compiler reports the failure once, at the `include`.
+    type Fits;
+}
+
+// Bounded by `Declared` so a body function matches the other impl alone, and the marker is inferred
+// from the body even where the chain reads its output through `Fits`.
+impl<D: Declared, Pipe> BodyFits<Pipe, AsDeclared> for D {
+    type Fits = ();
+}
+
+impl<F, M, I, O, X, Fut, Pipe> BodyFits<Pipe, AsBodyFn<M, I, O, X>> for F
+where
+    Pipe: PublishPipeline,
+    F: Fn(BodyTag<M>, I, O, X) -> Fut,
+    Fut: Future + Send,
+{
+    type Fits = ();
+}
+
+impl<F, M, I, O, X, Pipe> BodyFits<LocalPipeline<Pipe>, AsBodyFn<M, I, O, X>> for F {
+    type Fits = ();
+}
 
 /// The publish pipeline a router's chain carries, read off the router type. Machinery; never
 /// named directly.

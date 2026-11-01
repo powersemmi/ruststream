@@ -8,6 +8,9 @@
 
 // A thread-mode embassy task is never sent anywhere, and the app holds a bus that is not `Send`.
 #![allow(clippy::future_not_send)]
+// With every feature on, the app's task future nests one level past the default query depth when
+// the compiler lays it out.
+#![recursion_limit = "256"]
 
 use core::cell::Cell;
 use core::pin::pin;
@@ -128,7 +131,7 @@ async fn on_level(level: &Reading<'_>, Out(alerts): Out<impl Publisher, Alerts>)
     }
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_measure)

@@ -63,11 +63,13 @@
 //!
 //! # Cargo features
 //!
-//! The core traits, the router, middleware and dispatch are always present. The runtime is one
-//! of two features, and the rest is additive and opt-in.
+//! The core traits, the router, middleware and dispatch are always present. Every feature is
+//! additive and opt-in.
 //!
-//! The runtime runs the app's subscriptions. `tokio` and `embassy` select it, and the two exclude
-//! each other: enabling both is a compile error.
+//! The runtime runs the app's subscriptions. `tokio` and `embassy` provide one each, and they
+//! build together: the handlers are the same for both, and the app picks its runner. A function
+//! marked `#[ruststream::app]` runs on tokio, and `#[ruststream::app(runtime = embassy)]` runs on
+//! embassy.
 //!
 //! * `tokio` (default): the [`runtime::RustStream`] application object on tokio's runtime, its
 //!   lifecycle and the generated entry point ([`runtime::cli`]).
@@ -116,7 +118,7 @@
 //!   warns when a handler computes on the app's runtime ([`runtime::PollDiagnostics`]).
 //!
 //! A crate that disables the defaults (`default-features = false`) names its runtime among the
-//! features it enables: `features = ["tokio"]` or `features = ["embassy"]`. A broker crate on
+//! features it enables: `features = ["tokio"]`, `features = ["embassy"]` or both. A broker crate on
 //! tokio enables `tokio`. A device service on a bare-metal target picks from `embassy`, `json`,
 //! `cbor`, `macros` and `memory`. On a target with an operating system the crate uses the standard
 //! library with either runtime.
@@ -133,12 +135,6 @@
 #![cfg_attr(not(feature = "tokio"), no_std)]
 
 extern crate alloc;
-
-// The runtime is one choice: the generated code, the app object and the re-exports all assume one.
-#[cfg(all(feature = "tokio", feature = "embassy"))]
-compile_error!(
-    "the `tokio` and `embassy` features select the runtime and exclude each other; enable one"
-);
 
 pub mod prelude;
 pub mod testing;

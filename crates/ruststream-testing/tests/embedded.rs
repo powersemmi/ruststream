@@ -1,5 +1,5 @@
 //! A device service's app tested on the host through `TestApp`, as a device crate tests it: the
-//! handlers with `#[subscriber]`, the app with `#[ruststream::app]`, and the test handing the app
+//! handlers with `#[subscriber]`, the app with `#[ruststream::app(runtime = embassy)]`, and the test handing the app
 //! function its bus.
 
 // The app and its handlers are not `Send`: the harness polls them inside the test's future.
@@ -21,7 +21,8 @@ use ruststream::memory::local::prelude::{
 };
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts, Out, PublishError};
 use ruststream::testing::InProcess;
-use ruststream::testing::{TestApp, TestError};
+use ruststream::testing::TestError;
+use ruststream::testing::embedded::TestApp;
 use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 
 /// The board's bus: each subscription holds four messages.
@@ -137,7 +138,7 @@ async fn bus_is_shut_down(sensor: &LocalMemoryPublisher<4>) -> bool {
     sensor.publish(reading, None).await == Err(LocalMemoryError::ShutDown)
 }
 
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_level)
@@ -739,7 +740,7 @@ async fn on_tank(
 }
 
 /// The tank's app, with the limits the board reads from its flash.
-#[ruststream::app]
+#[ruststream::app(runtime = embassy)]
 fn tank(bus: Bus) -> EmbeddedApp<impl Mounts<State = Limits>> {
     EmbeddedApp::new()
         .with_state(Limits {
