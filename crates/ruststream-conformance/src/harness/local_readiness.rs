@@ -2,6 +2,7 @@
 
 #![allow(clippy::future_not_send)]
 
+use std::fmt::Debug;
 use std::pin::{Pin, pin};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -165,7 +166,7 @@ fn poll<S: Stream>(stream: Pin<&mut S>, waker: &Waker) -> Poll<Option<S::Item>> 
 }
 
 /// The delivery a poll yielded, panicking on anything else.
-fn taken<M, E: std::fmt::Debug>(polled: Poll<Option<Result<M, E>>>, which: &str) -> M {
+fn taken<M, E: Debug>(polled: Poll<Option<Result<M, E>>>, which: &str) -> M {
     match polled {
         Poll::Ready(Some(Ok(message))) => message,
         Poll::Ready(Some(Err(err))) => {

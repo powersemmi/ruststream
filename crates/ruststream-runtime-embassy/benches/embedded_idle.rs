@@ -7,7 +7,10 @@
     unreachable_pub,
     clippy::must_use_candidate,
     clippy::needless_pass_by_value,
-    clippy::future_not_send
+    clippy::future_not_send,
+    // The app's future lives on the stack of the measured run, as a device keeps it; boxing it
+    // would put an allocation in the number the floor holds.
+    clippy::large_futures
 )]
 //! The embedded app with idle subscriptions beside a busy one: what a delivery costs when fifteen
 //! other subscriptions of the app wait for theirs.
@@ -22,6 +25,7 @@
 
 use std::cell::Cell;
 use std::hint::black_box;
+use std::iter::repeat_n;
 
 use embassy_futures::block_on;
 use embassy_futures::join::join;
@@ -141,7 +145,7 @@ fn stand(deliveries: usize, fifteen_idle: bool) -> Stand {
     HANDLED.with(|handled| handled.set(0));
     Stand {
         bus: Bus::new(),
-        payloads: (0..deliveries).map(|_| BytesMut::from("x")).collect(),
+        payloads: repeat_n(BytesMut::from("x"), deliveries).collect(),
         fifteen_idle,
     }
 }
@@ -191,7 +195,11 @@ fn start_and_drain(stand: Stand) {
         let (ran, ()) = join(run, drive).await;
         ran.expect("the app stops cleanly");
     });
-    assert_eq!(HANDLED.with(Cell::get), deliveries);
+    assert_eq!(
+        HANDLED.with(Cell::get),
+        deliveries,
+        "the busy subscription handled every delivery"
+    );
 }
 
 /// The measured region: everything this runs is counted, nothing around it is.
