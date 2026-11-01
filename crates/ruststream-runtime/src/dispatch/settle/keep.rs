@@ -172,11 +172,13 @@ async fn drop_original<M: LocalSettle>(slot: &mut Slot<M>) -> Result<(), AckErro
 #[allow(clippy::future_not_send)]
 mod tests {
     use alloc::borrow::ToOwned;
+    use alloc::boxed::Box;
     use alloc::string::String;
     use alloc::sync::Arc;
     use alloc::vec::Vec;
-    use core::cell::RefCell;
+    use core::cell::{Cell, RefCell};
     use core::future::ready;
+    use core::pin::Pin;
     use core::sync::atomic::{AtomicU8, Ordering};
     use core::time::Duration;
     use std::io;
@@ -365,11 +367,11 @@ mod tests {
     /// The app's host beside the store: the copies never reach it, and it counts the
     /// continuations a failed publish leaves with it.
     struct NoWork {
-        boxed: core::cell::Cell<usize>,
+        boxed: Cell<usize>,
     }
 
     impl LocalDetach for NoWork {
-        fn detach_boxed(&self, _work: core::pin::Pin<alloc::boxed::Box<dyn Future<Output = ()>>>) {
+        fn detach_boxed(&self, _work: Pin<Box<dyn Future<Output = ()>>>) {
             self.boxed.set(self.boxed.get() + 1);
         }
 
@@ -417,7 +419,7 @@ mod tests {
             settlement,
         };
         let work = NoWork {
-            boxed: core::cell::Cell::new(0),
+            boxed: Cell::new(0),
         };
         settle_reacting(
             &mut Slot::new(msg),

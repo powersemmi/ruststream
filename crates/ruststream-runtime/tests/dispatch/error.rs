@@ -16,14 +16,14 @@ use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 use ruststream::memory::prelude::*;
-use ruststream::memory::{ConnectedMemoryBroker, LogMode};
-use ruststream::runtime::{FromRef, RETRY_COUNT_HEADER};
+use ruststream::memory::{ConnectedMemoryBroker, LogMode, MemoryPublisher};
+use ruststream::runtime::RETRY_COUNT_HEADER;
 use ruststream::testing::TestApp;
 
 use crate::log_capture;
 use ruststream::{
     AckError, AddressedCopies, BrokerMoves, Lend, OutgoingMessage, PairError, RedeliveryAddress,
-    RedeliveryAddressed, Settle, Subscribe, Subscriber, SubscriptionSource,
+    RedeliveryAddressed, Settle, Subscribe, Subscriber, SubscriptionSource, Take,
 };
 use serde::{Deserialize, Serialize};
 
@@ -166,7 +166,7 @@ async fn on_job(job: &Job, State(alerts): State<Arc<Mutex<Vec<Alert>>>>) -> Hand
     })
 }
 
-fn failing_app(lost: &Lost) -> impl ruststream::runtime::App {
+fn failing_app(lost: &Lost) -> impl App {
     let lost = lost.clone();
     RustStream::new(AppInfo::new("errors", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(lost))
@@ -309,7 +309,7 @@ async fn context_error_then(
 }
 
 /// The four pair handlers over a broker whose retry copies reach the bus.
-fn pairs_app(events: &Events) -> impl ruststream::runtime::App {
+fn pairs_app(events: &Events) -> impl App {
     let events = events.clone();
     RustStream::new(AppInfo::new("pairs", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(events))
@@ -322,7 +322,7 @@ fn pairs_app(events: &Events) -> impl ruststream::runtime::App {
 }
 
 /// The four pair handlers over a broker that refuses every retry copy.
-fn refusing_pairs_app(events: &Events) -> impl ruststream::runtime::App {
+fn refusing_pairs_app(events: &Events) -> impl App {
     let events = events.clone();
     RustStream::new(AppInfo::new("pairs", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(events))
@@ -398,16 +398,16 @@ async fn a_refused_copy_runs_only_error_in_every_form_of_the_pair() {
 }
 
 /// A publisher whose bus takes everything but the dead letter, and keeps what it is handed.
-struct RefusesDeadLetter(ruststream::memory::MemoryPublisher);
+struct RefusesDeadLetter(MemoryPublisher);
 
 impl Publisher for RefusesDeadLetter {
-    type Payload = ruststream::Take;
+    type Payload = Take;
     type Error = io::Error;
     type Options = ();
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_, ruststream::BytesMut>,
+        msg: OutgoingMessage<'_, BytesMut>,
         options: Option<&()>,
     ) -> Result<(), io::Error> {
         if msg.name() == "jobs.dead" {
@@ -442,7 +442,7 @@ async fn a_failed_dead_letter_copy_reaches_the_error_continuation() {
         .on_startup(async move |()| Ok::<_, Infallible>(startup))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(on_job)
-                .max_attempts(ruststream::nonzero!(2u32))
+                .max_attempts(nonzero!(2u32))
                 .dead_letter("jobs.dead")
                 .out_retry(RefusingDeadLetter)
         });
@@ -591,10 +591,9 @@ async fn an_outcome_without_an_error_continuation_on_a_broker_moved_subscription
         .expect("publish");
     tb.settle().await.expect("settle");
 
-    assert!(
-        captured
-            .lines_with("the outcome carries an `.error` continuation")
-            .is_empty()
+    assert_eq!(
+        captured.lines_with("the outcome carries an `.error` continuation"),
+        Vec::<String>::new()
     );
 }
 

@@ -34,12 +34,15 @@ struct Job<'a>(&'a [u8]);
 #[derive(Outgoing, Serialized)]
 struct Sent(&'static [u8]);
 
-/// What the `.error` continuations were told: the error, where the copy was going, its bytes.
+/// What one `.error` continuation was told: the error, where the copy was going, its bytes.
+type Told = (String, String, Vec<u8>);
+
+/// What the `.error` continuations were told.
 #[derive(Clone, Default)]
-struct Lost(Arc<Mutex<Vec<(String, String, Vec<u8>)>>>);
+struct Lost(Arc<Mutex<Vec<Told>>>);
 
 impl Lost {
-    fn told(&self) -> Vec<(String, String, Vec<u8>)> {
+    fn told(&self) -> Vec<Told> {
         self.0.lock().expect("the handlers never panic").clone()
     }
 }
