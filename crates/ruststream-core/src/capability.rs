@@ -351,11 +351,13 @@ crate::__contract_twin! {
         /// # Examples
         ///
         /// ```
-        /// use ruststream::{OutgoingMessage, Transaction};
+        /// use ruststream::{OutgoingMessage, PublishMessageError, Transaction};
         ///
         /// async fn settle_pair<T: Transaction>(mut txn: T) -> Result<(), T::Error> {
-        ///     txn.publish(OutgoingMessage::new("orders", b"{}".as_slice()), None).await?;
-        ///     txn.publish(OutgoingMessage::new("audit", b"{}".as_slice()), None).await?;
+        ///     let orders = OutgoingMessage::new("orders", b"{}".as_slice());
+        ///     txn.publish(orders, None).await.map_err(PublishMessageError::into_error)?;
+        ///     let audit = OutgoingMessage::new("audit", b"{}".as_slice());
+        ///     txn.publish(audit, None).await.map_err(PublishMessageError::into_error)?;
         ///     txn.commit().await
         /// }
         /// ```
@@ -408,9 +410,9 @@ crate::__contract_twin! {
         ///
         /// # Errors
         ///
-        /// Returns [`Self::Error`] when the message cannot be buffered. For a pure client buffer
-        /// this is infallible in practice; implementations that stage broker-side state may reject
-        /// here.
+        /// Returns a [`PublishMessageError`](crate::PublishMessageError) over [`Self::Error`] when the message cannot be
+        /// buffered, with the message it did not take. For a pure client buffer this is
+        /// infallible in practice; implementations that stage broker-side state may reject here.
         fn publish(&mut self, msg: OutgoingFor<'msg, Self::Payload>, options: Option<&Self::Options>)
             <'msg>
             -> [impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> @send { + Send }];
@@ -443,7 +445,7 @@ crate::__contract_twin! {
         /// # Examples
         ///
         /// ```
-        /// use ruststream::{HeaderMap, OutgoingFor, Transaction};
+        /// use ruststream::{HeaderMap, OutgoingFor, Transaction, PublishOutcome};
         ///
         /// struct Tagged<T>(T, HeaderMap);
         ///
@@ -509,15 +511,17 @@ crate::__contract_twin! {
         /// # Examples
         ///
         /// ```
-        /// use ruststream::{OutgoingMessage, OwnedTransactions, Transaction};
+        /// use ruststream::{OutgoingMessage, OwnedTransactions, PublishMessageError, Transaction};
         ///
         /// async fn dual_write<P: OwnedTransactions>(
         ///     publisher: &P,
         /// ) -> Result<(), Box<dyn std::error::Error>> {
         ///     let mut orders = publisher.transaction().await?;
         ///     let mut audit = publisher.transaction().await?; // concurrent with `orders`
-        ///     orders.publish(OutgoingMessage::new("orders", b"{}".as_slice()), None).await?;
-        ///     audit.publish(OutgoingMessage::new("audit", b"{}".as_slice()), None).await?;
+        ///     let order = OutgoingMessage::new("orders", b"{}".as_slice());
+        ///     orders.publish(order, None).await.map_err(PublishMessageError::into_error)?;
+        ///     let entry = OutgoingMessage::new("audit", b"{}".as_slice());
+        ///     audit.publish(entry, None).await.map_err(PublishMessageError::into_error)?;
         ///     orders.commit().await?;
         ///     audit.commit().await?;
         ///     Ok(())

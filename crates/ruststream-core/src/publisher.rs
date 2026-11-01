@@ -34,7 +34,7 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 /// ```
 /// use std::io;
 ///
-/// use ruststream::{Lend, OutgoingMessage, Publisher};
+/// use ruststream::{Lend, OutgoingMessage, Publisher, PublishOutcome, PublishMessageError};
 /// # #[derive(Clone)]
 /// # struct Socket;
 /// # impl Socket {
@@ -56,10 +56,12 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 ///
 ///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingMessage<'msg, &[u8]>,
+///         msg: OutgoingMessage<'msg, &'msg [u8]>,
 ///         _options: Option<&()>,
 ///     ) -> PublishOutcome<'msg, io::Error, Lend> {
-///         self.socket.send_frame(msg.name(), msg.payload()).await
+///         let sent = self.socket.send_frame(msg.name(), msg.payload()).await;
+///         // The frame was copied, so the refused message goes back as it came.
+///         sent.map_err(|err| PublishMessageError::with_message(err, msg))
 ///     }
 /// }
 /// ```
@@ -213,7 +215,7 @@ pub trait PayloadEncode {
 /// ```
 /// use std::io;
 ///
-/// use ruststream::{Lend, OutgoingMessage, Publisher};
+/// use ruststream::{Lend, OutgoingMessage, Publisher, PublishOutcome, PublishMessageError};
 /// # #[derive(Clone)]
 /// # struct Connection;
 /// # impl Connection {
@@ -236,10 +238,12 @@ pub trait PayloadEncode {
 ///
 ///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingMessage<'msg, &[u8]>,
+///         msg: OutgoingMessage<'msg, &'msg [u8]>,
 ///         _options: Option<&()>,
 ///     ) -> PublishOutcome<'msg, io::Error, Lend> {
-///         self.connection.write(msg.name(), msg.payload()).await
+///         let written = self.connection.write(msg.name(), msg.payload()).await;
+///         // The client only read the bytes, so the refused message goes back as it came.
+///         written.map_err(|err| PublishMessageError::with_message(err, msg))
 ///     }
 /// }
 /// ```
@@ -257,7 +261,7 @@ pub struct Lend;
 /// ```
 /// use std::io;
 ///
-/// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take};
+/// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
 /// # #[derive(Clone)]
 /// # struct Producer;
 /// # impl Producer {
@@ -284,7 +288,11 @@ pub struct Lend;
 ///         _options: Option<&()>,
 ///     ) -> PublishOutcome<'msg, io::Error, Take> {
 ///         let topic = msg.name();
-///         self.producer.send(topic, msg.into_payload().freeze()).await
+///         self.producer
+///             .send(topic, msg.into_payload().freeze())
+///             .await
+///             // The client consumed the buffer, so the refusal has no message to return.
+///             .map_err(PublishMessageError::new)
 ///     }
 /// }
 /// ```
@@ -301,7 +309,7 @@ pub struct Take;
 /// # Examples
 ///
 /// ```
-/// use ruststream::{HeaderMap, OutgoingFor, Publisher};
+/// use ruststream::{HeaderMap, OutgoingFor, Publisher, PublishOutcome};
 ///
 /// // A handle that forwards every publish to the publisher it wraps, whichever form that one
 /// // declared.
@@ -502,12 +510,16 @@ crate::__contract_twin! {
         /// # Examples
         ///
         /// ```
-        /// use ruststream::{OutgoingMessage, Publisher};
+        /// use ruststream::{OutgoingMessage, PublishMessageError, Publisher};
         ///
         /// async fn emit<P: Publisher>(publisher: &P) -> Result<(), P::Error> {
         ///     // Bytes the caller holds, in whichever form this publisher declared.
         ///     let msg = OutgoingMessage::new("orders.created", b"{}".as_slice());
-        ///     publisher.publish(msg, None).await
+        ///     // The refusal carries the unsent message; this caller only needs the error.
+        ///     publisher
+        ///         .publish(msg, None)
+        ///         .await
+        ///         .map_err(PublishMessageError::into_error)
         /// }
         /// ```
         ///
@@ -588,6 +600,7 @@ crate::__contract_twin! {
         /// use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublish, MemoryPublisher};
         /// use ruststream::runtime::{PublishBuilder, PublishExt, PublishSink};
         /// use ruststream::{
+        ///     PublishOutcome,
         ///     BytesMut, OutgoingMessage, Outgoing, PairError, PublishPolicy, Publisher, Serialized,
         ///     Take,
         /// };
@@ -706,8 +719,47 @@ crate::__contract_twin! {
         ///
         /// # Errors
         ///
-        /// Returns [`Self::Error`] when the broker rejects the message, the connection is lost, or
-        /// the operation times out.
+        /// Returns a [`PublishMessageError`] over [`Self::Error`] when the broker rejects the
+        /// message, the connection is lost, or the operation times out. It carries the message the
+        /// broker did not send: a [`Lend`] publisher always hands it back, and a [`Take`] publisher
+        /// hands it back when its client returns the buffer. A caller keeps it to try another
+        /// destination, as the error of an `Out` publish does for a handler.
+        ///
+        /// A broker author's `publish` that hands the message back:
+        ///
+        /// ```
+        /// use std::io;
+        ///
+        /// use ruststream::{Lend, OutgoingMessage, PublishMessageError, PublishOutcome, Publisher};
+        /// # #[derive(Clone)]
+        /// # struct Socket;
+        /// # impl Socket {
+        /// #     async fn write(&self, _subject: &str, _payload: &[u8]) -> io::Result<()> {
+        /// #         Err(io::Error::other("connection reset"))
+        /// #     }
+        /// # }
+        ///
+        /// #[derive(Clone)]
+        /// struct SocketPublisher {
+        ///     socket: Socket,
+        /// }
+        ///
+        /// impl Publisher for SocketPublisher {
+        ///     type Payload = Lend;
+        ///     type Error = io::Error;
+        ///     type Options = ();
+        ///
+        ///     async fn publish<'msg>(
+        ///         &self,
+        ///         msg: OutgoingMessage<'msg, &'msg [u8]>,
+        ///         _options: Option<&()>,
+        ///     ) -> PublishOutcome<'msg, io::Error, Lend> {
+        ///         let written = self.socket.write(msg.name(), msg.payload()).await;
+        ///         // The socket only read the bytes, so the refused message goes back whole.
+        ///         written.map_err(|error| PublishMessageError::with_message(error, msg))
+        ///     }
+        /// }
+        /// ```
         fn publish(&self, msg: OutgoingFor<'msg, Self::Payload>, options: Option<&Self::Options>)
             <'msg>
             -> [impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> @send { + Send }];
@@ -740,6 +792,7 @@ crate::__contract_twin! {
         /// ```
         /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         /// use ruststream::memory::MemoryBroker;
+        /// use ruststream::PublishOutcome;
         /// use ruststream::runtime::PublishExt;
         /// use ruststream::{HeaderMap, Outgoing, OutgoingFor, Publisher, Serialized};
         ///

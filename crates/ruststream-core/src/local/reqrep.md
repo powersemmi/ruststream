@@ -15,7 +15,7 @@ Every [`RequestReply`] is a `LocalRequestReply` through a blanket impl.
 # use futures::{Stream, stream};
 # use std::time::Duration;
 #
-use ruststream::{HeaderMap, LocalRequestReply, OutgoingFor, Take};
+use ruststream::{HeaderMap, LocalRequestReply, OutgoingFor, Take, PublishOutcome};
 # use ruststream::{AckError, IncomingMessage, LocalSettle, LocalPublisher};
 # /// The client's state: shared by `Rc`, so nothing built on it is `Send`.
 # #[derive(Default)]

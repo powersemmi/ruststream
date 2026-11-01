@@ -12,7 +12,7 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
-use ruststream::LocalTransactionalPublisher;
+use ruststream::{LocalTransactionalPublisher, PublishOutcome};
 # use ruststream::{BytesMut, LocalPublisher, OutgoingFor, OutgoingMessage, Take};
 # #[derive(Default)]
 # struct Client {

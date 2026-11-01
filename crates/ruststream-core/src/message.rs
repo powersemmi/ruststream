@@ -119,7 +119,7 @@ impl RawMessage {
 /// ```
 /// use std::io;
 ///
-/// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take};
+/// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
 /// # #[derive(Clone)]
 /// # struct Client;
 /// # impl Client {
@@ -151,7 +151,11 @@ impl RawMessage {
 ///         _options: Option<&()>,
 ///     ) -> PublishOutcome<'msg, io::Error, Take> {
 ///         let (topic, payload, headers) = msg.into_parts();
-///         self.client.send(topic, payload.freeze(), headers).await
+///         self.client
+///             .send(topic, payload.freeze(), headers)
+///             .await
+///             // The client consumed the buffer, so the refusal has no message to return.
+///             .map_err(PublishMessageError::new)
 ///     }
 /// }
 /// ```
@@ -185,7 +189,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{BytesMut, OutgoingMessage, Publisher, Take};
+    /// use ruststream::{BytesMut, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
     ///
     /// /// A publisher that files every message under the tenant's namespace. The buffer the
     /// /// publish handed over moves across as it is, never downgraded to a borrow.
@@ -208,7 +212,11 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     ///         let name = format!("{}.{}", self.tenant, msg.name());
     ///         let (_, payload, headers) = msg.into_parts();
     ///         let renamed = OutgoingMessage::with_payload(&name, payload).with_headers(headers);
-    ///         self.inner.publish(renamed, options).await
+    ///         // The renamed message is this wrapper's own, so a refusal carries none back.
+    ///         self.inner
+    ///             .publish(renamed, options)
+    ///             .await
+    ///             .map_err(PublishMessageError::without_message)
     ///     }
     /// }
     /// ```
@@ -329,7 +337,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// ```
     /// use std::io;
     ///
-    /// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take};
+    /// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
     /// # #[derive(Clone)]
     /// # struct Client;
     /// # impl Client {
@@ -355,7 +363,11 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     ///         _options: Option<&()>,
     ///     ) -> PublishOutcome<'msg, io::Error, Take> {
     ///         let topic = msg.name();
-    ///         self.client.send(topic, msg.into_payload().freeze()).await
+    ///         self.client
+    ///             .send(topic, msg.into_payload().freeze())
+    ///             .await
+    ///             // The client consumed the buffer, so the refusal has no message to return.
+    ///             .map_err(PublishMessageError::new)
     ///     }
     /// }
     /// ```
@@ -388,7 +400,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// ```
     /// use std::io;
     ///
-    /// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take};
+    /// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
     /// # #[derive(Clone)]
     /// # struct Client;
     /// # impl Client {
@@ -419,7 +431,11 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     ///     ) -> PublishOutcome<'msg, io::Error, Take> {
     ///         // The destination, the buffer and the map the transforms filled, in one move.
     ///         let (topic, payload, headers) = msg.into_parts();
-    ///         self.client.send(topic, payload.freeze(), headers).await
+    ///         self.client
+    ///             .send(topic, payload.freeze(), headers)
+    ///             .await
+    ///             // The client consumed the buffer, so the refusal has no message to return.
+    ///             .map_err(PublishMessageError::new)
     ///     }
     /// }
     /// ```

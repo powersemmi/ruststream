@@ -588,7 +588,7 @@ impl RedeliveryAddress {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{OutgoingMessage, Publisher, RedeliveryAddress};
+    /// use ruststream::{OutgoingMessage, PublishMessageError, Publisher, RedeliveryAddress};
     ///
     /// /// A broker crate's own redelivery: the copy goes where the descriptor said it reaches the
     /// /// subscription again.
@@ -600,6 +600,7 @@ impl RedeliveryAddress {
     ///     publisher
     ///         .publish(OutgoingMessage::new(address.as_str(), payload), None)
     ///         .await
+    ///         .map_err(PublishMessageError::into_error)
     /// }
     /// ```
     #[must_use]

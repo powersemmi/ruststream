@@ -14,7 +14,7 @@ use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::rc::Rc;
 
-use ruststream::{LocalPublisher, OutgoingFor, Take};
+use ruststream::{LocalPublisher, OutgoingFor, Take, PublishOutcome};
 
 /// The client's outgoing queue, shared by `Rc`.
 #[derive(Default)]

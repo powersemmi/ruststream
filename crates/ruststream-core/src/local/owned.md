@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::rc::Rc;
 
-use ruststream::LocalOwnedTransactions;
+use ruststream::{LocalOwnedTransactions, PublishOutcome};
 # use ruststream::{LocalPublisher, LocalTransaction, OutgoingFor, Take};
 
 # #[derive(Default)]

@@ -52,7 +52,8 @@ use super::bus::Bus;
 ///     let sensor = LocalMemoryPublish.pair(&connected).await.expect("the bus pairs");
 ///     sensor
 ///         .publish(OutgoingMessage::produced("sensors/temp", BytesMut::from(&[21u8][..])), None)
-///         .await?;
+///         .await
+///         .map_err(PublishMessageError::into_error)?;
 ///
 ///     let mut deliveries = core::pin::pin!(readings.stream());
 ///     let Some(Ok(reading)) = deliveries.next().await else {
@@ -180,7 +181,8 @@ impl<const CAP: usize> DescribeServer for LocalMemoryBroker<CAP> {
 ///     connected
 ///         .publisher()
 ///         .publish(OutgoingMessage::produced("actuator/cmd", BytesMut::from("open")), None)
-///         .await?;
+///         .await
+///         .map_err(PublishMessageError::into_error)?;
 ///     let mut deliveries = core::pin::pin!(commands.stream());
 ///     let Some(Ok(command)) = deliveries.next().await else {
 ///         unreachable!("the bus is open and its stream yields no error");
@@ -218,7 +220,7 @@ impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
     ///     celsius: u8,
     /// ) -> Result<(), LocalMemoryError> {
     ///     let reading = OutgoingMessage::produced("sensors/temp", BytesMut::from(&[celsius][..]));
-    ///     connected.publisher().publish(reading, None).await
+    ///     connected.publisher().publish(reading, None).await.map_err(PublishMessageError::into_error)
     /// }
     ///
     /// let published = embassy_futures::block_on(async {
@@ -344,6 +346,7 @@ impl ClosedLocalMemoryBroker {
 ///     publisher
 ///         .publish(OutgoingMessage::produced("sensors/temp", BytesMut::from("21")), None)
 ///         .await
+///         .map_err(PublishMessageError::into_error)
 /// }
 ///
 /// assert_eq!(embassy_futures::block_on(sensor(LocalMemoryPublish)), Ok(()));
@@ -382,7 +385,7 @@ impl<const CAP: usize> DefaultPublish for ConnectedLocalMemoryBroker<CAP> {
 /// /// A full subscription refuses the publish, and the sensor keeps the reading for later.
 /// async fn report(publisher: &LocalMemoryPublisher<1>, celsius: u8) -> bool {
 ///     let reading = OutgoingMessage::produced("sensors/temp", BytesMut::from(&[celsius][..]));
-///     match publisher.publish(reading, None).await {
+///     match publisher.publish(reading, None).await.map_err(PublishMessageError::into_error) {
 ///         Ok(()) => true,
 ///         Err(LocalMemoryError::Full { .. }) => false,
 ///         Err(other) => panic!("the bus is open: {other}"),
@@ -454,6 +457,7 @@ impl<const CAP: usize> LocalPublisher for LocalMemoryPublisher<CAP> {
 ///     publisher
 ///         .publish(OutgoingMessage::produced("sensors/temp", BytesMut::from("21")), None)
 ///         .await
+///         .map_err(PublishMessageError::into_error)
 /// }
 ///
 /// assert_eq!(embassy_futures::block_on(late_publish()), Err(LocalMemoryError::ShutDown));

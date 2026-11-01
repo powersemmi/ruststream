@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::rc::Rc;
 
-use ruststream::{LocalTransaction, OutgoingFor, Take};
+use ruststream::{LocalTransaction, OutgoingFor, Take, PublishOutcome};
 
 #[derive(Default)]
 struct Client {
