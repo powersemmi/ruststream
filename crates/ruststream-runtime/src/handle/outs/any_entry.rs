@@ -47,7 +47,7 @@ impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body> 
 pub trait MaybeSendPublisher: Publisher {}
 
 #[cfg(feature = "tokio")]
-impl<Entry: Publisher + ?Sized> MaybeSendPublisher for Entry {}
+impl<Entry: Publisher> MaybeSendPublisher for Entry {}
 
 /// See the `tokio` form: without the feature every entry qualifies.
 #[cfg(not(feature = "tokio"))]

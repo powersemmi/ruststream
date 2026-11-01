@@ -98,7 +98,7 @@ pub trait PublishSink: Send {
 
 // A shared publisher reference is the ordinary sink: publishing takes `&self`, so the builder
 // only ever borrows it.
-impl<P: Publisher + ?Sized> PublishSink for &P {
+impl<P: Publisher> PublishSink for &P {
     type Payload = P::Payload;
     type Error = P::Error;
     type Options = P::Options;
