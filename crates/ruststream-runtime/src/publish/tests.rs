@@ -75,6 +75,7 @@ mod fixtures {
         pub(super) fail_begin: bool,
         pub(super) fail_commit: bool,
         pub(super) fail_abort: bool,
+        pub(super) refuse_publish: bool,
         pub(super) published: Arc<AtomicUsize>,
         pub(super) aborted: Arc<AtomicUsize>,
     }
@@ -93,11 +94,15 @@ mod fixtures {
 
         fn publish<'msg>(
             &self,
-            _msg: OutgoingMessage<'msg, &'msg [u8]>,
+            msg: OutgoingMessage<'msg, &'msg [u8]>,
             _options: Option<&Self::Options>,
         ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
             self.published.fetch_add(1, Ordering::SeqCst);
-            ready(Ok(()))
+            ready(if self.refuse_publish {
+                Err(ruststream_core::PublishMessageError::with_message(RiggedError, msg))
+            } else {
+                Ok(())
+            })
         }
     }
 
@@ -770,6 +775,33 @@ async fn a_scoped_publish_reports_an_encode_failure_without_settling() {
         err.to_string(),
         "failed to encode the value for a transactional publish",
     );
+    scope.abort().await.expect("abort failed");
+}
+
+/// A message the transaction refuses comes back inside the error, with the bytes that were
+/// encoded for it.
+#[cfg(feature = "json")]
+#[tokio::test]
+async fn a_scoped_publish_returns_the_message_the_transaction_refused() {
+    use fixtures::Rigged;
+
+    let publisher = Rigged {
+        refuse_publish: true,
+        ..Rigged::default()
+    };
+    let mut scope = publisher.begin().await.expect("begin failed");
+
+    let err = scope
+        .publish("out", &3_u32)
+        .await
+        .expect_err("the transaction refuses the message");
+
+    let TransactionPublishError::Publish { message, .. } = err else {
+        panic!("a broker rejection is the publish arm");
+    };
+    let message = message.expect("the transaction gave the message back");
+    assert_eq!(message.destination(), "out");
+    assert_eq!(message.payload().map(AsRef::as_ref), Some(&b"3"[..]));
     scope.abort().await.expect("abort failed");
 }
 
