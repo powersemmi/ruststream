@@ -9,7 +9,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 #[cfg(feature = "json")]
 use core::fmt;
-use std::sync::Arc;
 
 #[cfg(feature = "json")]
 use crate::PublishPolicy;
@@ -46,6 +45,7 @@ use crate::{BytesMut, Lend, PayloadForm};
 #[cfg(feature = "json")]
 mod fixtures {
     use alloc::boxed::Box;
+    use alloc::sync::Arc;
     use core::future::ready;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::collections::HashMap;

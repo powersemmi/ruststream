@@ -9,8 +9,6 @@ use std::error::Error;
 use std::future::ready;
 use std::pin::pin;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
 
 use futures::{Stream, StreamExt, stream};
@@ -21,7 +19,7 @@ use ruststream::memory::{
 use ruststream::testing::InProcess;
 use ruststream::{
     AckError, BatchSubscriber, Broker, BrokerMoves, BytesMut, ConnectedBroker, DefaultPublish,
-    DescribeServer, HeaderMap, IncomingMessage, Lend, LocalBatchSubscriber, LocalOwnedTransactions,
+    DescribeServer, HeaderMap, IncomingMessage, LocalBatchSubscriber, LocalOwnedTransactions,
     LocalPublisher, LocalRequestReply, LocalSeekable, LocalSeeker, LocalSettle, LocalSubscriber,
     LocalTransaction, LocalTransactionalPublisher, OutgoingFor, OutgoingMessage, OwnedTransactions,
     PairError, Positioned, PublishPolicy, Publisher, RedeliveryAddressed, RequestReply, Seekable,

@@ -69,7 +69,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for FailsOncePolicy {
 
     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
         Ok(FailsOnce {
-            armed: AtomicBool::new(true),
+            armed: Arc::new(AtomicBool::new(true)),
             inner: Publish.pair(connected).await?,
         })
     }

@@ -106,7 +106,7 @@ impl Probe {
     fn taking(claim: Claim) -> Self {
         Self {
             claim,
-            seen: Mutex::new(None),
+            seen: Arc::new(Mutex::new(None)),
         }
     }
 

@@ -517,6 +517,7 @@ mod tests {
     use crate::Settle;
     use alloc::borrow::ToOwned;
     use alloc::string::String;
+    use alloc::sync::Arc;
     use alloc::vec::Vec;
     use core::future::ready;
     use std::io;
@@ -629,7 +630,7 @@ mod tests {
         let copy = AddressedCopy {
             live: Recording {
                 base,
-                sent: Mutex::new(Vec::new()),
+                sent: Arc::new(Mutex::new(Vec::new())),
             },
             address: "jobs".to_owned(),
             stack: PublishTransformStack {
@@ -664,7 +665,7 @@ mod tests {
             .await
             .expect("the broker takes the copy");
 
-        let sent = copy.live.sent.into_inner().expect("one test thread");
+        let sent = copy.live.sent.lock().expect("one test thread").clone();
         let [(name, payload, headers, options)] = sent.as_slice() else {
             panic!("one publish, got {sent:?}");
         };
