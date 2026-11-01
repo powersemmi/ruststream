@@ -19,7 +19,7 @@ use crate::{
     CallerName, Connected, Handle, Name, OutgoingDestination, Router, SubscriberBuilder,
     SubscriberSettings, nonzero, subscriber,
 };
-use crate::{Context, Detach, FailurePolicies, HandlerOutcome, HeaderMap, SubscriptionEnd};
+use crate::{Context, FailurePolicies, HandlerOutcome, HeaderMap, SendHost, SubscriptionEnd};
 
 #[derive(Debug, thiserror::Error)]
 #[error("subscriber stream failed")]
@@ -235,7 +235,7 @@ impl BatchHandler<Vec<PlainMessage>, (), ()> for ReportingBatchHandler {
         batch
     }
 
-    fn handle_batch<Host: Detach>(
+    fn handle_batch<Host: SendHost<()>>(
         &self,
         batch: Vec<PlainMessage>,
         _scratch: &mut Self::Scratch,
@@ -300,7 +300,7 @@ where
     S: BatchSubscriber<Message = PlainMessage, Batch = Vec<PlainMessage>> + Send + 'static,
 {
     move |shutdown, seen| {
-        spawn_batch_dispatch::<_, _, (), _>(
+        spawn_batch_dispatch::<_, _, (), _, _>(
             subscriber,
             Arc::new(ReportingBatchHandler { seen }),
             shutdown,

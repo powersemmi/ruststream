@@ -26,7 +26,7 @@ use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::HandlerOutcome;
-use super::host::Detach;
+use super::host::SendHost;
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
@@ -213,7 +213,7 @@ where
         batch.into_iter().collect()
     }
 
-    async fn handle_batch<Host: Detach>(
+    async fn handle_batch<Host: SendHost<D::Context>>(
         &self,
         batch: Vec<M>,
         values: &mut Self::Scratch,

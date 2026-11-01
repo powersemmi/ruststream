@@ -25,8 +25,8 @@ use ruststream_core::{BuildContext, LocalIncomingMessage, LocalSubscriber};
 use ruststream_runtime::{
     Delivery, DeliverySlot, DispatchFailure, Dispatched, Halt, HeadersAtOnce, HostDetach,
     KeepCopies, Keeping, LocalDetach, LocalDispatch, LocalHandler, LocalPipeline, LocalPlanned,
-    LocalRoute, NoCopies, OnOneThread, PrepareCopy, PrepareKept, RetryDestinationsDeclared, Router,
-    RouterCommit, RouterWith, ShutdownWait, dispatch,
+    LocalRoute, NoCopies, OnOneThread, PrepareCopy, PrepareKept, RetryCopies,
+    RetryDestinationsDeclared, Router, RouterCommit, RouterWith, ShutdownWait, dispatch,
 };
 use tracing::error;
 
@@ -83,7 +83,7 @@ pub trait Lanes {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: HostDetach<Kept: PrepareKept<Cx>>;
+        Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>;
 }
 
 impl Lanes for OneLane {
@@ -99,7 +99,7 @@ impl Lanes for OneLane {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: HostDetach<Kept: PrepareKept<Cx>>,
+        Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
         route.run_sequential(signal, state, host)
     }
@@ -118,7 +118,7 @@ impl<const WORKERS: usize> Lanes for Pool<WORKERS> {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: HostDetach<Kept: PrepareKept<Cx>>,
+        Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
         run_lanes::<WORKERS, _, _, _, _, _, _>(route, signal, state, host, false)
     }
@@ -137,7 +137,7 @@ impl<const LANES: usize> Lanes for Keyed<LANES> {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: HostDetach<Kept: PrepareKept<Cx>>,
+        Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
         run_lanes::<LANES, _, _, _, _, _, _>(route, signal, state, host, true)
     }
@@ -221,7 +221,7 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
     Body: LocalHandler<Sub::Message, Cx, State>,
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
     Signal: ShutdownWait + Halt + Clone,
-    Host: HostDetach<Kept: PrepareKept<Cx>>,
+    Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
 {
     let LocalRoute {
         mut subscriber,
@@ -328,7 +328,7 @@ async fn work<Message, Body, Cx, State, Signal, Host, const COUNT: usize>(
     Body: LocalHandler<Message, Cx, State>,
     Cx: BuildContext<Message> + Send + Sync + 'static,
     Signal: Halt,
-    Host: HostDetach<Kept: PrepareKept<Cx>>,
+    Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
 {
     // One encode buffer per worker, as the sequential loop keeps one.
     let mut encode = BytesMut::new();

@@ -16,7 +16,7 @@ use crate::IncomingMessage;
 use crate::handler::HandlerResult;
 use crate::host::{HostDetach, PrepareKept};
 use crate::publish::PublishContext;
-use crate::redelivery::DeferredRetry;
+use crate::redelivery::{RetryCopies, RetryRoute};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Coordinator, in_harness_scope};
 use crate::{AckError, HeaderMap, LocalIncomingMessage, OutgoingMessage, RetryDeclaration, Str};
@@ -50,7 +50,7 @@ pub(crate) async fn settle_outcome<M, C, Host>(
 ) where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach<Kept: PrepareKept<C>>,
+    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     let ack_result = match outcome {
         HandlerResult::Ack => slot.take().ack().await,
@@ -153,7 +153,7 @@ async fn settle_retry<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach<Kept: PrepareKept<C>>,
+    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if delivery.declaration.declares_nothing() {
         return slot.take().nack(true).await;
@@ -161,7 +161,7 @@ where
     // The broker moves this subscription's deliveries itself: its requeue is what an immediate
     // retry is, and the declaration is the broker's to apply, so no cap is read here, as on the
     // native delayed path.
-    let Some(path) = copy_path(delivery, host) else {
+    let Some(path) = copy_path(host) else {
         return slot.take().nack(true).await;
     };
     match redelivery_of(slot.get(), &delivery.declaration) {
@@ -203,12 +203,12 @@ where
     }
 }
 
-/// The way a copy of a failed delivery leaves: the subscription's erased retry publisher, or
+/// The way a copy of a failed delivery leaves: the subscription's retry publisher, or
 /// the store of copies the runner's host keeps in place.
-enum CopyPath<'a, C, Kept> {
+enum CopyPath<'a, Retry, Kept> {
     /// A copy published through the registration's retry publisher, its timer the runner's
     /// detached work.
-    Erased(&'a DeferredRetry<C>),
+    Published(&'a Arc<RetryRoute<Retry>>),
     /// A copy written into a record of the host's store, published from there.
     Kept(&'a Kept),
 }
@@ -222,14 +222,12 @@ pub(super) enum Target<'a> {
     DeadLetter(&'a str),
 }
 
-/// The copy path of this delivery: the registration's retry publisher where it has one, the
-/// host's store of kept copies otherwise; `None` where the broker moves the delivery itself.
-fn copy_path<'a, C, Host: HostDetach>(
-    delivery: &'a Delivery<C>,
-    host: &'a Host,
-) -> Option<CopyPath<'a, C, Host::Kept>> {
-    if let Some(retry) = delivery.retry.as_ref() {
-        return Some(CopyPath::Erased(retry));
+/// The copy path of this delivery: the registration's retry publisher where the host carries
+/// one, the host's store of kept copies otherwise; `None` where the broker moves the delivery
+/// itself.
+fn copy_path<Host: HostDetach>(host: &Host) -> Option<CopyPath<'_, Host::Retry, Host::Kept>> {
+    if let Some(route) = host.retry() {
+        return Some(CopyPath::Published(route));
     }
     host.kept().map(CopyPath::Kept)
 }
@@ -248,7 +246,7 @@ async fn send_copy<M, C, Host>(
     name: &str,
     target: Target<'_>,
     delay: Option<Duration>,
-    path: CopyPath<'_, C, Host::Kept>,
+    path: CopyPath<'_, Host::Retry, Host::Kept>,
     delivery: &Delivery<C>,
     host: &Host,
     build_cx: fn(&M) -> C,
@@ -256,10 +254,10 @@ async fn send_copy<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach<Kept: PrepareKept<C>>,
+    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     match path {
-        CopyPath::Erased(retry) => {
+        CopyPath::Published(retry) => {
             let destination = match target {
                 Target::Subscription => retry.destination.clone(),
                 Target::DeadLetter(destination) => Some(Arc::from(destination)),
@@ -341,7 +339,7 @@ async fn settle_nack_after<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach<Kept: PrepareKept<C>>,
+    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if slot.get().supports_nack_after() {
         // The cap is read before the delay reaches the broker: a native redelivery would otherwise
@@ -351,7 +349,7 @@ where
         // counts nothing; a broker that moves a spent delivery itself applies the declaration
         // itself.
         if delivery.declaration.max_attempts().is_some()
-            && let Some(path) = copy_path(delivery, host)
+            && let Some(path) = copy_path(host)
         {
             match redelivery_of(slot.get(), &delivery.declaration) {
                 // Under a cap a destination takes only the spent deliveries.
@@ -384,7 +382,7 @@ where
         return accepted;
     }
 
-    let Some(path) = copy_path(delivery, host) else {
+    let Some(path) = copy_path(host) else {
         return requeue_now::<M, Host>(slot, name, &delivery.declaration).await;
     };
 
@@ -477,7 +475,7 @@ async fn dead_letter<M, C, Host>(
     name: &str,
     destination: &str,
     at_cap: bool,
-    path: CopyPath<'_, C, Host::Kept>,
+    path: CopyPath<'_, Host::Retry, Host::Kept>,
     delivery: &Delivery<C>,
     host: &Host,
     build_cx: fn(&M) -> C,
@@ -485,7 +483,7 @@ async fn dead_letter<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach<Kept: PrepareKept<C>>,
+    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if at_cap {
         warn_at_cap(name, attempt_of(slot.get()), Some(destination));
@@ -571,7 +569,7 @@ async fn publish_copy<M, C, Host>(
     name: &str,
     destination: Option<Arc<str>>,
     delay: Option<Duration>,
-    retry: &DeferredRetry<C>,
+    retry: &Arc<RetryRoute<Host::Retry>>,
     delivery: &Delivery<C>,
     host: &Host,
     build_cx: fn(&M) -> C,
@@ -579,10 +577,10 @@ async fn publish_copy<M, C, Host>(
 where
     M: LocalIncomingMessage,
     C: Send + Sync + 'static,
-    Host: HostDetach<Kept: PrepareKept<C>>,
+    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
-    let publisher = Arc::clone(&retry.publisher);
-    let subscription: Arc<str> = Arc::from(name);
+    let route = Arc::clone(retry);
+    let subscription = Arc::clone(&route.subscription);
     let target = destination.unwrap_or_else(|| Arc::clone(&subscription));
 
     // Settling consumes the message, so capture everything the copy needs first: its bytes, the
@@ -616,7 +614,7 @@ where
     if reserved && !host.reserve() {
         warn!(
             target: "ruststream::dispatch",
-            subscription = %subscription,
+            subscription = %name,
             "the store of delayed retries is full; requeuing the delivery now",
         );
         return slot.take().nack(true).await;
@@ -631,31 +629,41 @@ where
         }
     }
 
-    let republish = async move {
-        let cx = PublishContext::new(&subscription, &delivered, &context);
-        let copy = OutgoingMessage::new(target.as_ref(), payload.as_ref()).with_headers(headers);
-        if let Err(err) = publisher.publish_copy(copy, &cx).await {
-            warn!(
-                target: "ruststream::dispatch",
-                subscription = %subscription,
-                destination = %target,
-                error = %err,
-                "publishing the retry copy failed; message lost",
-            );
-        }
-    };
-
+    // The copy's future is built when it is due, not when it is scheduled: the task that waits
+    // out the delay then holds the copy's data and the timer, and the publish future takes the
+    // timer's place once it has fired, so the task is as large as its larger half rather than
+    // both.
+    //
     // The copy leaves after the handler returned, so the harness watching the delivery is
     // handed on to it: the copy is one of the delivery's publishes.
     #[cfg(feature = "testing")]
-    let republish = in_harness_scope(harness_scope(delivery), republish);
+    let scope = harness_scope(delivery);
+    let republish = move || {
+        let republish = async move {
+            let cx = PublishContext::new(&subscription, &delivered, &context);
+            let copy =
+                OutgoingMessage::new(target.as_ref(), payload.as_ref()).with_headers(headers);
+            if let Err(err) = route.publisher.publish_copy(copy, &cx).await {
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %subscription,
+                    destination = %target,
+                    error = %err,
+                    "publishing the retry copy failed; message lost",
+                );
+            }
+        };
+        #[cfg(feature = "testing")]
+        let republish = in_harness_scope(scope, republish);
+        republish
+    };
 
     // A zero delay is an immediate copy: a timer task for it would cost a task allocation and
     // two scheduler turns to publish the same copy a little later.
     let Some(delay) = delay else {
         // An immediate copy is awaited on the dispatch path: there is no timer to wait for, and a
         // detached task would let the loop pull the next delivery before this one is back.
-        republish.await;
+        republish().await;
         return Ok(());
     };
 
@@ -664,12 +672,12 @@ where
     // drives the reaction, so a test sees the copy rather than a race.
     #[cfg(feature = "testing")]
     if let Some(coordinator) = delivery.hooks.coordinator() {
-        coordinator.schedule_redelivery_future(delay, republish);
+        coordinator.schedule_redelivery_future(delay, republish());
         return Ok(());
     }
     // The timer is the delivery's own work, so it runs where the delivery ran; being tracked, a
     // graceful shutdown waits for it and the copy leaves before the broker closes.
-    host.detach_after(delay, republish);
+    host.detach_after_with(delay, republish);
     Ok(())
 }
 
@@ -695,8 +703,7 @@ mod tests {
     };
     use crate::IncomingMessage;
     use crate::host::Detach;
-    use crate::redelivery::bare_retry_publisher;
-    use crate::testkit::Tracked;
+    use crate::testkit::{Tracked, copying};
     use crate::{Lend, Publisher, Subscriber};
     use ruststream::memory::MemoryBroker;
 
@@ -773,8 +780,8 @@ mod tests {
     async fn a_failed_deferred_republish_is_logged_rather_than_propagated() {
         let rejecting = RejectingPublisher::default();
         let attempts = Arc::clone(&rejecting.attempts);
-        let delivery = Delivery::deferring_to(bare_retry_publisher(rejecting), "orders");
-        let host = Tracked(TaskTracker::new());
+        let delivery = Delivery::empty();
+        let host = copying(Tracked(TaskTracker::new()), rejecting, "orders");
         let settled = Arc::new(AtomicU8::new(0));
         settle_nack_after(
             &mut Slot::new(plain(&[], &settled)),
@@ -791,8 +798,8 @@ mod tests {
         // is that the deferred task reports it instead of panicking the runtime.
         assert_eq!(settled.load(Ordering::SeqCst), 1);
         // The paused clock jumps to the copy's timer once nothing else can run.
-        host.0.close();
-        host.0.wait().await;
+        host.host.0.close();
+        host.host.0.wait().await;
         assert_eq!(
             attempts.load(Ordering::SeqCst),
             1,
@@ -807,11 +814,12 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_deferred_copy_lends_the_buffer_the_dispatch_holds() {
         let (reported, mut arrived) = mpsc::unbounded_channel();
-        let delivery = Delivery::deferring_to(
-            bare_retry_publisher(FormReportingPublisher(reported)),
+        let delivery = Delivery::empty();
+        let host = copying(
+            Tracked(TaskTracker::new()),
+            FormReportingPublisher(reported),
             "orders",
         );
-        let host = Tracked(TaskTracker::new());
 
         let settled = Arc::new(AtomicU8::new(0));
         let delivered = plain(&[], &settled);
@@ -844,8 +852,8 @@ mod tests {
         let broker = MemoryBroker::new();
         // Subscribe before publishing: the in-memory broker does not buffer earlier messages.
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-        let host = Tracked(TaskTracker::new());
+        let delivery = Delivery::empty();
+        let host = copying(Tracked(TaskTracker::new()), broker.publisher(), "orders");
 
         let settled = Arc::new(AtomicU8::new(0));
         let msg = plain(&[], &settled);
@@ -883,8 +891,8 @@ mod tests {
     async fn fallback_defers_republish_when_the_transport_cannot_settle() {
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-        let host = Tracked(TaskTracker::new());
+        let delivery = Delivery::empty();
+        let host = copying(Tracked(TaskTracker::new()), broker.publisher(), "orders");
 
         let settled = Arc::new(AtomicU8::new(0));
         let msg = plain_on(&[], &settled, Settlement::Unsupported);
@@ -918,8 +926,8 @@ mod tests {
     async fn a_rejected_settle_aborts_the_fallback() {
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-        let host = Tracked(TaskTracker::new());
+        let delivery = Delivery::empty();
+        let host = copying(Tracked(TaskTracker::new()), broker.publisher(), "orders");
 
         let settled = Arc::new(AtomicU8::new(0));
         let msg = plain_on(&[], &settled, Settlement::Rejected);
@@ -949,8 +957,8 @@ mod tests {
     async fn fallback_increments_an_existing_retry_count() {
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-        let host = Tracked(TaskTracker::new());
+        let delivery = Delivery::empty();
+        let host = copying(Tracked(TaskTracker::new()), broker.publisher(), "orders");
 
         let settled = Arc::new(AtomicU8::new(0));
         let msg = plain(&[(RETRY_COUNT_HEADER, "4")], &settled);
@@ -1028,8 +1036,8 @@ mod tests {
     async fn a_full_store_requeues_the_delivery_instead_of_copying_it() {
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-        let host = Store::with_room(0);
+        let delivery = Delivery::empty();
+        let host = copying(Store::with_room(0), broker.publisher(), "orders");
         let settled = Arc::new(AtomicU8::new(0));
         settle_nack_after(
             &mut Slot::new(plain(&[], &settled)),
@@ -1054,8 +1062,8 @@ mod tests {
     async fn a_store_with_room_takes_the_copy() {
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("orders");
-        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-        let host = Store::with_room(1);
+        let delivery = Delivery::empty();
+        let host = copying(Store::with_room(1), broker.publisher(), "orders");
         let settled = Arc::new(AtomicU8::new(0));
         settle_nack_after(
             &mut Slot::new(plain(&[], &settled)),
@@ -1069,7 +1077,7 @@ mod tests {
         .unwrap();
         assert_eq!(settled.load(Ordering::SeqCst), 1);
         assert_eq!(
-            host.room.load(Ordering::SeqCst),
+            host.host.room.load(Ordering::SeqCst),
             0,
             "the copy holds its room"
         );
@@ -1083,8 +1091,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_rejected_settle_gives_the_room_back() {
         let broker = MemoryBroker::new();
-        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-        let host = Store::with_room(1);
+        let delivery = Delivery::empty();
+        let host = copying(Store::with_room(1), broker.publisher(), "orders");
         let settled = Arc::new(AtomicU8::new(0));
         settle_nack_after(
             &mut Slot::new(plain_on(&[], &settled, Settlement::Rejected)),
@@ -1096,8 +1104,8 @@ mod tests {
         )
         .await
         .expect_err("the rejected settle is reported");
-        assert_eq!(host.released.load(Ordering::SeqCst), 1);
-        assert_eq!(host.room.load(Ordering::SeqCst), 1);
+        assert_eq!(host.host.released.load(Ordering::SeqCst), 1);
+        assert_eq!(host.host.room.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -1135,8 +1143,8 @@ mod tests {
         // A separate broker backs the retry publisher; if the fallback fired, the republish would
         // land here and never on `sub`.
         let other = MemoryBroker::new();
-        let delivery = Delivery::deferring_to(bare_retry_publisher(other.publisher()), "orders");
-        let host = Tracked(TaskTracker::new());
+        let delivery = Delivery::empty();
+        let host = copying(Tracked(TaskTracker::new()), other.publisher(), "orders");
 
         let msg = {
             let mut stream = core::pin::pin!(sub.stream());
@@ -1213,8 +1221,8 @@ mod tests {
     #[tokio::test]
     async fn an_undeclared_immediate_retry_stays_a_broker_requeue() {
         let broker = MemoryBroker::new();
-        let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-        let host = Tracked(TaskTracker::new());
+        let delivery = Delivery::empty();
+        let host = copying(Tracked(TaskTracker::new()), broker.publisher(), "orders");
         let settled = Arc::new(AtomicU8::new(0));
         settle_outcome(
             &mut Slot::new(plain(&[], &settled)),

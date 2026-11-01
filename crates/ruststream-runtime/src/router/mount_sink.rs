@@ -10,13 +10,14 @@ use crate::handler::Handler;
 use crate::lifecycle::BoxError;
 use crate::metadata::HandlerMetadata;
 use crate::middleware::BlanketLayer;
-use crate::redelivery::ScopeDelivery;
+use crate::redelivery::{OpenedSubscription, RetryCopies, RetryRoute, ScopeDelivery};
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber};
 
 /// What opening one subscription at startup hands the runner: the subscriber, its handler and the
-/// publish context its deliveries run under, which the runner keeps beside its own handle.
+/// publish context its deliveries run under, which the runner keeps beside its own handle, and the
+/// route its retry copies leave through.
 #[doc(hidden)]
-pub type Opened<Sub, Body, Cx> = (Sub, Body, Delivery<Cx>);
+pub type Opened<Sub, Body, Cx, Retry> = (Sub, Body, Delivery<Cx>, Option<RetryRoute<Retry>>);
 
 /// The collector a router's registrations are pushed into when it mounts.
 ///
@@ -46,7 +47,7 @@ pub trait MountSink<B: Broker, State> {
     /// type borrows the layer it was applied through and cannot leave the future that holds it.
     // Each part is the registration's own; bundling them would hide that.
     #[allow(clippy::too_many_arguments)]
-    fn push_workers<Open, Opening, Sub, Body, Cx, Global>(
+    fn push_workers<Open, Opening, Sub, Body, Cx, Global, Retry>(
         &mut self,
         meta: HandlerMetadata,
         policies: FailurePolicies,
@@ -55,17 +56,18 @@ pub trait MountSink<B: Broker, State> {
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<Opened<Sub, Body, Cx>, BoxError>> + Send,
+        Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>> + Send,
         Sub: Subscriber + Send + 'static,
         Sub::Message: Send + Sync + 'static,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         State: Send + Sync + 'static,
         Body: Handler<Sub::Message, Cx, State> + 'static,
-        Global: BlanketLayer + Send + 'static;
+        Global: BlanketLayer + Send + 'static,
+        Retry: RetryCopies<Cx>;
 
     /// The batch counterpart of [`push_workers`](Self::push_workers): the loop drives
     /// [`BatchSubscriber::batches`] with `batch_size`.
-    fn push_batch<Open, Opening, Sub, Body, Cx>(
+    fn push_batch<Open, Opening, Sub, Body, Cx, Retry>(
         &mut self,
         meta: HandlerMetadata,
         policies: FailurePolicies,
@@ -74,16 +76,17 @@ pub trait MountSink<B: Broker, State> {
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<Opened<Sub, Body, Cx>, BoxError>> + Send,
+        Opening: Future<Output = Result<Opened<Sub, Body, Cx, Retry>, BoxError>> + Send,
         Sub: BatchSubscriber + Send + 'static,
         Sub::Message: Send + 'static,
         Sub::Batch: 'static,
         Cx: Send + Sync + 'static,
-        Body: BatchHandler<Sub::Batch, Cx, State> + 'static;
+        Body: BatchHandler<Sub::Batch, Cx, State> + 'static,
+        Retry: RetryCopies<Cx>;
     /// A subscription whose handler the mount built in full, layers included: the runner takes
     /// it now and shares it with the loop it spawns once `open` has opened the subscriber. The
     /// rest is [`push_workers`](Self::push_workers).
-    fn push_mounted<Open, Opening, Sub, Body, Cx>(
+    fn push_mounted<Open, Opening, Sub, Body, Cx, Retry>(
         &mut self,
         meta: HandlerMetadata,
         policies: FailurePolicies,
@@ -92,15 +95,16 @@ pub trait MountSink<B: Broker, State> {
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<(Sub, Delivery<Cx>), BoxError>> + Send,
+        Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>> + Send,
         Sub: Subscriber + Send + 'static,
         Sub::Message: Send + Sync + 'static,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         State: Send + Sync + 'static,
-        Body: Handler<Sub::Message, Cx, State> + 'static;
+        Body: Handler<Sub::Message, Cx, State> + 'static,
+        Retry: RetryCopies<Cx>;
 
     /// The batch counterpart of [`push_mounted`](Self::push_mounted).
-    fn push_batch_mounted<Open, Opening, Sub, Body, Cx>(
+    fn push_batch_mounted<Open, Opening, Sub, Body, Cx, Retry>(
         &mut self,
         meta: HandlerMetadata,
         policies: FailurePolicies,
@@ -110,10 +114,11 @@ pub trait MountSink<B: Broker, State> {
         open: Open,
     ) where
         Open: FnOnce(Arc<Connected<B>>, Arc<ScopeDelivery>, Arc<str>) -> Opening + Send + 'static,
-        Opening: Future<Output = Result<(Sub, Delivery<Cx>), BoxError>> + Send,
+        Opening: Future<Output = Result<OpenedSubscription<Sub, Cx, Retry>, BoxError>> + Send,
         Sub: BatchSubscriber + Send + 'static,
         Sub::Message: Send + 'static,
         Sub::Batch: 'static,
         Cx: Send + Sync + 'static,
-        Body: BatchHandler<Sub::Batch, Cx, State> + 'static;
+        Body: BatchHandler<Sub::Batch, Cx, State> + 'static,
+        Retry: RetryCopies<Cx>;
 }

@@ -12,13 +12,12 @@ use futures::StreamExt;
 use tokio::{task, time};
 use tokio_util::task::TaskTracker;
 
-use crate::testkit::Tracked;
+use crate::testkit::{Tracked, copying};
 
 use super::super::dispatch::{Delivery, RETRY_COUNT_HEADER};
 use super::super::input::Decoded;
 use super::*;
 use crate::codec::{CodecError, JsonCodec};
-use crate::redelivery::bare_retry_publisher;
 use crate::testkit::Shutdown;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 use crate::testkit::log_capture;
@@ -707,8 +706,8 @@ async fn deferred_copies(
 async fn a_uniform_batch_retry_after_defers_a_republish() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-    let host = Tracked(TaskTracker::new());
+    let delivery = Delivery::empty();
+    let host = copying(Tracked(TaskTracker::new()), broker.publisher(), "orders");
 
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
         ready(HandlerOutcome::retry_after(DEFER))
@@ -742,8 +741,8 @@ async fn a_uniform_batch_retry_after_defers_a_republish() {
 async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-    let host = Tracked(TaskTracker::new());
+    let delivery = Delivery::empty();
+    let host = copying(Tracked(TaskTracker::new()), broker.publisher(), "orders");
 
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
         ready(vec![
@@ -778,8 +777,8 @@ async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
 async fn a_deferred_decode_rejection_is_republished() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-    let host = Tracked(TaskTracker::new());
+    let delivery = Delivery::empty();
+    let host = copying(Tracked(TaskTracker::new()), broker.publisher(), "orders");
 
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
         ready(HandlerOutcome::ack())
@@ -831,8 +830,8 @@ impl<'p> SliceHandler<Frame<'p>> for DeferFrames {
 async fn a_split_batch_defers_the_rejected_and_the_accepted_alike() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::deferring_to(bare_retry_publisher(broker.publisher()), "orders");
-    let host = Tracked(TaskTracker::new());
+    let delivery = Delivery::empty();
+    let host = copying(Tracked(TaskTracker::new()), broker.publisher(), "orders");
 
     // The middle element is empty, which `Frame` refuses to construct from.
     let handler = DeserializedBatch::<_, Frame<'static>, _>::over(DeferFrames)

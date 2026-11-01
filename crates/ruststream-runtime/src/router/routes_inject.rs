@@ -25,7 +25,7 @@ use crate::metadata::HandlerMetadata;
 use crate::middleware::BlanketLayer;
 use crate::publish::PublishPipeline;
 use crate::redelivery::{
-    CopyPathAddress, CopyPathPairing, RetrySetup, ScopeDelivery, open_subscription,
+    CopyPathAddress, CopyPathPairing, RetrySetup, RetrySlot, ScopeDelivery, open_subscription,
 };
 use crate::retry::RetryOpen;
 
@@ -163,18 +163,20 @@ where
     Extra: Send + Sync + 'static,
 {
     type Context = Def::Context;
+    type Copies = Source::Copies;
 
-    fn mount_one<G, PP, Sink>(
+    fn mount_one<G, PP, Sink, Slot>(
         self,
         global: &G,
         _pipeline: &PP,
         retry_pipeline: &RetryPipeline,
         sink: &mut Sink,
-        setup: RetrySetup<B, Def::Context>,
+        setup: RetrySetup<B, Def::Context, Slot>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
         Sink: MountSink<B, State>,
+        Slot: RetrySlot<B, Def::Context, Source::Copies, RetryPipeline>,
     {
         let Self {
             source,
@@ -196,7 +198,7 @@ where
             workers,
             global,
             async move |connected: Arc<Connected<B>>, scope: Arc<ScopeDelivery>, name: Arc<str>| {
-                let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
+                let (subscriber, delivery, retry) = open_subscription::<B, _, Def::Context, _>(
                     source,
                     connected.as_ref(),
                     &scope,
@@ -213,7 +215,7 @@ where
                     injections,
                     decode: policies.decode,
                 };
-                Ok((subscriber, handler, delivery))
+                Ok((subscriber, handler, delivery, retry))
             },
         );
     }
@@ -239,18 +241,20 @@ where
     Extra: Send + Sync + 'static,
 {
     type Context = Def::Context;
+    type Copies = Source::Copies;
 
-    fn mount_one<G, PP, Sink>(
+    fn mount_one<G, PP, Sink, Slot>(
         self,
         _global: &G,
         _pipeline: &PP,
         retry_pipeline: &RetryPipeline,
         sink: &mut Sink,
-        setup: RetrySetup<B, Def::Context>,
+        setup: RetrySetup<B, Def::Context, Slot>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
         Sink: MountSink<B, State>,
+        Slot: RetrySlot<B, Def::Context, Source::Copies, RetryPipeline>,
     {
         // Per-message layers cannot wrap a whole-batch handler, so no layer applies here.
         let Self {
@@ -264,13 +268,13 @@ where
             batch_size,
         } = self;
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
-        sink.push_batch::<_, _, _, _, Def::Context>(
+        sink.push_batch::<_, _, _, _, Def::Context, _>(
             meta,
             policies,
             workers,
             batch_size,
             async move |connected: Arc<Connected<B>>, scope: Arc<ScopeDelivery>, name: Arc<str>| {
-                let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
+                let (subscriber, delivery, retry) = open_subscription::<B, _, Def::Context, _>(
                     source,
                     connected.as_ref(),
                     &scope,
@@ -287,7 +291,7 @@ where
                     injections,
                     decode: policies.decode,
                 };
-                Ok((subscriber, handler, delivery))
+                Ok((subscriber, handler, delivery, retry))
             },
         );
     }

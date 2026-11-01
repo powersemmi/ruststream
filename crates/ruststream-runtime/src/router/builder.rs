@@ -9,7 +9,8 @@ use alloc::borrow::Cow;
 use core::num::NonZeroU32;
 
 use crate::{
-    Broker, Connected, LocalBroker, PublishPolicy, Publisher, RetryDeclaration, Subscriber,
+    Broker, BrokerMoves, Connected, LocalBroker, PublishPolicy, Publisher, RetryDeclaration,
+    Subscriber,
 };
 
 use crate::dispatch::Workers;
@@ -21,7 +22,7 @@ use crate::publish::{
     FitsOffer, ForReply, NamesDestination, NarrowToUse, OutPipeline, PublishIdentity,
     PublishPipeline, PublishTransform, Reads,
 };
-use crate::redelivery::{PublishesCopiesHere, RetryPairing, RetrySetup};
+use crate::redelivery::{PublishesCopiesHere, RetryParts, RetrySetup};
 use crate::retry::{
     Absent, DeclareCap, DeclareDeadLetter, DeclareMount, Present, Retry, RetryOffer, RetryOpen,
     RetryStackUse, RouteDeclaring, RoutePosition, SettlesDestination,
@@ -695,6 +696,7 @@ where
                 Head,
                 B,
                 RetryCx<Head, B>,
+                RetryParts<RetryPolicy<Transforms, Policy, B, Head>, Transforms, Pipe>,
                 RetrySettled<Head, B, Dest, Transforms, Policy>,
             >,
             Tail,
@@ -726,7 +728,7 @@ where
             routes: (
                 RetriedRoute::new(
                     head,
-                    RetryPairing::new(policy, transforms, self.pipeline.clone()),
+                    RetryParts::new(policy, transforms, self.pipeline.clone()),
                     destination,
                     <RetryUse<Transforms, Policy, B, Head> as NamesDestination>::NAMES,
                 ),
@@ -882,8 +884,9 @@ where
 {
     // A whole router is many registrations, each with its own context; nothing here reads one.
     type Context = ();
+    type Copies = BrokerMoves;
 
-    fn mount_one<G, PP, Sink>(
+    fn mount_one<G, PP, Sink, Slot>(
         self,
         global: &G,
         pipeline: &PP,
@@ -893,7 +896,7 @@ where
         sink: &mut Sink,
         // A whole router is many registrations, and a retry position or declaration belongs to
         // one, so neither binds here: `RetryOpen` is not implemented for a router.
-        _setup: RetrySetup<B, ()>,
+        _setup: RetrySetup<B, (), Slot>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,

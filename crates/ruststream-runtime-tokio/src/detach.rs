@@ -2,11 +2,12 @@
 //! on, tracked so a graceful shutdown waits for it.
 
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio_util::task::TaskTracker;
 
-use crate::{Clock, Delivery, Detach, Lent, Tokio};
+use crate::{Clock, Copying, Delivery, Detach, Lent, RetryCopies, RetryRoute, Tokio};
 
 /// The tokio runner's handle: what a delivery leaves behind is a task of the app's tracker, which
 /// the teardown drains. On a dedicated thread (`threads(n)`) the task runs on the thread's runtime
@@ -74,27 +75,55 @@ impl Detach for Tracked {
             work.await;
         });
     }
+
+    fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
+    where
+        Make: FnOnce() -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        // The work is built once the timer has fired, so the task holds the larger of the two
+        // rather than both.
+        self.spawn(async move {
+            Tokio.sleep(delay).await;
+            make().await;
+        });
+    }
 }
 
 /// What one subscription's loop dispatches under: the shared body's delivery context and the
-/// runner it hands leftovers to, kept in the one allocation a subscription makes for its context.
-pub(crate) struct Hosted<C> {
+/// runner it hands leftovers to, with the registration's retry route in its concrete type, kept
+/// in the one allocation a subscription makes for its context.
+pub(crate) struct Hosted<C, Retry> {
     pub(crate) delivery: Delivery<C>,
-    pub(crate) host: Tracked,
+    pub(crate) host: Copying<Tracked, Retry>,
 }
 
-impl<C> Hosted<C> {
-    /// `delivery` dispatched on the app's runtime, its leftovers tracked by `tasks`.
-    pub(crate) const fn new(delivery: Delivery<C>, tasks: TaskTracker) -> Self {
+impl<C, Retry> Hosted<C, Retry> {
+    /// `delivery` dispatched on the app's runtime, its leftovers tracked by `tasks`, its retry
+    /// copies leaving through `route`.
+    pub(crate) fn new(
+        delivery: Delivery<C>,
+        route: Option<RetryRoute<Retry>>,
+        tasks: TaskTracker,
+    ) -> Self {
         Self {
             delivery,
-            host: Tracked::new(tasks),
+            host: Copying::new(Tracked::new(tasks), route.map(Arc::new)),
         }
     }
 }
 
-impl<C> Lent<C> for Hosted<C> {
-    type Host = Tracked;
+/// The runner of one dedicated thread: `host` with the thread's own tracker `own`, sharing the
+/// registration's retry route.
+pub(crate) fn on_thread<Retry>(
+    host: &Copying<Tracked, Retry>,
+    own: TaskTracker,
+) -> Copying<Tracked, Retry> {
+    Copying::new(host.host.on_thread(own), host.route.clone())
+}
+
+impl<C, Retry: RetryCopies<C>> Lent<C> for Hosted<C, Retry> {
+    type Host = Copying<Tracked, Retry>;
 
     #[inline]
     fn delivery(&self) -> &Delivery<C> {
@@ -102,20 +131,51 @@ impl<C> Lent<C> for Hosted<C> {
     }
 
     #[inline]
-    fn host(&self) -> &Tracked {
+    fn host(&self) -> &Copying<Tracked, Retry> {
         &self.host
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use tokio::time;
     use tokio_util::task::TaskTracker;
 
     use super::Tracked;
+    use crate::Detach;
 
     #[test]
     fn the_runner_debug_form_reports_its_pending_continuations() {
         let host = format!("{:?}", Tracked::new(TaskTracker::new()));
         assert!(host.contains("pending_continuations: 0"), "{host}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn delayed_work_is_built_once_its_delay_has_passed() {
+        let tasks = TaskTracker::new();
+        let host = Tracked::new(tasks.clone());
+        let built = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&built);
+
+        host.detach_after_with(Duration::from_secs(5), move || {
+            flag.store(true, Ordering::SeqCst);
+            async {}
+        });
+
+        time::advance(Duration::from_secs(4)).await;
+        assert!(
+            !built.load(Ordering::SeqCst),
+            "the work is not built before its delay has passed"
+        );
+        tasks.close();
+        tasks.wait().await;
+        assert!(
+            built.load(Ordering::SeqCst),
+            "the tracked task built and ran the work after the delay"
+        );
     }
 }

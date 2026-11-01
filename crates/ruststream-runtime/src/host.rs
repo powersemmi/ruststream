@@ -13,7 +13,12 @@
 use core::time::Duration;
 
 #[cfg(feature = "alloc")]
+use alloc::sync::Arc;
+
+#[cfg(feature = "alloc")]
 use crate::lifecycle::BoxError;
+#[cfg(feature = "alloc")]
+use crate::redelivery::{NoRetry, RetryCopies, RetryRoute};
 #[cfg(feature = "alloc")]
 use crate::{HeaderMap, LocalIncomingMessage};
 
@@ -206,6 +211,21 @@ pub trait Detach: Send + Sync {
     where
         Work: Future<Output = ()> + Send + 'static;
 
+    /// Runs the work `make` builds once `delay` has passed on the runner's clock.
+    ///
+    /// The work is built after the delay, so a runner that holds it in a task of its own holds
+    /// the timer and the work one after the other, in the room of the larger. The body calls it
+    /// only after a [`reserve`](Self::reserve) that returned `true`, and the call takes that
+    /// reservation. The default builds the work now and hands it to
+    /// [`detach_after`](Self::detach_after).
+    fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
+    where
+        Make: FnOnce() -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        self.detach_after(delay, make());
+    }
+
     /// Reserves room for one delayed piece of work, before the delivery it copies is settled.
     ///
     /// A runner that keeps its delayed work in a store of fixed capacity answers `false` when
@@ -240,6 +260,13 @@ pub trait HostDetach {
     where
         Work: Future<Output = ()> + Send + 'static;
 
+    /// Runs the work `make` builds once `delay` has passed on the runner's clock: see
+    /// [`Detach::detach_after_with`].
+    fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
+    where
+        Make: FnOnce() -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static;
+
     /// Takes room for one delayed copy; `false` when the host has none left.
     fn reserve(&self) -> bool;
 
@@ -247,13 +274,22 @@ pub trait HostDetach {
     fn release(&self);
 
     /// The store of retry copies this host keeps in place: [`NoKept`] where the copies leave
-    /// through the subscription's erased retry publisher instead.
+    /// through the subscription's retry publisher instead.
     #[cfg(feature = "alloc")]
     type Kept: KeptCopies;
 
     /// The store of retry copies this host keeps in place, if it keeps any.
     #[cfg(feature = "alloc")]
     fn kept(&self) -> Option<&Self::Kept>;
+
+    /// The retry publisher of the registration this host serves, as its concrete type:
+    /// [`NoRetry`] where the host has none.
+    #[cfg(feature = "alloc")]
+    type Retry: 'static;
+
+    /// The registration's retry route, if the host carries one.
+    #[cfg(feature = "alloc")]
+    fn retry(&self) -> Option<&Arc<RetryRoute<Self::Retry>>>;
 }
 
 impl<Host: Detach> HostDetach for Host {
@@ -274,6 +310,15 @@ impl<Host: Detach> HostDetach for Host {
     }
 
     #[inline]
+    fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
+    where
+        Make: FnOnce() -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        Detach::detach_after_with(self, delay, make);
+    }
+
+    #[inline]
     fn reserve(&self) -> bool {
         Detach::reserve(self)
     }
@@ -289,6 +334,15 @@ impl<Host: Detach> HostDetach for Host {
     #[cfg(feature = "alloc")]
     #[inline]
     fn kept(&self) -> Option<&NoKept> {
+        None
+    }
+
+    #[cfg(feature = "alloc")]
+    type Retry = NoRetry;
+
+    #[cfg(feature = "alloc")]
+    #[inline]
+    fn retry(&self) -> Option<&Arc<RetryRoute<NoRetry>>> {
         None
     }
 }
@@ -319,6 +373,15 @@ impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
     }
 
     #[inline]
+    fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
+    where
+        Make: FnOnce() -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        LocalDetach::detach_after(self.0, delay, make());
+    }
+
+    #[inline]
     fn reserve(&self) -> bool {
         LocalDetach::reserve(self.0)
     }
@@ -335,6 +398,103 @@ impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
     #[inline]
     fn kept(&self) -> Option<&NoKept> {
         None
+    }
+
+    #[cfg(feature = "alloc")]
+    type Retry = NoRetry;
+
+    #[cfg(feature = "alloc")]
+    #[inline]
+    fn retry(&self) -> Option<&Arc<RetryRoute<NoRetry>>> {
+        None
+    }
+}
+
+/// A host of the multi-thread family for deliveries whose broker context is `Cx`: it and what it
+/// carries are shared between threads, so a future holding it can be sent, and it keeps no copy
+/// in place. Every [`Detach`]
+/// qualifies, and so does one with a retry route ([`Copying`]). Machinery; never named directly.
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub trait SendHost<Cx>: HostDetach<Kept = NoKept, Retry: RetryCopies<Cx>> + Send + Sync {}
+
+#[cfg(feature = "alloc")]
+impl<Cx, Host> SendHost<Cx> for Host where
+    Host: HostDetach<Kept = NoKept, Retry: RetryCopies<Cx>> + Send + Sync
+{
+}
+
+/// A [`Detach`] lent to the delivery body together with the retry route of the registration it
+/// serves: the host of a multi-thread runner, whose retry copies leave through the registration's
+/// concrete retry publisher once their timer has run. Machinery; never named directly.
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct Copying<Host, Retry> {
+    /// The runner's own handle.
+    pub host: Host,
+    /// The registration's retry route; `None` where the broker moves a spent delivery itself.
+    pub route: Option<Arc<RetryRoute<Retry>>>,
+}
+
+#[cfg(feature = "alloc")]
+impl<Host, Retry> Copying<Host, Retry> {
+    /// The runner's handle `host` with the registration's retry `route`.
+    #[must_use]
+    pub const fn new(host: Host, route: Option<Arc<RetryRoute<Retry>>>) -> Self {
+        Self { host, route }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<Host: Detach, Retry: 'static> HostDetach for Copying<Host, Retry> {
+    #[inline]
+    fn detach<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        Detach::detach(&self.host, work);
+    }
+
+    #[inline]
+    fn detach_after<Work>(&self, delay: Duration, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        Detach::detach_after(&self.host, delay, work);
+    }
+
+    #[inline]
+    fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
+    where
+        Make: FnOnce() -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        Detach::detach_after_with(&self.host, delay, make);
+    }
+
+    #[inline]
+    fn reserve(&self) -> bool {
+        Detach::reserve(&self.host)
+    }
+
+    #[inline]
+    fn release(&self) {
+        Detach::release(&self.host);
+    }
+
+    type Kept = NoKept;
+
+    #[inline]
+    fn kept(&self) -> Option<&NoKept> {
+        None
+    }
+
+    type Retry = Retry;
+
+    #[inline]
+    fn retry(&self) -> Option<&Arc<RetryRoute<Retry>>> {
+        self.route.as_ref()
     }
 }
 
@@ -367,6 +527,15 @@ impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept>
     }
 
     #[inline]
+    fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
+    where
+        Make: FnOnce() -> Work + Send + 'static,
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        LocalDetach::detach_after(self.0, delay, make());
+    }
+
+    #[inline]
     fn reserve(&self) -> bool {
         LocalDetach::reserve(self.0)
     }
@@ -381,6 +550,13 @@ impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept>
     #[inline]
     fn kept(&self) -> Option<&Kept> {
         Some(self.1)
+    }
+
+    type Retry = NoRetry;
+
+    #[inline]
+    fn retry(&self) -> Option<&Arc<RetryRoute<NoRetry>>> {
+        None
     }
 }
 

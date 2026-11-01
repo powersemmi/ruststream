@@ -17,11 +17,12 @@ use crate::metadata::HandlerMetadata;
 use crate::middleware::BlanketLayer;
 use crate::publish::{PublishIdentity, PublishPipeline};
 use crate::redelivery::{
-    CopyPathAddress, CopyPathPairing, RetryPairing, RetrySetup, ScopeDelivery, open_subscription,
+    BoundRetry, CopyPathAddress, CopyPathPairing, RetrySetup, RetrySlot, ScopeDelivery,
+    open_subscription,
 };
 use crate::retry::DestinationDeclared;
 use crate::retry::RetryOpen;
-use crate::{CopyPath, RetryDeclaration};
+use crate::{BrokerMoves, CopyPath, RetryDeclaration};
 
 use super::head::{Plain, PoisonAt};
 use super::mount_sink::MountSink;
@@ -86,17 +87,22 @@ pub(super) trait MountRoute<B: Broker, State, RetryPipeline> {
     /// what a transform on its retry position reads.
     type Context;
 
-    fn mount_one<G, PP, Sink>(
+    /// The copy path of the descriptor this registration mounts on, which pairs the broker's
+    /// default retry publisher where the mount site named none.
+    type Copies: CopyPathPairing<B, Self::Context, RetryPipeline>;
+
+    fn mount_one<G, PP, Sink, Slot>(
         self,
         global: &G,
         pipeline: &PP,
         retry_pipeline: &RetryPipeline,
         sink: &mut Sink,
-        setup: RetrySetup<B, Self::Context>,
+        setup: RetrySetup<B, Self::Context, Slot>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
-        Sink: MountSink<B, State>;
+        Sink: MountSink<B, State>,
+        Slot: RetrySlot<B, Self::Context, Self::Copies, RetryPipeline>;
 }
 
 /// The subscription descriptor one registration mounts on, read off its route so the mount chain
@@ -150,8 +156,8 @@ impl_destination_declared!(
 );
 
 // The registration that bound the position answered when it was wired: see `AttachRetry`.
-impl<Route, B: Broker, Cx> RetryDestinationsDeclared
-    for RetriedRoute<Route, B, Cx, DestinationDeclared>
+impl<Route, B: Broker, Cx, Parts> RetryDestinationsDeclared
+    for RetriedRoute<Route, B, Cx, Parts, DestinationDeclared>
 {
 }
 
@@ -181,18 +187,19 @@ pub trait RouteMetadata {
 /// [`RetryOpen`], so a second `.out(Retry, ..)` has nothing to bind - and it keeps the pairing out
 /// of every route type: a route that binds nothing carries nothing.
 #[doc(hidden)]
-pub struct RetriedRoute<Route, B: Broker, Cx, Settled = DestinationDeclared> {
+pub struct RetriedRoute<Route, B: Broker, Cx, Parts, Settled = DestinationDeclared> {
     route: Route,
-    retry: RetryPairing<B, Cx>,
+    retry: Parts,
     destination: Option<Cow<'static, str>>,
     named_per_delivery: bool,
     _settled: PhantomData<fn() -> Settled>,
+    _registration: PhantomData<fn() -> (B, Cx)>,
 }
 
-impl<Route, B: Broker, Cx, Settled> RetriedRoute<Route, B, Cx, Settled> {
+impl<Route, B: Broker, Cx, Parts, Settled> RetriedRoute<Route, B, Cx, Parts, Settled> {
     pub(super) fn new(
         route: Route,
-        retry: RetryPairing<B, Cx>,
+        retry: Parts,
         destination: Option<Cow<'static, str>>,
         named_per_delivery: bool,
     ) -> Self {
@@ -202,6 +209,7 @@ impl<Route, B: Broker, Cx, Settled> RetriedRoute<Route, B, Cx, Settled> {
             destination,
             named_per_delivery,
             _settled: PhantomData,
+            _registration: PhantomData,
         }
     }
 }
@@ -252,18 +260,20 @@ where
     Route: MountRoute<B, State, RetryPipeline>,
 {
     type Context = Route::Context;
+    type Copies = Route::Copies;
 
-    fn mount_one<G, PP, Sink>(
+    fn mount_one<G, PP, Sink, Slot>(
         self,
         global: &G,
         pipeline: &PP,
         retry_pipeline: &RetryPipeline,
         sink: &mut Sink,
-        setup: RetrySetup<B, Route::Context>,
+        setup: RetrySetup<B, Route::Context, Slot>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
         Sink: MountSink<B, State>,
+        Slot: RetrySlot<B, Route::Context, Route::Copies, RetryPipeline>,
     {
         self.route.mount_one(
             global,
@@ -276,7 +286,9 @@ where
 }
 
 // The pairing is a closure with nothing to print, so the wrapper renders as the route it carries.
-impl<Route: fmt::Debug, B: Broker, Cx, Settled> fmt::Debug for RetriedRoute<Route, B, Cx, Settled> {
+impl<Route: fmt::Debug, B: Broker, Cx, Parts, Settled> fmt::Debug
+    for RetriedRoute<Route, B, Cx, Parts, Settled>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RetriedRoute")
             .field("route", &self.route)
@@ -284,14 +296,16 @@ impl<Route: fmt::Debug, B: Broker, Cx, Settled> fmt::Debug for RetriedRoute<Rout
     }
 }
 
-impl<Route: RouteMeta, B: Broker, Cx, Settled> RouteMeta for RetriedRoute<Route, B, Cx, Settled> {
+impl<Route: RouteMeta, B: Broker, Cx, Parts, Settled> RouteMeta
+    for RetriedRoute<Route, B, Cx, Parts, Settled>
+{
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         self.route.collect(out);
     }
 }
 
-impl<Route: RouteMetadata, B: Broker, Cx, Settled> RouteMetadata
-    for RetriedRoute<Route, B, Cx, Settled>
+impl<Route: RouteMetadata, B: Broker, Cx, Parts, Settled> RouteMetadata
+    for RetriedRoute<Route, B, Cx, Parts, Settled>
 {
     fn metadata_mut(&mut self) -> &mut HandlerMetadata {
         self.route.metadata_mut()
@@ -300,21 +314,23 @@ impl<Route: RouteMetadata, B: Broker, Cx, Settled> RouteMetadata
 
 // The wrapped route mounts as it always does, with the pairing the mount site bound: this is the
 // one place a `Some` reaches the sink.
-impl<B, Route, State, RetryPipeline, Cx, Settled> MountRoute<B, State, RetryPipeline>
-    for RetriedRoute<Route, B, Cx, Settled>
+impl<B, Route, State, RetryPipeline, Cx, Parts, Settled> MountRoute<B, State, RetryPipeline>
+    for RetriedRoute<Route, B, Cx, Parts, Settled>
 where
     B: Broker + 'static,
     Route: MountRoute<B, State, RetryPipeline, Context = Cx>,
+    Parts: BoundRetry<B, Cx>,
 {
     type Context = Cx;
+    type Copies = Route::Copies;
 
-    fn mount_one<G, PP, Sink>(
+    fn mount_one<G, PP, Sink, Slot>(
         self,
         global: &G,
         pipeline: &PP,
         retry_pipeline: &RetryPipeline,
         sink: &mut Sink,
-        setup: RetrySetup<B, Cx>,
+        setup: RetrySetup<B, Cx, Slot>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
@@ -414,18 +430,20 @@ where
     RetryPipeline: Clone,
 {
     type Context = Cx;
+    type Copies = S::Copies;
 
-    fn mount_one<G, PP, Sink>(
+    fn mount_one<G, PP, Sink, Slot>(
         self,
         global: &G,
         _pipeline: &PP,
         retry_pipeline: &RetryPipeline,
         sink: &mut Sink,
-        setup: RetrySetup<B, Cx>,
+        setup: RetrySetup<B, Cx, Slot>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
         Sink: MountSink<B, State>,
+        Slot: RetrySlot<B, Cx, S::Copies, RetryPipeline>,
     {
         // The apply-and-push tail: the app's stack wraps through `BlanketLayer::apply`, whose
         // return type cannot be named, so this one step stays here rather than in a helper.
@@ -440,7 +458,8 @@ where
             self.workers,
             handler,
             async move |connected: Arc<Connected<B>>, scope: Arc<ScopeDelivery>, name: Arc<str>| {
-                open_subscription::<B, _, _>(source, connected.as_ref(), &scope, &name, setup).await
+                open_subscription::<B, _, _, _>(source, connected.as_ref(), &scope, &name, setup)
+                    .await
             },
         );
     }
@@ -459,32 +478,35 @@ where
     RetryPipeline: Clone,
 {
     type Context = Cx;
+    type Copies = S::Copies;
 
-    fn mount_one<G, PP, Sink>(
+    fn mount_one<G, PP, Sink, Slot>(
         self,
         _global: &G,
         _pipeline: &PP,
         retry_pipeline: &RetryPipeline,
         sink: &mut Sink,
-        setup: RetrySetup<B, Cx>,
+        setup: RetrySetup<B, Cx, Slot>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
         Sink: MountSink<B, State>,
+        Slot: RetrySlot<B, Cx, S::Copies, RetryPipeline>,
     {
         // Per-message layers cannot wrap a whole-batch handler, so neither the app-global stack
         // nor the router's own layers apply to batch registrations.
         let mut meta = self.meta;
         let setup = setup.resolve::<S::Copies, _>(retry_pipeline, &mut meta);
         let (source, handler) = (self.source, self.handler);
-        sink.push_batch_mounted::<_, _, _, _, Cx>(
+        sink.push_batch_mounted::<_, _, _, _, Cx, _>(
             meta,
             self.policies,
             self.workers,
             self.batch_size,
             handler,
             async move |connected: Arc<Connected<B>>, scope: Arc<ScopeDelivery>, name: Arc<str>| {
-                open_subscription::<B, _, _>(source, connected.as_ref(), &scope, &name, setup).await
+                open_subscription::<B, _, _, _>(source, connected.as_ref(), &scope, &name, setup)
+                    .await
             },
         );
     }
@@ -499,14 +521,15 @@ where
     H: Handler<S::Message, (), State> + 'static,
 {
     type Context = ();
+    type Copies = BrokerMoves;
 
-    fn mount_one<G, PP, Sink>(
+    fn mount_one<G, PP, Sink, Slot>(
         self,
         global: &G,
         _pipeline: &PP,
         _retry_pipeline: &RetryPipeline,
         sink: &mut Sink,
-        _setup: RetrySetup<B, ()>,
+        _setup: RetrySetup<B, (), Slot>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
@@ -583,6 +606,7 @@ where
     B: Broker + 'static,
     Head: MountRoute<B, State, RetryPipeline> + RetryDestinationsDeclared,
     Tail: RouterDef<B, State, RetryPipeline>,
+    RetryPipeline: Clone,
 {
     fn mount<G, PP, Sink>(
         self,

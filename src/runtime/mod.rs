@@ -82,15 +82,15 @@ pub use ruststream_runtime::{
     BlanketLayer, HandlerExt, Identity, Layer, LocalBlanketLayer, Stack, layers,
 };
 #[doc(hidden)]
+pub use ruststream_runtime::{
+    BoundRetry, CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere,
+    RetryCopies, RetrySetup, RetrySlot,
+};
+#[doc(hidden)]
 pub use ruststream_runtime::{CapsBatches, DefinitionInputCodec, MountsWith};
 pub use ruststream_runtime::{Clock, ShutdownWait};
 pub use ruststream_runtime::{
     CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,
-};
-#[doc(hidden)]
-pub use ruststream_runtime::{
-    CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere, RetryPairing,
-    RetrySetup,
 };
 pub use ruststream_runtime::{Ctx, CtxKey, FromContext, FromRef, Headers, State};
 #[doc(hidden)]
