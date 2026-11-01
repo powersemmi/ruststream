@@ -309,7 +309,9 @@ where
     Reaction: ContinuationFuture,
 {
     fn react(self: Box<Self>, failures: Failures) -> Continuation {
-        Box::pin((self.0)(failures))
+        // Built inside the future, so the closure's own synchronous part runs when the caller
+        // polls the continuation, after the delivery is settled.
+        Box::pin(async move { (self.0)(failures).await })
     }
 }
 
@@ -629,4 +631,40 @@ pub fn publish_lost(
         "publishing the message failed; message lost",
     );
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use std::io;
+
+    use futures::FutureExt;
+
+    use super::*;
+
+    fn lost() -> (BoxError, FailedMessage) {
+        (
+            Box::new(io::Error::other("down")),
+            FailedMessage::new("dest", Bytes::new(), HeaderMap::new()),
+        )
+    }
+
+    /// The closure's own synchronous part is user code: it runs when the continuation is polled,
+    /// after the delivery is settled, and never while the runtime builds the continuation.
+    #[test]
+    fn the_error_closure_runs_only_when_its_continuation_is_polled() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&ran);
+        let hook = ErrorHook::new(move |_failures: Failures| {
+            flag.store(true, Ordering::SeqCst);
+            async {}
+        });
+        let (error, message) = lost();
+
+        let continuation = hook.react(error, message);
+
+        assert!(!ran.load(Ordering::SeqCst));
+        continuation.now_or_never().expect("ready");
+        assert!(ran.load(Ordering::SeqCst));
+    }
 }
