@@ -17,6 +17,8 @@ A publish the runtime makes on its behalf gives the same control through `.error
 
 The continuation receives [`Failures`](api:ruststream::runtime::Failures), the publishes that failed.
 Each [`Failed`](api:ruststream::runtime::Failed) holds the cause, `error()`, and the very [message](api:ruststream::runtime::FailedMessage) the runtime tried to send, `message()`: its destination, its bytes and its headers.
+The message is the one that was sent: the headers and bytes the publish transforms and the publisher's base headers produced, so a reply arrives as it left.
+The bytes are `None` only when the publisher took the payload buffer and did not give it back.
 The message is a [`Serialized`](api:ruststream::Serialized) value, so another `Out` republishes it as it is, and nothing is decoded again.
 It returns nothing, like [`and_after`](./and-after.md), and runs once the delivery is settled.
 Whatever the reaction needs (a client, state, a counter, an `Out` publisher) the handler moves into the closure.
