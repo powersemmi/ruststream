@@ -164,3 +164,13 @@ required-features = ["embassy", "json"]
 name = "embedded_out_continuation"
 path = "tests/embedded_out_continuation.rs"
 required-features = ["embassy", "json"]
+
+[[test]]
+name = "embedded_error_reply"
+path = "tests/embedded_error_reply.rs"
+required-features = ["embassy", "json"]
+
+[[test]]
+name = "embedded_spill"
+path = "tests/embedded_spill.rs"
+required-features = ["embassy", "json"]

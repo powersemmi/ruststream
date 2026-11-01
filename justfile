@@ -139,6 +139,8 @@ test:
     cargo test -p ruststream-runtime-embassy
     cargo test -p ruststream-memory --no-default-features --features embassy
     cargo test -p ruststream-testing --features embassy,json
+    # The same crate on the tokio runner alone: every embedded target gates itself on embassy.
+    cargo test -p ruststream-testing --features tokio,json
     # The reduced-feature legs CI runs, in CI's order. A module compiled only with a feature off
     # is invisible to the workspace run above, so an API a refactor removed can survive there
     # until CI says otherwise: `codec_free_lanes` and `ui_codec_free` build only where no codec
