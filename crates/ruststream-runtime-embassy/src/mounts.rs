@@ -11,56 +11,10 @@ use core::fmt::{self, Debug, Formatter};
 use core::future::ready;
 
 use ruststream_core::{Broker, ConnectedBroker};
-use ruststream_runtime::{
-    OpenRoutes, RetryDestinationsDeclared, Router, RouterCommit, RouterWith, RunRoutes,
-    ScopeDelivery,
-};
+use ruststream_runtime::{OpenRoutes, RunRoutes, ScopeDelivery};
 use tracing::warn;
 
 use crate::app::RunError;
-
-/// What a broker's scope returns: the router chain, finished into the routes the app opens.
-///
-/// Implemented by [`Router`] and by an open mount chain ([`RouterWith`]), so a scope ends on
-/// `.include(def)` or on a step such as `.out_reply(policy)` alike.
-///
-/// # Examples
-///
-/// See [`EmbeddedApp::with_broker`](crate::EmbeddedApp::with_broker).
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a mount chain of the embedded app",
-    label = "the broker's scope returns this",
-    note = "the closure of `with_broker` returns the router chain it was handed: \
-            `|b| b.include(a).include(b)`"
-)]
-pub trait MountChain {
-    /// The finished routes.
-    type Routes;
-
-    /// Finishes the chain: commits the registration a step left open.
-    fn finish(self) -> Self::Routes;
-}
-
-impl<B, Routes, RouteCodec, Layers, Pipe> MountChain
-    for Router<B, Routes, RouteCodec, Layers, Pipe>
-{
-    type Routes = Self;
-
-    fn finish(self) -> Self {
-        self
-    }
-}
-
-impl<Mount, R, Def, Attach, Last> MountChain for RouterWith<Mount, R, Def, Attach, Last>
-where
-    Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
-{
-    type Routes = Attach::Out;
-
-    fn finish(self) -> Attach::Out {
-        self.build()
-    }
-}
 
 /// Where a broker's connected form is shared once the app has connected it: the slot a
 /// [`Bindable`](crate::Bindable) fills for the tokens it minted, or [`NoSlot`] for a broker that

@@ -91,7 +91,7 @@ use std::convert::Infallible;
 use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
-use ruststream::runtime::{BrokerScope, Identity, MountChain, PublishIdentity};
+use ruststream::runtime::{BrokerScope, Identity, MountChain, MountRoutes, PublishIdentity};
 use ruststream::{Lend, OutgoingMessage, PairError};
 use serde::Deserialize;
 use tokio::runtime::{Builder, Runtime};
@@ -446,9 +446,15 @@ pub struct Pending {
 pub type Mount = BrokerScope<MemoryBroker, Identity, (), Latch>;
 
 /// The chain a scenario's mount returns.
-pub trait Mounted: MountChain<MemoryBroker, Identity, Latch, PublishIdentity> {}
+pub trait Mounted:
+    MountChain<Routes: MountRoutes<MemoryBroker, Identity, Latch, PublishIdentity>>
+{
+}
 
-impl<Chain: MountChain<MemoryBroker, Identity, Latch, PublishIdentity>> Mounted for Chain {}
+impl<Chain: MountChain<Routes: MountRoutes<MemoryBroker, Identity, Latch, PublishIdentity>>> Mounted
+    for Chain
+{
+}
 
 /// Builds a one-handler service on a fresh in-memory broker, ready to be started by the body.
 pub fn pending<Chain: Mounted>(

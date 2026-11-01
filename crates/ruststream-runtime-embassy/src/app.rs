@@ -12,7 +12,9 @@ use core::pin::pin;
 use futures::future::{Either, join, select};
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::InProcessRun;
-use ruststream_runtime::{Balance, BoxError, Identity, LocalPipeline, Router, RunRoutes};
+use ruststream_runtime::{
+    Balance, BoxError, Identity, LocalPipeline, MountChain, Router, RunRoutes,
+};
 use thiserror::Error;
 
 use crate::control::{Control, LoopSignal};
@@ -20,7 +22,7 @@ use crate::hooks::{HookList, Hooks, NoHooks};
 use crate::host::AppHost;
 #[cfg(feature = "testing")]
 use crate::in_process::StartInProcess;
-use crate::mounts::{BrokerMount, CloseAll, MountChain, Registration, StartMounts};
+use crate::mounts::{BrokerMount, CloseAll, Registration, StartMounts};
 
 /// The router a broker's scope hands the closure of [`EmbeddedApp::with_broker`].
 ///

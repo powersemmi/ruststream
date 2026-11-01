@@ -15,6 +15,7 @@
 
 mod builder;
 mod builders;
+mod chain;
 mod fold;
 mod fold_inject;
 mod fold_plan;
@@ -41,6 +42,7 @@ pub use builder::{AttachDeclaration, AttachRetry, RouterBroker};
 #[doc(hidden)]
 pub use builders::RouterCommit;
 pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOut, RouterWith};
+pub use chain::MountChain;
 #[doc(hidden)]
 pub use head::{ChainHead, Plain, Poison, PoisonAt, PoisonMode, Poisoned, SplitHead};
 pub use local::LocalPipeline;
