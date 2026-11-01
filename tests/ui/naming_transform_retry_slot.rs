@@ -11,6 +11,7 @@ struct Order {
     id: u32,
 }
 
+#[derive(Clone)]
 struct ByTenant;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for ByTenant {

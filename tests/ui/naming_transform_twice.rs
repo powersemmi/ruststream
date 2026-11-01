@@ -16,6 +16,7 @@ struct Receipt {
     id: u32,
 }
 
+#[derive(Clone)]
 struct ReplyTo;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
@@ -31,6 +32,7 @@ impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
     }
 }
 
+#[derive(Clone)]
 struct Inbox;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Inbox {

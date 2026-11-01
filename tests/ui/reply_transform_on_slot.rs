@@ -22,6 +22,7 @@ struct Audit;
 
 // The transform reads the delivery, so it is a reply transform. A slot publish is issued by the
 // handler body and has no delivery to hand on, so this one has no place on a slot.
+#[derive(Clone)]
 struct StampSource;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for StampSource {

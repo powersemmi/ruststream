@@ -13,6 +13,7 @@ struct Receipt {
     id: u32,
 }
 
+#[derive(Clone)]
 struct Stamp;
 
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {

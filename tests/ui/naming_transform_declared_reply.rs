@@ -19,6 +19,7 @@ struct Receipt {
     id: u32,
 }
 
+#[derive(Clone)]
 struct ReplyTo;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
