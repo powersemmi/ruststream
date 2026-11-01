@@ -44,7 +44,12 @@ pub trait Subscriber: MaybeSend {
     ///
     /// A device broker over a channel or a socket returns a handle on the state its stream reads;
     /// see [`ReadyHint`] for the contract and a full example.
-    fn ready_hint(&self) -> impl ReadyHint + MaybeSendSync + 'static {}
+    ///
+    /// The probe is an owned handle that does not borrow the subscriber: the type captures the
+    /// subscriber's own type and nothing else (`use<Self>` in the trait, the impl's generic
+    /// parameters in an implementation), so the app holds it beside the subscription without
+    /// borrowing it.
+    fn ready_hint(&self) -> impl ReadyHint + MaybeSendSync + 'static + use<Self> {}
 }
 
 /// What an embedded app asks an idle subscription before it polls the subscription's stream.
@@ -157,7 +162,7 @@ pub trait Subscriber: MaybeSend {
 ///         Frames(Arc::clone(&self.0))
 ///     }
 ///
-///     fn ready_hint(&self) -> impl ReadyHint + 'static {
+///     fn ready_hint(&self) -> impl ReadyHint + 'static + use<> {
 ///         FramesWaiting(Arc::clone(&self.0))
 ///     }
 /// }

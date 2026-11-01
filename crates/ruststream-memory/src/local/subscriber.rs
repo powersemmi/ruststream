@@ -216,7 +216,7 @@ impl<const CAP: usize> Subscriber for LocalMemorySubscriber<CAP> {
         Deliveries { subscriber: self }
     }
 
-    fn ready_hint(&self) -> impl ReadyHint + 'static {
+    fn ready_hint(&self) -> impl ReadyHint + 'static + use<CAP> {
         DeliveriesWaiting(Clone::clone(&self.subscription))
     }
 }

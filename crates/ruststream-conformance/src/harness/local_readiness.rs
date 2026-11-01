@@ -322,7 +322,7 @@ mod tests {
             self.inner.stream()
         }
 
-        fn ready_hint(&self) -> impl ReadyHint + MaybeSendSync + 'static {
+        fn ready_hint(&self) -> impl ReadyHint + MaybeSendSync + 'static + use<Sub> {
             Counted {
                 asked: Arc::clone(&self.asked),
                 true_for: self.true_for,
@@ -410,7 +410,7 @@ mod tests {
             }
         }
 
-        fn ready_hint(&self) -> impl ReadyHint + MaybeSendSync + 'static {
+        fn ready_hint(&self) -> impl ReadyHint + MaybeSendSync + 'static + use<Sub> {
             Arrived {
                 inner: self.inner.ready_hint(),
                 left: Arc::clone(&self.left),
@@ -515,7 +515,7 @@ mod tests {
             Muted(Box::pin(self.0.stream()))
         }
 
-        fn ready_hint(&self) -> impl ReadyHint + MaybeSendSync + 'static {
+        fn ready_hint(&self) -> impl ReadyHint + MaybeSendSync + 'static + use<Sub> {
             self.0.ready_hint()
         }
     }

@@ -67,7 +67,7 @@ impl Subscriber for HintedSubscriber {
         Counted(Box::pin(self.0.stream()))
     }
 
-    fn ready_hint(&self) -> impl ReadyHint + 'static {
+    fn ready_hint(&self) -> impl ReadyHint + 'static + use<> {
         self.0.ready_hint()
     }
 }

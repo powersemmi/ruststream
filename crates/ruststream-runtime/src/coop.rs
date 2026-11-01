@@ -55,7 +55,7 @@ impl<Sub: Subscriber> Subscriber for Cooperative<Sub> {
         )
     }
 
-    fn ready_hint(&self) -> impl ReadyHint + 'static {
+    fn ready_hint(&self) -> impl ReadyHint + 'static + use<Sub> {
         YieldedOr {
             probe: self.subscriber.ready_hint(),
             yielded: Arc::clone(&self.yielded),
@@ -249,7 +249,7 @@ mod tests {
             stream::pending()
         }
 
-        fn ready_hint(&self) -> impl ReadyHint + 'static {
+        fn ready_hint(&self) -> impl ReadyHint + 'static + use<> {
             NothingWaits
         }
     }
@@ -340,7 +340,7 @@ mod tests {
             LineStream(Arc::clone(&self.0))
         }
 
-        fn ready_hint(&self) -> impl ReadyHint + 'static {
+        fn ready_hint(&self) -> impl ReadyHint + 'static + use<> {
             LineWaiting(Arc::clone(&self.0))
         }
     }
