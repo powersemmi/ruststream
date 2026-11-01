@@ -29,11 +29,6 @@ pub type Continuation = Pin<Box<dyn Future<Output = ()> + 'static>>;
 /// embedded runtime alone, whose continuations carry no `Send`, uses the same traits.
 #[cfg(feature = "tokio")]
 #[doc(hidden)]
-#[diagnostic::on_unimplemented(
-    message = "the closure `{Self}` must be `Send` to run on the Tokio runner",
-    label = "this closure holds a value that is not `Send`",
-    note = "it runs on a worker thread of the Tokio runner; keep a non-`Send` value out of it, or build for the embedded runtime alone"
-)]
 pub trait MaybeSend: Send {}
 
 #[cfg(feature = "tokio")]
