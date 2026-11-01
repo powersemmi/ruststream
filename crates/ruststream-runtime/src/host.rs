@@ -269,22 +269,12 @@ pub trait HostDetach {
     /// [`LocalDetach::STORES_COPIES`].
     const STORES_COPIES: bool = false;
 
-    /// Runs `work` beside the delivery that left it.
-    fn detach<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static;
-
     /// Runs work the delivery already boxed: an `and_after` continuation or a post-settle hook.
     ///
     /// A runner that keeps its work boxed takes this box as it is, so a continuation costs one
     /// allocation and not a box around a box.
     #[cfg(feature = "alloc")]
     fn detach_boxed(&self, work: Continuation);
-
-    /// Runs `work` once `delay` has passed on the runner's clock.
-    fn detach_after<Work>(&self, delay: Duration, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static;
 
     /// Runs the work `make` builds once `delay` has passed on the runner's clock: see
     /// [`Detach::detach_after_with`].
@@ -319,26 +309,10 @@ pub trait HostDetach {
 }
 
 impl<Host: Detach> HostDetach for Host {
-    #[inline]
-    fn detach<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        Detach::detach(self, work);
-    }
-
     #[cfg(feature = "alloc")]
     #[inline]
     fn detach_boxed(&self, work: Continuation) {
         Detach::detach_boxed(self, work);
-    }
-
-    #[inline]
-    fn detach_after<Work>(&self, delay: Duration, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        Detach::detach_after(self, delay, work);
     }
 
     #[inline]
@@ -388,26 +362,10 @@ pub struct OnOneThread<'host, Host>(pub &'host Host);
 impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
     const STORES_COPIES: bool = Host::STORES_COPIES;
 
-    #[inline]
-    fn detach<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        LocalDetach::detach(self.0, work);
-    }
-
     #[cfg(feature = "alloc")]
     #[inline]
     fn detach_boxed(&self, work: Continuation) {
         LocalDetach::detach_boxed(self.0, work);
-    }
-
-    #[inline]
-    fn detach_after<Work>(&self, delay: Duration, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        LocalDetach::detach_after(self.0, delay, work);
     }
 
     #[inline]
@@ -487,24 +445,8 @@ impl<Host, Retry> Copying<Host, Retry> {
 #[cfg(feature = "alloc")]
 impl<Host: Detach, Retry: 'static> HostDetach for Copying<Host, Retry> {
     #[inline]
-    fn detach<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        Detach::detach(&self.host, work);
-    }
-
-    #[inline]
     fn detach_boxed(&self, work: Continuation) {
         Detach::detach_boxed(&self.host, work);
-    }
-
-    #[inline]
-    fn detach_after<Work>(&self, delay: Duration, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        Detach::detach_after(&self.host, delay, work);
     }
 
     #[inline]
@@ -553,26 +495,10 @@ pub struct Keeping<'host, Host, Kept>(pub &'host Host, pub &'host Kept);
 impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept> {
     const STORES_COPIES: bool = Host::STORES_COPIES;
 
-    #[inline]
-    fn detach<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        LocalDetach::detach(self.0, work);
-    }
-
     #[cfg(feature = "alloc")]
     #[inline]
     fn detach_boxed(&self, work: Continuation) {
         LocalDetach::detach_boxed(self.0, work);
-    }
-
-    #[inline]
-    fn detach_after<Work>(&self, delay: Duration, work: Work)
-    where
-        Work: Future<Output = ()> + Send + 'static,
-    {
-        LocalDetach::detach_after(self.0, delay, work);
     }
 
     #[inline]

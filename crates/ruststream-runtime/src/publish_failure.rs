@@ -663,7 +663,7 @@ mod tests {
     use alloc::format;
     use alloc::string::ToString;
     use alloc::vec;
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::io;
 
     use super::*;
@@ -729,8 +729,8 @@ mod tests {
 
     #[test]
     fn the_hooks_of_a_reaction_print_without_their_closures() {
-        let hook = ErrorHook::new(|_failures: Failures| async {});
-        let reaction = Reaction::new(ErrorHook::new(|_failures: Failures| async {}), None);
+        let hook = ErrorHook::new(async |_failures: Failures| {});
+        let reaction = Reaction::new(ErrorHook::new(async |_failures: Failures| {}), None);
 
         assert_eq!(
             (format!("{hook:?}"), format!("{reaction:?}")),
@@ -742,12 +742,14 @@ mod tests {
     /// through each of them.
     #[test]
     fn the_failures_of_a_batch_publish_keep_the_source_of_their_shared_cause() {
-        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let record = Arc::clone(&seen);
+        let rooted = Arc::new(AtomicUsize::new(0));
+        let record = Arc::clone(&rooted);
         let hook = ErrorHook::new(move |failures: Failures| {
             for failed in failures {
                 let source = failed.error().source().map(ToString::to_string);
-                record.lock().expect("lock").push(source);
+                if source.as_deref() == Some("root") {
+                    record.fetch_add(1, Ordering::SeqCst);
+                }
             }
             async {}
         });
@@ -761,9 +763,6 @@ mod tests {
             .now_or_never()
             .expect("ready");
 
-        assert_eq!(
-            *seen.lock().expect("lock"),
-            [Some("root".to_owned()), Some("root".to_owned())]
-        );
+        assert_eq!(rooted.load(Ordering::SeqCst), 2);
     }
 }
