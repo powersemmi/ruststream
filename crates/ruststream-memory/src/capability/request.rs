@@ -191,7 +191,7 @@ impl RequestReply for MemoryRequester {
 #[cfg(test)]
 mod tests {
     use futures::StreamExt;
-    use ruststream_core::{PublishMessageError, Settle};
+    use ruststream_core::Settle;
 
     use super::*;
     use crate::capability::tests::replaying;
