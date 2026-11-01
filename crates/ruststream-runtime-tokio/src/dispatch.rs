@@ -4,13 +4,12 @@
 use std::future::poll_fn;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
 
 use bytes::BytesMut;
 use futures::Stream;
-use tokio::task::{JoinError, JoinHandle, JoinSet};
+use tokio::task::{JoinError, JoinHandle};
 use tracing::error;
 
 use ruststream_runtime::DeliverySlot as Slot;
@@ -55,32 +54,6 @@ where
         consuming,
         HeadersOnDemand,
     ))
-}
-
-/// Waits for whichever comes first: a finished worker off `tasks`, or `shutdown`.
-///
-/// For a full pool, what a turn of the sequential loop is for a subscriber: in the same order and
-/// over the same pinned token future, a worker that has already finished is reaped without the
-/// token's waiter list being touched. `Ended` answers an empty set, which a full pool cannot be.
-///
-/// # Cancel safety
-///
-/// Cancel-safe, like a turn of the sequential loop: a `JoinSet` keeps its finished workers across
-/// polls, and the registration a parked poll made with the waiter list outlives that poll.
-pub(super) async fn reap<Wait, Done>(
-    tasks: &mut JoinSet<Done>,
-    mut cancelled: Pin<&mut Wait>,
-) -> Turn<Result<Done, JoinError>>
-where
-    Wait: Future<Output = ()>,
-    Done: 'static,
-{
-    poll_fn(|cx| match tasks.poll_join_next(cx) {
-        Poll::Ready(Some(joined)) => Poll::Ready(Turn::Delivery(joined)),
-        Poll::Ready(None) => Poll::Ready(Turn::Ended),
-        Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
-    })
-    .await
 }
 
 /// Spawns a task that drives `subscriber` through `handler` with `workers.count()` long-lived
@@ -223,7 +196,7 @@ pub(super) fn log_worker_exit<Done>(joined: Result<Done, JoinError>) -> Option<D
 /// terminates. The handler owns the batch's deliveries and settles each of them.
 ///
 /// With a non-sequential `workers` policy, up to `workers.count()` batches are in flight at once,
-/// each in its own task; keyed lanes do not apply at batch granularity (the macro rejects
+/// each on a worker started with the subscription (see [`batch_pool`]); keyed lanes do not apply at batch granularity (the macro rejects
 /// `by_key` on batch forms), so a keyed policy degrades to the plain pool.
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 pub(crate) fn spawn_batch_dispatch<S, H, C, St, Retry>(
@@ -262,17 +235,20 @@ where
     let consuming = shutdown.consuming();
     Ok(tokio::spawn(async move {
         let _consuming = consuming;
-        batch_loop(subscriber, &shared, &shutdown, workers, batch_size).await;
+        if workers.is_sequential() {
+            batch_loop(subscriber, &shared, &shutdown, batch_size).await;
+        } else {
+            batch_pool::run(subscriber, Arc::new(shared), &shutdown, workers, batch_size).await;
+        }
     }))
 }
 
-/// The loop of a batch subscription on the app's runtime: one batch at a time where the policy
-/// is sequential, up to `workers.count()` at once on a pool of workers otherwise.
+/// The loop of a sequential batch subscription: one batch at a time, run on the loop's own task
+/// (a pool of workers is [`batch_pool`]).
 async fn batch_loop<S, H, C, St, Retry>(
     mut subscriber: S,
     shared: &pool::Shared<H, St, C, Retry>,
     shutdown: &Shutdown,
-    workers: Workers,
     batch_size: NonZeroUsize,
 ) where
     Retry: RetryCopies<C>,
@@ -287,28 +263,14 @@ async fn batch_loop<S, H, C, St, Retry>(
     // batch the handler sees.
     let mut stream = std::pin::pin!(subscriber.batches(batch_size));
     let mut cancelled = std::pin::pin!(shutdown.cancelled());
-    let mut tasks = JoinSet::new();
-    // One decode buffer for the whole loop: the sequential path lends the same one to every
-    // batch, so the slice a handler reads is allocated once for the subscription. The encode
-    // buffer beside it is the same bargain on the way out. A pooled batch runs beside the
-    // others and cannot share these, so it takes a pair of its own from `spare`, where the
-    // pool keeps what finished workers handed back.
+    // One decode buffer for the whole loop: every batch borrows the same one, so the slice a
+    // handler reads is allocated once for the subscription. The encode buffer beside it is the
+    // same bargain on the way out.
     let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
     let mut encode = BytesMut::new();
-    let mut spare = Vec::new();
     loop {
         if shutdown.is_cancelled() {
             break;
-        }
-        if tasks.len() >= workers.count().get() {
-            // The pool is full: reap a finished worker before polling for more.
-            match reap(&mut tasks, cancelled.as_mut()).await {
-                Turn::Delivery(joined) => spare.extend(log_worker_exit(joined)),
-                // A full pool holds a worker, so `Ended` is shutdown's twin here: either
-                // way the drain below joins whatever is still running.
-                Turn::Ended | Turn::Shutdown => break,
-            }
-            continue;
         }
         // The stream first, the token only where the stream has nothing: see `turn_into`, whose
         // wait this is.
@@ -319,7 +281,7 @@ async fn batch_loop<S, H, C, St, Retry>(
         })
         .await;
         match pulled {
-            Turn::Delivery(Ok(batch)) if workers.is_sequential() => {
+            Turn::Delivery(Ok(batch)) => {
                 // Turbofish: the adapter handlers are generic over the batch context, so the
                 // spawn's own parameter names it.
                 run_batch::<_, _, C, _, _, _>(
@@ -335,10 +297,6 @@ async fn batch_loop<S, H, C, St, Retry>(
                 )
                 .await;
             }
-            Turn::Delivery(Ok(batch)) => {
-                let buffers = spare.pop().unwrap_or_default();
-                tasks.spawn(pooled_batch::<_, _, C, _, _>(shared, batch, buffers));
-            }
             Turn::Delivery(Err(err)) => {
                 error!(
                     target: "ruststream::dispatch",
@@ -352,44 +310,6 @@ async fn batch_loop<S, H, C, St, Retry>(
             }
             Turn::Shutdown => break,
         }
-    }
-    while let Some(joined) = tasks.join_next().await {
-        log_worker_exit(joined);
-    }
-}
-
-/// One batch of a pooled subscription, run on a worker of its own with the buffers it was lent,
-/// which it hands back for the next batch.
-fn pooled_batch<H, Batch, C, St, Retry>(
-    shared: &pool::Shared<H, St, C, Retry>,
-    batch: Batch,
-    (mut scratch, mut encode): (H::Scratch, BytesMut),
-) -> impl Future<Output = (H::Scratch, BytesMut)> + use<H, Batch, C, St, Retry>
-where
-    Retry: RetryCopies<C>,
-    H: BatchHandler<Batch, C, St>,
-    C: Send + Sync + 'static,
-    St: Send + Sync,
-{
-    let handler = Arc::clone(&shared.handler);
-    let name = Arc::clone(&shared.name);
-    let state = Arc::clone(&shared.state);
-    let hosted = Arc::clone(&shared.hosted);
-    let failure = shared.failure.clone();
-    async move {
-        run_batch::<_, _, C, _, _, _>(
-            &handler,
-            batch,
-            &mut scratch,
-            &mut encode,
-            &name,
-            &state,
-            &hosted.delivery,
-            &hosted.host,
-            &failure,
-        )
-        .await;
-        (scratch, encode)
     }
 }
 
@@ -459,6 +379,7 @@ where
     }))
 }
 
+mod batch_pool;
 #[cfg(test)]
 mod fixtures;
 mod pool;
