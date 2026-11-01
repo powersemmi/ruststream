@@ -17,7 +17,7 @@ use crate::lifecycle::BoxError;
 use crate::middleware::BlanketLayer;
 use crate::middleware::Identity;
 use crate::publish::{
-    OutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough, SinkOutcome, SinkRefusal,
+    OutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough, SinkOutcome,
 };
 use crate::publish_failure::Refusal;
 use crate::settings::{BatchSized, Declared, DefMountCodec, MountsWith, Sequential};
@@ -299,8 +299,10 @@ impl<W> OutPipeline<W> for LocalPipeline<PublishIdentity> {
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
-        let sent = leaf.publish(msg, options);
-        async move { sent.await.map_err(SinkRefusal::returned::<W::Payload>) }
+        // The identity pipeline's own send: under the harness it records the publish with the
+        // destination it went to, and it does so when the future is polled, inside the slot's
+        // publishing scope.
+        <PublishIdentity as OutPipeline<W>>::send(&PublishIdentity, leaf, msg, options)
     }
 }
 
