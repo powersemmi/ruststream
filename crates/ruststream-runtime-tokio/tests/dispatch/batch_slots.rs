@@ -193,7 +193,7 @@ async fn a_sequential_loop_fills_one_slot_for_every_batch() {
         .subscriber("sequential")
         .assert_batch_sizes(&[2, 2, 2])
         .settled(HandlerOutcome::ack());
-    let storage = storage.lock().expect("storage");
+    let storage = storage.lock().expect("storage").clone();
     assert_eq!(storage.len(), 3);
     assert!(
         storage.iter().all(|at| *at == storage[0]),

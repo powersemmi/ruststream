@@ -291,6 +291,47 @@ struct Pages<Inner, Log> {
 
 impl<Inner, Log> Unpin for Pages<Inner, Log> {}
 
+impl<Inner, Log: LogMode> Pages<Inner, Log>
+where
+    Inner: BatchStream<Vec<MemoryMessage<Log>>, Error = Infallible>,
+{
+    fn poll_page(
+        &mut self,
+        cx: &mut TaskContext<'_>,
+        slot: &mut RowBatch<Log>,
+    ) -> Poll<Option<Result<(), Infallible>>> {
+        if self.fault == Fault::EmptyPages {
+            // A page with nothing in it, each after one turn of the scheduler.
+            if !self.yielded {
+                self.yielded = true;
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+            self.yielded = false;
+            return Poll::Ready(Some(Ok(())));
+        }
+        if self.fault == Fault::OneInFlight && self.held.is_none() {
+            let in_flight = Arc::clone(&self.in_flight);
+            let acquiring = self.acquiring.get_or_insert_with(|| {
+                Box::pin(async move { in_flight.acquire_owned().await.ok() })
+            });
+            let Some(permit) = ready!(acquiring.as_mut().poll(cx)) else {
+                return Poll::Ready(None);
+            };
+            self.acquiring = None;
+            self.held = Some(permit);
+        }
+        let step = ready!(self.inner.as_mut().poll_fill(cx, &mut self.lent));
+        if matches!(step, Some(Ok(()))) {
+            slot.fill(self.lent.drain(..), self.fault);
+            if let Some(permit) = self.held.take() {
+                slot.holding(permit);
+            }
+        }
+        Poll::Ready(step)
+    }
+}
+
 impl<Inner, Log: LogMode> BatchStream<RowBatch<Log>> for Pages<Inner, Log>
 where
     Inner: BatchStream<Vec<MemoryMessage<Log>>, Error = Infallible>,
@@ -298,40 +339,11 @@ where
     type Error = Infallible;
 
     fn poll_fill(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut TaskContext<'_>,
         slot: &mut RowBatch<Log>,
     ) -> Poll<Option<Result<(), Infallible>>> {
-        let this = &mut *self;
-        if this.fault == Fault::EmptyPages {
-            // A page with nothing in it, each after one turn of the scheduler.
-            if !this.yielded {
-                this.yielded = true;
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
-            }
-            this.yielded = false;
-            return Poll::Ready(Some(Ok(())));
-        }
-        if this.fault == Fault::OneInFlight && this.held.is_none() {
-            let in_flight = Arc::clone(&this.in_flight);
-            let acquiring = this.acquiring.get_or_insert_with(|| {
-                Box::pin(async move { in_flight.acquire_owned().await.ok() })
-            });
-            let Some(permit) = ready!(acquiring.as_mut().poll(cx)) else {
-                return Poll::Ready(None);
-            };
-            this.acquiring = None;
-            this.held = Some(permit);
-        }
-        let step = ready!(this.inner.as_mut().poll_fill(cx, &mut this.lent));
-        if matches!(step, Some(Ok(()))) {
-            slot.fill(this.lent.drain(..), this.fault);
-            if let Some(permit) = this.held.take() {
-                slot.holding(permit);
-            }
-        }
-        Poll::Ready(step)
+        self.get_mut().poll_page(cx, slot)
     }
 }
 
@@ -474,6 +486,11 @@ impl<Log: LogMode> RowBatch<Log> {
                 }),
             }
         }
+        self.place(gone, fault);
+    }
+
+    /// Puts the deliveries whose row is gone after the rest, and the page's own fault on its rows.
+    fn place(&mut self, gone: Vec<RowDelivery<Log>>, fault: Fault) {
         if fault == Fault::PlaceholderForGone {
             self.rows
                 .extend(gone.iter().map(|_| Row::new(0, "placeholder")));

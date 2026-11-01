@@ -592,7 +592,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
             AssertUnwindSafe(async {
                 handler
                     .handle_batch(&mut *batch, scratch, &mut ctx, host)
-                    .await
+                    .await;
             })
             .catch_unwind()
         ),
@@ -604,7 +604,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
         AssertUnwindSafe(async {
             handler
                 .handle_batch(&mut *batch, scratch, &mut ctx, host)
-                .await
+                .await;
         })
         .catch_unwind()
     )

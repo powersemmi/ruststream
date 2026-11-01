@@ -8,9 +8,10 @@ use core::task::{Context, Poll};
 
 use crate::MaybeSend;
 
-/// The storage one batch is collected in. The runtime allocates one per worker when the
-/// subscription starts, lends it to the broker to fill, drains it while it settles the batch, and
-/// lends it again for the next one.
+/// The storage one batch is collected in, which the runtime owns and reuses.
+///
+/// The runtime allocates one per worker when the subscription starts, lends it to the broker to
+/// fill, drains it while it settles the batch, and lends it again for the next one.
 ///
 /// A broker whose batches are a `Vec` of its messages names `Vec<..>` as its
 /// [`BatchSubscriber::Batch`](crate::BatchSubscriber::Batch) and needs nothing more. A broker with
@@ -122,7 +123,7 @@ mod tests {
     fn a_vec_slot_has_room_for_the_batch_size() {
         let slot = <Vec<u32> as BatchSlot>::with_capacity(NonZeroUsize::new(64).unwrap());
         assert!(slot.capacity() >= 64);
-        assert!(slot.is_empty());
+        assert_eq!(slot.len(), 0);
     }
 
     #[test]
@@ -134,7 +135,7 @@ mod tests {
         let drained: Vec<u32> = BatchSlot::drain(&mut slot).collect();
 
         assert_eq!(drained, [3, 1, 2]);
-        assert!(slot.is_empty());
+        assert_eq!(slot.len(), 0);
         assert_eq!(slot.capacity(), room);
     }
 }

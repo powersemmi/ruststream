@@ -9,8 +9,9 @@
 //! queue that was allocated with the crew: no task, no reference count, no allocation.
 
 use std::future::poll_fn;
+use std::iter::repeat_with;
 use std::num::NonZeroUsize;
-use std::pin::pin;
+use std::pin::{Pin, pin};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
@@ -117,11 +118,14 @@ impl<Slot> Inbox<Slot> {
     }
 }
 
+/// What a worker that ends mid-batch reports through: the free list and its own inbox.
+type Departure<Slot> = (Arc<FreeList<Slot>>, Arc<Inbox<Slot>>);
+
 /// A worker's report that it ended mid-batch: its index once more, so a worker that panicked
 /// outside the handler's future is found by the next batch the loop hands it, rather than never
 /// picked again. A worker that leaves its loop disarms it first.
 struct Farewell<Slot> {
-    ended: Option<(Arc<FreeList<Slot>>, Arc<Inbox<Slot>>)>,
+    ended: Option<Departure<Slot>>,
     index: usize,
 }
 
@@ -177,6 +181,47 @@ async fn work<Slot, Body, Cx, State, Retry>(
     farewell.ended = None;
 }
 
+/// Waits for a free worker and takes its slot, or `None` once shutdown fires or the worker is gone.
+///
+/// The token is polled first only where no worker is free: a pool with room pays the queue alone.
+/// A worker that ends reports itself once more, so the wait always has one to find.
+async fn acquire<Slot, Cancelled>(
+    free: &FreeList<Slot>,
+    slots: &mut [Option<Slot>],
+    cancelled: &mut Pin<&mut Cancelled>,
+    name: &str,
+) -> Option<(usize, Slot)>
+where
+    Cancelled: Future<Output = ()>,
+{
+    let freed = {
+        let mut next = pin!(free.next());
+        poll_fn(|cx| match next.as_mut().poll(cx) {
+            Poll::Ready(freed) => Poll::Ready(Turn::Delivery(freed)),
+            Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
+        })
+        .await
+    };
+    let Turn::Delivery((index, returned)) = freed else {
+        return None;
+    };
+    if returned.is_some() {
+        slots[index] = returned;
+    }
+    let slot = slots[index].take();
+    if slot.is_none() {
+        // A worker only disappears if its task panicked, taking its slot with it; stop pulling
+        // rather than running on fewer workers than the registration asked for.
+        error!(
+            target: "ruststream::dispatch",
+            subscription = %name,
+            worker = index,
+            "worker terminated; stopping dispatch",
+        );
+    }
+    slot.map(|slot| (index, slot))
+}
+
 /// Drives `subscriber` through `shared.handler` on `workers.count()` long-lived workers until
 /// `shutdown` is triggered or the stream ends, then lets each finish its batch.
 pub(super) async fn run<Sub, Body, Cx, State, Retry>(
@@ -197,9 +242,10 @@ pub(super) async fn run<Sub, Body, Cx, State, Retry>(
     // Every worker is free at the start, so the queue of free ones is seeded with all of them;
     // it never holds more. Each worker's slot is the loop's until it hands it over.
     let free = Arc::new(FreeList::new(count));
-    let mut slots: Vec<Option<Sub::Batch>> = (0..count)
-        .map(|_| Some(<Sub::Batch as BatchSlot>::with_capacity(batch_size)))
-        .collect();
+    let mut slots: Vec<Option<Sub::Batch>> =
+        repeat_with(|| Some(<Sub::Batch as BatchSlot>::with_capacity(batch_size)))
+            .take(count)
+            .collect();
     let mut inboxes = Vec::with_capacity(count);
     let mut crew = Crew(Vec::with_capacity(count));
     for index in 0..count {
@@ -229,35 +275,10 @@ pub(super) async fn run<Sub, Body, Cx, State, Retry>(
         let (worker, mut slot) = if let Some(held) = held.take() {
             held
         } else {
-            // The token first only where no worker is free: a pool with room pays the queue
-            // alone. A worker that ends reports itself once more, so the wait always has one
-            // to find.
-            let freed = {
-                let mut next = pin!(free.next());
-                poll_fn(|cx| match next.as_mut().poll(cx) {
-                    Poll::Ready(freed) => Poll::Ready(Turn::Delivery(freed)),
-                    Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
-                })
-                .await
-            };
-            let Turn::Delivery((index, returned)) = freed else {
+            let Some(acquired) = acquire(&free, &mut slots, &mut cancelled, name).await else {
                 break;
             };
-            if returned.is_some() {
-                slots[index] = returned;
-            }
-            let Some(slot) = slots[index].take() else {
-                // A worker only disappears if its task panicked, taking its slot with it; stop
-                // pulling rather than running on fewer workers than the registration asked for.
-                error!(
-                    target: "ruststream::dispatch",
-                    subscription = %name,
-                    worker = index,
-                    "worker terminated; stopping dispatch",
-                );
-                break;
-            };
-            (index, slot)
+            acquired
         };
         // The stream first, the token only where the stream has nothing: see `turn_into`, whose
         // wait this is.

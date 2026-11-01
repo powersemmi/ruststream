@@ -12,7 +12,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::{any, fmt, marker::PhantomData, num::NonZeroUsize};
+use core::{any, fmt, marker::PhantomData, mem, num::NonZeroUsize};
 use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync, MaybeSync};
 #[cfg(feature = "otel")]
 use std::slice;
@@ -775,9 +775,10 @@ pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S, Host>(
         return;
     }
     // A rejected element is settled before the handler runs, as it always was, and the accepted
-    // remainder is put back on the way past it. The batch keeps its storage; the copy of the
-    // deliveries is the cost of a batch that has a rejection in it.
-    let all: Vec<M> = batch.drain(..).collect();
+    // remainder is put back on the way past it. A batch that has a rejection in it pays one
+    // allocation for the room of the accepted rest.
+    let all = mem::take(batch);
+    batch.reserve(all.len() - rejected.len());
     let mut rejected = rejected.into_iter().peekable();
     for (index, msg) in all.into_iter().enumerate() {
         if rejected.peek().is_some_and(|(at, _)| *at == index) {

@@ -898,7 +898,7 @@ fn recording_the_batch_size_allocates_nothing_per_batch() {
             &host,
         )
         .now_or_never()
-        .expect("a batch that decodes whole settles nothing and never waits")
+        .expect("a batch that decodes whole settles nothing and never waits");
     };
 
     // The first batch gives the scratch buffer its room; what follows is the steady state.

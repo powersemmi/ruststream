@@ -255,10 +255,10 @@ impl<Log: LogMode> BatchSubscriber for FaultySubscriber<Log> {
             Some(BatchFault::FailsWithMessages) | None => size,
         };
         Wrapping {
-            fails: matches!(self.batch, Some(BatchFault::FailsWithMessages)),
             inner: Box::pin(self.inner.batches(size)),
             lent: Vec::new(),
             settle,
+            fails: matches!(self.batch, Some(BatchFault::FailsWithMessages)),
         }
     }
 }

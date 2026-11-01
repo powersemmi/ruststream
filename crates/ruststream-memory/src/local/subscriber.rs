@@ -445,7 +445,7 @@ mod tests {
 
     use super::*;
     use crate::local::LocalMemoryBroker;
-    use crate::local::drive::{ended, waiting};
+    use crate::local::drive::waiting;
 
     async fn open(name: &str) -> (ConnectedLocalMemoryBroker<4>, LocalMemorySubscriber<4>) {
         let connected = LocalMemoryBroker::<4>::new().connect().await.unwrap();
@@ -575,9 +575,10 @@ mod tests {
         S: BatchStream<Vec<LocalMemoryMessage<4>>>,
     {
         let mut slot = Vec::new();
-        let step = poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot))
-            .now_or_never()
-            .expect("the stream has nothing waiting");
+        let Some(step) = poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot)).now_or_never()
+        else {
+            panic!("the stream has nothing waiting");
+        };
         step.map(|_| slot)
     }
 

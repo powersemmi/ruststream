@@ -46,9 +46,9 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
         size: NonZeroUsize,
     ) -> impl BatchStream<Self::Batch, Error = <Self as Subscriber>::Error> + MaybeSend + '_ {
         Greedy {
-            limit: size.get(),
             #[cfg(feature = "testing")]
             coordinator: self.coordinator(),
+            limit: size.get(),
             subscriber: self,
         }
     }
@@ -56,10 +56,10 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
 
 /// The batch stream of a [`MemorySubscriber`].
 struct Greedy<'sub, Log: LogMode> {
-    subscriber: &'sub mut MemorySubscriber<Log>,
-    limit: usize,
     #[cfg(feature = "testing")]
     coordinator: Option<Coordinator>,
+    limit: usize,
+    subscriber: &'sub mut MemorySubscriber<Log>,
 }
 
 impl<Log: LogMode> BatchStream<Vec<MemoryMessage<Log>>> for Greedy<'_, Log> {
@@ -121,10 +121,11 @@ impl<Log: LogMode> Partitioned for MemoryMessage<Log> {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
     use std::future::poll_fn;
 
     use futures::StreamExt;
-    use ruststream_core::Settle;
+    use ruststream_core::{BatchSlot, Settle};
 
     use super::*;
     use crate::{MemoryBroker, Retaining, Retention};
@@ -138,9 +139,7 @@ mod tests {
 
     /// The next batch the stream fills a fresh slot with, or `None` where the subscription ended.
     pub(super) async fn filled<Log: LogMode>(
-        stream: &mut Pin<
-            &mut impl BatchStream<Vec<MemoryMessage<Log>>, Error = std::convert::Infallible>,
-        >,
+        stream: &mut Pin<&mut impl BatchStream<Vec<MemoryMessage<Log>>, Error = Infallible>>,
     ) -> Option<Vec<MemoryMessage<Log>>> {
         let mut slot = Vec::new();
         let step = poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot)).await;
@@ -192,7 +191,7 @@ mod tests {
         assert_eq!(slot.len(), 8);
         assert_eq!(slot.capacity(), 8);
         assert_eq!(slot.as_ptr(), storage);
-        for msg in slot.drain(..) {
+        for msg in BatchSlot::drain(&mut slot) {
             msg.ack().await.unwrap();
         }
         poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot))

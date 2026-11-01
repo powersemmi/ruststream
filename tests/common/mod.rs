@@ -9,6 +9,9 @@
 //! Registrations are documented by default, so every message type here derives `JsonSchema`:
 //! a suite mounting one of them is not asking to be the file that opts documentation out.
 
+use std::future::poll_fn;
+use std::pin::Pin;
+use std::task::{Context, Poll, ready};
 #[cfg(feature = "testing")]
 use std::time::Duration;
 
@@ -157,13 +160,13 @@ pub(crate) async fn expect_id<Log: LogMode>(
 /// slot a service never sees, lent for one fill the way the runtime lends it.
 #[allow(dead_code)]
 pub(crate) async fn filled<Message, Fill>(
-    stream: &mut std::pin::Pin<&mut Fill>,
+    stream: &mut Pin<&mut Fill>,
 ) -> Option<Result<Vec<Message>, Fill::Error>>
 where
     Fill: ruststream::BatchStream<Vec<Message>>,
 {
     let mut slot = Vec::new();
-    let step = std::future::poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot)).await;
+    let step = poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot)).await;
     step.map(|filled| filled.map(|()| slot))
 }
 
@@ -171,7 +174,7 @@ where
 /// wraps the bus's deliveries in its own.
 #[allow(dead_code)]
 pub(crate) struct Reading<Inner, From, To> {
-    inner: std::pin::Pin<Box<Inner>>,
+    inner: Pin<Box<Inner>>,
     lent: Vec<From>,
     read: fn(From) -> To,
 }
@@ -198,13 +201,13 @@ where
     type Error = Inner::Error;
 
     fn poll_fill(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         slot: &mut Vec<To>,
-    ) -> std::task::Poll<Option<Result<(), Self::Error>>> {
+    ) -> Poll<Option<Result<(), Self::Error>>> {
         let this = &mut *self;
-        let step = std::task::ready!(this.inner.as_mut().poll_fill(cx, &mut this.lent));
+        let step = ready!(this.inner.as_mut().poll_fill(cx, &mut this.lent));
         slot.extend(this.lent.drain(..).map(this.read));
-        std::task::Poll::Ready(step)
+        Poll::Ready(step)
     }
 }
