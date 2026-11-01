@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use embassy_futures::block_on;
 use embassy_time::{Duration as EmbassyDuration, Timer};
-use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
+use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream::nonzero;
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER};
 use ruststream::testing::embedded::TestApp;
@@ -391,4 +391,75 @@ fn a_copy_without_a_record_runs_only_error_in_every_form_of_the_pair() -> Result
         })?;
     }
     Ok(())
+}
+
+/// The answer the asking handler returns, to the destination it names.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "answers")]
+struct Answer(&'static [u8]);
+
+/// Answers an ask. If the answer cannot be published, the context's `.error` records it.
+#[subscriber(LocalMemorySource::new("ask"), reply)]
+async fn on_ask(ask: &Job<'_>, ctx: &mut Context<'_, (), Lost>) -> Answer {
+    let lost = ctx.state().clone();
+    ctx.after(HandlerOutcome::ack())
+        .error(async move |error, message| {
+            lost.0.lock().expect("the handlers never panic").push((
+                error.to_string(),
+                message.destination().to_owned(),
+                message.payload().to_vec(),
+            ));
+        });
+    let _ = ask.0;
+    Answer(b"yes")
+}
+
+/// Holds its delivery for an hour of the mock clock, so the answers subscription stays full.
+#[subscriber(LocalMemorySource::new("answers"))]
+async fn on_answers_stuck(job: &Job<'_>) -> HandlerOutcome {
+    let _ = job.0;
+    Timer::after(EmbassyDuration::from_secs(3600)).await;
+    HandlerOutcome::ack()
+}
+
+#[ruststream::app(runtime = embassy)]
+fn reply_app(bus: TightBus) -> EmbeddedApp<impl Mounts<State = Lost>> {
+    EmbeddedApp::new()
+        .with_state(Lost::default())
+        .with_broker(bus, |b| {
+            b.include(on_answers_stuck)
+                .include(on_ask)
+                .out_reply(LocalMemoryPublish)
+        })
+}
+
+#[test]
+fn a_reply_the_bus_refuses_is_not_requeued_and_reaches_the_error_continuation()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let lost = Lost::default();
+        let shared = lost.clone();
+        let tb = TestApp::with_state(reply_app(TightBus::new()), move |_| shared).await?;
+        // The first message fills the one slot of the answers subscription for the hour.
+        tb.broker::<TightBus>()
+            .message(&Sent(b"x"))
+            .to("answers")
+            .publish()
+            .await?;
+        tb.broker::<TightBus>()
+            .message(&Sent(b"?"))
+            .to("ask")
+            .publish()
+            .await?;
+
+        tb.advance(Duration::from_secs(1)).await?;
+
+        let told = lost.told();
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert_eq!(told[0].1, "answers");
+        // The delivery was acknowledged, not requeued: the handler ran once.
+        tb.broker::<TightBus>().subscriber("ask").assert_called(1);
+        tb.shutdown().await?;
+        Ok(())
+    })
 }
