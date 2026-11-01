@@ -190,7 +190,7 @@ where
 /// use std::time::Duration;
 ///
 /// use futures::Stream;
-/// use ruststream::{BatchSubscriber, BufferedSubscriber, Subscriber};
+/// use ruststream::{BatchStream, BatchSubscriber, BufferedSubscriber, Subscriber};
 ///
 /// /// The broker's own subscriber: one message at a time on the wire, batches on the client.
 /// struct Batching<S>(BufferedSubscriber<S>);
@@ -217,7 +217,7 @@ where
 ///     fn batches(
 ///         &mut self,
 ///         size: NonZeroUsize,
-///     ) -> impl Stream<Item = Result<Self::Batch, Self::Error>> + Send + '_ {
+///     ) -> impl BatchStream<Self::Batch, Error = Self::Error> + Send + '_ {
 ///         self.0.batches(size)
 ///     }
 /// }

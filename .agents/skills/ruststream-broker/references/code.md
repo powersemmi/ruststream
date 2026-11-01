@@ -177,7 +177,7 @@ is the crate's own, set from the descriptor.
 use std::num::NonZeroUsize;
 
 use futures::Stream;
-use ruststream::{BatchSubscriber, BufferedSubscriber, Subscriber};
+use ruststream::{BatchStream, BatchSubscriber, BufferedSubscriber, Subscriber};
 
 pub struct MySubscriber {
     buffered: BufferedSubscriber<WireSubscriber>,
@@ -204,7 +204,7 @@ impl BatchSubscriber for MySubscriber {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, MyError>> + Send + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = MyError> + Send + '_ {
         self.buffered.batches(size)
     }
 }
@@ -212,6 +212,41 @@ impl BatchSubscriber for MySubscriber {
 
 `Subscribe::Subscriber` is this same type, so a `&[T]` body works on `#[subscriber("name")]` too.
 `conformance::capabilities::batches` checks the capability.
+
+## Batches on a transport that batches on the wire
+
+The runtime lends the stream a slot, a `Vec` of the subscriber's messages, once per worker. The
+stream pushes each message of the batch into it, up to the size, and returns; the runtime drains
+the slot and lends it again. A pending poll may leave messages in the slot: the next poll resumes
+from them. A failed fill leaves the slot empty, and a subscription that ended leaves it untouched.
+
+```rust
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use ruststream::BatchStream;
+
+struct Fetches<'a> {
+    client: &'a mut WireClient,
+    size: usize,
+}
+
+impl BatchStream<Vec<MyDelivery>> for Fetches<'_> {
+    type Error = MyError;
+
+    fn poll_fill(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        slot: &mut Vec<MyDelivery>,
+    ) -> Poll<Option<Result<(), MyError>>> {
+        let size = self.size;
+        self.client.poll_fetch(cx, size, |delivery| slot.push(delivery))
+    }
+}
+```
+
+A batch type of the crate's own (the rows of a database page beside the deliveries that settle
+them) implements `BatchSlot` and names itself as `BatchSubscriber::Batch`.
 
 ## Per-message settings on the publish builder
 
