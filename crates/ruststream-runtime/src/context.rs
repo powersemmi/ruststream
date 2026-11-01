@@ -16,6 +16,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::OnceCell;
 use core::fmt;
+#[cfg(feature = "testing")]
 use core::mem;
 
 use bytes::BytesMut;
