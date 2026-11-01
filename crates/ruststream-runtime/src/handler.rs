@@ -512,7 +512,7 @@ impl HandlerOutcome {
     /// ```
     ///
     /// A lost copy is announced through an `Out` publisher the handler clones into the closure
-    /// (`Out<impl Publisher + Clone>`):
+    /// (`Out<impl Publisher>`):
     ///
     /// ```
     /// # #[cfg(feature = "json")]
@@ -536,7 +536,7 @@ impl HandlerOutcome {
     /// #[subscriber("orders")]
     /// async fn accept(
     ///     order: &Order,
-    ///     Out(alerts): Out<impl Publisher + Clone>,
+    ///     Out(alerts): Out<impl Publisher>,
     /// ) -> HandlerOutcome {
     ///     let id = order.id;
     ///     let alerts = alerts.clone();

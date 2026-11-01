@@ -399,6 +399,7 @@ async fn a_refused_copy_runs_only_error_in_every_form_of_the_pair() {
 }
 
 /// A publisher whose bus takes everything but the dead letter, and keeps what it is handed.
+#[derive(Clone)]
 struct RefusesDeadLetter(MemoryPublisher);
 
 impl Publisher for RefusesDeadLetter {
@@ -674,7 +675,7 @@ async fn a_published_reply_runs_the_context_then_and_not_the_error() {
 
 /// Asks for a retry later, and sends the alert through its own `Out` publisher if the copy is lost.
 #[subscriber(Queue { name: "outs" })]
-async fn on_job_out(job: &Job, Out(alerts): Out<impl Publisher + Clone>) -> HandlerOutcome {
+async fn on_job_out(job: &Job, Out(alerts): Out<impl Publisher>) -> HandlerOutcome {
     let id = job.id;
     let alerts = alerts.clone();
     HandlerOutcome::retry_after(RETRY_DELAY).error(async move |err, lost| {

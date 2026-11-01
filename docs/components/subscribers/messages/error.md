@@ -18,7 +18,7 @@ A publish the runtime makes on its behalf gives the same control through `.error
 The continuation receives the cause and the [`FailedMessage`](api:ruststream::runtime::FailedMessage): its destination, its bytes and its headers.
 It returns nothing, like [`and_after`](./and-after.md), and runs once the delivery is settled.
 Whatever the reaction needs (a client, state, a counter, an `Out` publisher) the handler moves into the closure.
-An `Out` publisher is cloned for that: declare it `Out<impl Publisher + Clone>` and move `alerts.clone()` in, then publish through it in the continuation as in the handler body.
+An `Out` publisher is cloned for that: declare it `Out<impl Publisher>` and move `alerts.clone()` in, then publish through it in the continuation as in the handler body.
 The closure is `Clone`, because the runtime runs a copy of it for each failure: keep shared state behind an `Arc`.
 
 The handler never runs again because a runtime publish failed.
