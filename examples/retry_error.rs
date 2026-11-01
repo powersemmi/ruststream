@@ -11,10 +11,9 @@
 use std::future::ready;
 use std::io;
 
-use ruststream::PublishOutcome;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, LogMode};
-use ruststream::{Lend, OutgoingMessage, PairError};
+use ruststream::{Lend, OutgoingMessage, PairError, PublishMessageError, PublishOutcome};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
@@ -42,10 +41,14 @@ impl Publisher for Down {
 
     fn publish<'msg>(
         &self,
-        _msg: OutgoingMessage<'msg, &'msg [u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
     ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
-        ready(Err(io::Error::other("broker down").into()))
+        // The broker is down: the message did not go out, so it comes back with the error.
+        ready(Err(PublishMessageError::with_message(
+            io::Error::other("broker down"),
+            msg,
+        )))
     }
 }
 
