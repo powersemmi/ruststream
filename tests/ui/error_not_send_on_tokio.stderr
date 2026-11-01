@@ -23,8 +23,8 @@ note: required by a bound in `HandlerOutcome::error`
    |     pub fn error<React, Reaction>(mut self, react: React) -> Self
    |            ----- required by a bound in this associated function
    |     where
-   |         React: FnOnce(BoxError, FailedMessage) -> Reaction + MaybeSend + 'static,
-   |                                                              ^^^^^^^^^ required by this bound in `HandlerOutcome::error`
+   |         React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
+   |                                                                      ^^^^^^^^^ required by this bound in `HandlerOutcome::error`
 
 error: future cannot be sent between threads safely
   --> tests/ui/error_not_send_on_tokio.rs:17:27
