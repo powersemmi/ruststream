@@ -11,6 +11,7 @@
 //! Associated types are named through the wrapped definition rather than through `Self`: the
 //! builder implements every definition form, so a bare `Self::Input` would be ambiguous.
 
+use crate::handler::MaybeSend;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -159,7 +160,7 @@ where
         input: &<<Def as InjectDef>::Input as InputKind>::Target,
         injections: &<Def as InjectDef>::Injections,
         ctx: &mut Context<'_, <Def as InjectDef>::Context, S>,
-    ) -> impl Future<Output = HandlerOutcome> + Send {
+    ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
         self.def.call(input, injections, ctx)
     }
 }
@@ -218,7 +219,8 @@ where
         input: &<<Def as PublishingDef>::Input as InputKind>::Target,
         injections: &<Def as PublishingDef>::Injections,
         ctx: &mut Context<'_, <Def as PublishingDef>::Context, S>,
-    ) -> impl Future<Output = Result<<Def as PublishingDef>::Reply, HandlerOutcome>> + Send {
+    ) -> impl Future<Output = Result<<Def as PublishingDef>::Reply, HandlerOutcome>> + MaybeSend
+    {
         self.def.call(input, injections, ctx)
     }
 }
@@ -268,7 +270,7 @@ where
         batch: &[<<Def as BatchInjectDef>::Input as InputKind>::Owned],
         injections: &<Def as BatchInjectDef>::Injections,
         ctx: &mut Context<'_, <Def as BatchInjectDef>::Context, S>,
-    ) -> impl Future<Output = BatchResult> + Send {
+    ) -> impl Future<Output = BatchResult> + MaybeSend {
         self.def.call(batch, injections, ctx)
     }
 }
@@ -310,7 +312,7 @@ where
         batch: &[<<Def as BatchPublishingDef>::Input as InputKind>::Owned],
         injections: &<Def as BatchPublishingDef>::Injections,
         ctx: &mut Context<'_, <Def as BatchPublishingDef>::Context, S>,
-    ) -> impl Future<Output = Result<Vec<<Def as BatchPublishingDef>::Reply>, BatchResult>> + Send
+    ) -> impl Future<Output = Result<Vec<<Def as BatchPublishingDef>::Reply>, BatchResult>> + MaybeSend
     {
         self.def.call(batch, injections, ctx)
     }

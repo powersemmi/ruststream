@@ -418,6 +418,7 @@ where
 
 /// Bundled, opinionated middleware layers ready to drop into a handler stack.
 pub mod layers {
+    use crate::handler::MaybeSend;
     use tracing::{debug, info, instrument, warn};
 
     use super::super::handler::HandlerResult;
@@ -493,7 +494,7 @@ pub mod layers {
             &self,
             msg: &M,
             ctx: &mut Context<'_, C, S>,
-        ) -> impl Future<Output = HandlerOutcome> + Send {
+        ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
             // An `async move` block, so `instrument` enters its span around the whole future.
             async move { traced(move || self.inner.handle(msg, ctx)).await }
         }
@@ -562,7 +563,7 @@ pub mod layers {
                 &self,
                 _msg: &(),
                 _ctx: &mut Context<'_, (), ()>,
-            ) -> impl Future<Output = HandlerOutcome> + Send {
+            ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
                 let outcome = self.0;
                 async move { HandlerOutcome::from(outcome) }
             }

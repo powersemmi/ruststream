@@ -9,6 +9,7 @@
 //! each reply independently, while a `.transactional()` one makes the whole batch's replies
 //! visible atomically - the consume-transform-produce pattern.
 
+use crate::handler::MaybeSend;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::{any, fmt};
@@ -142,7 +143,7 @@ pub(crate) trait BatchPublishingCall<S>: BatchPublishingDef {
         batch: &[<Self::Input as InputKind>::Owned],
         injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
-    ) -> impl Future<Output = Result<Vec<Self::Reply>, BatchResult>> + Send;
+    ) -> impl Future<Output = Result<Vec<Self::Reply>, BatchResult>> + MaybeSend;
 }
 
 /// Builds the registration metadata for a batch publishing definition mounted under `name`.

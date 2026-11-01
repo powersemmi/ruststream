@@ -61,6 +61,7 @@ mod verdict;
 #[cfg(all(test, feature = "json", feature = "asyncapi"))]
 mod matrix_tests;
 
+use crate::handler::MaybeSend;
 use crate::settings::{AllOpen, SubscriberBuilder};
 use alloc::string::String;
 #[doc(hidden)]
@@ -131,7 +132,7 @@ pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: Send + Syn
         input: &In,
         outs: &O,
         ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Verdict<In, R>> + Send;
+    ) -> impl Future<Output = Verdict<In, R>> + MaybeSend;
 }
 
 /// The body contract of a runner that polls every delivery on one thread: [`Handle`] without

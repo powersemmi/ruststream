@@ -31,6 +31,7 @@ ruststream = { version = "0.8", default-features = false, features = ["tokio"] }
 tokio 运行器在每个 `.await` 处可能把处理器移到另一个线程，所以处理器函数体的 future 必须是 `Send`。
 在 `.await` 之间持有 `Rc` 的函数体会在挂载它的 `include` 处报错，错误信息会指出这个处理器。
 embassy 运行器在同一个任务里轮询所有处理器，对 future 没有要求，所以同一个函数体可以在那里挂载。
+确认之后运行的后续任务（`and_after` 和上下文钩子）遵循同样的规则：启用 tokio 时它的 future 必须是 `Send`，只启用 embassy 时则没有这个要求，因此设备上的后续任务可以通过本地总线发布。
 
 ## 各运行器提供的能力
 

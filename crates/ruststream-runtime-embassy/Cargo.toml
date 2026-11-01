@@ -104,6 +104,13 @@ name = "retry"
 path = "tests/retry.rs"
 harness = false
 
+# An `and_after` continuation of a delivery, boxed once, on the mock clock: a binary of its own, as
+# above.
+[[test]]
+name = "continuation"
+path = "tests/continuation.rs"
+harness = false
+
 # The plan steps after the publishing forms (a codec reply, a raw reply, an `Out` slot), on the
 # mock clock: a binary of its own, as above.
 [[test]]

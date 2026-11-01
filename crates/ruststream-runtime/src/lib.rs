@@ -27,6 +27,9 @@
 //!   `std`, and `json` and `msgpack` fail the build with a message that says so.
 
 #![no_std]
+// Without the `tokio` feature a continuation carries no `Send`, so the futures of the Tokio
+// runner's lane are not `Send` either; the lint would flag every one of them.
+#![cfg_attr(not(feature = "tokio"), allow(clippy::future_not_send))]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -202,7 +205,7 @@ pub use handle::{
 #[doc(hidden)]
 pub use handler::IntoOutcome;
 #[cfg(feature = "alloc")]
-pub use handler::{Handler, HandlerOutcome, LocalHandler};
+pub use handler::{ContinuationFuture, Handler, HandlerOutcome, LocalHandler};
 pub use host::{Clock, ShutdownWait};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
@@ -218,6 +221,9 @@ pub use main_runtime::MainRuntime;
 #[doc(hidden)]
 pub use slot::{BindSlotsBody, LocalBindSlotsBody};
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use handler::Continuation;
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 #[doc(hidden)]
 pub use handler::HandlerResult;

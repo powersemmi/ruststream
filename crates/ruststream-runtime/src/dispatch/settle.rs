@@ -689,6 +689,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::Settle;
+    use crate::handler::Continuation;
     use alloc::borrow::ToOwned;
     use core::future::ready;
     use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
@@ -1010,6 +1011,10 @@ mod tests {
         where
             Work: Future<Output = ()> + Send + 'static,
         {
+            drop(self.tasks.spawn(work));
+        }
+
+        fn detach_boxed(&self, work: Continuation) {
             drop(self.tasks.spawn(work));
         }
 

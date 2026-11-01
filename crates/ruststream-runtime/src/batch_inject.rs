@@ -7,6 +7,7 @@
 //! its own definition pair because the handler consumes a slice and returns a
 //! [`BatchResult`], not a per-message [`HandlerOutcome`](super::HandlerOutcome).
 
+use crate::handler::MaybeSend;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -99,7 +100,7 @@ pub(crate) trait BatchInjectCall<S>: BatchInjectDef {
         batch: &[<Self::Input as InputKind>::Owned],
         injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
-    ) -> impl Future<Output = BatchResult> + Send;
+    ) -> impl Future<Output = BatchResult> + MaybeSend;
 }
 
 /// Builds the registration metadata for an injected batch definition mounted under `name`.

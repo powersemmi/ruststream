@@ -18,7 +18,6 @@ use core::cell::OnceCell;
 use core::fmt;
 #[cfg(feature = "testing")]
 use core::mem;
-use core::pin::Pin;
 
 use bytes::BytesMut;
 
@@ -28,7 +27,7 @@ use crate::{Field, FieldMut, HeaderMap, LocalSettle};
 
 use super::dispatch::Delivery;
 use super::failure::FailurePolicy;
-use super::handler::{HandlerOutcome, HandlerResult};
+use super::handler::{Continuation, ContinuationFuture, HandlerOutcome, HandlerResult};
 use crate::host::Halt;
 #[cfg(feature = "tokio")]
 use crate::main_runtime::MainRuntime;
@@ -104,10 +103,6 @@ impl<M: LocalSettle> HeaderSource for FromDelivery<'_, M> {
         self.0.headers()
     }
 }
-
-/// A post-settle continuation: a boxed `Send` future the dispatcher runs after the message (or
-/// batch) has been settled.
-type Continuation = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
 /// The settlement kind a post-settle hook is gated on. Drop and retry are distinct settlements
 /// (`nack` without vs with requeue), so they gate separately: [`HandlerResult::drop`] gates on
@@ -614,6 +609,9 @@ impl<'a, C, S> Context<'a, C, S> {
     /// per-element outcomes, the outcome gate is ignored there and only [`after_settle`](Self::after_settle)
     /// hooks (which run regardless) fire (see that method).
     ///
+    /// The hook's future is `Send` with the Tokio runner on, and carries no `Send` on the embedded
+    /// runtime alone: see [`then`](After::then).
+    ///
     /// # Cancel safety
     ///
     /// Post-settle hooks are at-most-once: the message is already settled before any hook runs, so
@@ -692,7 +690,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # }
     /// # fn main() {}
     /// ```
-    pub fn after_ack(&mut self, fut: impl Future<Output = ()> + Send + 'static) {
+    pub fn after_ack(&mut self, fut: impl ContinuationFuture) {
         self.after.push(AfterHook {
             gate: Some(OutcomeKind::Ack),
             fut: Box::pin(fut),
@@ -740,7 +738,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # }
     /// # fn main() {}
     /// ```
-    pub fn after_settle(&mut self, fut: impl Future<Output = ()> + Send + 'static) {
+    pub fn after_settle(&mut self, fut: impl ContinuationFuture) {
         self.after.push(AfterHook {
             gate: None,
             fut: Box::pin(fut),
@@ -829,6 +827,9 @@ impl<C, S> After<'_, '_, C, S> {
     /// Registers `fut` to run after the message settles, if the settlement matches the gate this
     /// builder was created with (see [`Context::after`]).
     ///
+    /// The future is `Send` with the Tokio runner on. On the embedded runtime alone it carries no
+    /// `Send`, so it may hold the local bus's publisher or an `Rc`.
+    ///
     /// # Examples
     ///
     /// ```
@@ -858,7 +859,7 @@ impl<C, S> After<'_, '_, C, S> {
     /// # }
     /// # fn main() {}
     /// ```
-    pub fn then(self, fut: impl Future<Output = ()> + Send + 'static) {
+    pub fn then(self, fut: impl ContinuationFuture) {
         self.ctx.after.push(AfterHook {
             gate: self.gate,
             fut: Box::pin(fut),

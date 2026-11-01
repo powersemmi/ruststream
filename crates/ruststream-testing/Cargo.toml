@@ -118,6 +118,18 @@ name = "embedded_manual"
 path = "tests/embedded_manual.rs"
 required-features = ["embassy", "json"]
 
+# The continuations a device service's deliveries leave behind, through the embedded `TestApp`.
+[[test]]
+name = "embedded_continuation"
+path = "tests/embedded_continuation.rs"
+required-features = ["embassy", "json"]
+
+# A continuation holding what is not `Send`, on the embedded runtime alone.
+[[test]]
+name = "embedded_continuation_local"
+path = "tests/embedded_continuation_local.rs"
+required-features = ["embassy", "json"]
+
 # An app that never settles, reported by the embedded `TestApp`.
 [[test]]
 name = "embedded_quiescence"

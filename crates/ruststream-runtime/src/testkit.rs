@@ -18,6 +18,7 @@ use tokio_util::task::TaskTracker;
 use alloc::sync::Arc;
 
 use crate::Publisher;
+use crate::handler::Continuation;
 use crate::host::{Copying, Detach, Halt};
 use crate::publish::{PublishIdentity, PublishTransformIdentity};
 use crate::redelivery::{RetryLeaf, RetryRoute, bare_retry_publisher};
@@ -31,6 +32,10 @@ impl Detach for Tracked {
     where
         Work: Future<Output = ()> + Send + 'static,
     {
+        drop(self.0.spawn(work));
+    }
+
+    fn detach_boxed(&self, work: Continuation) {
         drop(self.0.spawn(work));
     }
 

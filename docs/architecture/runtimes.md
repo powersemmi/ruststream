@@ -31,11 +31,12 @@ The handlers carry no runtime: `#[subscriber]` expands to the same code under bo
 The tokio runner moves a handler between threads at each `.await`, so the future of a handler body must be `Send`.
 A body that holds an `Rc` across an `.await` fails at the `include` that mounts it, and the error names the handler.
 The embassy runner polls every handler on its one task and asks nothing of the future, so the same body mounts there.
+A continuation that runs after the settlement (`and_after`, a context hook) follows the same rule: its future is `Send` when the tokio runtime is on and carries no `Send` when only embassy is, so a device continuation may publish through the local bus.
 
 ## What each runner offers
 
 The tokio runner offers `workers(n)`, `threads(n)`, the signals, metrics, OpenTelemetry and the CLI.
-The embassy runner offers constant-count workers (`.pool::<N>()` and `.keyed::<N>()`), a retry store with a capacity declared at the mount site (`.retry_capacity::<CAP>()`), and shutdown and health through `Control` and `Health`.
+The embassy runner offers constant-count workers (`.pool::<N>()` and `.keyed::<N>()`), a retry store with a capacity declared at the mount site (`.retry_capacity::<CAP>()`), continuations after the settlement, and shutdown and health through `Control` and `Health`.
 An item one runner does not offer is a compile error on the other.
 
 When a delayed retry finds the embassy store full, the mount site chooses what happens.

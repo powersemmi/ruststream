@@ -86,7 +86,7 @@ pub(super) async fn settle_split_batch<M, C, Host>(
         )
         .await;
         if let Some(after) = after {
-            host.detach(after);
+            host.detach_boxed(after);
         }
     }
     #[cfg(feature = "testing")]
@@ -208,7 +208,7 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
             // tracked set so a graceful shutdown drains it (at-most-once, like the
             // per-element ones below).
             if let Some(after) = after {
-                host.detach(after);
+                host.detach_boxed(after);
             }
         }
         BatchResult::PerElement(results) => {
@@ -232,7 +232,7 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
                 // graceful shutdown drains it. At-most-once: a lost or panicking continuation
                 // never redelivers the already-settled message.
                 if let Some(after) = after {
-                    host.detach(after);
+                    host.detach_boxed(after);
                 }
             }
         }
