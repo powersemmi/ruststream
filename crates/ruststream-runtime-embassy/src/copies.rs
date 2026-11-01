@@ -805,7 +805,10 @@ mod tests {
                             failed.error().to_string(),
                             "no free record in the store of retry copies (capacity 1)"
                         );
-                        assert_eq!(failed.message().payload().map(AsRef::as_ref), Some(&b"a"[..]));
+                        assert_eq!(
+                            failed.message().payload().map(AsRef::as_ref),
+                            Some(&b"a"[..])
+                        );
                         assert_eq!(failed.message().destination(), "jobs");
                     }
                 }),

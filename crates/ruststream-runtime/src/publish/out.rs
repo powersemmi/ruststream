@@ -250,10 +250,10 @@ pub trait OutPipeline<W>: Send + Sync + Clone {
 
     /// Sends one message through the path into `leaf`, the slot's attributed publisher, with
     /// the broker's per-message settings the call site adjusted.
-    fn send<'msg, P>(
+    fn send<P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'msg, W::Payload>,
+        msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
     ) -> impl Future<Output = SinkOutcome<Self::Error<P::Error>>> + Send
     where
@@ -270,10 +270,10 @@ impl<W> OutPipeline<W> for PublishIdentity {
 
     // Nothing composed onto this slot: the publish is the leaf call it always was, with no
     // message rebuilt and no error rewrapped.
-    async fn send<'msg, P>(
+    async fn send<P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'msg, W::Payload>,
+        msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
     ) -> SinkOutcome<P::Error>
     where
@@ -303,10 +303,10 @@ impl<W, Head: PublishLayer + Clone, Tail: PublishPipeline + Clone> OutPipeline<W
         PipelinePublishError(Box::new(err))
     }
 
-    async fn send<'msg, P>(
+    async fn send<P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'msg, W::Payload>,
+        msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
     ) -> SinkOutcome<PipelinePublishError>
     where
@@ -340,10 +340,10 @@ where
         Pipeline::from_publish_error(err)
     }
 
-    async fn send<'msg, P>(
+    async fn send<P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'msg, W::Payload>,
+        msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
     ) -> SinkOutcome<Self::Error<P::Error>>
     where
@@ -387,10 +387,10 @@ where
 pub trait LocalOutPipeline<W>: Clone {
     /// Sends one message through the path into `leaf`, the slot's publisher, with the broker's
     /// per-message settings the call site adjusted.
-    fn send<'msg, P>(
+    fn send<P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'msg, W::Payload>,
+        msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
     ) -> impl Future<Output = SinkOutcome<P::Error>>
     where
@@ -409,10 +409,10 @@ where
 {
     // The leaf's own future, which is `Send` exactly where the leaf's is.
     #[allow(clippy::future_not_send)]
-    async fn send<'msg, P>(
+    async fn send<P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'msg, W::Payload>,
+        msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
     ) -> SinkOutcome<P::Error>
     where

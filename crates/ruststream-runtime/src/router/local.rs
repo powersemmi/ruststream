@@ -23,7 +23,7 @@ use crate::settings::{BatchSized, Declared, DefMountCodec, MountsWith, Sequentia
 use crate::subscriber_def::SubscriberDef;
 use crate::{
     Broker, Connected, LocalBatchSubscriber, LocalPublisher, LocalSourceMessage, OutgoingFor,
-    PayloadForm, PublishOutcome, SourceSubscriber, SubscriptionSource,
+    PayloadForm, SourceSubscriber, SubscriptionSource,
 };
 
 use super::builder::Router;
@@ -284,10 +284,10 @@ impl<P: LocalPublisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
 impl<W> LocalOutPipeline<W> for LocalPipeline<PublishIdentity> {
     // The leaf's own future, which is `Send` exactly where the leaf's is.
     #[allow(clippy::future_not_send)]
-    fn send<'msg, P>(
+    fn send<P>(
         &self,
         leaf: &P,
-        msg: OutgoingFor<'msg, W::Payload>,
+        msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
     ) -> impl Future<Output = SinkOutcome<P::Error>>
     where

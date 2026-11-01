@@ -226,7 +226,9 @@ async fn uniform(jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> HandlerOutcome
             let count = failures.len();
             let each: Vec<String> = failures
                 .map(|failed| {
-                    let payload = String::from_utf8_lossy(failed.message().payload().expect("the bytes")).into_owned();
+                    let payload =
+                        String::from_utf8_lossy(failed.message().payload().expect("the bytes"))
+                            .into_owned();
                     format!(" {payload} {}", failed.error())
                 })
                 .collect();
@@ -343,7 +345,9 @@ async fn receipted(jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> Vec<Receipt>
         .error(async move |failures: Failures| {
             let each: Vec<String> = failures
                 .map(|failed| {
-                    let payload = String::from_utf8_lossy(failed.message().payload().expect("the bytes")).into_owned();
+                    let payload =
+                        String::from_utf8_lossy(failed.message().payload().expect("the bytes"))
+                            .into_owned();
                     format!(
                         " {} {payload} {}",
                         failed.message().destination(),

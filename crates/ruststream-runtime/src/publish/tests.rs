@@ -55,7 +55,7 @@ mod fixtures {
     use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
     use crate::{OwnedTransactions, PairError, PublishPolicy};
     use ruststream::memory::{ConnectedMemoryBroker, MemoryTransaction};
-    use ruststream_core::PublishOutcome;
+    use ruststream_core::{PublishMessageError, PublishOutcome};
 
     /// A value JSON cannot encode: an object key must be a string, and this map's are
     /// tuples. Encoding one is a real codec failure, not a stubbed one.
@@ -64,7 +64,7 @@ mod fixtures {
     }
 
     /// The failure the rigged publisher reports.
-    #[derive(Debug, Error)]
+    #[derive(Debug, Clone, Error)]
     #[error("the rigged publisher refused")]
     pub(super) struct RiggedError;
 
@@ -75,7 +75,7 @@ mod fixtures {
         pub(super) fail_begin: bool,
         pub(super) fail_commit: bool,
         pub(super) fail_abort: bool,
-        pub(super) refuse_publish: bool,
+        pub(super) refusal: Option<RiggedError>,
         pub(super) published: Arc<AtomicUsize>,
         pub(super) aborted: Arc<AtomicUsize>,
     }
@@ -98,11 +98,9 @@ mod fixtures {
             _options: Option<&Self::Options>,
         ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
             self.published.fetch_add(1, Ordering::SeqCst);
-            ready(if self.refuse_publish {
-                Err(ruststream_core::PublishMessageError::with_message(RiggedError, msg))
-            } else {
-                Ok(())
-            })
+            ready(self.refusal.as_ref().map_or(Ok(()), |error| {
+                Err(PublishMessageError::with_message(error.clone(), msg))
+            }))
         }
     }
 
@@ -783,10 +781,10 @@ async fn a_scoped_publish_reports_an_encode_failure_without_settling() {
 #[cfg(feature = "json")]
 #[tokio::test]
 async fn a_scoped_publish_returns_the_message_the_transaction_refused() {
-    use fixtures::Rigged;
+    use fixtures::{Rigged, RiggedError};
 
     let publisher = Rigged {
-        refuse_publish: true,
+        refusal: Some(RiggedError),
         ..Rigged::default()
     };
     let mut scope = publisher.begin().await.expect("begin failed");
@@ -808,10 +806,10 @@ async fn a_scoped_publish_returns_the_message_the_transaction_refused() {
 /// A raw bytes publish the sink refuses returns the bytes the caller passed.
 #[tokio::test]
 async fn a_refused_raw_publish_returns_the_bytes() {
-    use fixtures::Rigged;
+    use fixtures::{Rigged, RiggedError};
 
     let publisher = Rigged {
-        refuse_publish: true,
+        refusal: Some(RiggedError),
         ..Rigged::default()
     };
 

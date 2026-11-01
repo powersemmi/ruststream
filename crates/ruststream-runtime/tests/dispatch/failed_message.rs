@@ -15,7 +15,7 @@ use ruststream::memory::LogMode;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::RETRY_COUNT_HEADER;
 use ruststream::testing::TestApp;
-use ruststream::{BytesMut, Lend, OutgoingMessage, PairError, Take};
+use ruststream::{Lend, OutgoingMessage, PairError, Take};
 use ruststream_core::{PublishMessageError, PublishOutcome};
 use ruststream_runtime::{Failed, Outgoing};
 use serde::{Deserialize, Serialize};
@@ -83,8 +83,12 @@ fn record(log: &Mutex<Log>, failed: &Failed) {
                 .push((key.to_owned(), String::from_utf8_lossy(value).into_owned()));
         }
         log.consumed.push(message.payload().is_none());
-        log.payloads
-            .push(message.payload().map(|bytes| bytes.to_vec()).unwrap_or_default());
+        log.payloads.push(
+            message
+                .payload()
+                .map(|bytes| bytes.to_vec())
+                .unwrap_or_default(),
+        );
     }
 }
 
@@ -206,7 +210,9 @@ impl Publisher for ConsumingDown {
         _msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&()>,
     ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Take>> {
-        ready(Err(PublishMessageError::new(io::Error::other("broker down"))))
+        ready(Err(PublishMessageError::new(io::Error::other(
+            "broker down",
+        ))))
     }
 }
 

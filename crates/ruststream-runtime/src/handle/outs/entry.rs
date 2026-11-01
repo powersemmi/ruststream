@@ -14,8 +14,8 @@ use core::time::Duration;
 use crate::codec::Codec;
 use crate::inject::FromStartup;
 use crate::publish::{
-    Admits, HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishIdentity,
-    SinkOutcome, TransactionScope, TypedTransaction, message_of,
+    Admits, HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishIdentity, SinkOutcome,
+    TransactionScope, TypedTransaction, message_of,
 };
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 #[cfg(feature = "testing")]
@@ -369,9 +369,9 @@ impl<M: OutSlot, W: Publisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Bod
 
     // The owned answer: what a typed publish through the slot reports, the message a transform
     // rewrote included.
-    async fn publish_kept<'msg>(
+    async fn publish_kept(
         &self,
-        msg: OutgoingFor<'msg, Self::Payload>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> SinkOutcome<Self::Error> {
         let publish = self.pipeline.send(&self.wired, msg, options);

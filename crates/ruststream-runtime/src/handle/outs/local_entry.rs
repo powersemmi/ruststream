@@ -123,9 +123,9 @@ where
 
     // The publisher's own future, which is `Send` exactly where the publisher's is.
     #[allow(clippy::future_not_send)]
-    fn send<'msg>(
+    fn send(
         &mut self,
-        msg: OutgoingFor<'msg, Self::Payload>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = SinkOutcome<Self::Error>> {
         #[cfg(feature = "testing")]

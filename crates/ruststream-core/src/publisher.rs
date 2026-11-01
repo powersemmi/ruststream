@@ -622,7 +622,6 @@ impl<Error> SinkRefusal<Error> {
     }
 }
 
-
 mod sealed {
     /// Seals [`PayloadForm`](super::PayloadForm): a transport reads the payload or keeps it,
     /// and a third answer would be one the runtime has no buffer strategy for.
@@ -904,8 +903,7 @@ crate::__contract_twin! {
         /// # Errors
         ///
         /// Returns the failure of [`publish`](Self::publish) with the message it did not send.
-        fn publish_kept(&self, msg: OutgoingFor<'msg, Self::Payload>, options: Option<&Self::Options>)
-            <'msg>
+        fn publish_kept(&self, msg: OutgoingFor<'_, Self::Payload>, options: Option<&Self::Options>)
             -> [impl Future<Output = SinkOutcome<Self::Error>> @send { + Send }]
         {
             let sent = self.publish(msg, options);

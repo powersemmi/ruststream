@@ -65,9 +65,9 @@ impl LocalPublishSink for InjectSink<'_> {
     // An injection stands in for an external producer, which reaches no broker's options type.
     type Options = ();
 
-    async fn send<'msg>(
+    async fn send(
         &mut self,
-        msg: OutgoingMessage<'msg, &[u8]>,
+        msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&Self::Options>,
     ) -> SinkOutcome<Self::Error> {
         let testable = self.broker.testable().ok_or(TestError::ShutDown)?;

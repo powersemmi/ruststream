@@ -891,11 +891,8 @@ mod tests {
 
     #[test]
     fn a_failed_message_splits_into_its_destination_bytes_and_headers() {
-        let message = FailedMessage::new(
-            "dest",
-            Some(Bytes::from_static(b"body")),
-            HeaderMap::new(),
-        );
+        let message =
+            FailedMessage::new("dest", Some(Bytes::from_static(b"body")), HeaderMap::new());
 
         let (destination, payload, headers) = message.into_parts();
 

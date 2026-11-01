@@ -66,12 +66,7 @@ struct Rewrite;
 impl<Options> PublishTransform<ForSlot, Options> for Rewrite {
     type Destination = Reads;
 
-    fn apply(
-        &self,
-        out: &mut Outgoing<'_>,
-        _options: &mut Option<Options>,
-        _cx: &SlotContext<'_>,
-    ) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &SlotContext<'_>) {
         out.headers_mut().insert("x-stamp", "yes");
         out.set_payload(&b"rewritten"[..]);
     }

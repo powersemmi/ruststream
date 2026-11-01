@@ -10,8 +10,8 @@ use thiserror::Error;
 use tracing::warn;
 
 use super::{HeadersUnset, MessageBody, PublishBuilder, PublishCodec, SinkRefusal, message_of};
-use crate::publish_failure::FailedMessage;
 use crate::codec::{CodecError, Encoding};
+use crate::publish_failure::FailedMessage;
 use crate::{
     OutgoingDestination, OutgoingMessage, OwnedTransactions, PayloadForm, Publisher, Transaction,
     TransactionalPublisher,

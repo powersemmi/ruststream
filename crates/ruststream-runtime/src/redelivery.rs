@@ -190,9 +190,8 @@ where
         // What comes back is the message that was sent, transforms applied: its headers, and its
         // bytes, a buffer of this call that a transform wrote included.
         let refused = publish.await;
-        refused.map_err(|refusal| {
-            Refusal::from_sink(refusal.reclaiming::<Live::Payload>(&mut kept))
-        })
+        refused
+            .map_err(|refusal| Refusal::from_sink(refusal.reclaiming::<Live::Payload>(&mut kept)))
     }
 }
 

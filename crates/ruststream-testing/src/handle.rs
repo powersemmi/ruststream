@@ -8,13 +8,13 @@ use std::fmt;
 // builder entry points do not, because the value's own wire decides whether a codec is needed.
 use ruststream_core::OutgoingDestination;
 use ruststream_core::{Lend, OutgoingMessage, PublishMessageError, RawMessage};
-use ruststream_runtime::{SinkOutcome, SinkRefusal};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use ruststream_runtime::codec::{Codec, DefaultCodec};
 use ruststream_runtime::message_of;
 use ruststream_runtime::{
     HeadersUnset, LocalPublishSink, MessageBody, PublishBuilder, UnnamedCodec,
 };
+use ruststream_runtime::{SinkOutcome, SinkRefusal};
 use ruststream_runtime_tokio::Shutdown;
 
 use ruststream_runtime::testing::Coordinator;
@@ -115,16 +115,14 @@ impl LocalPublishSink for InjectSink<'_> {
             label,
         } = &self.0
         else {
-            return Err(SinkRefusal::returned::<Lend>(PublishMessageError::with_message(
-                TestError::Ambiguous,
-                msg,
-            )));
+            return Err(SinkRefusal::returned::<Lend>(
+                PublishMessageError::with_message(TestError::Ambiguous, msg),
+            ));
         };
         if harness.shutdown.is_cancelled() {
-            return Err(SinkRefusal::returned::<Lend>(PublishMessageError::with_message(
-                TestError::ShutDown,
-                msg,
-            )));
+            return Err(SinkRefusal::returned::<Lend>(
+                PublishMessageError::with_message(TestError::ShutDown, msg),
+            ));
         }
         // The test's own publish is part of the record: in process it is what tells a message
         // the test put on a destination from a runtime publish the broker has since evicted;

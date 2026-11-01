@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::{Stream, StreamExt};
+use ruststream::Bytes;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, LogMode, MemoryPublisher};
 use ruststream::runtime::RETRY_COUNT_HEADER;
@@ -167,7 +168,7 @@ async fn on_job(job: &Job, State(alerts): State<Arc<Mutex<Vec<Alert>>>>) -> Hand
             let alert = Alert {
                 destination: lost.destination().to_owned(),
                 error: err.to_string(),
-                bytes: lost.payload().map_or(0, |payload| payload.len()),
+                bytes: lost.payload().map_or(0, Bytes::len),
             };
             alerts.lock().expect("alerts").push(alert);
         }
@@ -519,7 +520,7 @@ async fn a_single_outcome_error_owns_a_capture_that_is_not_clone() {
                 lost_log.alerts.lock().expect("alerts").push(Alert {
                     destination: lost.destination().to_owned(),
                     error: format!("{id} {err}"),
-                    bytes: lost.payload().map_or(0, |payload| payload.len()),
+                    bytes: lost.payload().map_or(0, Bytes::len),
                 });
             }
         })
@@ -565,7 +566,7 @@ async fn a_single_delivery_hands_one_failed_with_its_bytes_and_headers() {
                 lost.alerts.lock().expect("alerts").push(Alert {
                     destination: failed.message().destination().to_owned(),
                     error: format!("{id} {} retries {retries}", failed.error()),
-                    bytes: failed.message().payload().map_or(0, |payload| payload.len()),
+                    bytes: failed.message().payload().map_or(0, Bytes::len),
                 });
             }
         })
