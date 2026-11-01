@@ -808,10 +808,9 @@ fn copy_sent(
     input: &str,
     payload: Bytes,
 ) -> Option<Continuation> {
-    sent.err().and_then(|err| {
-        publish_lost(None, subscription, target, input, err, || {
-            FailedMessage::new(target, payload, HeaderMap::new())
-        })
+    let err = sent.err()?;
+    publish_lost(None, subscription, target, input, err, || {
+        FailedMessage::new(target, payload, HeaderMap::new())
     })
 }
 
