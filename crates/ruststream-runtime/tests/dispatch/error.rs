@@ -19,6 +19,7 @@ use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, LogMode, MemoryPublisher};
 use ruststream::runtime::RETRY_COUNT_HEADER;
 use ruststream::testing::TestApp;
+use tokio::time::sleep;
 
 use crate::log_capture;
 use ruststream::{
@@ -729,7 +730,7 @@ async fn slow_ask(
 ) -> Answer {
     ctx.after(HandlerOutcome::ack())
         .error(async move |err, lost| {
-            tokio::time::sleep(RETRY_DELAY).await;
+            sleep(RETRY_DELAY).await;
             log.lock()
                 .expect("log")
                 .push(format!("error {err} {}", lost.destination()));
