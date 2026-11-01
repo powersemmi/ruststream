@@ -1,9 +1,11 @@
 //! What a handler's `.error` continuation receives when a publish the runtime makes for its
 //! outcome fails, and the reaction the runtime takes when the outcome carries none.
 
+use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use bytes::Bytes;
+use core::fmt;
 use thiserror::Error;
 use tracing::warn;
 
@@ -83,7 +85,7 @@ impl FailedMessage {
     #[must_use]
     pub fn new(destination: &str, payload: Bytes, headers: HeaderMap) -> Self {
         Self {
-            destination: destination.to_string(),
+            destination: destination.to_owned(),
             payload,
             headers,
         }
@@ -140,14 +142,13 @@ impl ErrorHook {
     }
 
     /// Hands the failure to the handler's continuation, which the caller runs.
-    #[must_use]
     pub fn react(self, error: BoxError, message: FailedMessage) -> Continuation {
         (self.0)(error, message)
     }
 }
 
-impl core::fmt::Debug for ErrorHook {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl fmt::Debug for ErrorHook {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ErrorHook").finish_non_exhaustive()
     }
 }
@@ -165,8 +166,8 @@ pub struct Reaction {
     then: Option<Continuation>,
 }
 
-impl core::fmt::Debug for Reaction {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl fmt::Debug for Reaction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Reaction").finish_non_exhaustive()
     }
 }

@@ -399,17 +399,14 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         // What a publish made for this settlement hands its result to: the `.error` of the outcome
         // (with the `.and_after` beside it, which then follows the publish), else the one the
         // context registered. Most deliveries carry neither, and pay the two checks.
-        let reaction = match settle.as_mut() {
-            Some(s) => {
-                if let Some(error) = s.take_error() {
-                    ctx.demote_errors();
-                    Some(Reaction::new(error, s.take_after()))
-                } else {
-                    ctx.take_reaction_for(s.outcome())
-                }
+        let reaction = settle.as_mut().and_then(|s| {
+            if let Some(error) = s.take_error() {
+                ctx.demote_errors();
+                Some(Reaction::new(error, s.take_after()))
+            } else {
+                ctx.take_reaction_for(s.outcome())
             }
-            None => None,
-        };
+        });
         let continuations = match settle.as_ref() {
             Some(s) if ctx.has_hooks() => Some(ctx.take_hooks_for(s.outcome())),
             _ => None,
