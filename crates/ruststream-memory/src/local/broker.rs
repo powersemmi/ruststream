@@ -10,11 +10,11 @@ use bytes::Bytes;
 use ruststream_core::RawMessage;
 use ruststream_core::{
     AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
-    LocalPublisher, OutgoingMessage, PairError, PublishOutcome, PublishPolicy, ServerSpec,
-    Subscribe, Take,
+    OutgoingMessage, PairError, PublishOutcome, PublishPolicy, Publisher, ServerSpec, Subscribe,
+    Take,
 };
 #[cfg(feature = "testing")]
-use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, LocalTestableBroker};
+use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, TestableBroker};
 use thiserror::Error;
 
 use super::LocalMemorySubscriber;
@@ -420,7 +420,7 @@ impl<const CAP: usize> fmt::Debug for LocalMemoryPublisher<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalPublisher for LocalMemoryPublisher<CAP> {
+impl<const CAP: usize> Publisher for LocalMemoryPublisher<CAP> {
     // The bus keeps every message until its subscriptions have read it, so the publish takes the
     // buffer rather than borrowing it.
     type Payload = Take;
@@ -492,7 +492,7 @@ impl<const CAP: usize> InProcess for LocalMemoryBroker<CAP> {
 }
 
 #[cfg(feature = "testing")]
-impl<const CAP: usize> LocalTestableBroker for ConnectedLocalMemoryBroker<CAP> {
+impl<const CAP: usize> TestableBroker for ConnectedLocalMemoryBroker<CAP> {
     fn install_coordinator(&self, coordinator: Coordinator) {
         self.bus.harness().install(coordinator);
     }
@@ -528,7 +528,7 @@ mod tests {
 
     use embassy_futures::block_on;
     use futures::{FutureExt, StreamExt};
-    use ruststream_core::{LocalSettle, LocalSubscriber, OutgoingFor, PublishMessageError};
+    use ruststream_core::{OutgoingFor, PublishMessageError, Settle, Subscriber};
 
     use super::*;
     use crate::local::drive::{ended, waiting};

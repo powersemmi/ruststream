@@ -29,7 +29,7 @@ use serde::de::DeserializeOwned;
 use tracing::warn;
 
 use crate::redelivery::RetryCopies;
-use crate::{BuildBatchContext, LocalSettle, Settle};
+use crate::{BuildBatchContext, Settle};
 
 use super::context::Context;
 use super::dispatch::{Slot, Workers, settle_outcome};
@@ -397,7 +397,7 @@ pub trait TakenBatch<C> {
 // The decoding forms collect the deliveries, and a batch's context is built from its first.
 impl<M, C> TakenBatch<C> for Vec<M>
 where
-    M: LocalSettle,
+    M: Settle,
     C: BuildBatchContext<M>,
 {
     fn context(&self) -> Option<C> {
@@ -671,7 +671,7 @@ impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
         ctx: &mut Context<'_, C, S>,
         host: &Host,
     ) where
-        M: LocalSettle,
+        M: Settle,
         F: Deserialized,
         Via: for<'p> CallSlice<Inner, F::Output<'p>, C, S>,
         C: BuildBatchContext<M> + Send + Sync + 'static,
@@ -872,7 +872,7 @@ pub(crate) fn reported<M, C, S>(
     ctx: &Context<'_, C, S>,
 ) -> Option<HandlerResult>
 where
-    M: LocalSettle,
+    M: Settle,
 {
     let err = msg.decode_error()?;
     warn!(

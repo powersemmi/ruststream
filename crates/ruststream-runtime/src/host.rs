@@ -30,7 +30,7 @@ use crate::publish_failure::Reaction;
 #[cfg(feature = "alloc")]
 use crate::redelivery::{NoRetry, RetryCopies, RetryRoute};
 #[cfg(feature = "alloc")]
-use crate::{HeaderMap, LocalSettle};
+use crate::{HeaderMap, Settle};
 
 /// A runtime's clock: the time it reads and the timers it arms.
 ///
@@ -624,7 +624,7 @@ pub struct KeptDelivery<'a, M, Cx> {
 pub trait PrepareKept<Cx>: KeptCopies {
     /// Prepares the copy in `record`, filled by [`fill`](KeptCopies::fill), bound for
     /// `destination` or, without one, for the subscription.
-    fn prepare<M: LocalSettle>(
+    fn prepare<M: Settle>(
         &self,
         record: usize,
         destination: Option<&str>,
@@ -633,7 +633,7 @@ pub trait PrepareKept<Cx>: KeptCopies {
 
     /// Prepares a copy bound for `destination` or, without one, for the subscription, in a
     /// buffer of its own because no record is free; it allocates.
-    fn spill<M: LocalSettle>(
+    fn spill<M: Settle>(
         &self,
         payload: &[u8],
         headers: HeaderMap,
@@ -702,7 +702,7 @@ impl KeptCopies for NoKept {
 #[cfg(feature = "alloc")]
 #[allow(clippy::uninhabited_references)]
 impl<Cx> PrepareKept<Cx> for NoKept {
-    fn prepare<M: LocalSettle>(
+    fn prepare<M: Settle>(
         &self,
         _record: usize,
         _destination: Option<&str>,
@@ -711,7 +711,7 @@ impl<Cx> PrepareKept<Cx> for NoKept {
         match *self {}
     }
 
-    fn spill<M: LocalSettle>(
+    fn spill<M: Settle>(
         &self,
         _payload: &[u8],
         _headers: HeaderMap,

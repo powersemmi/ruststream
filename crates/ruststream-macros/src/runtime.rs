@@ -17,7 +17,7 @@ pub(crate) enum Runtime {
 impl Runtime {
     /// The bounds a capability written on an `Out` parameter becomes: as written on tokio; on
     /// embassy each publisher capability of the core maps to its local twin, so
-    /// `Out<impl Publisher>` asks for a `LocalPublisher`.
+    /// `Out<impl Publisher>` asks for a `Publisher`.
     pub(crate) fn capability(
         self,
         bounds: &Punctuated<TypeParamBound, Token![+]>,
@@ -34,7 +34,7 @@ impl Runtime {
 // same on both runners, and Send by leakage at the multi-thread mount. The transactional and
 // request capabilities keep the bounds as written, so they mount where their wire implements
 // them, which is the multi-thread runner.
-const LOCAL_TWINS: [(&str, &str); 1] = [("Publisher", "LocalPublisher")];
+const LOCAL_TWINS: [(&str, &str); 1] = [("Publisher", "Publisher")];
 
 /// One bound with a core publisher capability replaced by its local twin, named through the
 /// facade and keeping the arguments it was written with (`Publisher<Options = Qos>`). Any other
@@ -83,7 +83,7 @@ mod tests {
 
         assert_eq!(
             mapped(Runtime::Embassy, &bounds),
-            ":: ruststream :: LocalPublisher < Options = Qos > + Audited + 'static"
+            ":: ruststream :: Publisher < Options = Qos > + Audited + 'static"
         );
     }
 

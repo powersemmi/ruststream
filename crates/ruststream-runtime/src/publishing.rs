@@ -21,7 +21,7 @@ use tracing::warn;
 use crate::codec::Codec;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Origin, PipelinePublish, publishing_to};
-use crate::{LocalPublisher, LocalSettle, OutgoingMessage, PayloadForm, Publisher, Settle};
+use crate::{OutgoingMessage, PayloadForm, Publisher, Settle};
 
 use super::context::Context;
 use super::dispatch::Workers;
@@ -108,7 +108,7 @@ pub(crate) trait EncodeReply: Send + Sync {
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
     ) -> impl Future<Output = Result<(), Refusal>>
     where
-        Leaf: LocalPublisher,
+        Leaf: Publisher,
         ReplyCodec: Codec,
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
         Cx: Sync,
@@ -152,7 +152,7 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
     ) -> impl Future<Output = Result<(), Refusal>>
     where
-        Leaf: LocalPublisher,
+        Leaf: Publisher,
         ReplyCodec: Codec,
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
         Cx: Sync,
@@ -202,7 +202,7 @@ where
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
     ) -> impl Future<Output = Result<(), Refusal>>
     where
-        Leaf: LocalPublisher,
+        Leaf: Publisher,
         ReplyCodec: Codec,
         Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
         Cx: Sync,
@@ -285,7 +285,7 @@ where
 impl<Reply, DeliveryCx, Pipeline, Bare> LocalReplySink<Reply, DeliveryCx, Pipeline> for &Bare
 where
     Reply: super::Serialized,
-    Bare: LocalPublisher,
+    Bare: Publisher,
 {
     type Payload = Bare::Payload;
 
@@ -347,7 +347,7 @@ async fn deliver_bare<'e, Reply, Bare>(
 ) -> Result<(), Refusal>
 where
     Reply: super::Serialized,
-    Bare: LocalPublisher,
+    Bare: Publisher,
 {
     // The dispatch loop's buffer, for a reply that writes its bytes rather than holding
     // them; a reply that already holds them leaves it untouched. Which of the two a
@@ -631,7 +631,7 @@ where
     Reply: EncodeReply,
     DeliveryCx: Sync,
     Pipeline: SendThrough<Leaf>,
-    Leaf: LocalPublisher,
+    Leaf: Publisher,
     ReplyCodec: Codec,
     Transforms: PublishTransform<ForReply<DeliveryCx>, Leaf::Options>,
 {
@@ -722,7 +722,7 @@ impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline>
         ctx: &mut Context<'_, Def::Context, State>,
     ) -> HandlerOutcome
     where
-        Msg: LocalSettle,
+        Msg: Settle,
         Via: CallPublishing<Def, State>,
         Def::Input: Materialize<DecodeCodec, Msg>,
         Sink: LocalReplySink<Def::Reply, Def::Context, Pipeline>,
@@ -809,7 +809,7 @@ pub struct LocalPublishing<Publishing>(pub(crate) Publishing);
 impl<Msg, Def, DecodeCodec, Wiring, Pipeline, State> LocalHandler<Msg, Def::Context, State>
     for LocalPublishing<PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>>
 where
-    Msg: LocalSettle,
+    Msg: Settle,
     Def: LocalPublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, Msg>,
     for<'w> &'w Wiring: LocalReplySink<Def::Reply, Def::Context, Pipeline>,

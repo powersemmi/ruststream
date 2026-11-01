@@ -26,7 +26,7 @@ use crate::codec::{Codec, CodecError};
 use crate::handle::{Input, Solo, SoloSet};
 use crate::in_messages::DecodeSet;
 use crate::metadata::IncomingMessageMetadata;
-use crate::{Carries, IncomingMessage, LocalSettle, SendSource, Subscriber};
+use crate::{Carries, IncomingMessage, Settle, Subscriber, SubscriptionSource};
 
 #[cfg(feature = "testing")]
 use super::context::Context;
@@ -299,7 +299,7 @@ impl<DecodeCodec, F: Send + Sync + 'static> DecodeWith<DecodeCodec> for Provided
 impl<DecodeCodec, F, M> Materialize<DecodeCodec, M> for Provided<F>
 where
     F: Send + Sync + 'static,
-    M: LocalSettle,
+    M: Settle,
 {
     type Held<'m>
         = ()
@@ -500,7 +500,7 @@ pub trait SourceCarries<T, Conn> {
 impl<T, Conn, Src> SourceCarries<T, Conn> for Src
 where
     Conn: crate::ConnectedBroker,
-    Src: SendSource<Conn>,
+    Src: SubscriptionSource<Conn>,
     <Src::Subscriber as Subscriber>::Message: Carries<T>,
 {
     type Delivery = <Src::Subscriber as Subscriber>::Message;

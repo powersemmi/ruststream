@@ -28,9 +28,7 @@ pub use assertions::{PublishedAssertions, SubscriberAssertions};
 #[doc(hidden)]
 pub use attribution::{attribute, split_record};
 #[cfg(feature = "testing")]
-pub use broker::{
-    Backlog, InProcess, LocalTestableBroker, TestableBroker, TestableRegistration, expect_published,
-};
+pub use broker::{Backlog, InProcess, TestableBroker, TestableRegistration, expect_published};
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 pub use broker::{LivePublish, live_publish};

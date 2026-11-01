@@ -11,8 +11,8 @@ use crate::handler::MaybeSend;
 use alloc::format;
 use core::{fmt, marker::PhantomData};
 
+use crate::Settle;
 use crate::codec::{Codec, CodecError};
-use crate::{LocalSettle, Settle};
 use serde::de::DeserializeOwned;
 use tracing::warn;
 
@@ -110,7 +110,7 @@ impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
         ctx: &mut Context<'_, Cx, St>,
     ) -> HandlerOutcome
     where
-        M: LocalSettle,
+        M: Settle,
         Input: Materialize<DecodeCodec, M>,
         Via: CallHandler<Inner, Input::Target, Cx, St>,
     {
@@ -140,7 +140,7 @@ pub struct LocalTyped<Adapter>(pub(crate) Adapter);
 impl<M, Input, DecodeCodec, Inner, Cx, St> LocalHandler<M, Cx, St>
     for LocalTyped<Typed<M, Input, DecodeCodec, Inner>>
 where
-    M: LocalSettle,
+    M: Settle,
     Input: Materialize<DecodeCodec, M>,
     Inner: LocalHandler<Input::Target, Cx, St>,
 {
@@ -171,7 +171,7 @@ pub(crate) fn refused<Input, Decoder, M, Cx, St>(
 ) -> Option<HandlerOutcome>
 where
     Input: Materialize<Decoder, M>,
-    M: LocalSettle,
+    M: Settle,
 {
     msg.decode_error()
         .map(|err| refuse::<Input, Decoder, M, Cx, St>(err, decode, ctx))

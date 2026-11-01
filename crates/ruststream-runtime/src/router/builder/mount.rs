@@ -4,7 +4,7 @@
 use alloc::borrow::ToOwned;
 use core::marker::PhantomData;
 
-use crate::{BatchSubscriber, Broker, Connected, LocalBatchSubscriber, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
 use crate::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch, batch_metadata};
 use crate::batch_inject::{BatchInjectDef, batch_inject_metadata};
@@ -108,7 +108,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     ) -> IncludedRawBatchRouter<B, Source, Def, F, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
         Source: SubscriptionSource<Connected<B>> + 'static,
-        Source::Subscriber: LocalBatchSubscriber,
+        Source::Subscriber: BatchSubscriber,
         Def: BatchDef<Input = Provided<F>> + BatchSized,
         Def::Handler: 'static,
     {

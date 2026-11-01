@@ -2,7 +2,7 @@
 //!
 //! A `#[subscriber]` body that publishes is one function for both runners. It is generic over
 //! each of its entries and bounds it with [`SlotEntry`], whose capability is the local family's
-//! (`Wire: LocalPublisher`), which every `Publisher` satisfies. The multi-thread runner's mount
+//! (`Wire: Publisher`), which every `Publisher` satisfies. The multi-thread runner's mount
 //! then asks the body's future to be `Send` at the concrete entries it wired, where the compiler
 //! sees through every publish the body makes.
 
@@ -12,12 +12,11 @@ use core::ops::Deref;
 use crate::codec::Codec;
 use crate::publish::{Admits, TransactionScope, TypedTransaction};
 use crate::publish::{
-    HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, OutPipeline, PublishBuilder,
+    HeadersUnset, LocalOutPipeline, MessageBody, OutPipeline, PublishBuilder, PublishSink,
 };
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 use crate::{
-    HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, OwnedTransactions,
-    PublishMessageError, PublishOutcome, Publisher, TransactionalPublisher,
+    MaybeSendSync, OutgoingDestination, OwnedTransactions, Publisher, TransactionalPublisher,
 };
 
 use super::arena::Outs;
@@ -86,13 +85,13 @@ impl<Entry: ?Sized, M, Body> MaybeSendSink<M, Body> for Entry {}
 /// An entry whose live value publishes: the slot itself publishes through its path, and
 /// [`message`](Self::message) starts a typed publish over the slot's codec and dictionary.
 pub trait SlotPublish<M, Body = ()>:
-    SlotEntry<M, Body, Wire: LocalPublisher>
-    + LocalPublisher<Options = <<Self as SlotEntry<M, Body>>::Wire as LocalPublisher>::Options>
+    SlotEntry<M, Body, Wire: Publisher>
+    + Publisher<Options = <<Self as SlotEntry<M, Body>>::Wire as Publisher>::Options>
 {
     /// The codec typed publishes through the slot encode with.
     type Enc: SlotEncoding;
     /// The sink a publish through the slot travels.
-    type Sink<'a>: LocalPublishSink<Options = <Self::Wire as LocalPublisher>::Options>
+    type Sink<'a>: PublishSink<Options = <Self::Wire as Publisher>::Options>
     where
         Self: 'a;
 
@@ -134,9 +133,10 @@ where
 impl<M, W, E, Pipe, Body> SlotPublish<M, Body> for LocalSlot<M, W, E, Pipe, Body>
 where
     M: OutSlot,
-    W: LocalPublisher,
+    W: Publisher,
     E: SlotEncoding,
     Pipe: LocalOutPipeline<W>,
+    Self: MaybeSendSync,
 {
     type Enc = E;
     type Sink<'a>
@@ -213,36 +213,6 @@ impl<E> Outs<E> {
     {
         let _ = marker;
         self.entries().pick_entry()
-    }
-}
-
-// The slot publishes through its own path, so a direct `publish` keeps the slot's attribution,
-// as the multi-thread runner's slot does.
-#[allow(clippy::future_not_send)]
-impl<M, W, E, Pipe, Body> LocalPublisher for LocalSlot<M, W, E, Pipe, Body>
-where
-    M: OutSlot,
-    W: LocalPublisher,
-    E: Clone,
-    Pipe: LocalOutPipeline<W>,
-{
-    type Payload = W::Payload;
-    type Error = W::Error;
-    type Options = W::Options;
-
-    async fn publish<'msg>(
-        &self,
-        msg: OutgoingFor<'msg, Self::Payload>,
-        options: Option<&Self::Options>,
-    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
-        let mut sink = self;
-        LocalPublishSink::send(&mut sink, msg, options)
-            .await
-            .map_err(|refusal| PublishMessageError::new(refusal.into_error()))
-    }
-
-    fn base_headers(&self) -> Option<&HeaderMap> {
-        (**self).base_headers()
     }
 }
 

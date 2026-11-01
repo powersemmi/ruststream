@@ -4,13 +4,13 @@
 
 use bytes::Bytes;
 use ruststream_core::{
-    AckError, HeaderMap, IncomingMessage, LocalSettle, LocalSubscriber, OutgoingMessage, Subscribe,
+    AckError, HeaderMap, IncomingMessage, OutgoingMessage, Settle, Subscribe, Subscriber,
 };
-use ruststream_runtime::testing::{Backlog, LocalTestableBroker};
+use ruststream_runtime::testing::{Backlog, TestableBroker};
 
 use super::{expect_next, expect_no_more};
 
-pub(super) async fn ordering<C: LocalTestableBroker + Subscribe>(broker: C) {
+pub(super) async fn ordering<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.ordering")
         .await
         .expect("subscribe failed");
@@ -41,7 +41,7 @@ pub(super) async fn ordering<C: LocalTestableBroker + Subscribe>(broker: C) {
 /// A message published before the subscription opened reaches it, or does not, exactly as the
 /// broker declares through [`TestableBroker::backlog`]; the one published after reaches it either
 /// way.
-pub(super) async fn publish_before_subscribe<C: LocalTestableBroker + Subscribe>(broker: C) {
+pub(super) async fn publish_before_subscribe<C: TestableBroker + Subscribe>(broker: C) {
     let backlog = broker.backlog();
     broker.inject(OutgoingMessage::new(
         "conformance.late",
@@ -92,14 +92,14 @@ pub(crate) fn unknown_backlog(backlog: Backlog) -> ! {
 }
 
 /// Acknowledges `msg`, accepting a transport that cannot acknowledge.
-async fn settle_ack<M: LocalSettle>(msg: M) {
+async fn settle_ack<M: Settle>(msg: M) {
     match msg.ack().await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
     }
 }
 
-pub(super) async fn ack_consumes_delivery<C: LocalTestableBroker + Subscribe>(broker: C) {
+pub(super) async fn ack_consumes_delivery<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.ack")
         .await
         .expect("subscribe failed");
@@ -116,7 +116,7 @@ pub(super) async fn ack_consumes_delivery<C: LocalTestableBroker + Subscribe>(br
     broker.shutdown().await.expect("shutdown failed");
 }
 
-pub(super) async fn nack_with_requeue_redelivers<C: LocalTestableBroker + Subscribe>(broker: C) {
+pub(super) async fn nack_with_requeue_redelivers<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.requeue")
         .await
         .expect("subscribe failed");
@@ -155,7 +155,7 @@ pub(super) async fn nack_with_requeue_redelivers<C: LocalTestableBroker + Subscr
     broker.shutdown().await.expect("shutdown failed");
 }
 
-pub(super) async fn nack_without_requeue_drops<C: LocalTestableBroker + Subscribe>(broker: C) {
+pub(super) async fn nack_without_requeue_drops<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.drop")
         .await
         .expect("subscribe failed");
@@ -175,7 +175,7 @@ pub(super) async fn nack_without_requeue_drops<C: LocalTestableBroker + Subscrib
     broker.shutdown().await.expect("shutdown failed");
 }
 
-pub(super) async fn headers_propagate<C: LocalTestableBroker + Subscribe>(broker: C) {
+pub(super) async fn headers_propagate<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.headers")
         .await
         .expect("subscribe failed");
@@ -204,9 +204,7 @@ pub(super) async fn headers_propagate<C: LocalTestableBroker + Subscribe>(broker
     broker.shutdown().await.expect("shutdown failed");
 }
 
-pub(super) async fn published_log_observes_publishes<C: LocalTestableBroker + Subscribe>(
-    broker: C,
-) {
+pub(super) async fn published_log_observes_publishes<C: TestableBroker + Subscribe>(broker: C) {
     broker.inject(OutgoingMessage::new(
         "conformance.observe",
         b"first".as_slice(),

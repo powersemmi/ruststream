@@ -22,7 +22,7 @@ use ruststream::runtime::{
 };
 use ruststream::testing::embedded::TestApp;
 use ruststream::{
-    CallerName, FixedName, LocalPublisher, MessageHeaders, NoHeaders, OutgoingDestination,
+    CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
 };
 
 /// The board's bus: each subscription holds four messages.
@@ -90,7 +90,7 @@ struct Raise;
 
 impl<Entry> LocalHandle<Frame<'_>, (), Outs<(Entry,)>, (), Limits> for Raise
 where
-    Entry: LocalOutEntry<Alerts, Wire: LocalPublisher>,
+    Entry: LocalOutEntry<Alerts, Wire: Publisher>,
 {
     async fn handle(
         &self,

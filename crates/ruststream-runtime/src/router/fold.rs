@@ -38,8 +38,8 @@ use crate::lifecycle::BoxError;
 use crate::middleware::{LocalBlanketLayer, Stack};
 use crate::redelivery::{RetryCopies, ScopeDelivery, open_local_subscription};
 use crate::{
-    Broker, BuildBatchContext, BuildContext, Connected, LocalBatchSubscriber, LocalSettle,
-    LocalSubscriber, SubscriptionSource,
+    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, Settle, Subscriber,
+    SubscriptionSource,
 };
 
 use super::builder::Router;
@@ -353,7 +353,7 @@ where
 
 impl<State, Sub, Body, Cx, Layers> RunRoutes<State> for OpenedRoute<Sub, Body, Cx, Layers>
 where
-    Sub: LocalSubscriber,
+    Sub: Subscriber,
     Body: LocalHandler<Sub::Message, Cx, State>,
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
     Layers: LocalBlanketLayer,
@@ -405,9 +405,9 @@ impl<B, State, Source, M, F, Inner, Cx> OpenLayered<B, State>
 where
     B: Broker,
     Source: SubscriptionSource<Connected<B>>,
-    Source::Subscriber: LocalBatchSubscriber<Message = M>,
+    Source::Subscriber: BatchSubscriber<Message = M>,
     LocalBatch<DeserializedBatch<M, F, Inner>>:
-        RunsBatches<<Source::Subscriber as LocalBatchSubscriber>::Batch, Cx, State>,
+        RunsBatches<<Source::Subscriber as BatchSubscriber>::Batch, Cx, State>,
 {
     type Opened<Layers: LocalBlanketLayer + Clone> =
         OpenedBatchRoute<Source::Subscriber, LocalBatch<DeserializedBatch<M, F, Inner>>, Cx>;
@@ -438,7 +438,7 @@ where
 
 impl<State, Sub, Body, Cx> RunRoutes<State> for OpenedBatchRoute<Sub, Body, Cx>
 where
-    Sub: LocalBatchSubscriber,
+    Sub: BatchSubscriber,
     Body: RunsBatches<Sub::Batch, Cx, State>,
 {
     async fn run<Signal, Host>(mut self, signal: Signal, state: &Arc<State>, host: &Host)
@@ -530,7 +530,7 @@ impl<Batch, M, F, Inner, C, S> RunsBatches<Batch, C, S>
     for LocalBatch<DeserializedBatch<M, F, Inner>>
 where
     Batch: IntoIterator<Item = M>,
-    M: LocalSettle,
+    M: Settle,
     F: Deserialized,
     Inner: for<'p> LocalSliceHandler<F::Output<'p>, C, S>,
     C: BuildBatchContext<M> + Send + Sync + 'static,

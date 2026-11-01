@@ -9,7 +9,7 @@ use super::super::{RETRY_COUNT_HEADER, Slot};
 use super::{Target, current_retry_count};
 use crate::host::{HostDetach, KeptDelivery, PrepareKept};
 use crate::publish_failure::Reaction;
-use crate::{AckError, HeaderMap, LocalSettle, Str};
+use crate::{AckError, HeaderMap, Settle, Str};
 
 /// Drops the original delivery and sends a copy of it to `target` through a record of the
 /// host's store: published at once without a delay (or with a zero one), by the store's driver
@@ -45,7 +45,7 @@ pub(super) async fn keep_copy<M, C, Kept, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
+    M: Settle,
     Kept: PrepareKept<C>,
     Host: HostDetach,
 {
@@ -111,7 +111,7 @@ async fn spill_copy<M, C, Kept, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
+    M: Settle,
     Kept: PrepareKept<C>,
     Host: HostDetach,
 {
@@ -151,7 +151,7 @@ where
 }
 
 /// The delivery's headers with the retry count advanced: what the copy carries.
-fn counted<M: LocalSettle>(msg: &M) -> HeaderMap {
+fn counted<M: Settle>(msg: &M) -> HeaderMap {
     let mut headers = msg.headers().clone();
     let next_count = current_retry_count(&headers) + 1;
     headers.insert(Str::from_static(RETRY_COUNT_HEADER), next_count.to_string());
@@ -160,7 +160,7 @@ fn counted<M: LocalSettle>(msg: &M) -> HeaderMap {
 
 /// Drops the original, as on the erased path: a transport with no settlement has nothing to drop,
 /// and any other settle failure leaves the delivery with the broker.
-async fn drop_original<M: LocalSettle>(slot: &mut Slot<M>) -> Result<(), AckError> {
+async fn drop_original<M: Settle>(slot: &mut Slot<M>) -> Result<(), AckError> {
     match slot.take().nack(false).await {
         Ok(()) | Err(AckError::Unsupported) => Ok(()),
         Err(err) => Err(err),
@@ -195,7 +195,7 @@ mod tests {
         ErrorHook, FailedMessage, Failures, NoFreeRecordError, Reaction, publish_lost,
     };
     use crate::testkit::log_capture;
-    use crate::{HeaderMap, LocalSettle, RetryDeclaration};
+    use crate::{HeaderMap, RetryDeclaration, Settle};
 
     /// What the store was asked to do, in order.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -333,7 +333,7 @@ mod tests {
 
     // The settlement under test, not the transforms: a record is kept as it was filled.
     impl<Cx> PrepareKept<Cx> for Store {
-        fn prepare<M: LocalSettle>(
+        fn prepare<M: Settle>(
             &self,
             _record: usize,
             _destination: Option<&str>,
@@ -341,7 +341,7 @@ mod tests {
         ) {
         }
 
-        fn spill<M: LocalSettle>(
+        fn spill<M: Settle>(
             &self,
             payload: &[u8],
             headers: HeaderMap,

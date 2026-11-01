@@ -19,9 +19,7 @@ use crate::router::{
     BatchPublishInjectMount, BatchPublishMount, DefaultReply, PublishInjectMount, PublishMount,
     RawReplyInjectMount, RawReplyMount, ReplyAttachment,
 };
-use crate::{
-    Broker, Connected, ConnectedBroker, LocalPublisher, OutgoingDestination, PublishPolicy,
-};
+use crate::{Broker, Connected, ConnectedBroker, OutgoingDestination, PublishPolicy, Publisher};
 
 /// What one `.out(marker, policy)` call attaches: the slot's publish policy and the
 /// [`PublishTransform`](crate::PublishTransform) stack the `.transform(..)` steps after it
@@ -448,7 +446,7 @@ pub trait AdmitsAt<N, Last, Mount, Def, B> {}
 /// transform mounted there writes. Machinery behind the `.transform(..)` step's own bound.
 #[doc(hidden)]
 pub type PositionOptions<Policy, B> =
-    <<Policy as PublishPolicy<Connected<B>>>::Live as LocalPublisher>::Options;
+    <<Policy as PublishPolicy<Connected<B>>>::Live as Publisher>::Options;
 
 // The reply position: the mount token turns the definition's reply type into an offer, and the
 // wiring's own stack says whether the right has been taken already.
@@ -456,7 +454,7 @@ impl<N, Policy, Enc, PL, BL, Tx, Slots, Mount, Def, B> AdmitsAt<N, ReplyLast, Mo
     for (WithSource<ReplyWiring<Policy, Enc, PL, BL, Tx>>, Slots)
 where
     B: Broker,
-    Policy: PublishPolicy<Connected<B>, Live: LocalPublisher>,
+    Policy: PublishPolicy<Connected<B>, Live: Publisher>,
     Mount: MountOffer<Def>,
     Def: DeclaresReply,
     PL: PublishTransform<ForReply<Def::Context>, PositionOptions<Policy, B>>,
@@ -532,7 +530,7 @@ impl<N, Def, Policy, B> TransformProbe<N> for ReplyProbe<Def, Policy, B>
 where
     B: Broker,
     Def: DeclaresReply,
-    Policy: PublishPolicy<Connected<B>, Live: LocalPublisher>,
+    Policy: PublishPolicy<Connected<B>, Live: Publisher>,
     N: PublishTransform<ForReply<Def::Context>, PositionOptions<Policy, B>>,
 {
     type Witness = N::Destination;
@@ -541,7 +539,7 @@ where
 impl<N, Policy, B> TransformProbe<N> for SlotProbe<Policy, B>
 where
     B: Broker,
-    Policy: PublishPolicy<Connected<B>, Live: LocalPublisher>,
+    Policy: PublishPolicy<Connected<B>, Live: Publisher>,
     N: PublishTransform<ForSlot, PositionOptions<Policy, B>>,
 {
     type Witness = N::Destination;
@@ -873,7 +871,7 @@ macro_rules! impl_step_at {
         where
             B: Broker,
             M: OutSlot,
-            Policy: PublishPolicy<Connected<B>, Live: LocalPublisher>,
+            Policy: PublishPolicy<Connected<B>, Live: Publisher>,
             Layers: PublishTransform<ForSlot, PositionOptions<Policy, B>>,
             N: PublishTransform<ForSlot, PositionOptions<Policy, B>>,
             <N as PublishTransform<ForSlot, PositionOptions<Policy, B>>>::Destination: FitsOffer<

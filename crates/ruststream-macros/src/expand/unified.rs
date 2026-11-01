@@ -173,7 +173,7 @@ pub(super) fn expand(
             // A slot's capability is the local family's on the body's side; its methods are
             // reachable under the names the service imported.
             #[allow(unused_imports)]
-            use ::ruststream::LocalPublisher as _;
+            use ::ruststream::Publisher as _;
             #input_binding
             #batch_len
             #prelude
@@ -669,7 +669,7 @@ impl NeutralArena {
             let entry = Ident::new(&format!("__RsSlot{index}"), name.span());
             let marker = &out.marker;
             // The local family's capability is the weaker one: every `Publisher` is a
-            // `LocalPublisher`, and the multi-thread runner checks `Send` at its mount.
+            // `Publisher`, and the multi-thread runner checks `Send` at its mount.
             let capability = Runtime::Embassy.capability(out.bounds);
             let body = body_ty(out.bodies.as_ref());
             bounds.push(quote! {
@@ -705,7 +705,7 @@ impl NeutralArena {
                 if !on_entry_publisher {
                     bounds.push(quote! {
                         #entry: ::ruststream::runtime::MaybeSendPublisher<
-                            <#entry as ::ruststream::LocalPublisher>::Options
+                            <#entry as ::ruststream::Publisher>::Options
                         >
                     });
                 }

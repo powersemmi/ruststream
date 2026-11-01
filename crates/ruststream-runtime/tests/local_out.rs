@@ -15,8 +15,8 @@ use std::time::Duration;
 use futures::StreamExt;
 use futures::future::join;
 use ruststream_core::{
-    Broker, BytesMut, CallerName, IncomingMessage, LocalPublisher, LocalSubscriber, MessageHeaders,
-    NoHeaders, OutgoingDestination, OutgoingMessage, PublishPolicy, SubscriptionSource,
+    Broker, BytesMut, CallerName, IncomingMessage, MessageHeaders, NoHeaders, OutgoingDestination,
+    OutgoingMessage, PublishPolicy, Publisher, Subscriber, SubscriptionSource,
 };
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
@@ -132,7 +132,7 @@ struct Mirror;
 
 impl<A> LocalHandle<Order<'_>, (), Outs<(A,)>> for Mirror
 where
-    A: LocalOutEntry<Audit, Wire: LocalPublisher>,
+    A: LocalOutEntry<Audit, Wire: Publisher>,
 {
     async fn handle(
         &self,

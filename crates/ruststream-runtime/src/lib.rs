@@ -134,11 +134,11 @@ pub(crate) type SourceSubscriber<B, S> = <S as SubscriptionSource<Connected<B>>>
 
 /// The message that subscriber yields. See [`SourceSubscriber`].
 #[cfg(feature = "alloc")]
-pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as LocalSubscriber>::Message;
+pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as Subscriber>::Message;
 
 /// The message that subscriber yields on a broker of either family. See [`SourceSubscriber`].
 #[cfg(feature = "alloc")]
-pub(crate) type LocalSourceMessage<B, S> = <SourceSubscriber<B, S> as LocalSubscriber>::Message;
+pub(crate) type LocalSourceMessage<B, S> = <SourceSubscriber<B, S> as Subscriber>::Message;
 
 /// The batch that subscriber yields, where it batches. See [`SourceSubscriber`].
 #[cfg(feature = "alloc")]
@@ -241,9 +241,6 @@ pub use handler::Continuation;
 #[doc(hidden)]
 pub use handler::HandlerResult;
 #[cfg(feature = "alloc")]
-#[doc(hidden)]
-pub use handler::MaybeSendSync;
-#[cfg(feature = "alloc")]
 pub use in_messages::{
     CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,
 };
@@ -254,6 +251,8 @@ pub use in_messages::{
 };
 #[cfg(feature = "alloc")]
 pub use inject::Out;
+#[doc(hidden)]
+pub use ruststream_core::{MaybeSend, MaybeSendSync};
 // Public and hidden: a hand-written low-level def (`SubscriberDef` / `BatchDef`) names its
 // input kind, and the self-deserializing one is how such a def opts onto the byte transport.
 #[cfg(feature = "std")]
@@ -301,14 +300,14 @@ pub use publish::{
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, ContextKind, EncodedWire, ForBatch, ForReply, ForSlot, HeaderSource, HeadersUnset,
-    LocalPublishSink, MapHeaders, MessageBody, MessageWire, MissingSegment, Names, OutPipeline,
-    Outgoing, OutgoingName, PipelinePublishError, PublishAt, PublishBuilder, PublishCodec,
-    PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt,
-    PublishHeaders, PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink,
-    PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads,
-    ResolvedName, SatisfiesContract, SerializePayloadError, SerializedWire, SlotContext,
-    SuppliedName, TemplateAddress, TransactionPublishError, TransactionScope, TypedHeaders,
-    TypedTransaction, UnnamedCodec, for_batch,
+    MapHeaders, MessageBody, MessageWire, MissingSegment, Names, OutPipeline, Outgoing,
+    OutgoingName, PipelinePublishError, PublishAt, PublishBuilder, PublishCodec, PublishContext,
+    PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt, PublishHeaders,
+    PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink, PublishStack,
+    PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads, ResolvedName,
+    SatisfiesContract, SerializePayloadError, SerializedWire, SlotContext, SuppliedName,
+    TemplateAddress, TransactionPublishError, TransactionScope, TypedHeaders, TypedTransaction,
+    UnnamedCodec, for_batch,
 };
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
 // injects through the same positions as a live publish.

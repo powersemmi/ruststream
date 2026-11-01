@@ -2,8 +2,8 @@
 
 #[cfg(feature = "testing")]
 pub use ruststream_runtime::testing::{
-    Backlog, Coordinator, InProcess, LocalTestableBroker, Outcome, PublishedAssertions,
-    SubscriberAssertions, TestError, TestableBroker, TestableRegistration, expect_published,
+    Backlog, Coordinator, InProcess, Outcome, PublishedAssertions, SubscriberAssertions, TestError,
+    TestableBroker, TestableRegistration, expect_published,
 };
 /// The harness of the embedded runner's app, driven on the host.
 #[cfg(all(feature = "testing", feature = "embassy"))]

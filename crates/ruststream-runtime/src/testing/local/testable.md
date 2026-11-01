@@ -2,7 +2,7 @@ The local form of [`TestableBroker`]: the view of an in-process connected form t
 drives, for a broker whose types are not `Send`.
 
 The items are those of [`TestableBroker`] without the `Send` and `Sync` bounds. Every
-[`TestableBroker`] is a `LocalTestableBroker` through a blanket impl.
+[`TestableBroker`] is a `TestableBroker` through a blanket impl.
 
 # Examples
 
@@ -10,7 +10,7 @@ The items are those of [`TestableBroker`] without the `Send` and `Sync` bounds. 
 use std::cell::{OnceCell, RefCell};
 use std::rc::Rc;
 
-use ruststream::testing::{Coordinator, LocalTestableBroker};
+use ruststream::testing::{Coordinator, TestableBroker};
 use ruststream::{OutgoingMessage, RawMessage};
 
 /// The in-process transport: what was published and the harness's coordinator, behind `Rc`.
@@ -24,7 +24,7 @@ pub struct QueueConnected {
     transport: Rc<Transport>,
 }
 
-impl LocalTestableBroker for QueueConnected {
+impl TestableBroker for QueueConnected {
     fn install_coordinator(&self, coordinator: Coordinator) {
         // A second install is ignored: the run keeps counting on the first coordinator.
         self.transport.coordinator.get_or_init(|| coordinator);

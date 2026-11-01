@@ -55,8 +55,7 @@ use super::harness::on_foreign_runtime;
 use super::helpers::unique_subject;
 use ruststream_core::{
     AckError, BrokerMoves, Connected, ConnectedBroker, HeaderMap, OutgoingMessage, Publisher,
-    RedeliveryAddressed, RetryDeclaration, SendBroker, SendSource, Settle, Subscriber,
-    SubscriptionSource,
+    RedeliveryAddressed, RetryDeclaration, SendBroker, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::RETRY_COUNT_HEADER;
 
@@ -167,7 +166,7 @@ pub async fn redelivery_address<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: RedeliveryAddressed<Connected<B>> + SendSource<Connected<B>> + Clone + Send + Sync,
+    Src: RedeliveryAddressed<Connected<B>> + SubscriptionSource<Connected<B>> + Clone + Send + Sync,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher + 'static,
@@ -496,7 +495,7 @@ fn assert_count<M: Settle>(msg: &M, expected: u64, which: &str) {
 /// use std::num::NonZeroU32;
 ///
 /// use ruststream::conformance::retry;
-/// use ruststream::{Broker, BrokerMoves, Connected, Publisher, SendBroker, SendSource, SubscriptionSource, nonzero};
+/// use ruststream::{Broker, BrokerMoves, Connected, Publisher, SendBroker, SubscriptionSource, SubscriptionSource, nonzero};
 ///
 /// // A broker crate passes its production broker, its queue descriptor and its publisher.
 /// async fn check<B, Src, Pub>(
@@ -505,7 +504,7 @@ fn assert_count<M: Settle>(msg: &M, expected: u64, which: &str) {
 ///     make_publisher: impl Fn(&Connected<B>) -> Pub,
 /// ) where
 ///     B: SendBroker,
-///     Src: SendSource<Connected<B>> + SubscriptionSource<Connected<B>, Copies = BrokerMoves> + Send,
+///     Src: SubscriptionSource<Connected<B>> + SubscriptionSource<Connected<B>, Copies = BrokerMoves> + Send,
 ///     Pub: Publisher,
 /// {
 ///     let attempts: NonZeroU32 = nonzero!(2u32);
@@ -526,7 +525,9 @@ pub async fn broker_moves<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + SubscriptionSource<Connected<B>, Copies = BrokerMoves> + Send,
+    Src: SubscriptionSource<Connected<B>>
+        + SubscriptionSource<Connected<B>, Copies = BrokerMoves>
+        + Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,

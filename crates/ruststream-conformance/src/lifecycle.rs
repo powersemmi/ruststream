@@ -58,7 +58,7 @@ use super::harness::{expect_next, on_foreign_runtime, unknown_backlog};
 use super::helpers::unique_subject;
 use ruststream_core::{
     AckError, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage,
-    Publisher, SendBroker, SendSource, Settle, Subscriber,
+    Publisher, SendBroker, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::testing::Backlog;
 
@@ -103,7 +103,7 @@ pub(crate) async fn ladder<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B + Send + Sync + 'static,
-    Src: SendSource<Connected<B>> + Clone + Send + 'static,
+    Src: SubscriptionSource<Connected<B>> + Clone + Send + 'static,
     Src::Subscriber: Send + 'static,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,
@@ -407,7 +407,7 @@ async fn held_across_shutdown<S, M, E, B, MkBroker, Src, MkSrc>(
     E: fmt::Debug,
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>>,
+    Src: SubscriptionSource<Connected<B>>,
     MkSrc: Fn(&str) -> Src,
 {
     let answer = within(
@@ -520,7 +520,7 @@ pub async fn shutdown_flushes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>>,
+    Src: SubscriptionSource<Connected<B>>,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
@@ -661,7 +661,7 @@ pub async fn shared_handle_closes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     B: SendBroker,
     Connected<B>: Clone,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>>,
+    Src: SubscriptionSource<Connected<B>>,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
@@ -715,7 +715,7 @@ pub async fn shared_handle_closes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 async fn connect_and_subscribe<B, Src>(broker: B, source: Src) -> (Connected<B>, Src::Subscriber)
 where
     B: SendBroker,
-    Src: SendSource<Connected<B>>,
+    Src: SubscriptionSource<Connected<B>>,
 {
     let connected = connect_within(broker, "shutdown_flushes").await;
     let subject = source.name().to_owned();

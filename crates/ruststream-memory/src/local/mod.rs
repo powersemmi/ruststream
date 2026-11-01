@@ -120,8 +120,8 @@ pub mod prelude {
         LocalMemorySubscriber,
     };
     pub use ruststream_core::{
-        AckError, Broker, BytesMut, ConnectedBroker, HeaderMap, IncomingMessage,
-        LocalBatchSubscriber, LocalPublisher, LocalSettle, LocalSubscriber, OutgoingMessage,
-        PublishMessageError, PublishPolicy, Subscribe, SubscriptionSource,
+        AckError, BatchSubscriber, Broker, BytesMut, ConnectedBroker, HeaderMap, IncomingMessage,
+        OutgoingMessage, PublishMessageError, PublishPolicy, Publisher, Settle, Subscribe,
+        Subscriber, SubscriptionSource,
     };
 }

@@ -21,7 +21,7 @@ use ruststream::IncomingMessage;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER};
 use ruststream::{
-    Broker, Deserialized, LocalPublisher, LocalSubscriber, Outgoing, OutgoingMessage, Serialized,
+    Broker, Deserialized, Outgoing, OutgoingMessage, Publisher, Serialized, Subscriber,
     SubscriptionSource, subscriber,
 };
 use static_cell::StaticCell;
@@ -152,7 +152,7 @@ async fn publish(bus: &Bus, subject: &'static str, payload: &[u8]) {
 }
 
 /// The payload of the next message `subscriber` holds, if it holds one now.
-fn next_payload<Sub: LocalSubscriber>(subscriber: &mut Sub) -> Option<Vec<u8>> {
+fn next_payload<Sub: Subscriber>(subscriber: &mut Sub) -> Option<Vec<u8>> {
     pin!(subscriber.stream())
         .next()
         .now_or_never()

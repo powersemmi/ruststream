@@ -13,7 +13,7 @@ use ruststream_runtime::testing::{
     PublishTarget, PublishedAssertions, RunBroker, SubscriberAssertions, TestError, attribute,
 };
 use ruststream_runtime::{
-    HeadersUnset, LocalPublishSink, MessageBody, PublishBuilder, UnnamedCodec, message_of,
+    HeadersUnset, MessageBody, PublishBuilder, PublishSink, UnnamedCodec, message_of,
 };
 
 use super::TestApp;
@@ -58,7 +58,7 @@ impl fmt::Debug for InjectSink<'_> {
     }
 }
 
-impl LocalPublishSink for InjectSink<'_> {
+impl PublishSink for InjectSink<'_> {
     // The in-process transport copies what it keeps out of the bytes it is lent.
     type Payload = Lend;
     type Error = TestError;

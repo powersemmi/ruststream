@@ -21,7 +21,7 @@ use embassy_sync::channel::Channel;
 use futures::StreamExt;
 use futures::future::{Either, join, select};
 use hash32::{FnvHasher, Hasher as _};
-use ruststream_core::{BuildContext, IncomingMessage, LocalSettle, LocalSubscriber};
+use ruststream_core::{BuildContext, IncomingMessage, Settle, Subscriber};
 use ruststream_runtime::{
     Delivery, DeliverySlot, DispatchFailure, Dispatched, Halt, HeadersAtOnce, HostDetach,
     KeepCopies, Keeping, LocalDetach, LocalDispatch, LocalHandler, LocalPipeline, LocalPlanned,
@@ -79,7 +79,7 @@ pub trait Lanes {
         host: &Host,
     ) -> impl Future<Output = ()>
     where
-        Sub: LocalSubscriber,
+        Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
@@ -95,7 +95,7 @@ impl Lanes for OneLane {
         host: &Host,
     ) -> impl Future<Output = ()>
     where
-        Sub: LocalSubscriber,
+        Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
@@ -114,7 +114,7 @@ impl<const WORKERS: usize> Lanes for Pool<WORKERS> {
         host: &Host,
     ) -> impl Future<Output = ()>
     where
-        Sub: LocalSubscriber,
+        Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
@@ -133,7 +133,7 @@ impl<const LANES: usize> Lanes for Keyed<LANES> {
         host: &Host,
     ) -> impl Future<Output = ()>
     where
-        Sub: LocalSubscriber,
+        Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
@@ -154,7 +154,7 @@ impl<L: Lanes> LocalDispatch for EmbeddedPlan<L, NoRoom> {
         state: &Arc<State>,
         host: &Host,
     ) where
-        Sub: LocalSubscriber,
+        Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
@@ -178,7 +178,7 @@ impl<L: Lanes, const CAPACITY: usize> LocalDispatch for EmbeddedPlan<L, Room<CAP
         state: &Arc<State>,
         host: &Host,
     ) where
-        Sub: LocalSubscriber,
+        Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
@@ -217,7 +217,7 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
     host: &Host,
     keyed: bool,
 ) where
-    Sub: LocalSubscriber,
+    Sub: Subscriber,
     Body: LocalHandler<Sub::Message, Cx, State>,
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
     Signal: ShutdownWait + Halt + Clone,
@@ -324,7 +324,7 @@ async fn work<Message, Body, Cx, State, Signal, Host, const COUNT: usize>(
     free: Option<(&Channel<NoopRawMutex, usize, COUNT>, usize)>,
     shared: &Shared<'_, Body, Cx, State, Signal, Host>,
 ) where
-    Message: LocalSettle,
+    Message: Settle,
     Body: LocalHandler<Message, Cx, State>,
     Cx: BuildContext<Message> + Send + Sync + 'static,
     Signal: Halt,

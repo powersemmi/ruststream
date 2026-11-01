@@ -23,7 +23,7 @@ use crate::publish_failure::{Reaction, Refusal, publish_lost};
 use crate::redelivery::{RetryCopies, RetryRoute};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Coordinator, in_harness_scope};
-use crate::{AckError, HeaderMap, LocalSettle, OutgoingMessage, RetryDeclaration, Str};
+use crate::{AckError, HeaderMap, OutgoingMessage, RetryDeclaration, Settle, Str};
 
 mod keep;
 
@@ -52,7 +52,7 @@ pub(crate) async fn settle_outcome<M, C, Host>(
     host: &Host,
     build_cx: fn(&M) -> C,
 ) where
-    M: LocalSettle,
+    M: Settle,
     C: Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
@@ -94,7 +94,7 @@ pub(crate) async fn settle_reacting<M, C, Host>(
     host: &Host,
     build_cx: fn(&M) -> C,
 ) where
-    M: LocalSettle,
+    M: Settle,
     C: Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
@@ -158,13 +158,13 @@ enum Redelivery<'a> {
 /// both. A transport that counts its deliveries answers for all of them, the ones a delay or a
 /// requeue brought round included. The header starts absent and is incremented on every copy
 /// published for the delivery, so the first delivery counts as one either way.
-fn attempt_of<M: LocalSettle>(msg: &M) -> u64 {
+fn attempt_of<M: Settle>(msg: &M) -> u64 {
     msg.redelivery_count()
         .unwrap_or_else(|| current_retry_count(msg.headers()) + 1)
 }
 
 /// Reads the registration's declaration against this delivery.
-fn redelivery_of<'d, M: LocalSettle>(msg: &M, declaration: &'d RetryDeclaration) -> Redelivery<'d> {
+fn redelivery_of<'d, M: Settle>(msg: &M, declaration: &'d RetryDeclaration) -> Redelivery<'d> {
     match (declaration.max_attempts(), declaration.dead_letter()) {
         (Some(cap), destination) if attempt_of(msg) >= u64::from(cap.get()) => {
             destination.map_or(Redelivery::Reject, |destination| Redelivery::DeadLetter {
@@ -209,7 +209,7 @@ async fn settle_retry<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
+    M: Settle,
     C: Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
@@ -313,7 +313,7 @@ async fn send_copy<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
+    M: Settle,
     C: Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
@@ -402,7 +402,7 @@ async fn settle_nack_after<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
+    M: Settle,
     C: Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
@@ -496,7 +496,7 @@ where
 /// # Errors
 ///
 /// Returns the [`AckError`] from the requeue.
-async fn requeue_now<M: LocalSettle, Host: HostDetach>(
+async fn requeue_now<M: Settle, Host: HostDetach>(
     slot: &mut Slot<M>,
     name: &str,
     declaration: &RetryDeclaration,
@@ -550,7 +550,7 @@ async fn dead_letter<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
+    M: Settle,
     C: Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
@@ -576,7 +576,7 @@ where
 /// # Errors
 ///
 /// Returns the [`AckError`] from the rejection.
-async fn reject_spent<M: LocalSettle>(slot: &mut Slot<M>, name: &str) -> Result<(), AckError> {
+async fn reject_spent<M: Settle>(slot: &mut Slot<M>, name: &str) -> Result<(), AckError> {
     warn_at_cap(name, attempt_of(slot.get()), None);
     slot.take().nack(false).await
 }
@@ -643,7 +643,7 @@ async fn publish_copy<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
+    M: Settle,
     C: Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {

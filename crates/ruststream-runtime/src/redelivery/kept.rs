@@ -23,9 +23,9 @@ use crate::publish::{
 };
 use crate::publish_failure::Refusal;
 use crate::{
-    AddressedCopies, Broker, BrokerMoves, Connected, DefaultPublish, HeaderMap, LocalPublisher,
-    LocalSettle, NamedCopies, Outgoing, OutgoingMessage, PayloadForm, PublishPolicy, Reads,
-    RedeliveryAddressed, SubscriptionSource,
+    AddressedCopies, Broker, BrokerMoves, Connected, DefaultPublish, HeaderMap, NamedCopies,
+    Outgoing, OutgoingMessage, PayloadForm, PublishPolicy, Publisher, Reads, RedeliveryAddressed,
+    Settle, SubscriptionSource,
 };
 
 /// Where a kept copy leaves: the publisher and the address that reaches the subscription
@@ -60,7 +60,7 @@ pub trait PrepareCopy<Cx>: CopyPublisher {
     /// Puts the publisher's own constants under the delivery's headers and runs the mount site's
     /// transforms over the copy bound for `destination`, the way a publish through the
     /// multi-thread runner's retry slot does.
-    fn prepare<M: LocalSettle>(
+    fn prepare<M: Settle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -81,7 +81,7 @@ pub struct AddressedCopy<Live, Stack = PublishTransformIdentity> {
     stack: Stack,
 }
 
-impl<Live: LocalPublisher, Stack> CopyPublisher for AddressedCopy<Live, Stack> {
+impl<Live: Publisher, Stack> CopyPublisher for AddressedCopy<Live, Stack> {
     type Options = Live::Options;
 
     fn address(&self) -> &str {
@@ -108,10 +108,10 @@ impl<Live: LocalPublisher, Stack> CopyPublisher for AddressedCopy<Live, Stack> {
 
 impl<Cx, Live, Stack> PrepareCopy<Cx> for AddressedCopy<Live, Stack>
 where
-    Live: LocalPublisher,
+    Live: Publisher,
     Stack: KeptTransforms<Cx, Live::Options>,
 {
-    fn prepare<M: LocalSettle>(
+    fn prepare<M: Settle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -148,7 +148,7 @@ where
 )]
 pub trait KeptTransforms<Cx, Options> {
     /// Runs the stack over the copy bound for `destination`.
-    fn apply_kept<M: LocalSettle>(
+    fn apply_kept<M: Settle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -161,7 +161,7 @@ pub trait KeptTransforms<Cx, Options> {
 // Nothing to run: the copy is kept as it was filled, and the context is never built.
 impl<Cx, Options> KeptTransforms<Cx, Options> for PublishTransformIdentity {
     #[inline]
-    fn apply_kept<M: LocalSettle>(
+    fn apply_kept<M: Settle>(
         &self,
         _payload: &mut BytesMut,
         _headers: &mut HeaderMap,
@@ -176,7 +176,7 @@ impl<Cx, Options, Inner, Outer> KeptTransforms<Cx, Options> for PublishTransform
 where
     Self: PublishTransform<ForReply<Cx>, Options, Destination = Reads>,
 {
-    fn apply_kept<M: LocalSettle>(
+    fn apply_kept<M: Settle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -225,7 +225,7 @@ impl CopyPublisher for NoCopyPath {
 
 #[allow(clippy::uninhabited_references)]
 impl<Cx> PrepareCopy<Cx> for NoCopyPath {
-    fn prepare<M: LocalSettle>(
+    fn prepare<M: Settle>(
         &self,
         _payload: &mut BytesMut,
         _headers: &mut HeaderMap,
@@ -372,7 +372,7 @@ where
     B: Broker,
     Source: RedeliveryAddressed<Connected<B>>,
     Connected<B>: DefaultPublish,
-    DefaultLive<B>: LocalPublisher,
+    DefaultLive<B>: Publisher,
 {
     type Path = AddressedCopy<DefaultLive<B>>;
 
@@ -440,9 +440,9 @@ where
     Source: SubscriptionSource<Connected<B>>,
     Source::Copies: SlotAddress<B, Source>,
     Policy: PublishPolicy<Connected<B>>,
-    Policy::Live: LocalPublisher,
+    Policy::Live: Publisher,
     // The transforms run over each copy as it is kept, reading the delivery it copies.
-    Stack: KeptTransforms<Cx, <Policy::Live as LocalPublisher>::Options>,
+    Stack: KeptTransforms<Cx, <Policy::Live as Publisher>::Options>,
 {
     type Path = AddressedCopy<Policy::Live, Stack>;
 

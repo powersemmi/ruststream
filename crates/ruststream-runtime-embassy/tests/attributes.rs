@@ -29,8 +29,8 @@ use ruststream::runtime::{
     EmbeddedApp, HandlerOutcome, Health, Message, Mounts, Out, SubscriberSettings,
 };
 use ruststream::{
-    Broker, Deserialized, LocalPublisher, LocalSubscriber, OutSlot, Outgoing, OutgoingMessage,
-    Publisher, Serialized, SubscriptionSource, subscriber,
+    Broker, Deserialized, OutSlot, Outgoing, OutgoingMessage, Publisher, Serialized, Subscriber,
+    SubscriptionSource, subscriber,
 };
 use serde::Serialize;
 use static_cell::StaticCell;
@@ -212,7 +212,7 @@ async fn subscribe(
 }
 
 /// The payload of the next message `subscriber` holds, if it holds one now.
-fn next_payload<Sub: LocalSubscriber>(subscriber: &mut Sub) -> Option<Vec<u8>> {
+fn next_payload<Sub: Subscriber>(subscriber: &mut Sub) -> Option<Vec<u8>> {
     pin!(subscriber.stream())
         .next()
         .now_or_never()
@@ -222,7 +222,7 @@ fn next_payload<Sub: LocalSubscriber>(subscriber: &mut Sub) -> Option<Vec<u8>> {
 }
 
 /// The next message `subscriber` holds, if it holds one now: its payload and `bytes` header.
-fn next_message<Sub: LocalSubscriber>(subscriber: &mut Sub) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
+fn next_message<Sub: Subscriber>(subscriber: &mut Sub) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
     pin!(subscriber.stream())
         .next()
         .now_or_never()

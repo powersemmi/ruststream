@@ -23,7 +23,7 @@ use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream_core::Broker;
 use ruststream_core::IncomingMessage;
 use ruststream_core::{
-    BytesMut, CallerName, LocalPublisher, MessageHeaders, NoHeaders, OutgoingDestination,
+    BytesMut, CallerName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
 };
 use ruststream_runtime::{
     Clock, Context, Continuation, Delivery, Detach, DispatchFailure, FailurePolicies,
@@ -330,7 +330,7 @@ struct Relay;
 
 impl<T> LocalHandle<Reading<'_>, (), Outs<(T,)>> for Relay
 where
-    T: LocalOutEntry<Trail, Wire: LocalPublisher>,
+    T: LocalOutEntry<Trail, Wire: Publisher>,
 {
     async fn handle(
         &self,

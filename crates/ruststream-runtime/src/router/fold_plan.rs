@@ -28,8 +28,7 @@ use crate::redelivery::{
 use crate::redelivery::{ScopeDelivery, open_local_subscription};
 use crate::typed::{LocalTyped, Typed};
 use crate::{
-    Broker, BuildContext, Connected, LocalSettle, LocalSubscriber, RetryDeclaration,
-    SubscriptionSource,
+    Broker, BuildContext, Connected, RetryDeclaration, Settle, Subscriber, SubscriptionSource,
 };
 
 use super::builder::Router;
@@ -64,7 +63,7 @@ pub trait LocalDispatch {
         host: &Host,
     ) -> impl Future<Output = ()>
     where
-        Sub: LocalSubscriber,
+        Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
@@ -102,7 +101,7 @@ impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
         state: &Arc<State>,
         host: &Lent,
     ) where
-        Sub: LocalSubscriber,
+        Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
@@ -140,7 +139,7 @@ impl LocalDispatch for SequentialPlan {
         state: &Arc<State>,
         host: &Host,
     ) where
-        Sub: LocalSubscriber,
+        Sub: Subscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
@@ -277,11 +276,11 @@ pub trait OpenLocalRoute<B: Broker, State> {
     /// dead-letter destination.
     type Declaration;
     /// The opened subscription.
-    type Sub: LocalSubscriber;
+    type Sub: Subscriber;
     /// The handler each delivery runs.
-    type Body: LocalHandler<<Self::Sub as LocalSubscriber>::Message, Self::Cx, State>;
+    type Body: LocalHandler<<Self::Sub as Subscriber>::Message, Self::Cx, State>;
     /// The broker's typed per-delivery context the handler reads.
-    type Cx: BuildContext<<Self::Sub as LocalSubscriber>::Message> + Send + Sync + 'static;
+    type Cx: BuildContext<<Self::Sub as Subscriber>::Message> + Send + Sync + 'static;
 
     /// The descriptor, read before the registration opens.
     fn source(&self) -> &Self::Source;
@@ -402,8 +401,8 @@ impl<B, State, Source, M, Input, DecodeCodec, Inner, Cx> OpenLocalRoute<B, State
 where
     B: Broker,
     Source: SubscriptionSource<Connected<B>>,
-    Source::Subscriber: LocalSubscriber<Message = M>,
-    M: LocalSettle,
+    Source::Subscriber: Subscriber<Message = M>,
+    M: Settle,
     Input: Materialize<DecodeCodec, M>,
     Inner: LocalHandler<Input::Target, Cx, State>,
     Cx: BuildContext<M> + Send + Sync + 'static,
@@ -501,7 +500,7 @@ open_dispatched!(
 impl<State, Sub, Body, Cx, Layers, Plan, Path> RunRoutes<State>
     for OpenedDispatch<Sub, Body, Cx, Layers, Plan, Path>
 where
-    Sub: LocalSubscriber,
+    Sub: Subscriber,
     Body: LocalHandler<Sub::Message, Cx, State>,
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
     Layers: LocalBlanketLayer,

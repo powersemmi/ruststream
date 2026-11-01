@@ -21,8 +21,7 @@ use futures::{Stream, StreamExt, stream};
 
 use crate::{
     AddressedCopies, BatchSubscriber, Clock, ConnectedBroker, DeclareRetryError, RedeliveryAddress,
-    RedeliveryAddressed, RetryDeclaration, Seekable, SendSource, Subscriber, SubscriptionSource,
-    Tokio,
+    RedeliveryAddressed, RetryDeclaration, Seekable, Subscriber, SubscriptionSource, Tokio,
 };
 
 const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
@@ -124,7 +123,7 @@ impl<C, S> SubscriptionSource<C> for Buffered<S>
 where
     C: ConnectedBroker,
     // `Sync` on the wrapped source is what lets the redelivery address be asked for by reference.
-    S: SendSource<C> + Send + Sync,
+    S: SubscriptionSource<C> + Send + Sync,
     S::Subscriber: Send,
 {
     type Subscriber = BufferedSubscriber<S::Subscriber>;

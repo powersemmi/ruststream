@@ -26,9 +26,9 @@ Each rule names the trait it concerns; the rustdoc of that trait is the referenc
   their futures across threads; the lifecycle traits (`Broker`, `ConnectedBroker`, `Subscribe`,
   `SubscriptionSource`, `PublishPolicy`) carry no `Send`. A broker whose client holds `Rc` or
   `RefCell` implements the lifecycle traits as they are and the per-message `Local*` twins
-  (`LocalSubscriber`, `LocalSettle`, `LocalPublisher`, a local form of each capability): the same
+  (`Subscriber`, `Settle`, `Publisher`, a local form of each capability): the same
   items without `Send`. A delivery implements `IncomingMessage` (the accessors) and `Settle` (or
-  `LocalSettle`). A blanket impl makes every Send implementation a local one, so a crate implements
+  `Settle`). A blanket impl makes every Send implementation a local one, so a crate implements
   and imports one family; with both in scope a method call on its own type is ambiguous (E0034).
 - Implement `Subscribe` on the **connected** form for the by-name `#[subscriber("topic")]` form,
   and ship a `SubscriptionSource<Connected<B>>` descriptor for broker-specific options (even a

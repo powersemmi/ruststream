@@ -14,8 +14,8 @@ use std::time::Duration;
 use futures::StreamExt;
 use futures::future::join;
 use ruststream_core::{
-    Broker, BytesMut, IncomingMessage, LocalPublisher, LocalSubscriber, OutgoingMessage,
-    PublishPolicy, SubscriptionSource,
+    Broker, BytesMut, IncomingMessage, OutgoingMessage, PublishPolicy, Publisher, Subscriber,
+    SubscriptionSource,
 };
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{

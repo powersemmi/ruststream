@@ -13,7 +13,7 @@ use super::{
 use crate::codec::{Codec, Encoding};
 use crate::lifecycle::BoxError;
 use crate::publish_failure::Refusal;
-use crate::{HeaderMap, LocalPublisher, PayloadForm};
+use crate::{HeaderMap, PayloadForm, Publisher};
 
 /// A byte [`Publisher`](crate::Publisher) paired with a [`Codec`] and a static [`PublishTransform`] stack: what a
 /// reply wiring becomes once the broker connects.
@@ -67,7 +67,7 @@ impl<P, C> TypedPublisher<P, C, PublishTransformIdentity, BatchTransformIdentity
 // knows its leaf is a `Publisher` and its pipeline a `PublishPipeline` proves these futures
 // `Send` through the forwarding impls.
 #[allow(clippy::future_not_send)]
-impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
+impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// The message a reply starts from: `name` and the encoded `payload` over the publisher's
     /// own base ([`Publisher::base_headers`](crate::Publisher::base_headers)).
     ///

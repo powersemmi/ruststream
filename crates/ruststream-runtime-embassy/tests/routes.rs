@@ -30,7 +30,7 @@ mod scenarios {
     };
     use ruststream::runtime::{Control, EmbeddedApp, HandlerOutcome, IntoSource, Mounts, RunError};
     use ruststream::{
-        Broker, BrokerMoves, ConnectedBroker, Deserialized, LocalPublisher, OutgoingMessage,
+        Broker, BrokerMoves, ConnectedBroker, Deserialized, OutgoingMessage, Publisher,
         SubscriptionSource, subscriber,
     };
     use static_cell::StaticCell;

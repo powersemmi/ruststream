@@ -12,8 +12,8 @@ use core::task::{Context, Poll};
 
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, AddressedCopies, FromName, HeaderMap, IncomingMessage, LocalBatchSubscriber,
-    LocalSettle, LocalSubscriber, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource,
+    AckError, AddressedCopies, BatchSubscriber, FromName, HeaderMap, IncomingMessage,
+    RedeliveryAddress, RedeliveryAddressed, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -205,7 +205,7 @@ impl<const CAP: usize> fmt::Debug for LocalMemorySubscriber<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalSubscriber for LocalMemorySubscriber<CAP> {
+impl<const CAP: usize> Subscriber for LocalMemorySubscriber<CAP> {
     type Message = LocalMemoryMessage<CAP>;
     type Error = Infallible;
 
@@ -214,7 +214,7 @@ impl<const CAP: usize> LocalSubscriber for LocalMemorySubscriber<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalBatchSubscriber for LocalMemorySubscriber<CAP> {
+impl<const CAP: usize> BatchSubscriber for LocalMemorySubscriber<CAP> {
     type Batch = Vec<LocalMemoryMessage<CAP>>;
 
     fn batches(
@@ -401,7 +401,7 @@ impl<const CAP: usize> IncomingMessage for LocalMemoryMessage<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalSettle for LocalMemoryMessage<CAP> {
+impl<const CAP: usize> Settle for LocalMemoryMessage<CAP> {
     fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {
         self.settled = true;
         ready(Ok(()))
@@ -429,11 +429,11 @@ mod tests {
     use embassy_futures::block_on;
     use futures::{FutureExt, StreamExt};
     use ruststream_core::{
-        Broker, BytesMut, ConnectedBroker, LocalPublisher, OutgoingMessage, Subscribe,
+        Broker, BytesMut, ConnectedBroker, OutgoingMessage, Publisher, Subscribe,
     };
 
     #[cfg(feature = "testing")]
-    use ruststream_runtime::testing::{Coordinator, LocalTestableBroker};
+    use ruststream_runtime::testing::{Coordinator, TestableBroker};
 
     use ruststream_runtime::RETRY_COUNT_HEADER;
 

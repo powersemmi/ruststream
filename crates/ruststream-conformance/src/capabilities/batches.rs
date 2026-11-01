@@ -14,7 +14,7 @@ use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
     BatchSubscriber, Connected, IncomingMessage, OutgoingMessage, Positioned, Publisher, Seekable,
-    Seeker, SendBroker, SendSource, Settle,
+    Seeker, SendBroker, Settle, SubscriptionSource,
 };
 
 /// Verifies the [`BatchSubscriber`] contract.
@@ -58,7 +58,7 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: BatchSubscriber + Send,
     SubscriberMessage<Src::Subscriber>: 'static,
     MkSrc: Fn(&str) -> Src,
@@ -315,7 +315,7 @@ pub async fn batch_seeking<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: BatchSubscriber + Seekable + Send,
     SubscriberMessage<Src::Subscriber>: Positioned<Position = SeekPosition<Src::Subscriber>>,
     MkSrc: Fn(&str) -> Src,

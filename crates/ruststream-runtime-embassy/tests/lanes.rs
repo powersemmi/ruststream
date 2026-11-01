@@ -34,7 +34,7 @@ mod scenarios {
     use futures_core::Stream;
     use ruststream_core::IncomingMessage;
     use ruststream_core::{
-        AckError, Broker, BrokerMoves, ConnectedBroker, HeaderMap, LocalSettle, LocalSubscriber,
+        AckError, Broker, BrokerMoves, ConnectedBroker, HeaderMap, Settle, Subscriber,
         SubscriptionSource,
     };
     use ruststream_runtime::{
@@ -108,7 +108,7 @@ mod scenarios {
         }
     }
 
-    impl LocalSettle for KeyedDelivery {
+    impl Settle for KeyedDelivery {
         fn ack(self) -> impl Future<Output = Result<(), AckError>> {
             self.acked.set(self.acked.get() + 1);
             ready(Ok(()))
@@ -156,7 +156,7 @@ mod scenarios {
         }
     }
 
-    impl LocalSubscriber for KeyedSubscriber {
+    impl Subscriber for KeyedSubscriber {
         type Message = KeyedDelivery;
         type Error = Fault;
 

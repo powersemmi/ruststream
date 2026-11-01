@@ -12,8 +12,7 @@ use core::fmt;
 use core::num::NonZeroUsize;
 
 use crate::{
-    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, SendSource, Settle,
-    SubscriptionSource,
+    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, Settle, SubscriptionSource,
 };
 
 use crate::batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
@@ -146,7 +145,7 @@ impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, Sta
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 where
     B: Broker + 'static,
-    Source: SendSource<Connected<B>> + Send + 'static,
+    Source: SubscriptionSource<Connected<B>> + Send + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     Def::Context: Send + Sync + 'static,
@@ -226,7 +225,7 @@ impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, Sta
     for BatchInjectRoute<Source, Def, DecodeCodec, Extra>
 where
     B: Broker + 'static,
-    Source: SendSource<Connected<B>> + Send + 'static,
+    Source: SubscriptionSource<Connected<B>> + Send + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     Def::Context: Send + Sync + 'static,

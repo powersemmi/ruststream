@@ -18,7 +18,7 @@ use serde::Serialize;
 use crate::codec::Codec;
 use crate::{
     BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, PublishPolicy, Publisher,
-    SendSource, Settle, SubscriptionSource,
+    Settle, SubscriptionSource,
 };
 
 use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
@@ -214,7 +214,7 @@ where
     B: Broker + 'static,
     // The subscription side: the source opens against the connected form, and the definition's
     // handler runs over the messages it yields.
-    Source: SendSource<Connected<B>> + Send + 'static,
+    Source: SubscriptionSource<Connected<B>> + Send + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     RetryPipeline: Clone,
@@ -331,7 +331,7 @@ impl<B, Source, Def, DecodeCodec, ReplySource, Extra, State, Live, RetryPipeline
     for RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>
 where
     B: Broker + 'static,
-    Source: SendSource<Connected<B>> + Send + 'static,
+    Source: SubscriptionSource<Connected<B>> + Send + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     RetryPipeline: Clone,
@@ -438,7 +438,7 @@ impl<B, Source, Def, DecodeCodec, ReplySource, Extra, BatchReply, State, RetryPi
 where
     B: Broker + 'static,
     // The subscription side: batches open against the connected form.
-    Source: SendSource<Connected<B>> + Send + 'static,
+    Source: SubscriptionSource<Connected<B>> + Send + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     RetryPipeline: Clone,

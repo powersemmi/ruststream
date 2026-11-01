@@ -29,7 +29,7 @@ use tracing::error;
 
 use crate::publish_failure::Reaction;
 use crate::redelivery::RetryCopies;
-use crate::{BuildContext, HeaderMap, LocalSettle, LocalSubscriber};
+use crate::{BuildContext, HeaderMap, Settle, Subscriber};
 
 use super::batch::{LocalBatchHandler, TakenBatch};
 use super::context::Context;
@@ -134,7 +134,7 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     held: Held,
     headers: Headers,
 ) where
-    S: LocalSubscriber,
+    S: Subscriber,
     H: LocalHandler<S::Message, C, St>,
     Headers: LendHeaders<S::Message>,
     // See `dispatch`.
@@ -323,7 +323,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     // A deferred retry copy carries the broker's context into the work the delivery leaves
     // behind, which may run on another thread.
     C: BuildContext<M> + Send + Sync + 'static,
-    M: LocalSettle,
+    M: Settle,
     Signal: Halt,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
     Headers: LendHeaders<M>,
@@ -693,7 +693,7 @@ mod tests {
     use crate::failure::{DispatchFailure, FailurePolicies};
     use crate::handler::{HandlerOutcome, LocalHandler};
     use crate::testkit::{Shutdown, Tracked};
-    use crate::{AckError, HeaderMap, LocalSettle};
+    use crate::{AckError, HeaderMap, Settle};
     use tokio::task::yield_now;
     use tokio_util::task::TaskTracker;
 
@@ -764,7 +764,7 @@ mod tests {
         }
     }
 
-    impl LocalSettle for OnOneThread {
+    impl Settle for OnOneThread {
         fn ack(self) -> impl Future<Output = Result<(), AckError>> {
             ready(Ok(()))
         }

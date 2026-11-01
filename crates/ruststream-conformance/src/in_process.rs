@@ -58,8 +58,8 @@ use tokio::{runtime, time, time::timeout};
 use super::harness::{expect_next, expect_no_more};
 use super::helpers::unique_subject;
 use ruststream_core::{
-    AckError, ConnectedBroker, HeaderMap, OutgoingMessage, RawMessage, SendBroker, SendSubscribe,
-    Settle, Subscribe, Subscriber,
+    AckError, ConnectedBroker, HeaderMap, OutgoingMessage, RawMessage, SendBroker, Settle,
+    Subscribe, Subscriber,
 };
 use ruststream_runtime::testing::{Coordinator, InProcess, TestableBroker, TestableRegistration};
 
@@ -81,7 +81,7 @@ const SHARED: u32 = 10;
 pub(crate) async fn run<B, F>(factory: F)
 where
     B: InProcess + SendBroker,
-    B::Connected: SendSubscribe + TestableBroker,
+    B::Connected: Subscribe + TestableBroker,
     F: Fn() -> B,
 {
     own_publishes_are_logged(connect_in_process(factory()).await).await;
@@ -218,7 +218,7 @@ struct Received {
 /// Two subscriptions of one name, and one of another, receive exactly what the broker's routing
 /// answer says: `routes` is what a live `TestApp` waits on, so a transport that delivers
 /// otherwise makes it wait for a delivery that never comes, or stop before one that does.
-async fn one_name_two_subscriptions<C: TestableBroker + SendSubscribe>(connected: C) {
+async fn one_name_two_subscriptions<C: TestableBroker + Subscribe>(connected: C) {
     let coordinator = Coordinator::new(usize::MAX);
     connected.install_coordinator(coordinator.clone());
     let name = unique_subject("conformance.shared");
@@ -357,7 +357,7 @@ where
 fn counts_balance<B>(broker: B)
 where
     B: InProcess + SendBroker,
-    B::Connected: SendSubscribe + TestableBroker,
+    B::Connected: Subscribe + TestableBroker,
 {
     thread::scope(|scope| {
         let joined = thread::Builder::new()
@@ -381,7 +381,7 @@ where
 async fn counts<B>(broker: B)
 where
     B: InProcess + SendBroker,
-    B::Connected: SendSubscribe + TestableBroker,
+    B::Connected: Subscribe + TestableBroker,
 {
     let connected = connect_in_process(broker).await;
     let coordinator = Coordinator::new(usize::MAX);

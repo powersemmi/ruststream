@@ -23,9 +23,9 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, Receiver};
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, Broker, BrokerMoves, ConnectedBroker, DefaultPublish, HeaderMap, IncomingMessage,
-    Lend, LocalBatchSubscriber, LocalPublisher, LocalSettle, LocalSubscriber, OutgoingMessage,
-    PairError, PublishMessageError, PublishOutcome, PublishPolicy, SubscriptionSource,
+    AckError, BatchSubscriber, Broker, BrokerMoves, ConnectedBroker, DefaultPublish, HeaderMap,
+    IncomingMessage, Lend, OutgoingMessage, PairError, PublishMessageError, PublishOutcome,
+    PublishPolicy, Publisher, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -113,7 +113,7 @@ impl FrameSubscriber {
     }
 }
 
-impl LocalSubscriber for FrameSubscriber {
+impl Subscriber for FrameSubscriber {
     type Message = FrameDelivery;
     type Error = Infallible;
 
@@ -141,7 +141,7 @@ impl Stream for Deliveries<'_> {
 
 // A batch is the frames waiting when the first one arrives, up to the size the registration
 // asked for, held inline: taking one allocates nothing.
-impl LocalBatchSubscriber for FrameSubscriber {
+impl BatchSubscriber for FrameSubscriber {
     type Batch = heapless::Vec<FrameDelivery, DEPTH>;
 
     fn batches(
@@ -201,7 +201,7 @@ impl IncomingMessage for FrameDelivery {
     }
 }
 
-impl LocalSettle for FrameDelivery {
+impl Settle for FrameDelivery {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         count(&self.settled.acked);
         ready(Ok(()))
@@ -451,7 +451,7 @@ pub struct FramePublisher {
     replies: &'static Frames,
 }
 
-impl LocalPublisher for FramePublisher {
+impl Publisher for FramePublisher {
     // The frame copies the bytes inline, so the client keeps nothing of the buffer.
     type Payload = Lend;
     type Error = FramePublishError;
@@ -480,7 +480,7 @@ mod tests {
     use alloc::string::ToString;
 
     use embassy_futures::block_on;
-    use ruststream_core::{Broker, LocalPublisher, OutgoingMessage, PublishPolicy};
+    use ruststream_core::{Broker, OutgoingMessage, PublishPolicy, Publisher};
 
     // The channels lock through embassy-sync, which the executor's critical section serves.
     use embassy_executor as _;

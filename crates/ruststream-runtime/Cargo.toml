@@ -77,7 +77,7 @@ testing = [
     "ruststream-core/testing",
 ]
 # The app's runtime as a handler reaches it (`MainRuntime`), for the runner built on Tokio.
-tokio = ["std", "dep:tokio"]
+tokio = ["std", "dep:tokio", "ruststream-core/send"]
 poll-diagnostics = ["std", "dep:quanta", "dep:pin-project-lite"]
 
 [dependencies]

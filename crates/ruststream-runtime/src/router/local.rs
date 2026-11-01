@@ -22,8 +22,8 @@ use crate::publish_failure::Refusal;
 use crate::settings::{BatchSized, Declared, DefMountCodec, MountsWith, Sequential};
 use crate::subscriber_def::SubscriberDef;
 use crate::{
-    Broker, Connected, LocalBatchSubscriber, LocalPublisher, LocalSourceMessage, OutgoingFor,
-    PayloadForm, SourceSubscriber, SubscriptionSource,
+    BatchSubscriber, Broker, Connected, LocalSourceMessage, OutgoingFor, PayloadForm, Publisher,
+    SourceSubscriber, SubscriptionSource,
 };
 
 use super::builder::Router;
@@ -260,7 +260,7 @@ impl<Layer: LocalBlanketLayer, Pipe> LayerFits<LocalPipeline<Pipe>> for Layer {}
 
 // A local chain's replies and slot publishes go straight to the broker: the publish layers of
 // the multi-thread runner's app do not reach it.
-impl<P: LocalPublisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
+impl<P: Publisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
     // The publisher's own future, which is `Send` exactly where the publisher's is.
     #[allow(clippy::future_not_send)]
     async fn send_through<'a>(
@@ -291,8 +291,8 @@ impl<W> LocalOutPipeline<W> for LocalPipeline<PublishIdentity> {
         options: Option<&P::Options>,
     ) -> impl Future<Output = SinkOutcome<P::Error>>
     where
-        W: LocalPublisher,
-        P: LocalPublisher<Options = W::Options, Payload = W::Payload>,
+        W: Publisher,
+        P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
         let sent = leaf.publish(msg, options);
         async move { sent.await.map_err(SinkRefusal::returned::<W::Payload>) }
@@ -376,7 +376,7 @@ where
     B: Broker + 'static,
     Def: BatchDef<Input = Provided<F>> + BatchSized,
     Def::Source: SubscriptionSource<Connected<B>> + 'static,
-    SourceSubscriber<B, Def::Source>: LocalBatchSubscriber,
+    SourceSubscriber<B, Def::Source>: BatchSubscriber,
     Def::Handler: 'static,
     F: Send + Sync + 'static,
 {

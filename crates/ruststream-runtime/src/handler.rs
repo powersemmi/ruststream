@@ -6,6 +6,7 @@ use core::{convert::Infallible, fmt, pin::Pin, time::Duration};
 
 use super::context::Context;
 use crate::publish_failure::{ErrorHook, Failures};
+pub(crate) use ruststream_core::MaybeSend;
 
 /// A boxed, owned continuation run after a message is settled: what a [`HandlerOutcome`] hands
 /// the dispatcher, and what the dispatcher hands the runner's host.
@@ -21,42 +22,6 @@ pub type Continuation = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 #[cfg(not(feature = "tokio"))]
 #[doc(hidden)]
 pub type Continuation = Pin<Box<dyn Future<Output = ()> + 'static>>;
-
-/// `Send` where the runtime crate's `tokio` feature is on, and nothing otherwise.
-///
-/// The Tokio runner's handler traits name it where they need a `Send` future, so a build for the
-/// embedded runtime alone, whose continuations carry no `Send`, uses the same traits.
-#[cfg(feature = "tokio")]
-#[doc(hidden)]
-pub trait MaybeSend: Send {}
-
-#[cfg(feature = "tokio")]
-impl<Value: Send + ?Sized> MaybeSend for Value {}
-
-/// See the `tokio` form: without the feature every type is `MaybeSend`.
-#[cfg(not(feature = "tokio"))]
-#[doc(hidden)]
-pub trait MaybeSend {}
-
-#[cfg(not(feature = "tokio"))]
-impl<Value: ?Sized> MaybeSend for Value {}
-
-/// `Send + Sync` where the runtime crate's `tokio` feature is on, and nothing otherwise: what an
-/// arena entry a body clones into a continuation, and borrows across a publish, must be.
-#[cfg(feature = "tokio")]
-#[doc(hidden)]
-pub trait MaybeSendSync: Send + Sync {}
-
-#[cfg(feature = "tokio")]
-impl<Value: Send + Sync + ?Sized> MaybeSendSync for Value {}
-
-/// See the `tokio` form: without the feature every type is `MaybeSendSync`.
-#[cfg(not(feature = "tokio"))]
-#[doc(hidden)]
-pub trait MaybeSendSync {}
-
-#[cfg(not(feature = "tokio"))]
-impl<Value: ?Sized> MaybeSendSync for Value {}
 
 /// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: `Send` where the
 /// runtime crate's `tokio` feature is on.

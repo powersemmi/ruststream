@@ -18,7 +18,7 @@ use core::fmt;
 use core::future::ready;
 use core::marker::PhantomData;
 
-use crate::{Broker, Connected, LocalSettle, PairError, Settle};
+use crate::{Broker, Connected, PairError, Settle};
 
 use super::context::Context;
 use super::dispatch::Workers;
@@ -449,7 +449,7 @@ pub struct LocalInject<Inject>(pub(crate) Inject);
 impl<Msg, Def, DecodeCodec, State> LocalHandler<Msg, Def::Context, State>
     for LocalInject<InjectHandler<Def, DecodeCodec>>
 where
-    Msg: LocalSettle,
+    Msg: Settle,
     Def: LocalInjectCall<State>,
     Def::Input: Materialize<DecodeCodec, Msg>,
 {

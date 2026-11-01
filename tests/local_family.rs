@@ -20,11 +20,10 @@ use ruststream::memory::{
 use ruststream::testing::InProcess;
 use ruststream::{
     AckError, BatchSubscriber, Broker, BrokerMoves, BytesMut, ConnectedBroker, DefaultPublish,
-    DescribeServer, HeaderMap, IncomingMessage, LocalBatchSubscriber, LocalOwnedTransactions,
-    LocalPublisher, LocalRequestReply, LocalSeekable, LocalSeeker, LocalSettle, LocalSubscriber,
-    LocalTransaction, LocalTransactionalPublisher, OutgoingFor, OutgoingMessage, OwnedTransactions,
+    DescribeServer, HeaderMap, IncomingMessage, OutgoingFor, OutgoingMessage, OwnedTransactions,
     PairError, Positioned, PublishPolicy, Publisher, RedeliveryAddressed, RequestReply, Seekable,
-    Subscribe, Subscriber, SubscriptionSource, Take, TransactionalPublisher,
+    Seeker, Settle, Subscribe, Subscriber, SubscriptionSource, Take, Transaction,
+    TransactionalPublisher,
 };
 use tokio::task::{self, LocalSet};
 
@@ -41,7 +40,7 @@ async fn round_trip<B>(broker: B, orders: &[&[u8]]) -> Result<Vec<Vec<u8>>, BoxE
 where
     B: Broker,
     B::Connected: Subscribe + DefaultPublish,
-    LocalLive<B::Connected>: LocalPublisher<Payload = Take>,
+    LocalLive<B::Connected>: Publisher<Payload = Take>,
 {
     let connected = broker.connect().await?;
     let mut subscriber = connected.subscribe("orders").await?;
@@ -100,11 +99,11 @@ fn capability_twins<Conn, Src, Sub, Msg, Pub, Tx, Req>()
 where
     Conn: Subscribe + DefaultPublish,
     Src: SubscriptionSource<Conn> + RedeliveryAddressed<Conn>,
-    Sub: LocalBatchSubscriber + LocalSeekable<Seeker: LocalSeeker>,
+    Sub: BatchSubscriber + Seekable<Seeker: Seeker>,
     Msg: Positioned,
-    Pub: LocalTransactionalPublisher + LocalOwnedTransactions<Transaction = Tx>,
-    Tx: LocalTransaction,
-    Req: LocalRequestReply,
+    Pub: TransactionalPublisher + OwnedTransactions<Transaction = Tx>,
+    Tx: Transaction,
+    Req: RequestReply,
 {
 }
 
@@ -130,9 +129,9 @@ fn memory_broker_meets_every_capability_twin_through_the_blanket_impls() {
 fn implementations_meet_their_local_twins() {
     fn local<Sub, Pub, Req>()
     where
-        Sub: ?Sized + LocalSubscriber + LocalBatchSubscriber + LocalSeekable,
-        Pub: LocalPublisher + LocalTransactionalPublisher + LocalOwnedTransactions,
-        Req: LocalRequestReply,
+        Sub: ?Sized + Subscriber + BatchSubscriber + Seekable,
+        Pub: Publisher + TransactionalPublisher + OwnedTransactions,
+        Req: RequestReply,
     {
     }
 
@@ -223,7 +222,7 @@ impl Subscribe for RcConnected {
     }
 }
 
-impl LocalSubscriber for RcSubscriber {
+impl Subscriber for RcSubscriber {
     type Message = RcDelivery;
     type Error = Infallible;
 
@@ -256,7 +255,7 @@ impl IncomingMessage for RcDelivery {
     }
 }
 
-impl LocalSettle for RcDelivery {
+impl Settle for RcDelivery {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         self.state.acked.set(self.state.acked.get() + 1);
         ready(Ok(()))
@@ -283,7 +282,7 @@ impl DefaultPublish for RcConnected {
     type Policy = RcPublish;
 }
 
-impl LocalPublisher for RcPublisher {
+impl Publisher for RcPublisher {
     type Payload = Take;
     type Error = Infallible;
     type Options = ();

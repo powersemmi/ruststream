@@ -8,8 +8,7 @@ use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 
 use crate::{
-    BatchSubscriber, Broker, BuildContext, Connected, SendSource, Settle, Subscriber,
-    SubscriptionSource,
+    BatchSubscriber, Broker, BuildContext, Connected, Settle, Subscriber, SubscriptionSource,
 };
 
 use crate::batch::BatchHandler;
@@ -431,7 +430,7 @@ impl<B, S, H, Cx, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
     for SubscribeRoute<S, H, Cx>
 where
     B: Broker + 'static,
-    S: SendSource<Connected<B>> + Send + 'static,
+    S: SubscriptionSource<Connected<B>> + Send + 'static,
     S::Subscriber: Send + 'static,
     S::Copies: CopyPathPairing<B, Cx, RetryPipeline> + CopyPathAddress<Connected<B>, S>,
     SourceMessage<B, S>: Settle + 'static,
@@ -479,7 +478,7 @@ where
 impl<B, S, H, Cx, State, RetryPipeline> MountRoute<B, State, RetryPipeline> for BatchRoute<S, H, Cx>
 where
     B: Broker + 'static,
-    S: SendSource<Connected<B>> + Send + 'static,
+    S: SubscriptionSource<Connected<B>> + Send + 'static,
     S::Subscriber: BatchSubscriber + Send + 'static,
     S::Copies: CopyPathPairing<B, Cx, RetryPipeline> + CopyPathAddress<Connected<B>, S>,
     SourceMessage<B, S>: Settle + 'static,

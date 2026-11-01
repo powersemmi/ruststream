@@ -19,7 +19,7 @@ use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
     AckError, AddressedCopies, BatchSubscriber, BrokerMoves, Carries, CarriesBatch, Connected,
-    NamedCopies, OutgoingMessage, Publisher, SendBroker, SendSource, Settle, Subscriber,
+    NamedCopies, OutgoingMessage, Publisher, SendBroker, Settle, Subscriber, SubscriptionSource,
 };
 
 /// How many rounds the batch suite gives the broker to put two waiting values in one batch.
@@ -187,7 +187,7 @@ pub async fn carries<
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     Src::Copies: CopyPathCheck,
     SubscriberMessage<Src::Subscriber>: Carries<Value>,
@@ -421,7 +421,7 @@ pub async fn carries_batch<
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: BatchSubscriber + Send,
     Src::Copies: CopyPathCheck,
     <Src::Subscriber as BatchSubscriber>::Batch: CarriesBatch<Value>,

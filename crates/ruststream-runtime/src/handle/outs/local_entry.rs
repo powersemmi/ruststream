@@ -2,21 +2,12 @@
 //! [`Router::local`](crate::Router::local), and the [`LocalOutEntry`] bound a
 //! [`LocalHandle`](crate::LocalHandle) body states.
 
-use alloc::boxed::Box;
-use alloc::format;
-use alloc::vec::Vec;
-use core::fmt;
-use core::marker::PhantomData;
-use core::ops::Deref;
-
-#[cfg(feature = "testing")]
-use crate::PublishOutcome;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::Codec;
 use crate::inject::LocalFromStartup;
 use crate::metadata::OutgoingMessageMetadata;
 use crate::publish::{
-    HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, PublishBuilder, SinkOutcome,
+    HeadersUnset, LocalOutPipeline, MessageBody, PublishBuilder, PublishSink, SinkOutcome,
     message_of,
 };
 use crate::router::LocalPipeline;
@@ -26,9 +17,15 @@ use crate::testing::coordinator::{
     Anchor, Origin, PipelinePublish, paired, publishing_to, record_slot_publish,
 };
 use crate::{
-    Broker, Connected, HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, PairError,
-    PublishPolicy,
+    Broker, Connected, HeaderMap, MaybeSend, MaybeSendSync, OutgoingDestination, OutgoingFor,
+    PairError, PublishMessageError, PublishOutcome, PublishPolicy, Publisher,
 };
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::vec::Vec;
+use core::fmt;
+use core::marker::PhantomData;
+use core::ops::Deref;
 
 use super::arena::SlotDictionary;
 
@@ -89,7 +86,7 @@ impl<M, W, E, Pipe, Body> Deref for LocalSlot<M, W, E, Pipe, Body> {
     }
 }
 
-impl<M: OutSlot, W: LocalPublisher, E, Pipe, Body> LocalSlot<M, W, E, Pipe, Body> {
+impl<M: OutSlot, W: Publisher, E, Pipe, Body> LocalSlot<M, W, E, Pipe, Body> {
     /// Starts a typed publish through the slot, on the message type's own wire: the slot's
     /// [`message`](super::Slot::message) of the multi-thread runner, read the same way.
     ///
@@ -103,7 +100,7 @@ impl<M: OutSlot, W: LocalPublisher, E, Pipe, Body> LocalSlot<M, W, E, Pipe, Body
     where
         Body: ContainsMessage<T, Index>,
         T: OutgoingDestination + PublishedThrough<M>,
-        &'a Self: LocalPublishSink,
+        &'a Self: PublishSink,
     {
         message_of(self, value, &self.codec)
     }
@@ -112,30 +109,42 @@ impl<M: OutSlot, W: LocalPublisher, E, Pipe, Body> LocalSlot<M, W, E, Pipe, Body
 // The publish travels the slot's path: its transforms, then the leaf call. A slot with no transform
 // lends the leaf the message as the builder made it, with nothing rebuilt or copied. Under the
 // harness, the leaf records the publish with its slot, and with the broker it went to, as the
-// multi-thread runner's slot records it.
-impl<M, W, E, Pipe, Body> LocalPublishSink for &LocalSlot<M, W, E, Pipe, Body>
+// multi-thread runner's slot records it. A direct `publish` keeps the slot's attribution for the
+// same reason. The slot is a `Publisher` where its parts satisfy the contract's `Send` bound, which
+// is every slot with the runner of the multi-thread family and any slot without it.
+#[allow(clippy::future_not_send)]
+impl<M, W, E, Pipe, Body> Publisher for LocalSlot<M, W, E, Pipe, Body>
 where
     M: OutSlot,
-    W: LocalPublisher,
+    W: Publisher,
+    E: Clone,
     Pipe: LocalOutPipeline<W>,
+    Self: MaybeSendSync,
 {
     type Payload = W::Payload;
     type Error = W::Error;
     type Options = W::Options;
 
-    // The publisher's own future, which is `Send` exactly where the publisher's is.
-    #[allow(clippy::future_not_send)]
-    fn send(
-        &mut self,
+    async fn publish<'msg>(
+        &self,
+        msg: OutgoingFor<'msg, Self::Payload>,
+        options: Option<&Self::Options>,
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
+        self.publish_kept(msg, options)
+            .await
+            .map_err(|refusal| PublishMessageError::new(refusal.into_error()))
+    }
+
+    #[allow(clippy::manual_async_fn)] // the testing arm returns a scoped future, not an async block
+    fn publish_kept(
+        &self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error>> {
+    ) -> impl Future<Output = SinkOutcome<Self::Error>> + MaybeSend {
         #[cfg(feature = "testing")]
-        let slot: &LocalSlot<M, W, E, Pipe, Body> = self;
-        #[cfg(feature = "testing")]
-        return slot.anchor.scoped(publishing_to(slot.origin, async move {
-            let leaf = Attributed::<M, W>(&slot.wired, PhantomData);
-            slot.pipeline.send(&leaf, msg, options).await
+        return self.anchor.scoped(publishing_to(self.origin, async move {
+            let leaf = Attributed::<M, W>(&self.wired, PhantomData);
+            self.pipeline.send(&leaf, msg, options).await
         }));
         #[cfg(not(feature = "testing"))]
         self.pipeline.send(&self.wired, msg, options)
@@ -204,7 +213,7 @@ impl<M, W> Clone for Attributed<'_, M, W> {
 }
 
 #[cfg(feature = "testing")]
-impl<M: OutSlot, W: LocalPublisher> LocalPublisher for Attributed<'_, M, W> {
+impl<M: OutSlot, W: Publisher> Publisher for Attributed<'_, M, W> {
     type Payload = W::Payload;
     type Error = W::Error;
     type Options = W::Options;
@@ -263,7 +272,7 @@ impl<C: Clone> SlotEncoding for C {}
 /// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream_core::{
-///     CallerName, LocalPublisher, MessageHeaders, NoHeaders, OutgoingDestination,
+///     CallerName, Publisher, MessageHeaders, NoHeaders, OutgoingDestination,
 /// };
 /// use ruststream_runtime::{
 ///     Context, HandlerOutcome, LocalHandle, LocalOutEntry, OutSlot, Outs, PublishedThrough,
@@ -298,7 +307,7 @@ impl<C: Clone> SlotEncoding for C {}
 ///
 /// impl<A> LocalHandle<Order, (), Outs<(A,)>> for Mirror
 /// where
-///     A: LocalOutEntry<Audit, Wire: LocalPublisher>,
+///     A: LocalOutEntry<Audit, Wire: Publisher>,
 /// {
 ///     async fn handle(
 ///         &self,

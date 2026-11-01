@@ -22,8 +22,8 @@ use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Origin;
 use crate::{
-    Broker, BuildContext, Connected, LocalPublisher, LocalSettle, LocalSubscriber, PublishPolicy,
-    RetryDeclaration, Serialized, SubscriptionSource,
+    Broker, BuildContext, Connected, PublishPolicy, Publisher, RetryDeclaration, Serialized,
+    Settle, Subscriber, SubscriptionSource,
 };
 
 use super::fold_plan::{LocalRoute, OpenLocalRoute};
@@ -51,17 +51,17 @@ impl<B, State, Source, M, Def, DecodeCodec, Policy, Enc, PL, Extra> OpenLocalRou
 where
     B: Broker,
     Source: SubscriptionSource<Connected<B>>,
-    Source::Subscriber: LocalSubscriber<Message = M>,
-    M: LocalSettle,
+    Source::Subscriber: Subscriber<Message = M>,
+    M: Settle,
     Def: LocalPublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
     Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
     Def::Reply: EncodeReply,
     Def::Context: BuildContext<M> + Send + Sync + 'static,
     Policy: PublishPolicy<Connected<B>>,
-    Policy::Live: LocalPublisher,
+    Policy::Live: Publisher,
     Enc: PublishCodec<Codec: Clone>,
-    PL: PublishTransform<ForReply<Def::Context>, <Policy::Live as LocalPublisher>::Options>,
+    PL: PublishTransform<ForReply<Def::Context>, <Policy::Live as Publisher>::Options>,
 {
     type Source = Source;
     type Declaration = Undeclared;
@@ -129,15 +129,15 @@ impl<B, State, Source, M, Def, DecodeCodec, Policy, Extra> OpenLocalRoute<B, Sta
 where
     B: Broker,
     Source: SubscriptionSource<Connected<B>>,
-    Source::Subscriber: LocalSubscriber<Message = M>,
-    M: LocalSettle,
+    Source::Subscriber: Subscriber<Message = M>,
+    M: Settle,
     Def: LocalPublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
     Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
     Def::Reply: Serialized,
     Def::Context: BuildContext<M> + Send + Sync + 'static,
     Policy: PublishPolicy<Connected<B>>,
-    Policy::Live: LocalPublisher,
+    Policy::Live: Publisher,
 {
     type Source = Source;
     type Declaration = Undeclared;

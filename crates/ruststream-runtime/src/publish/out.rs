@@ -37,7 +37,7 @@ use crate::publish_failure::Refusal;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::PipelinePublish;
 use crate::{
-    ConnectedBroker, HeaderMap, LocalPublisher, OutgoingFor, PairError, PayloadForm,
+    ConnectedBroker, HeaderMap, MaybeSend, MaybeSendSync, OutgoingFor, PairError, PayloadForm,
     PublishOutcome, PublishPolicy, Publisher,
 };
 
@@ -109,7 +109,7 @@ impl<Live> SlotStackUse<Live> for PublishTransformIdentity {
 
 // Read off the local family's contract, which every `Publisher` meets through the blanket impl,
 // so a slot of a publisher that is not `Send` takes the same transforms.
-impl<Live: LocalPublisher, Inner, Outer> SlotStackUse<Live> for PublishTransformStack<Inner, Outer>
+impl<Live: Publisher, Inner, Outer> SlotStackUse<Live> for PublishTransformStack<Inner, Outer>
 where
     Self: PublishTransform<ForSlot, Live::Options>,
 {
@@ -392,10 +392,10 @@ pub trait LocalOutPipeline<W>: Clone {
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> impl Future<Output = SinkOutcome<P::Error>>
+    ) -> impl Future<Output = SinkOutcome<P::Error>> + MaybeSend
     where
-        W: LocalPublisher,
-        P: LocalPublisher<Options = W::Options, Payload = W::Payload>;
+        W: Publisher,
+        P: Publisher<Options = W::Options, Payload = W::Payload>;
 }
 
 // The local twin of the multi-thread impl above: the same order (the transforms over a copy of the
@@ -403,9 +403,10 @@ pub trait LocalOutPipeline<W>: Clone {
 // transform.
 impl<W, Stack, Pipeline> LocalOutPipeline<W> for SlotTransforms<Stack, Pipeline>
 where
-    W: LocalPublisher,
+    W: Publisher,
     Stack: PublishTransform<ForSlot, W::Options>,
     Pipeline: LocalOutPipeline<W>,
+    Self: MaybeSendSync,
 {
     // The leaf's own future, which is `Send` exactly where the leaf's is.
     #[allow(clippy::future_not_send)]
@@ -416,8 +417,8 @@ where
         options: Option<&P::Options>,
     ) -> SinkOutcome<P::Error>
     where
-        W: LocalPublisher,
-        P: LocalPublisher<Options = W::Options, Payload = W::Payload>,
+        W: Publisher,
+        P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
         let (name, payload, headers) = msg.into_parts();
         let mut out = <W::Payload as PayloadForm>::rebuilt(name.into(), payload, headers);

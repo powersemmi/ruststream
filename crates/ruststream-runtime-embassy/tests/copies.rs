@@ -22,7 +22,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts};
-use ruststream::{Broker, Deserialized, LocalPublisher, OutgoingMessage, nonzero, subscriber};
+use ruststream::{Broker, Deserialized, OutgoingMessage, Publisher, nonzero, subscriber};
 use static_cell::StaticCell;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 

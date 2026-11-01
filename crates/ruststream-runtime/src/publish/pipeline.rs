@@ -9,7 +9,7 @@ use crate::lifecycle::BoxError;
 use crate::publish_failure::Refusal;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::PipelinePublish;
-use crate::{LocalPublisher, PayloadForm, Publisher};
+use crate::{PayloadForm, Publisher};
 
 /// A static, app-wide publish pipeline: an around-style chain of [`PublishLayer`] ending in
 /// the broker send.
@@ -38,9 +38,9 @@ pub trait PublishPipeline: Send + Sync {
 /// Every [`PublishPipeline`] is one for every [`Publisher`], through a forwarding impl whose
 /// future is the pipeline's own, so the multi-thread runner's publish stays `Send`. The pipeline
 /// of a [`Router::local`](crate::Router::local) chain is one for every
-/// [`LocalPublisher`](crate::LocalPublisher). Machinery; never named directly.
+/// [`Publisher`](crate::Publisher). Machinery; never named directly.
 #[doc(hidden)]
-pub(crate) trait SendThrough<P: LocalPublisher> {
+pub(crate) trait SendThrough<P: Publisher> {
     /// Sends `out` to `send` with the per-message settings the call site adjusted.
     fn send_through<'a>(
         &'a self,

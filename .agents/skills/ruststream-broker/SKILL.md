@@ -111,7 +111,7 @@ async fn lifecycle() {
 A client that holds `Rc` or `RefCell` (a thread-per-core client, an embedded network stack) has
 no `Send` futures to promise. The lifecycle traits (`Broker`, `ConnectedBroker`, `Subscribe`,
 `SubscriptionSource`, `PublishPolicy`) carry no `Send`, so it implements them as they are. The
-per-message traits come in pairs: it implements `LocalSubscriber`, `LocalSettle`, `LocalPublisher`
+per-message traits come in pairs: it implements `Subscriber`, `Settle`, `Publisher`
 and the local form of each capability, and `IncomingMessage` for the accessors of a delivery. Error
 types stay `Send + Sync + 'static`. Every Send implementation is already a local one through a
 blanket impl, so a crate implements one family of the pairs, never both, and imports one: with both

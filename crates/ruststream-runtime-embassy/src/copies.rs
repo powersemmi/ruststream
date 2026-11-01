@@ -15,7 +15,7 @@ use core::task::{Poll, Waker};
 use core::time::Duration;
 
 use bytes::{Bytes, BytesMut};
-use ruststream_core::{HeaderMap, LocalSettle};
+use ruststream_core::{HeaderMap, Settle};
 use ruststream_runtime::{
     Clock, Continuation, CopyPublisher, FailedMessage, KeptCopies, KeptDelivery, LocalDetach,
     NoFreeRecordError, PrepareCopy, PrepareKept, Reaction, Refusal, publish_done, publish_lost,
@@ -400,7 +400,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
 impl<Cx, Path: PrepareCopy<Cx>, const CAP: usize, Timers: Schedule> PrepareKept<Cx>
     for CopyStore<Path, CAP, Timers>
 {
-    fn prepare<M: LocalSettle>(
+    fn prepare<M: Settle>(
         &self,
         record: usize,
         destination: Option<&str>,
@@ -418,7 +418,7 @@ impl<Cx, Path: PrepareCopy<Cx>, const CAP: usize, Timers: Schedule> PrepareKept<
         });
     }
 
-    fn spill<M: LocalSettle>(
+    fn spill<M: Settle>(
         &self,
         payload: &[u8],
         headers: HeaderMap,
