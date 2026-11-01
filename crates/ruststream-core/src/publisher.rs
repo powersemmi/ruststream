@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use core::error::Error as StdError;
 use core::fmt;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use thiserror::Error;
 
 #[cfg(feature = "asyncapi")]
@@ -120,6 +120,15 @@ pub trait PayloadForm: sealed::Sealed {
     where
         T: Serialized;
 
+    /// What a refused publish keeps of the payload it got back: the bytes themselves where the
+    /// form owns them, and where they sit where the form lent them.
+    ///
+    /// A taking form was handed the buffer and gives it back, so it is frozen without a copy. A
+    /// lending form was handed a view, and the address and length are all that outlive the
+    /// borrow, so the caller that owns the bytes decides how to take them.
+    #[doc(hidden)]
+    fn kept(payload: Self::Form<'_>) -> KeptPayload;
+
     /// A message in this form, put back on the publish pipeline for the stages above the leaf.
     #[doc(hidden)]
     fn rebuilt<'a>(
@@ -155,6 +164,22 @@ pub trait PayloadForm: sealed::Sealed {
         out: Outgoing<'a>,
         spent: &'a mut Self::Spent,
     ) -> OutgoingMessage<'a, Self::Form<'a>>;
+}
+
+/// The payload of a refused publish, as [`PayloadForm::kept`] leaves it.
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum KeptPayload {
+    /// The bytes, owned: a taking transport gave its buffer back.
+    Owned(Bytes),
+    /// The bytes a lending transport was shown, which stay where they were: their address and
+    /// length.
+    Lent {
+        /// Where the bytes start.
+        addr: usize,
+        /// How many there are.
+        len: usize,
+    },
 }
 
 /// A value and the codec that encodes it, as the publish path hands them to

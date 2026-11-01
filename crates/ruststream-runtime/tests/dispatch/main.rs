@@ -5,3 +5,4 @@ mod error;
 mod log_capture;
 mod out_continuation;
 mod settle;
+mod publish_unsent;

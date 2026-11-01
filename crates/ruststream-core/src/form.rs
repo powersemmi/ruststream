@@ -11,6 +11,7 @@ use bytes::BytesMut;
 
 use crate::codec::CodecError;
 use crate::outgoing::{Outgoing, OutgoingName, Payload};
+use crate::publisher::KeptPayload;
 use crate::wire::{Serialized, WireBytes};
 use crate::{HeaderMap, Lend, OutgoingMessage, PayloadEncode, PayloadForm, Take};
 
@@ -69,6 +70,14 @@ impl PayloadForm for Lend {
         buf.clear();
         // Both answers are lent as they are: the transport reads them and keeps neither.
         Ok(value.wire_bytes(buf)?.of(buf))
+    }
+
+    #[inline]
+    fn kept(payload: &[u8]) -> KeptPayload {
+        KeptPayload::Lent {
+            addr: payload.as_ptr() as usize,
+            len: payload.len(),
+        }
     }
 
     #[inline]
@@ -152,6 +161,11 @@ impl PayloadForm for Take {
             // transport's claim on them, so this is the one copy the form asks for.
             WireBytes::Own(bytes) => Ok(BytesMut::from(bytes)),
         }
+    }
+
+    #[inline]
+    fn kept(payload: BytesMut) -> KeptPayload {
+        KeptPayload::Owned(payload.freeze())
     }
 
     #[inline]

@@ -112,13 +112,13 @@ pub use headers::HeaderMap;
 #[cfg(feature = "alloc")]
 pub use message::{IncomingMessage, LocalSettle, OutgoingMessage, RawMessage, Settle};
 #[cfg(feature = "alloc")]
-#[doc(hidden)]
-pub use publisher::PayloadEncode;
-#[cfg(feature = "alloc")]
 pub use publisher::{
     DefaultPublish, Lend, LocalPublisher, OutgoingFor, PairError, PayloadForm, PublishMessageError,
     PublishOutcome, PublishPolicy, Publisher, Take,
 };
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use publisher::{KeptPayload, PayloadEncode};
 #[cfg(feature = "alloc")]
 pub use schema::{
     CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,

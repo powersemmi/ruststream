@@ -29,8 +29,8 @@ use tracing::warn;
 use crate::handler::{Continuation, ContinuationFuture, MaybeSend};
 use crate::lifecycle::BoxError;
 use crate::{
-    CallerName, HeaderMap, MessageHeaders, MessageWire, NoHeaders, OutgoingDestination,
-    OutgoingMessage, Serialized, SerializedWire, WireBytes,
+    CallerName, HeaderMap, MessageHeaders, MessageWire, NoHeaders, OutgoingDestination, Serialized,
+    SerializedWire, WireBytes,
 };
 
 /// The error of a retry copy the embedded runner has nowhere to hold: every record of the mount's
@@ -113,12 +113,6 @@ impl FailedMessage {
             payload,
             headers,
         }
-    }
-
-    /// The message a sink refused and its client gave back, made owned.
-    pub(crate) fn unsent<Payload: AsRef<[u8]>>(msg: OutgoingMessage<'_, Payload>) -> Self {
-        let (name, payload, headers) = msg.into_parts();
-        Self::new(name, Bytes::copy_from_slice(payload.as_ref()), headers)
     }
 
     /// Where the message was going.
