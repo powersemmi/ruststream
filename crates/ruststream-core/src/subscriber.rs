@@ -54,9 +54,9 @@ pub trait Subscriber: MaybeSend {
 /// that returns a `ReadyHint` from [`Subscriber::ready_hint`] lets the app skip the poll, and the
 /// wait for shutdown beside it, while the answer is `false`: one call in place of a poll of the
 /// stream. The cost of an idle subscription per wake falls from a stream poll to that call.
-/// Measured on the host (release, fat LTO) with one busy subscription among sixteen, each idle
-/// subscription costs 119 instructions per delivery in place of 162, which is 27% less; what
-/// remains is the resume of the subscription's frame in the app's future.
+/// In the `embedded_idle` benchmark of the repository (release, fat LTO, one busy subscription
+/// among sixteen) an idle subscription costs 74 instructions per delivery in place of 143, which
+/// is 48% less; what remains is the resume of the subscription's frame in the app's future.
 ///
 /// # The contract
 ///
