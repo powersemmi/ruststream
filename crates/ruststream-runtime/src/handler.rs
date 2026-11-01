@@ -516,7 +516,10 @@ impl HandlerOutcome {
     /// Whether this outcome drops the message (a negative acknowledgement without redelivery).
     #[must_use]
     pub const fn is_drop(&self) -> bool {
-        matches!(self.outcome.status(), HandlerResult::Nack { requeue: false })
+        matches!(
+            self.outcome.status(),
+            HandlerResult::Nack { requeue: false }
+        )
     }
 
     /// The redelivery delay of a [`retry_after`](Self::retry_after) outcome; `None` for every
