@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use embassy_futures::block_on;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
-use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, Out};
+use ruststream::runtime::{EmbeddedApp, Failures, HandlerOutcome, MountSteps, Mounts, Out};
 use ruststream::testing::embedded::TestApp;
 use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 
@@ -44,7 +44,7 @@ struct Alerts;
 async fn on_job(job: &Job<'_>, Out(alerts): Out<impl Publisher, Alerts>) -> HandlerOutcome {
     let job = job.0.to_vec();
     let alerts = alerts.clone();
-    HandlerOutcome::retry_after(LATER).error(async move |_err, _lost| {
+    HandlerOutcome::retry_after(LATER).error(async move |_failures: Failures| {
         alerts
             .message(&Alert(job))
             .publish()
