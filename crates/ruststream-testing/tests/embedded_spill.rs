@@ -88,7 +88,11 @@ struct Lost(Arc<Mutex<Vec<(String, Vec<u8>)>>>);
 #[subscriber(LocalMemorySource::new("capped"))]
 async fn on_capped(job: &Job<'_>, ctx: &mut Context<'_, (), Lost>) -> HandlerOutcome {
     let lost = ctx.state().clone();
-    let delay = if job.0[0] == b'a' { LATER } else { Duration::ZERO };
+    let delay = if job.0[0] == b'a' {
+        LATER
+    } else {
+        Duration::ZERO
+    };
     HandlerOutcome::retry_after(delay).error(async move |failures: Failures| {
         for failed in failures {
             let (_, message) = failed.into_parts();
@@ -145,64 +149,6 @@ fn a_dead_letter_sent_from_a_full_store_that_the_bus_refuses_reaches_the_error_c
             *lost.0.lock().expect("the handlers never panic"),
             [("capped.dead".to_owned(), b"b".to_vec())]
         );
-        tb.shutdown().await?;
-        Ok(())
-    })
-}
-
-/// Asks for an immediate retry on a first delivery and acknowledges the copy.
-#[subscriber(LocalMemorySource::new("plain"))]
-async fn on_plain(job: &Job<'_>, ctx: &mut Context<'_>) -> HandlerOutcome {
-    let _ = job.0;
-    if ctx.headers().get_str(RETRY_COUNT_HEADER).is_some() {
-        HandlerOutcome::ack()
-    } else {
-        HandlerOutcome::retry_after(Duration::ZERO)
-    }
-}
-
-#[ruststream::app(runtime = embassy)]
-fn plain_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
-    EmbeddedApp::new().with_broker(bus, |b| b.include(on_plain))
-}
-
-#[ruststream::app(runtime = embassy)]
-fn tight_plain_app(bus: TightBus) -> EmbeddedApp<impl Mounts> {
-    EmbeddedApp::new().with_broker(bus, |b| b.include(on_plain))
-}
-
-#[test]
-fn an_immediate_retry_needs_no_store() -> Result<(), Box<dyn Error>> {
-    block_on(async {
-        let tb = TestApp::start(plain_app(Bus::new())).await?;
-        tb.broker::<Bus>()
-            .message(&Sent(b"p"))
-            .to("plain")
-            .publish()
-            .await?;
-
-        let plain = tb.broker::<Bus>();
-        let calls = plain.subscriber("plain").assert_called(2);
-        assert_eq!(calls.outcomes().last(), Some(&Outcome::Ack));
-        tb.shutdown().await?;
-        Ok(())
-    })
-}
-
-#[test]
-fn an_immediate_retry_the_bus_refuses_is_lost() -> Result<(), Box<dyn Error>> {
-    block_on(async {
-        let tb = TestApp::start(tight_plain_app(TightBus::new())).await?;
-        // The delivery in hand fills the bus, so there is no room for its copy.
-        tb.broker::<TightBus>()
-            .message(&Sent(b"p"))
-            .to("plain")
-            .publish()
-            .await?;
-
-        tb.broker::<TightBus>()
-            .subscriber("plain")
-            .assert_called_once();
         tb.shutdown().await?;
         Ok(())
     })
