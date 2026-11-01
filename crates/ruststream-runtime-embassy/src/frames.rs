@@ -39,9 +39,11 @@ pub const DEPTH: usize = 4;
 /// The channel the stand-in delivers through: a device keeps it in a `static`.
 pub type Frames = Channel<FrameLock, Frame, DEPTH>;
 
-/// How the stand-in locks: not at all where the runtime is single-threaded, so it costs no atomic
-/// and an embedded build needs no critical-section implementation; through a critical section
-/// next to a multi-thread runtime, which shares the stand-in between threads.
+/// How the stand-in locks.
+///
+/// Where the runtime is single-threaded it does not lock at all, so it costs no atomic and an
+/// embedded build needs no critical-section implementation. Next to a multi-thread runtime it locks
+/// through a critical section, because the stand-in is shared between threads.
 pub type FrameLock = IfSend<CriticalSectionRawMutex, NoopRawMutex>;
 
 /// One message on the wire, held inline.
