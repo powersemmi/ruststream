@@ -1604,6 +1604,7 @@ dependencies = [
  "ruststream",
  "ruststream-asyncapi",
  "ruststream-core",
+ "ruststream-memory",
  "ruststream-runtime",
  "ruststream-runtime-tokio",
  "serde",
