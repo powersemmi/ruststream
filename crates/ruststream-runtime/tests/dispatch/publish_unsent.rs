@@ -124,3 +124,56 @@ async fn a_refused_publish_through_slot_transforms_returns_the_rewritten_message
         .with_raw(b"rewritten")
         .with_header("x-stamp", "yes");
 }
+
+/// A message that carries its own bytes, which leave as they are.
+#[derive(Outgoing, Serialized)]
+struct Blob(Vec<u8>);
+
+#[derive(OutSlot)]
+#[publishes(Blob)]
+struct Blobs;
+
+/// Publishes the bytes a value carries and, on a refusal, sends the returned message on.
+#[subscriber("relay-blob")]
+async fn relay_blob(
+    _job: &Job,
+    Out(primary): Out<impl Publisher, Blobs>,
+    Out(fallback): Out<impl Publisher>,
+) -> HandlerOutcome {
+    let blob = Blob(b"own bytes".to_vec());
+    if let Err(refused) = primary.message(&blob).to("primary").publish().await {
+        let unsent = refused.unsent().expect("the refusal returns the message");
+        fallback
+            .message(unsent)
+            .to("fallback")
+            .publish()
+            .await
+            .expect("the fallback takes the message");
+    }
+    HandlerOutcome::ack()
+}
+
+/// The bytes a value holds come back with the refusal, as the value produced them.
+#[tokio::test(start_paused = true)]
+async fn a_refused_publish_of_a_value_s_own_bytes_returns_them() {
+    let app =
+        RustStream::new(AppInfo::new("relay", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(relay_blob)
+                .out(Blobs, DownPublish)
+                .out(DefaultSlot, Publish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&Job { id: 1 })
+        .to("relay-blob")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Job>("fallback")
+        .assert_called_once()
+        .with_raw(b"own bytes");
+}

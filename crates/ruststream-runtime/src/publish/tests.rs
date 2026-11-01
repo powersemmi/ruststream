@@ -805,6 +805,27 @@ async fn a_scoped_publish_returns_the_message_the_transaction_refused() {
     scope.abort().await.expect("abort failed");
 }
 
+/// A raw bytes publish the sink refuses returns the bytes the caller passed.
+#[tokio::test]
+async fn a_refused_raw_publish_returns_the_bytes() {
+    use fixtures::Rigged;
+
+    let publisher = Rigged {
+        refuse_publish: true,
+        ..Rigged::default()
+    };
+
+    let err = raw_of(&publisher, b"raw bytes")
+        .to("unit.raw")
+        .publish()
+        .await
+        .expect_err("the sink refuses the message");
+
+    let unsent = err.unsent().expect("the sink gave the message back");
+    assert_eq!(unsent.destination(), "unit.raw");
+    assert_eq!(unsent.payload().map(AsRef::as_ref), Some(&b"raw bytes"[..]));
+}
+
 /// An owned transaction encodes with the publisher's codec, keeps its buffer private, and
 /// discards it on abort.
 #[cfg(feature = "json")]
