@@ -38,6 +38,7 @@ mod out;
 mod pipeline;
 mod publisher;
 mod reply;
+mod scratch;
 mod sink;
 mod transaction;
 mod transform;

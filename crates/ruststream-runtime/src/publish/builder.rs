@@ -27,6 +27,7 @@ use crate::{
 use bytes::Bytes;
 use ruststream_core::KeptPayload;
 
+use super::scratch::Scratch;
 use super::sink::{CallCodec, PublishCodec, PublishSink};
 use crate::publish_failure::FailedMessage;
 use crate::wire::Serialized;
@@ -808,10 +809,9 @@ where
 {
     // The buffer a publish to a lending transport writes into, and the one a serialized value
     // writes into whichever form it leaves in. A handle used outside a dispatch loop has no
-    // scratch to reuse, so this is its own; `BytesMut::new` does not allocate, so a value that
-    // lends bytes it already holds pays nothing for it, and a taking transport is handed the
-    // codec's own buffer and never touches this one.
-    let mut buf = BytesMut::new();
+    // loop buffer to reuse, so it takes the thread's; a taking transport is handed the codec's
+    // own buffer and never touches the slot.
+    let mut buf = Scratch::of::<Sink::Payload>();
     let payload =
         <T::Wire as WirePayload<T, Enc>>::payload::<Sink::Payload>(value, &codec, &mut buf)?;
     let refused = match deliver(sink, name, payload, headers, options).await {
@@ -823,7 +823,7 @@ where
     // own bytes, which the value produces again.
     Err(refused.into_error(|addr, len| {
         if addr == buf.as_ptr() as usize && len == buf.len() {
-            return buf.split().freeze();
+            return buf.split_off_frozen();
         }
         let mut spare = BytesMut::new();
         <T::Wire as WirePayload<T, Enc>>::payload::<Sink::Payload>(value, &codec, &mut spare)
