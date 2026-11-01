@@ -4,7 +4,7 @@ use core::error::Error as StdError;
 
 use futures_core::Stream;
 
-use crate::{MaybeSend, Settle};
+use crate::{MaybeSend, MaybeSendSync, Settle};
 
 /// A consumer attached to one or more broker names.
 ///
@@ -44,7 +44,7 @@ pub trait Subscriber: MaybeSend {
     ///
     /// A device broker over a channel or a socket returns a handle on the state its stream reads;
     /// see [`ReadyHint`] for the contract and a full example.
-    fn ready_hint(&self) -> impl ReadyHint + MaybeSend + 'static {}
+    fn ready_hint(&self) -> impl ReadyHint + MaybeSendSync + 'static {}
 }
 
 /// What an embedded app asks an idle subscription before it polls the subscription's stream.
@@ -154,7 +154,7 @@ pub trait Subscriber: MaybeSend {
 ///         Frames(Arc::clone(&self.0))
 ///     }
 ///
-///     fn ready_hint(&self) -> impl ReadyHint + Send + 'static {
+///     fn ready_hint(&self) -> impl ReadyHint + 'static {
 ///         FramesWaiting(Arc::clone(&self.0))
 ///     }
 /// }

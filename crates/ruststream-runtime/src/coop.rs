@@ -14,6 +14,8 @@ use core::task::{Context, Poll};
 use futures::Stream;
 use pin_project_lite::pin_project;
 
+use ruststream_core::ReadyHint;
+
 use crate::{BatchStream, Subscriber};
 
 /// How many consecutive ready items a subscription's stream hands out before it yields once to
@@ -30,6 +32,12 @@ impl<Sub: Subscriber> Subscriber for Cooperative<Sub> {
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + '_ {
         Bounded::new(self.0.stream(), YIELD_AFTER)
+    }
+
+    // The bound adds nothing to the answer: a stream that yielded to the executor after a run of
+    // deliveries left them waiting, so the probe still says ready.
+    fn ready_hint(&self) -> impl ReadyHint + 'static {
+        self.0.ready_hint()
     }
 }
 
@@ -114,7 +122,11 @@ mod tests {
     use futures::Stream;
     use futures::stream;
 
-    use super::Bounded;
+    use core::convert::Infallible;
+
+    use ruststream_core::{ReadyHint, Settle, Subscriber};
+
+    use super::{Bounded, Cooperative};
 
     /// Polls `stream` `count` times and says which polls were ready.
     fn readiness<S: Stream>(stream: S, count: usize) -> Vec<bool> {
@@ -144,5 +156,59 @@ mod tests {
         });
         let seen = readiness(Bounded::new(inner, 3), 8);
         assert_eq!(seen, [true, true, false, true, true, true, false, true]);
+    }
+
+    /// A probe that says nothing waits.
+    struct NothingWaits;
+
+    impl ReadyHint for NothingWaits {
+        fn may_be_ready(&self) -> bool {
+            false
+        }
+    }
+
+    /// A subscriber that declares a probe and yields nothing.
+    struct Hinted;
+
+    impl Subscriber for Hinted {
+        type Message = Waiting;
+        type Error = Infallible;
+
+        fn stream(&mut self) -> impl Stream<Item = Result<Waiting, Infallible>> + '_ {
+            stream::pending()
+        }
+
+        fn ready_hint(&self) -> impl ReadyHint + 'static {
+            NothingWaits
+        }
+    }
+
+    /// The message type of the subscribers above; none is ever yielded.
+    struct Waiting;
+
+    impl ruststream_core::IncomingMessage for Waiting {
+        fn payload(&self) -> &[u8] {
+            &[]
+        }
+
+        fn headers(&self) -> &ruststream_core::HeaderMap {
+            unreachable!("no delivery is ever yielded")
+        }
+    }
+
+    impl Settle for Waiting {
+        async fn ack(self) -> Result<(), ruststream_core::AckError> {
+            Ok(())
+        }
+
+        async fn nack(self, _requeue: bool) -> Result<(), ruststream_core::AckError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_cooperative_bound_hands_on_the_probe_of_the_subscriber_it_wraps() {
+        let bounded = Cooperative(Hinted);
+        assert!(!bounded.ready_hint().may_be_ready());
     }
 }

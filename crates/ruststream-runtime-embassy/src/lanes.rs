@@ -11,15 +11,17 @@
 
 use alloc::sync::Arc;
 use core::array;
+use core::future::poll_fn;
 use core::hash::Hasher as _;
 use core::marker::PhantomData;
 use core::pin::pin;
+use core::task::Poll;
 use ruststream_core::MaybeSendSync;
 
 use bytes::BytesMut;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
-use futures::StreamExt;
+use futures::Stream;
 use futures::future::{Either, join, select};
 use hash32::{FnvHasher, Hasher as _};
 use ruststream_core::{BuildContext, IncomingMessage, Settle, Subscriber};
@@ -27,7 +29,7 @@ use ruststream_runtime::{
     Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, Halt, Handler, HeadersAtOnce,
     HostDetach, KeepCopies, Keeping, LocalPipeline, NoCopies, OneTaskDispatch, OneTaskPlanned,
     OneTaskRoute, PrepareCopy, PrepareKept, RetryCopies, RetryDestinationsDeclared, Router,
-    RouterCommit, RouterWith, ShutdownWait, dispatch,
+    RouterCommit, RouterWith, ShutdownWait, dispatch, idle,
 };
 use tracing::error;
 
@@ -249,6 +251,7 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
         work(mailbox, (!keyed).then_some((&free, index)), &shared)
     });
     let feed = async {
+        let probe = subscriber.ready_hint();
         let mut stream = pin!(subscriber.stream());
         let mut cancelled = pin!(signal.cancelled());
         let mut rotation = 0;
@@ -265,10 +268,24 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
                     Either::Right(((), _)) => break,
                 }
             }
-            let next = match select(stream.next(), cancelled.as_mut()).await {
-                Either::Left((next, _)) => next,
-                Either::Right(((), _)) => break,
-            };
+            // The stream is polled first and the shutdown wait only where it answers `Pending`; a
+            // subscription whose probe says nothing is ready is not polled again until it does.
+            let mut parked = false;
+            let next = poll_fn(|cx| {
+                if idle(parked, &probe, &signal) {
+                    return Poll::Pending;
+                }
+                match stream.as_mut().poll_next(cx) {
+                    Poll::Ready(next) => Poll::Ready(Either::Left(next)),
+                    Poll::Pending => {
+                        let waiting = cancelled.as_mut().poll(cx).map(Either::Right);
+                        parked = waiting.is_pending();
+                        waiting
+                    }
+                }
+            })
+            .await;
+            let Either::Left(next) = next else { break };
             match next {
                 Some(Ok(msg)) => {
                     let lane = held.take().unwrap_or_else(|| {

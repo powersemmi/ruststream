@@ -13,8 +13,7 @@ use core::task::{Context, Poll};
 use futures_core::Stream;
 use ruststream_core::{
     AckError, AddressedCopies, BatchStream, BatchSubscriber, FromName, HeaderMap, IncomingMessage,
-    MaybeSend, ReadyHint, RedeliveryAddress, RedeliveryAddressed, Settle, Subscriber,
-    SubscriptionSource,
+    ReadyHint, RedeliveryAddress, RedeliveryAddressed, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -217,7 +216,7 @@ impl<const CAP: usize> Subscriber for LocalMemorySubscriber<CAP> {
         Deliveries { subscriber: self }
     }
 
-    fn ready_hint(&self) -> impl ReadyHint + MaybeSend + 'static {
+    fn ready_hint(&self) -> impl ReadyHint + 'static {
         DeliveriesWaiting(Clone::clone(&self.subscription))
     }
 }

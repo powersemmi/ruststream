@@ -1791,6 +1791,7 @@ dependencies = [
  "embassy-time",
  "embassy-time-driver",
  "embassy-time-queue-utils",
+ "futures-core",
  "inventory",
  "ruststream",
  "ruststream-core",

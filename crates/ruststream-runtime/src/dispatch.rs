@@ -18,7 +18,7 @@ use core::convert::Infallible;
 use core::panic::AssertUnwindSafe;
 use core::pin::Pin;
 use core::task::{Context as TaskContext, Poll};
-use ruststream_core::MaybeSendSync;
+use ruststream_core::{MaybeSendSync, ReadyHint};
 
 #[cfg(feature = "testing")]
 use bytes::Bytes;
@@ -147,6 +147,8 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     let _held = held;
     let delivery = lent.delivery();
     let host = lent.host();
+    // Taken before the stream opens: the stream borrows the subscriber for the whole loop.
+    let probe = subscriber.ready_hint();
     let mut stream = core::pin::pin!(subscriber.stream());
     let mut cancelled = core::pin::pin!(shutdown.cancelled());
     // One encode buffer for the whole loop: a reply that leaves through a publisher which
@@ -158,7 +160,15 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     // through the turn and bound to a local on its way here would be copied twice more.
     let mut slot = Slot::empty();
     loop {
-        match turn_into(&shutdown, stream.as_mut(), cancelled.as_mut(), &mut slot).await {
+        match turn_into(
+            &shutdown,
+            &probe,
+            stream.as_mut(),
+            cancelled.as_mut(),
+            &mut slot,
+        )
+        .await
+        {
             Turn::Delivery(Ok(())) => {
                 // Pinned rather than awaited in place: a delivery's future carries the
                 // context, the handler's own state and the settle path, and awaiting the
@@ -210,40 +220,73 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
 /// `cancelled` has resolved the flag stays set - a token never un-cancels - so the check at the
 /// top answers every later turn and the resolved future is never polled again.
 ///
+/// A subscription whose probe declares readiness is polled again within a turn only once the probe
+/// says something may be ready (see [`idle`]); the first poll of every turn is real, so the
+/// stream and the token have registered with the task before any poll is skipped.
+///
 /// The other loops write the same wait out rather than share it: one instantiation shared with
 /// them is enough for the compiler to stop inlining it here.
-fn turn_into<'s, St, Message, Failure, Wait, Signal>(
-    shutdown: &Signal,
+fn turn_into<'s, St, Message, Failure, Wait, Signal, Probe>(
+    shutdown: &'s Signal,
+    probe: &'s Probe,
     stream: Pin<&'s mut St>,
     cancelled: Pin<&'s mut Wait>,
     slot: &'s mut Slot<Message>,
-) -> TurnInto<'s, St, Message, Wait>
+) -> TurnInto<'s, St, Message, Wait, Signal, Probe>
 where
     St: Stream<Item = Result<Message, Failure>>,
     Wait: Future<Output = ()>,
     Signal: ShutdownWait,
+    Probe: ReadyHint,
 {
     TurnInto {
         shutdown: shutdown.is_cancelled(),
+        signal: shutdown,
+        probe,
+        parked: false,
         stream,
         cancelled,
         slot,
     }
 }
 
+/// Whether an idle subscription may skip the poll of its stream and of its shutdown wait.
+///
+/// The poll is skipped only after a poll of the same wait that answered `Pending` (`parked`), so
+/// the stream and the shutdown token have registered with the task and a later wake still reaches
+/// it; only where the probe says nothing is ready; and never once shutdown is signalled, because a
+/// stop wakes the task and a skipped wait would not see it. A probe that declares none makes the
+/// answer the constant `false`.
+#[doc(hidden)]
+#[inline]
+pub fn idle<Probe, Signal>(parked: bool, probe: &Probe, shutdown: &Signal) -> bool
+where
+    Probe: ReadyHint,
+    Signal: ShutdownWait,
+{
+    Probe::GATED && parked && !probe.may_be_ready() && !shutdown.is_cancelled()
+}
+
 /// The future [`turn_into`] returns: written out rather than an `async fn` so its poll carries an
 /// inline hint, which a closure inside `poll_fn` cannot.
-struct TurnInto<'s, St, Message, Wait> {
+struct TurnInto<'s, St, Message, Wait, Signal, Probe> {
     shutdown: bool,
+    signal: &'s Signal,
+    probe: &'s Probe,
+    // Set once a poll of this turn found the stream and the shutdown wait both pending.
+    parked: bool,
     stream: Pin<&'s mut St>,
     cancelled: Pin<&'s mut Wait>,
     slot: &'s mut Slot<Message>,
 }
 
-impl<St, Message, Failure, Wait> Future for TurnInto<'_, St, Message, Wait>
+impl<St, Message, Failure, Wait, Signal, Probe> Future
+    for TurnInto<'_, St, Message, Wait, Signal, Probe>
 where
     St: Stream<Item = Result<Message, Failure>>,
     Wait: Future<Output = ()>,
+    Signal: ShutdownWait,
+    Probe: ReadyHint,
 {
     type Output = Turn<Result<(), Failure>>;
 
@@ -254,6 +297,9 @@ where
         if this.shutdown {
             return Poll::Ready(Turn::Shutdown);
         }
+        if idle(this.parked, this.probe, this.signal) {
+            return Poll::Pending;
+        }
         match this.stream.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(msg))) => {
                 this.slot.fill(msg);
@@ -261,7 +307,11 @@ where
             }
             Poll::Ready(Some(Err(err))) => Poll::Ready(Turn::Delivery(Err(err))),
             Poll::Ready(None) => Poll::Ready(Turn::Ended),
-            Poll::Pending => this.cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
+            Poll::Pending => {
+                let waiting = this.cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown);
+                this.parked = waiting.is_pending();
+                waiting
+            }
         }
     }
 }

@@ -81,6 +81,7 @@ ruststream = { path = "../..", default-features = false, features = ["macros", "
 # A device service's handlers and app, as the embedded tests write them.
 embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
 embassy-futures.workspace = true
+futures-core.workspace = true
 
 [lints]
 workspace = true
@@ -177,4 +178,11 @@ required-features = ["embassy", "json"]
 [[test]]
 name = "embedded_spill"
 path = "tests/embedded_spill.rs"
+required-features = ["embassy", "json"]
+
+# An idle subscription whose subscriber hands out a readiness probe is not polled on a neighbour's
+# wakes, through the embedded `TestApp`.
+[[test]]
+name = "embedded_readiness"
+path = "tests/embedded_readiness.rs"
 required-features = ["embassy", "json"]
