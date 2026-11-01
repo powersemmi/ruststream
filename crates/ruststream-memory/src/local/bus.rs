@@ -157,6 +157,16 @@ impl<const CAP: usize> Subscription<CAP> {
         })
     }
 
+    /// Whether the next poll of the subscription's stream could return `Ready`: a delivery waits,
+    /// or the bus shut down and the stream ends.
+    ///
+    /// Under the test harness the subscription may hold deliveries back while the harness is
+    /// exhausted; the answer is then `true` all the same, which costs one poll that answers
+    /// `Pending`.
+    pub(super) fn may_be_ready(&self) -> bool {
+        !self.queue.is_empty() || self.state.with(|state| state.standing) == Standing::ShutDown
+    }
+
     /// The next delivery already waiting, without registering a waker.
     pub(super) fn try_next(&self) -> Option<Delivery> {
         self.state.with(|state| {
@@ -538,5 +548,47 @@ mod tests {
         other.join().unwrap();
 
         assert!(subscription.try_next().is_none());
+    }
+
+    fn open_four() -> (Bus<4>, Shared<Subscription<4>>) {
+        let bus = Bus::<4>::new();
+        bus.connect();
+        let subscription = bus.subscribe("cmd").unwrap();
+        (bus, subscription)
+    }
+
+    fn publish_open(bus: &Bus<4>) {
+        let sent = bus.fanout("cmd", Bytes::from_static(b"open"), HeaderMap::new());
+        assert!(sent.is_ok());
+    }
+
+    #[test]
+    fn an_empty_subscription_is_not_ready() {
+        let (_bus, subscription) = open_four();
+        assert!(!subscription.may_be_ready());
+    }
+
+    #[test]
+    fn a_published_delivery_makes_it_ready_until_it_is_taken() {
+        let (bus, subscription) = open_four();
+        publish_open(&bus);
+        assert!(subscription.may_be_ready());
+        let _taken = subscription.try_next().unwrap();
+        assert!(!subscription.may_be_ready());
+    }
+
+    #[test]
+    fn a_shut_down_makes_it_ready_so_the_end_of_the_stream_is_seen() {
+        let (bus, subscription) = open_four();
+        bus.shut_down();
+        assert!(subscription.may_be_ready());
+    }
+
+    #[test]
+    fn a_subscription_its_subscriber_left_is_not_ready() {
+        let (bus, subscription) = open_four();
+        publish_open(&bus);
+        bus.unsubscribe(&subscription);
+        assert!(!subscription.may_be_ready());
     }
 }
