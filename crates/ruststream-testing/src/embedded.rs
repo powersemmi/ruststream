@@ -587,6 +587,8 @@ impl TestApp {
     /// Polls the app until nothing wakes it: everything delivered is handled, and what remains
     /// waits on the clock.
     async fn drive(&self) -> Result<(), TestError> {
+        // Each step has the whole budget: the steps that settled before it spent none of it.
+        self.coordinator().begin_step();
         let driven = poll_fn(move |_cx| {
             let waker = Waker::from(Arc::clone(&self.waker));
             let mut cx = Context::from_waker(&waker);
@@ -597,7 +599,15 @@ impl TestApp {
                 // the hooks of the test's own publish run here too, the app stopped or not.
                 self.poll_hooks(&mut cx);
                 if !self.waker.woken.load(Ordering::Acquire) {
-                    return Poll::Ready(Ok(()));
+                    // An app that stopped taking deliveries because it never settles is quiet
+                    // too, and is not done.
+                    return Poll::Ready(if self.coordinator().exhausted() {
+                        Err(TestError::NotQuiescent {
+                            processed: MAX_POLLS,
+                        })
+                    } else {
+                        Ok(())
+                    });
                 }
             }
             Poll::Ready(Err(TestError::NotQuiescent {

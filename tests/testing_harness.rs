@@ -216,6 +216,26 @@ async fn skip_policy_panic_keeps_running() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn settled_steps_do_not_spend_the_budget_of_the_next() {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+    let tb = TestApp::start(app).await.unwrap();
+
+    // More settled steps than one step's budget holds, each one a step of its own.
+    for id in 1..=10_001 {
+        tb.broker::<MemoryBroker>()
+            .message(&Order { id })
+            .to("orders")
+            .publish()
+            .await
+            .unwrap();
+    }
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_called(10_001);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn perpetual_requeue_hits_the_step_budget() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include(loop_forever));
