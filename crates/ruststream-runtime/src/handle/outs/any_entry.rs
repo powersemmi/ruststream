@@ -63,13 +63,13 @@ impl<Entry: ?Sized> MaybeSendPublisher for Entry {}
 #[cfg(feature = "tokio")]
 #[doc(hidden)]
 pub trait MaybeSendSink<M, Body = ()>:
-    for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Self>
+    'static + for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Self>
 {
 }
 
 #[cfg(feature = "tokio")]
 impl<Entry, M, Body> MaybeSendSink<M, Body> for Entry where
-    Entry: for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Entry>
+    Entry: 'static + for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Entry>
 {
 }
 
