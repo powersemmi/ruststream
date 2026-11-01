@@ -20,9 +20,9 @@ use std::sync::Arc;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
-use ruststream_core::MaybeSend;
 use ruststream_core::Broker;
 use ruststream_core::IncomingMessage;
+use ruststream_core::MaybeSend;
 use ruststream_core::{
     BytesMut, CallerName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
 };

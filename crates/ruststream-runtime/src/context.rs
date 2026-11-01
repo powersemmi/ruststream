@@ -26,14 +26,14 @@ use crate::testing::coordinator::RecordedValue;
 use crate::{Field, FieldMut, HeaderMap, Settle};
 
 use super::dispatch::Delivery;
-#[cfg(feature = "testing")]
-use ruststream_core::MaybeSendSync;
 use super::failure::FailurePolicy;
 use super::handler::{Continuation, ContinuationFuture, HandlerOutcome, HandlerResult, MaybeSend};
 use crate::host::Halt;
 #[cfg(feature = "tokio")]
 use crate::main_runtime::MainRuntime;
 use crate::publish_failure::{ErrorHook, Failures, Reaction};
+#[cfg(feature = "testing")]
+use ruststream_core::MaybeSendSync;
 
 /// What a context reads the headers through: `Sync` with the `tokio` feature, because the
 /// context then crosses threads; a bare reference without it.

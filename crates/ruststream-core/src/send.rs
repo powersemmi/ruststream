@@ -55,3 +55,35 @@ pub trait MaybeSync {}
 
 #[cfg(not(feature = "send"))]
 impl<Value: ?Sized> MaybeSync for Value {}
+
+/// Chooses between two types by the `send` feature: [`IfSend`] is `Yes` where it is on and `No`
+/// where it is off.
+///
+/// A crate that cannot see this crate's features names its sharing primitive through it, so the
+/// choice follows the feature as the build unifies it: a lock that is `Sync` next to a
+/// multi-thread runtime, a lock that costs nothing without one. The choice is made at compile
+/// time and costs nothing at run time.
+#[doc(hidden)]
+pub trait Pick<Yes, No> {
+    /// The chosen type.
+    type Picked;
+}
+
+/// The type [`IfSend`] picks through.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct WhenSend;
+
+#[cfg(feature = "send")]
+impl<Yes, No> Pick<Yes, No> for WhenSend {
+    type Picked = Yes;
+}
+
+#[cfg(not(feature = "send"))]
+impl<Yes, No> Pick<Yes, No> for WhenSend {
+    type Picked = No;
+}
+
+/// `Yes` where the `send` feature is on, `No` otherwise.
+#[doc(hidden)]
+pub type IfSend<Yes, No> = <WhenSend as Pick<Yes, No>>::Picked;

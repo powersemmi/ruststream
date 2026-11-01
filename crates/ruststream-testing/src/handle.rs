@@ -14,6 +14,7 @@ use ruststream_runtime::message_of;
 use ruststream_runtime::{HeadersUnset, MessageBody, PublishBuilder, PublishSink, UnnamedCodec};
 use ruststream_runtime::{SinkOutcome, SinkRefusal};
 use ruststream_runtime_tokio::Shutdown;
+use send_wrapper::SendWrapper;
 
 use ruststream_runtime::testing::Coordinator;
 use ruststream_runtime::testing::PublishTarget;
@@ -133,7 +134,7 @@ impl PublishSink for InjectSink<'_> {
             Transport::InProcess(testable) => testable.inject(msg),
             Transport::Live { connected, publish } => {
                 let publish = publish.ok_or_else(|| TestError::NoTransport(label.clone()))?;
-                publish(*connected, msg)
+                SendWrapper::new(publish(*connected, msg))
                     .await
                     .map_err(|err| TestError::Publish {
                         broker: label.clone(),

@@ -1,11 +1,11 @@
 //! A broker stand-in a device could run: frames in a `static` embassy-sync channel, nothing on the
 //! heap between the publisher and the settlement.
 //!
-//! The channel locks with `NoopRawMutex`, so it is not `Sync`, and the subscriber that holds its
-//! receiver is not `Send`. The delivery counts its settlement in the subscription's cells, so it
-//! is neither `Send` nor `Sync`. The subscriber and its delivery therefore implement only the
-//! `Local*` contract twins, and the body reaches them through those alone. [`FrameBroker`] is the
-//! same channel as a broker an app registers, with [`FrameSource`] its subscription.
+//! The channel locks with `NoopRawMutex` where the runtime is single-threaded, so it is not `Sync`,
+//! and the subscriber that holds its receiver is not `Send`; next to a multi-thread runtime it
+//! locks with `CriticalSectionRawMutex`, which a `Send` subscriber needs. The delivery counts its
+//! settlement in the subscription's cells under the same lock. [`FrameBroker`] is the same channel
+//! as a broker an app registers, with [`FrameSource`] its subscription.
 
 // The broker's futures hold its `!Send` forms on purpose: that is what the body is held to here.
 #![allow(clippy::future_not_send)]
@@ -19,12 +19,13 @@ use core::num::NonZeroUsize;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::{Channel, Receiver};
 use futures_core::Stream;
 use ruststream_core::{
     AckError, BatchSubscriber, Broker, BrokerMoves, ConnectedBroker, DefaultPublish, HeaderMap,
-    IncomingMessage, Lend, OutgoingMessage, PairError, PublishMessageError, PublishOutcome,
+    IfSend, IncomingMessage, Lend, OutgoingMessage, PairError, PublishMessageError, PublishOutcome,
     PublishPolicy, Publisher, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
@@ -36,7 +37,12 @@ pub const PAYLOAD: usize = 64;
 pub const DEPTH: usize = 4;
 
 /// The channel the stand-in delivers through: a device keeps it in a `static`.
-pub type Frames = Channel<NoopRawMutex, Frame, DEPTH>;
+pub type Frames = Channel<FrameLock, Frame, DEPTH>;
+
+/// How the stand-in locks: not at all where the runtime is single-threaded, so it costs no atomic
+/// and an embedded build needs no critical-section implementation; through a critical section
+/// next to a multi-thread runtime, which shares the stand-in between threads.
+pub type FrameLock = IfSend<CriticalSectionRawMutex, NoopRawMutex>;
 
 /// One message on the wire, held inline.
 #[derive(Clone, Debug)]
@@ -57,10 +63,16 @@ impl Frame {
 }
 
 /// How the deliveries of a subscription were settled.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Settlements {
-    acked: Cell<u32>,
-    nacked: Cell<u32>,
+    acked: Mutex<FrameLock, Cell<u32>>,
+    nacked: Mutex<FrameLock, Cell<u32>>,
+}
+
+impl Default for Settlements {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Settlements {
@@ -68,28 +80,28 @@ impl Settlements {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            acked: Cell::new(0),
-            nacked: Cell::new(0),
+            acked: Mutex::new(Cell::new(0)),
+            nacked: Mutex::new(Cell::new(0)),
         }
     }
 
     /// How many deliveries were acknowledged.
     #[must_use]
     pub fn acked(&self) -> u32 {
-        self.acked.get()
+        self.acked.lock(Cell::get)
     }
 
     /// How many deliveries were negatively acknowledged.
     #[must_use]
     pub fn nacked(&self) -> u32 {
-        self.nacked.get()
+        self.nacked.lock(Cell::get)
     }
 }
 
 /// A subscription over the channel.
 #[derive(Debug)]
 pub struct FrameSubscriber {
-    receiver: Receiver<'static, NoopRawMutex, Frame, DEPTH>,
+    receiver: Receiver<'static, FrameLock, Frame, DEPTH>,
     settled: &'static Settlements,
 }
 
@@ -213,9 +225,9 @@ impl Settle for FrameDelivery {
     }
 }
 
-/// Adds one: the executor's one thread settles a subscription's deliveries.
-fn count(counter: &Cell<u32>) {
-    counter.set(counter.get() + 1);
+/// Adds one.
+fn count(counter: &Mutex<FrameLock, Cell<u32>>) {
+    counter.lock(|cell| cell.set(cell.get() + 1));
 }
 
 /// The stand-in as a broker an app registers: the channel its one subscription receives from.
