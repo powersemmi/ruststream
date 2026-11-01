@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use embassy_futures::block_on;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
-use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER};
+use ruststream::runtime::{
+    EmbeddedApp, Failures, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER,
+};
 use ruststream::testing::embedded::TestApp;
 use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
 
@@ -57,7 +59,12 @@ async fn rc_job(job: &Job<'_>, ctx: &mut Context<'_, (), Log>) -> HandlerOutcome
     let log = Rc::new(ctx.state().clone());
     let on_error = Rc::clone(&log);
     HandlerOutcome::retry_after(LATER)
-        .error(async move |_err, _lost| on_error.push("error"))
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (_err, _lost) = failed.into_parts();
+                on_error.push("error");
+            }
+        })
         .and_after(async move { log.push("then") })
 }
 

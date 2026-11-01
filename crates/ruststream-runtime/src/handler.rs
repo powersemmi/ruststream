@@ -5,8 +5,7 @@ use alloc::sync::Arc;
 use core::{convert::Infallible, fmt, pin::Pin, time::Duration};
 
 use super::context::Context;
-use crate::lifecycle::BoxError;
-use crate::publish_failure::{ErrorHook, FailedMessage};
+use crate::publish_failure::{ErrorHook, Failures};
 
 /// A boxed, owned continuation run after a message is settled: what a [`HandlerOutcome`] hands
 /// the dispatcher, and what the dispatcher hands the runner's host.
@@ -458,16 +457,20 @@ impl HandlerOutcome {
     /// [`retry_after`](Self::retry_after), and the dead-letter copy the mount's
     /// `max_attempts(..).dead_letter(..)` turns this retry into at the cap.
     ///
-    /// The continuation receives the [`BoxError`] and the [`FailedMessage`] and returns
-    /// nothing. It runs after the delivery is settled, as an [`and_after`](Self::and_after)
-    /// continuation does, and the handler never runs again because of the failure. Whatever the
-    /// reaction needs (a client, state, a counter) the handler moves into the closure as a clone.
-    /// Attaching a second one replaces the first.
+    /// The continuation receives the [`Failures`]: one [`Failed`](crate::Failed) per message that
+    /// failed to go out, each with its error and the very message the runtime tried to send
+    /// (bytes and headers), which another `Out` republishes as it is. It returns nothing and runs
+    /// after the delivery is settled, as an [`and_after`](Self::and_after) continuation does; the
+    /// handler never runs again because of the failure. Whatever the reaction needs (a client,
+    /// state, a counter) the handler moves into the closure. Attaching a second one replaces the
+    /// first.
     ///
-    /// The closure is `Clone`, and the runtime runs a copy of it for each failure. An outcome
-    /// returned for a whole batch (a uniform one) carries it to every element, so it runs once
-    /// per element whose copy fails, each time with that element's error and message; a
-    /// [`and_after`](Self::and_after) beside it runs once, with the last element.
+    /// The closure is one-shot, like an [`and_after`](Self::and_after) continuation, so it may
+    /// own what it captures. A single delivery's `Failures` holds one failure. An outcome returned
+    /// for a whole batch runs the closure once, with the failure of every element whose copy
+    /// failed, in the batch's order; its `and_after` runs once, when at least one element's copy
+    /// was published. A batch handler that needs a reaction per element returns one outcome per
+    /// element instead.
     ///
     /// Without `.error` a failed copy is logged with the subscription, the destination, the
     /// message type and the error, and is lost. On a mount whose broker retries and dead-letters
@@ -503,16 +506,22 @@ impl HandlerOutcome {
     ///     if payment.settled {
     ///         return HandlerOutcome::ack();
     ///     }
-    ///     HandlerOutcome::retry_after(Duration::from_secs(5)).error(async move |err, lost| {
-    ///         tracing::error!(%err, destination = lost.destination(), "the retry is lost");
+    ///     HandlerOutcome::retry_after(Duration::from_secs(5)).error(async move |failures: Failures| {
+    ///         for failed in failures {
+    ///             tracing::error!(
+    ///                 error = %failed.error(),
+    ///                 destination = failed.message().destination(),
+    ///                 "the retry is lost",
+    ///             );
+    ///         }
     ///     })
     /// }
     /// # }
     /// # fn main() {}
     /// ```
     ///
-    /// A lost copy is announced through an `Out` publisher the handler clones into the closure
-    /// (`Out<impl Publisher>`):
+    /// A lost copy goes to a dead-letter destination through an `Out` publisher the handler clones
+    /// into the closure (`Out<impl Publisher>`), as it was, with its headers:
     ///
     /// ```
     /// # #[cfg(feature = "json")]
@@ -520,29 +529,30 @@ impl HandlerOutcome {
     /// use std::time::Duration;
     ///
     /// use ruststream::prelude::*;
-    /// use serde::{Deserialize, Serialize};
+    /// use serde::Deserialize;
     ///
     /// #[derive(Deserialize)]
     /// struct Order {
     ///     id: u64,
     /// }
     ///
-    /// #[derive(Outgoing, Serialize)]
-    /// #[outgoing(name = "alerts")]
-    /// struct Alert {
-    ///     order: u64,
-    /// }
-    ///
     /// #[subscriber("orders")]
     /// async fn accept(
-    ///     order: &Order,
-    ///     Out(alerts): Out<impl Publisher>,
+    ///     _order: &Order,
+    ///     Out(dead): Out<impl Publisher>,
     /// ) -> HandlerOutcome {
-    ///     let id = order.id;
-    ///     let alerts = alerts.clone();
-    ///     HandlerOutcome::retry_after(Duration::from_secs(5)).error(async move |_err, _lost| {
-    ///         // The alert itself may fail too; there is nobody left to tell.
-    ///         let _ = alerts.message(&Alert { order: id }).publish().await;
+    ///     let dead = dead.clone();
+    ///     HandlerOutcome::retry_after(Duration::from_secs(5)).error(async move |failures: Failures| {
+    ///         for failed in failures {
+    ///             let lost = failed.into_message();
+    ///             // The republish may fail too; there is nobody left to tell.
+    ///             let _ = dead
+    ///                 .message(&lost)
+    ///                 .to("orders.dead")
+    ///                 .with_headers(lost.headers().clone())
+    ///                 .publish()
+    ///                 .await;
+    ///         }
     ///     })
     /// }
     /// # }
@@ -550,7 +560,7 @@ impl HandlerOutcome {
     /// ```
     pub fn error<React, Reaction>(mut self, react: React) -> Self
     where
-        React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
+        React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
         let status = self.outcome.status();

@@ -15,18 +15,20 @@ Some publishes are the runtime's, not the handler's: the delayed copy of a [`ret
 A publish in the handler body returns a `Result`, and the handler decides.
 A publish the runtime makes on its behalf gives the same control through `.error`.
 
-The continuation receives the cause and the [`FailedMessage`](api:ruststream::runtime::FailedMessage): its destination, its bytes and its headers.
+The continuation receives [`Failures`](api:ruststream::runtime::Failures), the publishes that failed.
+Each [`Failed`](api:ruststream::runtime::Failed) holds the cause, `error()`, and the very [message](api:ruststream::runtime::FailedMessage) the runtime tried to send, `message()`: its destination, its bytes and its headers.
+The message is a [`Serialized`](api:ruststream::Serialized) value, so another `Out` republishes it as it is, and nothing is decoded again.
 It returns nothing, like [`and_after`](./and-after.md), and runs once the delivery is settled.
 Whatever the reaction needs (a client, state, a counter, an `Out` publisher) the handler moves into the closure.
 An `Out` publisher is cloned for that: declare it `Out<impl Publisher>` and move `alerts.clone()` in, then publish through it in the continuation as in the handler body.
-The closure is `Clone`, because the runtime runs a copy of it for each failure: keep shared state behind an `Arc`.
+The closure runs at most once, like `and_after`, so it may own what it captures.
 
 The handler never runs again because a runtime publish failed.
 The delivery is settled before the copy is published, so a failed copy cannot make the handler repeat its side effects or run past its `max_attempts` cap.
 A failed reply no longer requeues the delivery either.
 
 `.error` runs for every cause: the network, a broker that is down, full or overloaded, a broker that rejected the message, a codec or a publish transform that failed, or, on the embedded runner, a store of retry copies with no free record ([`NoFreeRecordError`](api:ruststream::runtime::NoFreeRecordError)).
-The first argument is the cause itself, so the continuation can tell a transient failure from a permanent one.
+`Failed::error` is the cause itself, so the continuation can tell a transient failure from a permanent one.
 
 Without `.error` the failure is logged with the subscription, the destination, the message type and the error, and the copy is lost.
 
@@ -47,8 +49,11 @@ The handler below retries once at its cap, so the retry becomes a dead letter, a
 
 On a subscription whose broker retries and dead-letters natively the runtime publishes nothing, so the continuation never runs.
 Each outcome that carries `.error` there logs a warning naming the subscription.
-A batch handler attaches `.error` to the outcome of the element it concerns; a uniform outcome for the whole batch carries it to every element, and it runs once for each element whose copy fails, with that element's error and message.
-The [`and_after`](./and-after.md) beside a uniform outcome runs once, with the last element.
+A batch handler has two forms.
+A `Vec<HandlerOutcome>` attaches a one-shot `.error` to the outcome of the element it concerns; its `Failures` holds that element's failure.
+A single `HandlerOutcome` returned for the whole batch runs its `.error` once, with the failure of every element whose copy failed, in the batch's order.
+The list is allocated only when a copy fails.
+The [`and_after`](./and-after.md) beside a uniform outcome runs once, after the batch, when at least one copy was published; when every copy fails it does not run.
 
 ## From the context
 
@@ -76,7 +81,11 @@ struct Quote {
 async fn quote(req: &QuoteRequest, ctx: &mut Context<'_>) -> Quote {
     let id = req.id;
     ctx.after(HandlerOutcome::ack())
-        .error(async move |err, _reply| tracing::warn!(id, %err, "the quote was not sent"));
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                tracing::warn!(id, error = %failed.error(), "the quote was not sent");
+            }
+        });
     Quote { id }
 }
 # }

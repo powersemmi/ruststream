@@ -192,7 +192,7 @@ mod tests {
     use crate::handler::HandlerResult;
     use crate::host::{Keeping, KeptCopies, KeptDelivery, LocalDetach, OnOneThread, PrepareKept};
     use crate::publish_failure::{
-        ErrorHook, FailedMessage, NoFreeRecordError, Reaction, publish_lost,
+        ErrorHook, FailedMessage, Failures, NoFreeRecordError, Reaction, publish_lost,
     };
     use crate::testkit::log_capture;
     use crate::{HeaderMap, LocalSettle, RetryDeclaration};
@@ -436,7 +436,7 @@ mod tests {
 
     /// A handler's `.error` continuation, for the tests that only watch whether it is asked.
     fn hook() -> Reaction {
-        Reaction::new(ErrorHook::new(async move |_error, _lost| {}), None)
+        Reaction::new(ErrorHook::new(async move |_failures: Failures| {}), None)
     }
 
     const LATER: Duration = Duration::from_secs(5);

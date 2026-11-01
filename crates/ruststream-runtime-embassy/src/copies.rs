@@ -459,7 +459,7 @@ mod tests {
 
     use ruststream_core::HeaderMap;
     use ruststream_runtime::{
-        BoxError, Clock, CopyPublisher, ErrorHook, KeptCopies, LocalDetach, Reaction,
+        BoxError, Clock, CopyPublisher, ErrorHook, Failures, KeptCopies, LocalDetach, Reaction,
     };
 
     // The store on embassy's clock polls embassy's timer, whose queue lives in the executor.
@@ -609,7 +609,7 @@ mod tests {
 
     /// A reaction that only needs to exist.
     fn reaction() -> Reaction {
-        Reaction::new(ErrorHook::new(async move |_error, _lost| {}), None)
+        Reaction::new(ErrorHook::new(async move |_failures: Failures| {}), None)
     }
 
     fn keep<Path: CopyPublisher, const CAP: usize>(
@@ -812,13 +812,15 @@ mod tests {
             Some(bytes::Bytes::from_static(b"a")),
             HeaderMap::new(),
             Some(Reaction::new(
-                ErrorHook::new(async move |error, lost| {
-                    assert_eq!(
-                        error.to_string(),
-                        "no free record in the store of retry copies (capacity 1)"
-                    );
-                    assert_eq!(lost.payload().as_ref(), b"a");
-                    assert_eq!(lost.destination(), "jobs");
+                ErrorHook::new(async move |failures: Failures| {
+                    for failed in failures {
+                        assert_eq!(
+                            failed.error().to_string(),
+                            "no free record in the store of retry copies (capacity 1)"
+                        );
+                        assert_eq!(failed.message().payload().as_ref(), b"a");
+                        assert_eq!(failed.message().destination(), "jobs");
+                    }
                 }),
                 None,
             )),

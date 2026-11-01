@@ -243,13 +243,14 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
             if let Some(error) = error {
                 // The one uniform outcome fans out: each element settles by the status and owns
                 // a share of the `.error`, which runs for a copy the runtime fails to publish
-                // for it; the continuation rides the last element and runs after the whole
-                // batch is settled (at-most-once, like the per-element ones).
+                // for it; the `.error` runs once with every failure, and the continuation once
+                // when at least one publish succeeded, both after the last element's publish is
+                // reported (at-most-once, like the per-element ones).
                 let mut own = HandlerOutcome::from(status).error_hook(error);
                 if let Some(after) = after {
                     own = own.and_after_boxed(after);
                 }
-                let mut fan = UniformFan::new(own);
+                let mut fan = UniformFan::new(own, accepted.len());
                 let last = accepted.len().saturating_sub(1);
                 for (index, msg) in accepted.into_iter().enumerate() {
                     #[cfg(feature = "testing")]

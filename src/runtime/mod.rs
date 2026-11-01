@@ -108,7 +108,7 @@ pub use ruststream_runtime::{
     UnbuiltDefinition, WireDocs, declared_reply_destination, reply_destination,
 };
 pub use ruststream_runtime::{DynMiddleware, DynStack, DynStackHandler, Next};
-pub use ruststream_runtime::{FailedMessage, NoFreeRecordError};
+pub use ruststream_runtime::{Failed, FailedMessage, Failures, NoFreeRecordError};
 pub use ruststream_runtime::{FailurePolicies, FailurePolicy};
 pub use ruststream_runtime::{Handler, HandlerOutcome, LocalHandler};
 pub use ruststream_runtime::{

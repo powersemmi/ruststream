@@ -5,18 +5,26 @@ use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
-use bytes::Bytes;
+use alloc::vec::{self, Vec};
+use bytes::{Bytes, BytesMut};
+#[cfg(not(feature = "tokio"))]
+use core::cell::RefCell;
+use core::convert::Infallible;
+use core::error::Error as StdError;
 use core::fmt;
-#[cfg(feature = "tokio")]
+use core::iter::FusedIterator;
 use core::mem;
 #[cfg(feature = "tokio")]
 use std::sync::{Mutex, PoisonError};
 use thiserror::Error;
 use tracing::warn;
 
-use crate::HeaderMap;
 use crate::handler::{Continuation, ContinuationFuture, MaybeSend};
 use crate::lifecycle::BoxError;
+use crate::{
+    CallerName, HeaderMap, MessageHeaders, MessageWire, NoHeaders, OutgoingDestination, Serialized,
+    SerializedWire, WireBytes,
+};
 
 /// The error of a retry copy the embedded runner has nowhere to hold: every record of the mount's
 /// store is taken.
@@ -44,7 +52,7 @@ impl NoFreeRecordError {
 /// The message a runtime publish failed to send: the destination it was bound for, its bytes and
 /// its headers.
 ///
-/// A handler's `.error` continuation receives it beside the [`BoxError`]. The runtime builds
+/// A handler's `.error` continuation receives it inside a [`Failed`], beside the error. The runtime builds
 /// it only for an outcome that registered `.error`, so a failure nobody asked about copies
 /// nothing.
 ///
@@ -72,7 +80,11 @@ impl NoFreeRecordError {
 /// async fn accept(order: &Order) -> HandlerOutcome {
 ///     let id = order.id;
 ///     HandlerOutcome::retry_after(Duration::from_secs(5))
-///         .error(async move |_err, lost| record(id, &lost))
+///         .error(async move |failures: Failures| {
+///             for failed in failures {
+///                 record(id, failed.message());
+///             }
+///         })
 /// }
 /// # }
 /// # fn main() {}
@@ -121,31 +133,171 @@ impl FailedMessage {
     }
 }
 
+/// The message a runtime publish failed to send is a [`Serialized`] value: its bytes leave as they
+/// are, so another `Out` publishes it unchanged.
+impl Serialized for FailedMessage {
+    type Error = Infallible;
+
+    fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
+        Ok(WireBytes::Own(&self.payload))
+    }
+}
+
+// Left out of the compiler's suggestions: a user who forgot a derive is not pointed at this type.
+#[diagnostic::do_not_recommend]
+impl MessageWire for FailedMessage {
+    type Wire = SerializedWire;
+}
+
+// The destination the message was going to belongs to the failure, not to another publish: the
+// call site that republishes it names where it goes now.
+impl OutgoingDestination for FailedMessage {
+    type Form = CallerName;
+}
+
+// Its headers travel with it, as a map the call site hands over with `with_headers`.
+impl MessageHeaders for FailedMessage {
+    type Contract = NoHeaders;
+}
+
+/// One publish the runtime made for a delivery and that failed: its cause and the message that
+/// did not go out.
+///
+/// The message is the one the runtime tried to send, with its bytes and headers as they were;
+/// republish it through another `Out`, store it or inspect it. Nothing is decoded again.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "json")]
+/// # mod demo {
+/// use std::time::Duration;
+///
+/// use ruststream::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn accept(order: &Order) -> HandlerOutcome {
+///     let id = order.id;
+///     HandlerOutcome::retry_after(Duration::from_secs(5)).error(async move |failures: Failures| {
+///         for failed in failures {
+///             tracing::error!(
+///                 order = id,
+///                 error = %failed.error(),
+///                 destination = failed.message().destination(),
+///                 bytes = failed.message().payload().len(),
+///                 "the retry was lost",
+///             );
+///         }
+///     })
+/// }
+/// # }
+/// # fn main() {}
+/// ```
+#[derive(Debug)]
+pub struct Failed {
+    error: BoxError,
+    message: FailedMessage,
+}
+
+impl Failed {
+    /// A failure of `message`, caused by `error`.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(error: BoxError, message: FailedMessage) -> Self {
+        Self { error, message }
+    }
+
+    /// Why the publish failed: the broker publisher's own error, the encode error, or the
+    /// "no free record" kind.
+    #[must_use]
+    pub fn error(&self) -> &(dyn StdError + Send + Sync + 'static) {
+        &*self.error
+    }
+
+    /// The message that did not go out.
+    #[must_use]
+    pub const fn message(&self) -> &FailedMessage {
+        &self.message
+    }
+
+    /// The message that did not go out, taken by value.
+    #[must_use]
+    pub fn into_message(self) -> FailedMessage {
+        self.message
+    }
+
+    /// The cause and the message, taken apart.
+    #[must_use]
+    pub fn into_parts(self) -> (BoxError, FailedMessage) {
+        (self.error, self.message)
+    }
+}
+
+/// The publishes that failed for one `.error` continuation: one [`Failed`] for a single delivery,
+/// every failed element for a uniform batch outcome, in the batch's order.
+///
+/// A single delivery's holds its one failure in place; a batch allocates its list only when an
+/// element failed.
+#[derive(Debug)]
+pub struct Failures(Repr);
+
+#[derive(Debug)]
+enum Repr {
+    One(Option<Failed>),
+    Many(vec::IntoIter<Failed>),
+}
+
+impl Failures {
+    /// The failure of a single delivery.
+    pub(crate) const fn one(failed: Failed) -> Self {
+        Self(Repr::One(Some(failed)))
+    }
+
+    /// The failures of a batch.
+    pub(crate) fn many(failures: Vec<Failed>) -> Self {
+        Self(Repr::Many(failures.into_iter()))
+    }
+}
+
+impl Iterator for Failures {
+    type Item = Failed;
+
+    fn next(&mut self) -> Option<Failed> {
+        match &mut self.0 {
+            Repr::One(failed) => failed.take(),
+            Repr::Many(failures) => failures.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let left = match &self.0 {
+            Repr::One(failed) => usize::from(failed.is_some()),
+            Repr::Many(failures) => failures.len(),
+        };
+        (left, Some(left))
+    }
+}
+
+impl ExactSizeIterator for Failures {}
+
+impl FusedIterator for Failures {}
+
 /// The `.error` closure, erased: `Send` where the runtime crate's `tokio` feature is on.
 #[cfg(feature = "tokio")]
 trait Reactor: Send {
-    fn react(self: Box<Self>, error: BoxError, message: FailedMessage) -> Continuation;
-    fn share(self: Box<Self>) -> Arc<dyn Shared>;
+    fn react(self: Box<Self>, failures: Failures) -> Continuation;
 }
 
 /// See the `tokio` form: without the feature the closure carries no `Send`.
 #[cfg(not(feature = "tokio"))]
 trait Reactor {
-    fn react(self: Box<Self>, error: BoxError, message: FailedMessage) -> Continuation;
-    fn share(self: Box<Self>) -> Arc<dyn Shared>;
-}
-
-/// One `.error` closure shared by the elements of a batch, which each take a copy of it when
-/// their own publish fails.
-#[cfg(feature = "tokio")]
-trait Shared: Send + Sync {
-    fn react(&self, error: BoxError, message: FailedMessage) -> Continuation;
-}
-
-/// See the `tokio` form.
-#[cfg(not(feature = "tokio"))]
-trait Shared {
-    fn react(&self, error: BoxError, message: FailedMessage) -> Continuation;
+    fn react(self: Box<Self>, failures: Failures) -> Continuation;
 }
 
 /// The closure as the one registration holds it.
@@ -153,115 +305,185 @@ struct Owned<React>(React);
 
 impl<React, Reaction> Reactor for Owned<React>
 where
-    React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
+    React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
     Reaction: ContinuationFuture,
 {
-    fn react(self: Box<Self>, error: BoxError, message: FailedMessage) -> Continuation {
-        Box::pin((self.0)(error, message))
-    }
-
-    fn share(self: Box<Self>) -> Arc<dyn Shared> {
-        Arc::new(Holder::new(self.0))
+    fn react(self: Box<Self>, failures: Failures) -> Continuation {
+        Box::pin((self.0)(failures))
     }
 }
 
-/// The closure behind the `Arc` a batch shares. Under Tokio the copy is made under a lock held
-/// for the clone alone, which lets the closure be shared without being `Sync`.
+/// A value shared by the elements of a batch and changed under a lock held for the change alone.
+/// Under Tokio the lock is a mutex, which keeps the value shareable without it being `Sync`;
+/// without `Send` a cell suffices.
 #[cfg(feature = "tokio")]
-struct Holder<React>(Mutex<React>);
+struct Lock<Value>(Mutex<Value>);
 
 #[cfg(feature = "tokio")]
-impl<React> Holder<React> {
-    const fn new(react: React) -> Self {
-        Self(Mutex::new(react))
+impl<Value> Lock<Value> {
+    const fn new(value: Value) -> Self {
+        Self(Mutex::new(value))
     }
 
-    fn copy(&self) -> React
-    where
-        React: Clone,
-    {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+    fn with<Out>(&self, change: impl FnOnce(&mut Value) -> Out) -> Out {
+        change(&mut self.0.lock().unwrap_or_else(PoisonError::into_inner))
     }
 }
 
-/// See the `tokio` form: without `Send` the closure is cloned in place.
+/// See the `tokio` form.
 #[cfg(not(feature = "tokio"))]
-struct Holder<React>(React);
+struct Lock<Value>(RefCell<Value>);
 
 #[cfg(not(feature = "tokio"))]
-impl<React> Holder<React> {
-    const fn new(react: React) -> Self {
-        Self(react)
+impl<Value> Lock<Value> {
+    const fn new(value: Value) -> Self {
+        Self(RefCell::new(value))
     }
 
-    fn copy(&self) -> React
-    where
-        React: Clone,
-    {
-        self.0.clone()
+    fn with<Out>(&self, change: impl FnOnce(&mut Value) -> Out) -> Out {
+        change(&mut self.0.borrow_mut())
     }
 }
 
-impl<React, Reaction> Shared for Holder<React>
-where
-    React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
-    Reaction: ContinuationFuture,
-{
-    fn react(&self, error: BoxError, message: FailedMessage) -> Continuation {
-        Box::pin(self.copy()(error, message))
+/// What the elements of a uniform batch outcome report to: the outcome's one `.error` closure and
+/// `and_after` continuation run once, when the last element's publish has been reported.
+struct Gather {
+    state: Lock<Gathered>,
+}
+
+struct Gathered {
+    /// Elements whose publish has not been reported yet.
+    pending: usize,
+    /// Whether any element's publish succeeded.
+    sent: bool,
+    /// The failures reported so far, with the index of their element. Allocated by the first.
+    failures: Vec<(usize, Failed)>,
+    react: Option<Box<dyn Reactor>>,
+    after: Option<Continuation>,
+}
+
+impl Gather {
+    #[allow(clippy::arc_with_non_send_sync)] // see `ErrorHook::fan_out`
+    fn new(elements: usize, react: Box<dyn Reactor>, after: Option<Continuation>) -> Arc<Self> {
+        Arc::new(Self {
+            state: Lock::new(Gathered {
+                pending: elements,
+                sent: false,
+                failures: Vec::new(),
+                react: Some(react),
+                after,
+            }),
+        })
+    }
+
+    /// Records one element's publish. The call that reports the last one gets the continuation
+    /// that runs the outcome's `and_after` (when any publish succeeded) and then its `.error`
+    /// (when any failed); every other call gets a continuation that does nothing.
+    fn report(&self, failure: Option<(usize, Failed)>) -> Continuation {
+        let done = self.state.with(|gathered| {
+            match failure {
+                Some(failure) => gathered.failures.push(failure),
+                None => gathered.sent = true,
+            }
+            gathered.pending -= 1;
+            if gathered.pending > 0 {
+                return None;
+            }
+            let mut failures = mem::take(&mut gathered.failures);
+            failures.sort_by_key(|(index, _)| *index);
+            Some((
+                gathered.sent.then(|| gathered.after.take()).flatten(),
+                gathered.react.take().filter(|_| !failures.is_empty()),
+                failures,
+            ))
+        });
+        let Some((after, react, failures)) = done else {
+            return Box::pin(async {});
+        };
+        Box::pin(async move {
+            if let Some(after) = after {
+                after.await;
+            }
+            if let Some(react) = react {
+                let failures = failures.into_iter().map(|(_, failed)| failed).collect();
+                react.react(Failures::many(failures)).await;
+            }
+        })
+    }
+}
+
+/// One element's share of a uniform outcome's `.error`: it reports the element's failure.
+struct Part {
+    gather: Arc<Gather>,
+    index: usize,
+}
+
+impl Reactor for Part {
+    fn react(self: Box<Self>, failures: Failures) -> Continuation {
+        let failed = failures.into_iter().next();
+        self.gather
+            .report(failed.map(|failed| (self.index, failed)))
+    }
+}
+
+/// The part of a uniform outcome's continuation one element carries: it reports a publish that
+/// succeeded.
+fn sent_part(gather: Arc<Gather>) -> Continuation {
+    Box::pin(async move { gather.report(None).await })
+}
+
+/// A uniform batch outcome handed out element by element.
+pub(crate) struct Fan {
+    gather: Arc<Gather>,
+    next: usize,
+}
+
+impl Fan {
+    /// The share of the next element: a hook for its failure and a continuation for its success.
+    pub(crate) fn element(&mut self) -> (ErrorHook, Continuation) {
+        let index = self.next;
+        self.next += 1;
+        let part = Part {
+            gather: Arc::clone(&self.gather),
+            index,
+        };
+        (
+            ErrorHook(Box::new(part)),
+            sent_part(Arc::clone(&self.gather)),
+        )
     }
 }
 
 /// The `.error` continuation of one [`HandlerOutcome`](crate::HandlerOutcome), until a publish
 /// the runtime makes for it fails. Machinery; never named directly.
 #[doc(hidden)]
-pub struct ErrorHook(Inner);
-
-/// An [`ErrorHook`]: a closure held by one registration, or one shared by a batch.
-enum Inner {
-    One(Box<dyn Reactor>),
-    Shared(Arc<dyn Shared>),
-}
+pub struct ErrorHook(Box<dyn Reactor>);
 
 impl ErrorHook {
     #[must_use]
     pub fn new<React, Reaction>(react: React) -> Self
     where
-        React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
+        React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
-        Self(Inner::One(Box::new(Owned(react))))
+        Self(Box::new(Owned(react)))
     }
 
     /// Hands the failure to the handler's continuation, which the caller runs.
     pub fn react(self, error: BoxError, message: FailedMessage) -> Continuation {
-        match self.0 {
-            Inner::One(owned) => owned.react(error, message),
-            Inner::Shared(shared) => shared.react(error, message),
-        }
+        self.0.react(Failures::one(Failed::new(error, message)))
     }
 
-    /// Moves the closure behind an `Arc` for the elements of a batch to share: one allocation
-    /// for the batch, and nothing is cloned until an element's publish fails.
-    pub(crate) fn into_shared(self) -> SharedHook {
-        match self.0 {
-            Inner::One(owned) => SharedHook(owned.share()),
-            Inner::Shared(shared) => SharedHook(shared),
+    /// Splits the hook of a uniform batch outcome over its `elements`: the closure runs once,
+    /// with every element's failure, after the last element's publish has been reported.
+    // Without the `tokio` feature the runner is single-threaded and the closure carries no `Send`,
+    // so the `Arc` is never shared across threads.
+    #[cfg_attr(not(feature = "tokio"), allow(clippy::arc_with_non_send_sync))]
+    pub(crate) fn fan_out(self, elements: usize, after: Option<Continuation>) -> Fan {
+        Fan {
+            gather: Gather::new(elements, self.0, after),
+            next: 0,
         }
-    }
-}
-
-/// An [`ErrorHook`] shared by the elements of a batch.
-#[derive(Clone)]
-pub(crate) struct SharedHook(Arc<dyn Shared>);
-
-impl SharedHook {
-    /// The hook of one element: a reference count, not a copy of the closure.
-    pub(crate) fn hook(&self) -> ErrorHook {
-        ErrorHook(Inner::Shared(Arc::clone(&self.0)))
     }
 }
 

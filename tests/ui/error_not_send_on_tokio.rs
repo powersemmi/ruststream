@@ -2,7 +2,7 @@
 // names the closure and says it must be `Send`, at the call that registers it.
 use std::rc::Rc;
 
-use ruststream::runtime::HandlerOutcome;
+use ruststream::runtime::{Failures, HandlerOutcome};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -14,8 +14,11 @@ struct Order {
 #[subscriber("orders")]
 async fn on_order(order: &Order) -> HandlerOutcome {
     let held = Rc::new(order.id);
-    HandlerOutcome::ack().error(async move |_err, _lost| {
+    HandlerOutcome::ack().error(async move |failures: Failures| {
+        for failed in failures {
+            let (_err, _lost) = failed.into_parts();
         drop(held);
+        }
     })
 }
 

@@ -83,13 +83,16 @@ mod error_continuation {
     async fn reconcile(payment: &Payment, ctx: &mut Context<'_, (), Alerts>) -> HandlerOutcome {
         let id = payment.id;
         let alerts = Arc::clone(ctx.state());
-        HandlerOutcome::retry_after(RECHECK).error(async move |err, lost| {
-            // The dead-letter copy never left: record where it was going and why.
-            tracing::error!(id, %err, destination = lost.destination(), "dead letter lost");
-            alerts.lock().expect("alerts").push(Alert {
-                destination: lost.destination().to_owned(),
-                cause: err.to_string(),
-            });
+        HandlerOutcome::retry_after(RECHECK).error(async move |failures: Failures| {
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                // The dead-letter copy never left: record where it was going and why.
+                tracing::error!(id, %err, destination = lost.destination(), "dead letter lost");
+                alerts.lock().expect("alerts").push(Alert {
+                    destination: lost.destination().to_owned(),
+                    cause: err.to_string(),
+                });
+            }
         })
     }
     // --8<-- [end:error]

@@ -157,13 +157,16 @@ impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for DownPublish {
 #[subscriber(Queue { name: "jobs" })]
 async fn on_job(job: &Job, State(alerts): State<Arc<Mutex<Vec<Alert>>>>) -> HandlerOutcome {
     let _ = job.id;
-    HandlerOutcome::retry_after(RETRY_DELAY).error(async move |err, lost| {
-        let alert = Alert {
-            destination: lost.destination().to_owned(),
-            error: err.to_string(),
-            bytes: lost.payload().len(),
-        };
-        alerts.lock().expect("alerts").push(alert);
+    HandlerOutcome::retry_after(RETRY_DELAY).error(async move |failures: Failures| {
+        for failed in failures {
+            let (err, lost) = failed.into_parts();
+            let alert = Alert {
+                destination: lost.destination().to_owned(),
+                error: err.to_string(),
+                bytes: lost.payload().len(),
+            };
+            alerts.lock().expect("alerts").push(alert);
+        }
     })
 }
 
@@ -233,11 +236,14 @@ async fn outcome_then_error(
     let on_error = Arc::clone(&log);
     HandlerOutcome::retry_after(RETRY_DELAY)
         .and_after(async move { log.lock().expect("log").push("then".to_owned()) })
-        .error(async move |err, lost| {
-            on_error
-                .lock()
-                .expect("log")
-                .push(format!("error {err} {}", lost.destination()));
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                on_error
+                    .lock()
+                    .expect("log")
+                    .push(format!("error {err} {}", lost.destination()));
+            }
         })
 }
 
@@ -254,11 +260,14 @@ async fn outcome_error_then(
     }
     let on_error = Arc::clone(&log);
     HandlerOutcome::retry_after(RETRY_DELAY)
-        .error(async move |err, lost| {
-            on_error
-                .lock()
-                .expect("log")
-                .push(format!("error {err} {}", lost.destination()));
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                on_error
+                    .lock()
+                    .expect("log")
+                    .push(format!("error {err} {}", lost.destination()));
+            }
         })
         .and_after(async move { log.lock().expect("log").push("then".to_owned()) })
 }
@@ -277,11 +286,14 @@ async fn context_then_error(
     let on_error = Arc::clone(&log);
     ctx.after(HandlerOutcome::retry_after(RETRY_DELAY))
         .then(async move { log.lock().expect("log").push("then".to_owned()) })
-        .error(async move |err, lost| {
-            on_error
-                .lock()
-                .expect("log")
-                .push(format!("error {err} {}", lost.destination()));
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                on_error
+                    .lock()
+                    .expect("log")
+                    .push(format!("error {err} {}", lost.destination()));
+            }
         });
     HandlerOutcome::retry_after(RETRY_DELAY)
 }
@@ -299,11 +311,14 @@ async fn context_error_then(
     }
     let on_error = Arc::clone(&log);
     ctx.after(HandlerOutcome::retry_after(RETRY_DELAY))
-        .error(async move |err, lost| {
-            on_error
-                .lock()
-                .expect("log")
-                .push(format!("error {err} {}", lost.destination()));
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                on_error
+                    .lock()
+                    .expect("log")
+                    .push(format!("error {err} {}", lost.destination()));
+            }
         })
         .then(async move { log.lock().expect("log").push("then".to_owned()) });
     HandlerOutcome::retry_after(RETRY_DELAY)
@@ -473,6 +488,149 @@ async fn a_failed_dead_letter_copy_reaches_the_error_continuation() {
     );
 }
 
+/// What a one-shot `.error` owns: not `Clone`, so only a closure that is called once accepts it.
+struct Ticket(Lost);
+
+/// The `.error` of a single outcome is a one-shot closure: it may own a value that cannot be
+/// cloned, and it runs once for the one copy that fails.
+#[tokio::test(start_paused = true)]
+async fn a_single_outcome_error_owns_a_capture_that_is_not_clone() {
+    #[subscriber(Queue { name: "ticketed" })]
+    async fn ticketed(job: &Job, ctx: &mut Context<'_, (), Lost>) -> HandlerOutcome {
+        let ticket = Ticket(ctx.state().clone());
+        let id = job.id;
+        HandlerOutcome::retry_after(RETRY_DELAY).error(async move |failures: Failures| {
+            // Consuming the whole ticket makes the closure own it, so the closure is not `Clone`.
+            let ticket = ticket;
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                // Consuming the whole ticket makes the closure own it, so the closure is not `Clone`.
+                let lost_log = ticket.0.clone();
+                lost_log.alerts.lock().expect("alerts").push(Alert {
+                    destination: lost.destination().to_owned(),
+                    error: format!("{id} {err}"),
+                    bytes: lost.payload().len(),
+                });
+            }
+        })
+    }
+
+    let lost = Lost::default();
+    let startup = lost.clone();
+    let app = RustStream::new(AppInfo::new("errors", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(startup))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(ticketed).out_retry(DownPublish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&Job { id: 7 })
+        .to("ticketed")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("advance");
+
+    assert_eq!(lost.alerts.lock().expect("alerts").len(), 1);
+}
+
+/// A single delivery's `Failures` holds one `Failed`, with the error and the message the runtime
+/// tried to send: its bytes and the headers it carried, the retry count among them.
+#[tokio::test(start_paused = true)]
+async fn a_single_delivery_hands_one_failed_with_its_bytes_and_headers() {
+    #[subscriber(Queue { name: "single" })]
+    async fn single(job: &Job, ctx: &mut Context<'_, (), Lost>) -> HandlerOutcome {
+        let lost = ctx.state().clone();
+        let id = job.id;
+        HandlerOutcome::retry_after(RETRY_DELAY).error(async move |failures: Failures| {
+            assert_eq!(failures.len(), 1);
+            for failed in failures {
+                let retries = failed
+                    .message()
+                    .headers()
+                    .get_str(RETRY_COUNT_HEADER)
+                    .unwrap_or("none")
+                    .to_owned();
+                lost.alerts.lock().expect("alerts").push(Alert {
+                    destination: failed.message().destination().to_owned(),
+                    error: format!("{id} {} retries {retries}", failed.error()),
+                    bytes: failed.message().payload().len(),
+                });
+            }
+        })
+    }
+
+    let lost = Lost::default();
+    let startup = lost.clone();
+    let app = RustStream::new(AppInfo::new("errors", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(startup))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(single).out_retry(DownPublish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&Job { id: 8 })
+        .to("single")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("advance");
+
+    assert_eq!(
+        *lost.alerts.lock().expect("alerts"),
+        [Alert {
+            destination: "single".to_owned(),
+            error: "8 broker down retries 1".to_owned(),
+            bytes: br#"{"id":8}"#.len(),
+        }],
+    );
+}
+
+/// Republishes the very message that failed through another `Out`: the same bytes reach another
+/// destination, with no decoding in between.
+#[subscriber(Queue { name: "forwarding" })]
+async fn forwarding(job: &Job, Out(dead): Out<impl Publisher>) -> HandlerOutcome {
+    let _ = job.id;
+    let dead = dead.clone();
+    HandlerOutcome::retry_after(RETRY_DELAY).error(async move |failures: Failures| {
+        for failed in failures {
+            let message = failed.into_message();
+            dead.message(&message)
+                .to("dead")
+                .with_headers(message.headers().clone())
+                .publish()
+                .await
+                .expect("forwarded");
+        }
+    })
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_message_is_republished_through_another_out_as_it_was() {
+    let app =
+        RustStream::new(AppInfo::new("errors", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(forwarding)
+                .out(DefaultSlot, Publish)
+                .out_retry(DownPublish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&Job { id: 9 })
+        .to("forwarding")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("advance");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Job>("dead")
+        .assert_called_once()
+        .with(&Job { id: 9 });
+}
+
 /// A copy the broker refuses, with no `.error` to tell, is logged with the subscription, the
 /// destination, the message type and the error, and is lost: the handler does not run again.
 #[tokio::test(start_paused = true)]
@@ -540,7 +698,11 @@ where
 #[subscriber(ManagedQueue { name: "managed" })]
 async fn managed_job(job: &Job) -> HandlerOutcome {
     let _ = job.id;
-    HandlerOutcome::retry_after(RETRY_DELAY).error(async move |_err, _lost| {})
+    HandlerOutcome::retry_after(RETRY_DELAY).error(async move |failures: Failures| {
+        for failed in failures {
+            let (_err, _lost) = failed.into_parts();
+        }
+    })
 }
 
 /// Returns an outcome with no `.error`.
@@ -611,11 +773,14 @@ async fn ask(job: &Job, ctx: &mut Context, State(log): State<Arc<Mutex<Vec<Strin
     let on_error = Arc::clone(&log);
     ctx.after(HandlerOutcome::ack())
         .then(async move { log.lock().expect("log").push("then".to_owned()) })
-        .error(async move |err, lost| {
-            on_error
-                .lock()
-                .expect("log")
-                .push(format!("error {err} {}", lost.destination()));
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                on_error
+                    .lock()
+                    .expect("log")
+                    .push(format!("error {err} {}", lost.destination()));
+            }
         });
     Answer { id: job.id }
 }
@@ -678,18 +843,21 @@ async fn a_published_reply_runs_the_context_then_and_not_the_error() {
 async fn on_job_out(job: &Job, Out(alerts): Out<impl Publisher>) -> HandlerOutcome {
     let id = job.id;
     let alerts = alerts.clone();
-    HandlerOutcome::retry_after(RETRY_DELAY).error(async move |err, lost| {
-        let alert = Alert {
-            destination: lost.destination().to_owned(),
-            error: err.to_string(),
-            bytes: usize::try_from(id).expect("small id"),
-        };
-        alerts
-            .message(&alert)
-            .to("alerts")
-            .publish()
-            .await
-            .expect("alert published");
+    HandlerOutcome::retry_after(RETRY_DELAY).error(async move |failures: Failures| {
+        for failed in failures {
+            let (err, lost) = failed.into_parts();
+            let alert = Alert {
+                destination: lost.destination().to_owned(),
+                error: err.to_string(),
+                bytes: usize::try_from(id).expect("small id"),
+            };
+            alerts
+                .message(&alert)
+                .to("alerts")
+                .publish()
+                .await
+                .expect("alert published");
+        }
     })
 }
 
@@ -730,11 +898,14 @@ async fn slow_ask(
     State(log): State<Arc<Mutex<Vec<String>>>>,
 ) -> Answer {
     ctx.after(HandlerOutcome::ack())
-        .error(async move |err, lost| {
-            sleep(RETRY_DELAY).await;
-            log.lock()
-                .expect("log")
-                .push(format!("error {err} {}", lost.destination()));
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                sleep(RETRY_DELAY).await;
+                log.lock()
+                    .expect("log")
+                    .push(format!("error {err} {}", lost.destination()));
+            }
         });
     Answer { id: job.id }
 }

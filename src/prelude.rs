@@ -104,7 +104,7 @@
 
 pub use crate::runtime::{
     CodecDiscriminator, Context, ContextKind, Ctx, DefaultSlot, Deserialized, FailurePolicies,
-    FailurePolicy, ForReply, ForSlot, FromContext, FromRef, Handle, HandlerOutcome,
+    FailurePolicy, Failures, ForReply, ForSlot, FromContext, FromRef, Handle, HandlerOutcome,
     HeaderDiscriminator, Headers, InMessages, InVariant, IncomingMessageMetadata, Input,
     MapPublisher, Message, MessageWire, Names, Out, OutEntry, OutMessages, OutgoingMessageMetadata,
     Outs, PublishExt, PublishTransform, PublishedThrough, Reads, Reply, ReplyShape, Retry, Router,

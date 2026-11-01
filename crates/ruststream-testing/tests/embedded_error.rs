@@ -13,7 +13,9 @@ use embassy_futures::block_on;
 use embassy_time::{Duration as EmbassyDuration, Timer};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream::nonzero;
-use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER};
+use ruststream::runtime::{
+    EmbeddedApp, Failures, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER,
+};
 use ruststream::testing::embedded::TestApp;
 use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
 
@@ -56,12 +58,15 @@ async fn on_job(job: &Job<'_>, ctx: &mut Context<'_, (), Lost>) -> HandlerOutcom
         return HandlerOutcome::ack();
     }
     let lost = ctx.state().clone();
-    HandlerOutcome::retry_after(LATER).error(async move |error, message| {
-        lost.0.lock().expect("the handlers never panic").push((
-            error.to_string(),
-            message.destination().to_owned(),
-            message.payload().to_vec(),
-        ));
+    HandlerOutcome::retry_after(LATER).error(async move |failures: Failures| {
+        for failed in failures {
+            let (error, message) = failed.into_parts();
+            lost.0.lock().expect("the handlers never panic").push((
+                error.to_string(),
+                message.destination().to_owned(),
+                message.payload().to_vec(),
+            ));
+        }
     })
 }
 
@@ -257,7 +262,12 @@ async fn outcome_then_error(job: &Job<'_>, ctx: &mut Context<'_, (), Log>) -> Ha
     let (then, error) = (ctx.state().clone(), ctx.state().clone());
     HandlerOutcome::retry_after(LATER)
         .and_after(async move { then.push("then".to_owned()) })
-        .error(async move |err, lost| error.push(format!("error {err} {}", lost.destination())))
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                error.push(format!("error {err} {}", lost.destination()));
+            }
+        })
 }
 
 /// The same pair on the outcome, `.error(..)` first.
@@ -269,7 +279,12 @@ async fn outcome_error_then(job: &Job<'_>, ctx: &mut Context<'_, (), Log>) -> Ha
     }
     let (then, error) = (ctx.state().clone(), ctx.state().clone());
     HandlerOutcome::retry_after(LATER)
-        .error(async move |err, lost| error.push(format!("error {err} {}", lost.destination())))
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                error.push(format!("error {err} {}", lost.destination()));
+            }
+        })
         .and_after(async move { then.push("then".to_owned()) })
 }
 
@@ -283,7 +298,12 @@ async fn context_then_error(job: &Job<'_>, ctx: &mut Context<'_, (), Log>) -> Ha
     let (then, error) = (ctx.state().clone(), ctx.state().clone());
     ctx.after(HandlerOutcome::retry_after(LATER))
         .then(async move { then.push("then".to_owned()) })
-        .error(async move |err, lost| error.push(format!("error {err} {}", lost.destination())));
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                error.push(format!("error {err} {}", lost.destination()));
+            }
+        });
     HandlerOutcome::retry_after(LATER)
 }
 
@@ -296,7 +316,12 @@ async fn context_error_then(job: &Job<'_>, ctx: &mut Context<'_, (), Log>) -> Ha
     }
     let (then, error) = (ctx.state().clone(), ctx.state().clone());
     ctx.after(HandlerOutcome::retry_after(LATER))
-        .error(async move |err, lost| error.push(format!("error {err} {}", lost.destination())))
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (err, lost) = failed.into_parts();
+                error.push(format!("error {err} {}", lost.destination()));
+            }
+        })
         .then(async move { then.push("then".to_owned()) });
     HandlerOutcome::retry_after(LATER)
 }
@@ -403,12 +428,15 @@ struct Answer(&'static [u8]);
 async fn on_ask(ask: &Job<'_>, ctx: &mut Context<'_, (), Lost>) -> Answer {
     let lost = ctx.state().clone();
     ctx.after(HandlerOutcome::ack())
-        .error(async move |error, message| {
-            lost.0.lock().expect("the handlers never panic").push((
-                error.to_string(),
-                message.destination().to_owned(),
-                message.payload().to_vec(),
-            ));
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let (error, message) = failed.into_parts();
+                lost.0.lock().expect("the handlers never panic").push((
+                    error.to_string(),
+                    message.destination().to_owned(),
+                    message.payload().to_vec(),
+                ));
+            }
         });
     let _ = ask.0;
     Answer(b"yes")

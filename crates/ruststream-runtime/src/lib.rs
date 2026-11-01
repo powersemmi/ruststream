@@ -226,7 +226,7 @@ pub use main_runtime::MainRuntime;
 #[doc(hidden)]
 pub use publish_failure::{ErrorHook, Reaction, publish_done, publish_lost};
 #[cfg(feature = "alloc")]
-pub use publish_failure::{FailedMessage, NoFreeRecordError};
+pub use publish_failure::{Failed, FailedMessage, Failures, NoFreeRecordError};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use slot::{BindSlotsBody, LocalBindSlotsBody};

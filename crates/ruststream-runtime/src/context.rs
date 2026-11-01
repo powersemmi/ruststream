@@ -29,10 +29,9 @@ use super::dispatch::Delivery;
 use super::failure::FailurePolicy;
 use super::handler::{Continuation, ContinuationFuture, HandlerOutcome, HandlerResult, MaybeSend};
 use crate::host::Halt;
-use crate::lifecycle::BoxError;
 #[cfg(feature = "tokio")]
 use crate::main_runtime::MainRuntime;
-use crate::publish_failure::{ErrorHook, FailedMessage, Reaction};
+use crate::publish_failure::{ErrorHook, Failures, Reaction};
 
 /// Where one delivery's header map comes from.
 ///
@@ -931,8 +930,9 @@ impl<'ctx, 'a, C, S> After<'ctx, 'a, C, S> {
     /// delayed retry copy, or the dead-letter copy.
     ///
     /// It is [`HandlerOutcome::error`] for a handler that returns no outcome of its own, or whose
-    /// reply has none to carry it. The continuation receives the error and the
-    /// [`FailedMessage`](crate::FailedMessage), runs after the delivery is settled, and the
+    /// reply has none to carry it. The continuation receives the
+    /// [`Failures`], one [`Failed`](crate::Failed) holding the error and the message that did not
+    /// go out, runs after the delivery is settled, and the
     /// handler never runs again because of the failure. The first one registered for the kind
     /// wins; an outcome that carries its own `.error` takes precedence over it. Without any, the
     /// failure is logged with the subscription, the destination, the message type and the error,
@@ -968,7 +968,11 @@ impl<'ctx, 'a, C, S> After<'ctx, 'a, C, S> {
     ///     let id = req.id;
     ///     // The reply is published after the ack; if that fails, the log says which quote.
     ///     ctx.after(HandlerOutcome::ack())
-    ///         .error(async move |err, _reply| tracing::warn!(id, %err, "the quote was not sent"));
+    ///         .error(async move |failures: Failures| {
+    ///             for failed in failures {
+    ///                 tracing::warn!(id, error = %failed.error(), "the quote was not sent");
+    ///             }
+    ///         });
     ///     Quote { id }
     /// }
     /// # }
@@ -976,7 +980,7 @@ impl<'ctx, 'a, C, S> After<'ctx, 'a, C, S> {
     /// ```
     pub fn error<React, Reaction>(self, react: React) -> AfterError<'ctx, 'a, C, S>
     where
-        React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
+        React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
         // The builder is always made by `Context::after`, which gates it on an outcome kind.
@@ -1029,7 +1033,11 @@ impl<C, S> AfterThen<'_, '_, C, S> {
     ///     let id = req.id;
     ///     ctx.after(HandlerOutcome::ack())
     ///         .then(async move { tracing::info!(id, "the quote was sent") })
-    ///         .error(async move |err, _reply| tracing::warn!(id, %err, "the quote was not sent"));
+    ///         .error(async move |failures: Failures| {
+    ///             for failed in failures {
+    ///                 tracing::warn!(id, error = %failed.error(), "the quote was not sent");
+    ///             }
+    ///         });
     ///     Quote { id }
     /// }
     /// # }
@@ -1037,7 +1045,7 @@ impl<C, S> AfterThen<'_, '_, C, S> {
     /// ```
     pub fn error<React, Reaction>(self, react: React)
     where
-        React: FnOnce(BoxError, FailedMessage) -> Reaction + Clone + MaybeSend + 'static,
+        React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
         let hook = &mut self.ctx.after[self.at];
@@ -1086,7 +1094,11 @@ impl<C, S> AfterError<'_, '_, C, S> {
     /// async fn quote(req: &QuoteRequest, ctx: &mut Context<'_>) -> Quote {
     ///     let id = req.id;
     ///     ctx.after(HandlerOutcome::ack())
-    ///         .error(async move |err, _reply| tracing::warn!(id, %err, "the quote was not sent"))
+    ///         .error(async move |failures: Failures| {
+    ///             for failed in failures {
+    ///                 tracing::warn!(id, error = %failed.error(), "the quote was not sent");
+    ///             }
+    ///         })
     ///         .then(async move { tracing::info!(id, "the quote was sent") });
     ///     Quote { id }
     /// }
