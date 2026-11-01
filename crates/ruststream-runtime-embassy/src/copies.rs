@@ -830,6 +830,54 @@ mod tests {
         );
     }
 
+    /// The allocations of publishing one warm copy of `payload` with two headers through `path`,
+    /// with a reaction registered or none.
+    fn allocations_of_a_send<Path: CopyPublisher>(path: Path, with_reaction: bool) -> u64 {
+        let store = CopyStore::<_, 1, _>::on_clock(path, Arc::from("jobs"), Probe::default());
+        let mut headers = HeaderMap::new();
+        headers.insert("a", "1");
+        headers.insert("b", "2");
+        let mut measured = 0;
+        // The first pass warms the record's buffers; the second is the one read.
+        for pass in 0..2 {
+            let record = store.take_record().expect("a free record");
+            store.fill(record, &[7; 64], headers.clone());
+            let reaction = with_reaction.then(reaction);
+            let info = allocation_counter::measure(|| {
+                let follow = embassy_futures::block_on(store.send_now(record, None, reaction));
+                drop(follow);
+            });
+            if pass == 1 {
+                measured = info.count_total;
+            }
+        }
+        measured
+    }
+
+    #[test]
+    fn a_failed_publish_copies_the_message_only_for_a_registered_error() {
+        let plain = allocations_of_a_send(Refusing, false);
+        let watched = allocations_of_a_send(Refusing, true);
+        assert!(
+            watched >= plain + 2,
+            "the failed message (payload and headers) is copied for the continuation alone: \
+             {plain} against {watched}"
+        );
+    }
+
+    #[test]
+    fn a_published_copy_costs_a_registered_reaction_one_header_map_and_no_payload() {
+        let sent = Recorded::default();
+        let plain = allocations_of_a_send(&sent, false);
+        let watched = allocations_of_a_send(&sent, true);
+        assert_eq!(
+            watched,
+            plain + 1,
+            "a publish consumes the headers, so a registered reaction keeps one map; the payload \
+             is copied only once the publish failed"
+        );
+    }
+
     #[test]
     fn a_closed_store_waits_for_a_record_a_settle_has_taken() {
         let clock = Probe::default();
