@@ -17,5 +17,5 @@ error[E0119]: conflicting implementations of trait `ReplyShape` for type `Export
   |
   = note: conflicting implementation in crate `ruststream_runtime`:
           - impl<R> ReplyShape for R
-            where R: _serde::Serialize, R: Send, R: Sync;
+            where R: _serde::Serialize, R: ruststream::runtime::MaybeSendSync;
   = note: this error originates in the derive macro `Serialized` (in Nightly builds, run with -Z macro-backtrace for more info)
