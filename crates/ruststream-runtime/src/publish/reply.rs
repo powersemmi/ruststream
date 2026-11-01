@@ -114,6 +114,8 @@ where
         PP: PublishPipeline,
     {
         let publisher = &self.inner.publisher;
+        #[cfg(feature = "std")]
+        let _turn = self.turn.lock().await;
         publisher
             .begin_transaction()
             .await
