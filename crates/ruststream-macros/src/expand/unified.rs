@@ -8,7 +8,7 @@
 //! the include-site value and instantiates the arena-carrying definition in `BindSlots::bind`,
 //! so the concrete publisher types are still inferred from the attached policies.
 
-use proc_macro2::{TokenStream as TokenStream2, TokenTree};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Ident, ItemFn, Pat};
 
@@ -142,7 +142,7 @@ pub(super) fn expand(
 
     // The runtime-neutral expansion: the body stays a function, and each runner states what it
     // needs of the function's future where it mounts it.
-    let arena = NeutralArena::of(outs, name, block);
+    let arena = NeutralArena::of(outs, name);
     let params = &arena.params;
     let bindings = &arena.bindings;
     let outs_param = if outs.is_empty() {
@@ -661,7 +661,7 @@ struct NeutralArena {
 }
 
 impl NeutralArena {
-    fn of(outs: &[OutParam<'_>], name: &Ident, block: &syn::Block) -> Self {
+    fn of(outs: &[OutParam<'_>], name: &Ident) -> Self {
         let mut params = Vec::new();
         let mut bounds = Vec::new();
         let mut bindings = Vec::new();
@@ -692,24 +692,30 @@ impl NeutralArena {
 
                 // An entry that publishes is a `Publisher`, hence `Clone`.
                 bounds.push(quote!(#entry: ::core::clone::Clone));
-                // A body that clones its entry moves the clone into a continuation, which the
-                // multi-thread runner needs `Send` and `'static`, publish future included. A body
-                // that never clones asks for none of it, so a `!Send` publisher stays legal when
-                // both runtimes' features are on in one build; the embedded runner never asks.
-                if clones_binding(out.pat, block) {
+                // The entry may be cloned into a continuation, which the multi-thread runner
+                // needs `Send` and `'static`, publish future included. The bounds are the
+                // per-feature ones: `Send` where `tokio` is on, nothing on embassy alone.
+                bounds.push(quote!(#entry: 'static + ::ruststream::runtime::MaybeSendSync));
+                // A capability bound written on the entry itself already makes it a `Publisher`
+                // with the settings the bound names; a second `Publisher` clause would restate
+                // them as a projection the compiler cannot equate with the first.
+                let on_entry_publisher = out.bounds.iter().any(|bound| {
+                    capability_named(bound, &["TransactionalPublisher", "RequestReply"])
+                });
+                if !on_entry_publisher {
                     bounds.push(quote! {
-                        #entry: 'static
-                            + ::ruststream::runtime::MaybeSendSync
-                            + ::ruststream::runtime::MaybeSendPublisher
-                    });
-                    bounds.push(quote! {
-                        #entry: ::ruststream::runtime::MaybeSendSink<#marker, #body>
-                    });
-                    bounds.push(quote! {
-                        <#entry as ::ruststream::runtime::SlotPublish<#marker, #body>>::Enc:
-                            ::ruststream::runtime::MaybeSendSync
+                        #entry: ::ruststream::runtime::MaybeSendPublisher<
+                            <#entry as ::ruststream::LocalPublisher>::Options
+                        >
                     });
                 }
+                bounds.push(quote! {
+                    #entry: ::ruststream::runtime::MaybeSendSink<#marker, #body>
+                });
+                bounds.push(quote! {
+                    <#entry as ::ruststream::runtime::SlotPublish<#marker, #body>>::Enc:
+                        ::ruststream::runtime::MaybeSendSync
+                });
             }
             // Every other capability also sits on the entry itself, which forwards it through
             // the slot (a broker grafts its own capability traits onto the entry types), so the
@@ -743,40 +749,6 @@ impl NeutralArena {
             bindings,
         }
     }
-}
-
-/// Whether the body calls `.clone()` on the binding an `Out` parameter introduces, which is how a
-/// body moves its entry into a continuation. The scan reads tokens, so a shadowing binding of the
-/// same name counts too, and costs a stricter bound at worst.
-fn clones_binding(pat: &Pat, block: &syn::Block) -> bool {
-    let binding = match pat {
-        Pat::TupleStruct(tuple) if tuple.elems.len() == 1 => &tuple.elems[0],
-        other => other,
-    };
-    let Pat::Ident(binding) = binding else {
-        return false;
-    };
-    let tokens: Vec<TokenTree> = block.stmts.iter().flat_map(stmt_tokens).collect();
-    contains_clone_call(&tokens, &binding.ident)
-}
-
-fn stmt_tokens(stmt: &syn::Stmt) -> Vec<TokenTree> {
-    quote!(#stmt).into_iter().collect()
-}
-
-/// Looks for `ident . clone` in a token sequence, descending into every group.
-fn contains_clone_call(tokens: &[TokenTree], ident: &Ident) -> bool {
-    tokens.iter().enumerate().any(|(index, tree)| match tree {
-        TokenTree::Group(group) => {
-            contains_clone_call(&group.stream().into_iter().collect::<Vec<_>>(), ident)
-        }
-        TokenTree::Ident(found) if found == ident => matches!(
-            (tokens.get(index + 1), tokens.get(index + 2)),
-            (Some(TokenTree::Punct(dot)), Some(TokenTree::Ident(method)))
-                if dot.as_char() == '.' && method == "clone"
-        ),
-        _ => false,
-    })
 }
 
 /// Whether a capability bound names one of `names` by its last path segment.

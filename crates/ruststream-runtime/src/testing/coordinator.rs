@@ -37,8 +37,9 @@ use super::hooks::{DueCall, DuePublish, HookRunner, Hooks, PublishTarget, Within
 mod scope;
 
 pub(crate) use scope::{
-    Delivered, HarnessScope, PendingRecord, PipelinePublish, Record, RecordedValue, SlotRecord,
-    calls_in_harness_scope, in_harness_scope, publishing_to, record_batch, record_slot_publish,
+    Anchor, Delivered, HarnessScope, PendingRecord, PipelinePublish, Record, RecordedValue,
+    SlotRecord, calls_in_harness_scope, in_harness_scope, publishing_to, record_batch,
+    record_slot_publish,
 };
 pub use scope::{Outcome, TestHooks};
 

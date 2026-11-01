@@ -1,6 +1,9 @@
 //! A device service that relays to a second bus: a token minted before the scopes rides the
 //! mount chain as a plain publish policy, and the harness reads what reached the other bus.
 
+// An `Out` publisher on the local bus is not `Send`, which only the embedded runtime alone allows,
+// so the file is empty where the tokio runtime is on too.
+#![cfg(not(feature = "tokio"))]
 // The app and its handlers are not `Send`: the harness polls them inside the test's future.
 #![allow(clippy::future_not_send)]
 

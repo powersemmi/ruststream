@@ -20,7 +20,7 @@ use crate::router::LocalPipeline;
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
-    Origin, PipelinePublish, paired, publishing_to, record_slot_publish,
+    Anchor, Origin, PipelinePublish, paired, publishing_to, record_slot_publish,
 };
 use crate::{
     Broker, Connected, HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, PairError,
@@ -50,6 +50,10 @@ pub struct LocalSlot<M, W, E, Pipe = LocalPipeline, Body = ()> {
     /// The broker the slot's publisher was paired against, which its publishes go to.
     #[cfg(feature = "testing")]
     origin: Origin,
+    /// The harness the entry was cloned under, which records the publishes of a clone that
+    /// outlives the handler's call.
+    #[cfg(feature = "testing")]
+    anchor: Anchor,
 }
 
 /// A clone is another handle on the same wired value, as the publisher's own clone is.
@@ -62,6 +66,8 @@ impl<M, W: Clone, E: Clone, Pipe: Clone, Body> Clone for LocalSlot<M, W, E, Pipe
             _declared: PhantomData,
             #[cfg(feature = "testing")]
             origin: self.origin,
+            #[cfg(feature = "testing")]
+            anchor: self.anchor.current_or(),
         }
     }
 }
@@ -124,10 +130,10 @@ where
         #[cfg(feature = "testing")]
         let slot: &LocalSlot<M, W, E, Pipe, Body> = self;
         #[cfg(feature = "testing")]
-        return publishing_to(slot.origin, async move {
+        return slot.anchor.scoped(publishing_to(slot.origin, async move {
             let leaf = Attributed::<M, W>(&slot.wired, PhantomData);
             slot.pipeline.send(&leaf, msg, options).await
-        });
+        }));
         #[cfg(not(feature = "testing"))]
         self.pipeline.send(&self.wired, msg, options)
     }
@@ -172,6 +178,8 @@ where
             _declared: PhantomData,
             #[cfg(feature = "testing")]
             origin,
+            #[cfg(feature = "testing")]
+            anchor: Anchor::default(),
         })
     }
 }

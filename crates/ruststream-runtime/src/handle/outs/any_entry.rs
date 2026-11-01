@@ -41,21 +41,23 @@ impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body> 
 
 /// A publisher whose futures are `Send` where the runtime crate's `tokio` feature is on, and any
 /// publisher otherwise. A body that clones its entry into a continuation asks it of the entry,
-/// so that a publish through `&entry` is proved `Send` for a body generic over its entry.
+/// so that a publish through `&entry` is proved `Send` for a body generic over its entry. `Options`
+/// is the wired publisher's per-message settings, which the entry publishes with, so a broker's
+/// builder steps stay on the entry's `message(..)`.
 #[cfg(feature = "tokio")]
 #[doc(hidden)]
-pub trait MaybeSendPublisher: Publisher {}
+pub trait MaybeSendPublisher<Options>: Publisher<Options = Options> {}
 
 #[cfg(feature = "tokio")]
-impl<Entry: Publisher> MaybeSendPublisher for Entry {}
+impl<Entry: Publisher> MaybeSendPublisher<Entry::Options> for Entry {}
 
 /// See the `tokio` form: without the feature every entry qualifies.
 #[cfg(not(feature = "tokio"))]
 #[doc(hidden)]
-pub trait MaybeSendPublisher {}
+pub trait MaybeSendPublisher<Options> {}
 
 #[cfg(not(feature = "tokio"))]
-impl<Entry: ?Sized> MaybeSendPublisher for Entry {}
+impl<Entry: ?Sized, Options> MaybeSendPublisher<Options> for Entry {}
 
 /// An entry whose publish sink is the entry itself, which is what lets a body generic over its
 /// entry prove its publish future `Send` where the `tokio` feature is on. Every entry qualifies
@@ -84,7 +86,8 @@ impl<Entry: ?Sized, M, Body> MaybeSendSink<M, Body> for Entry {}
 /// An entry whose live value publishes: the slot itself publishes through its path, and
 /// [`message`](Self::message) starts a typed publish over the slot's codec and dictionary.
 pub trait SlotPublish<M, Body = ()>:
-    SlotEntry<M, Body, Wire: LocalPublisher> + LocalPublisher
+    SlotEntry<M, Body, Wire: LocalPublisher>
+    + LocalPublisher<Options = <<Self as SlotEntry<M, Body>>::Wire as LocalPublisher>::Options>
 {
     /// The codec typed publishes through the slot encode with.
     type Enc: SlotEncoding;

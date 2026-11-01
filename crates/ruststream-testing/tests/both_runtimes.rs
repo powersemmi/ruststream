@@ -12,12 +12,11 @@ use std::rc::Rc;
 
 use embassy_futures::{block_on, yield_now};
 use ruststream::memory::MemoryBroker;
-use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish};
-use ruststream::memory::prelude::Publish;
-use ruststream::runtime::{AppInfo, EmbeddedApp, HandlerOutcome, Mounts, Out, RustStream};
+use ruststream::memory::local::LocalMemoryBroker;
+use ruststream::runtime::{AppInfo, EmbeddedApp, HandlerOutcome, Mounts, RustStream};
 use ruststream::testing::TestApp;
 use ruststream::testing::embedded::TestApp as EmbeddedTestApp;
-use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
+use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
 
 /// The board's bus: each subscription holds four messages.
 type Bus = LocalMemoryBroker<4>;
@@ -31,31 +30,10 @@ struct Reading<'a>(&'a [u8]);
 #[derive(Outgoing, Serialized)]
 struct Sent(&'static [u8]);
 
-/// The alert a high reading raises: the reading's bytes, as they came.
-#[derive(Outgoing, Serialized)]
-#[outgoing(name = "alerts")]
-struct Alert(Vec<u8>);
-
-/// The slot alerts leave through.
-#[derive(OutSlot)]
-#[publishes(Alert)]
-struct Alerts;
-
-/// Raises an alert for a reading of two digits or more.
+/// Acknowledges every reading it takes.
 #[subscriber("readings")]
-async fn on_reading(
-    reading: &Reading<'_>,
-    Out(alerts): Out<impl Publisher, Alerts>,
-) -> HandlerOutcome {
-    if reading.0.len() > 1
-        && alerts
-            .message(&Alert(reading.0.to_vec()))
-            .publish()
-            .await
-            .is_err()
-    {
-        return HandlerOutcome::retry();
-    }
+async fn on_reading(reading: &Reading<'_>) -> HandlerOutcome {
+    let _ = reading.0;
     HandlerOutcome::ack()
 }
 
@@ -80,7 +58,7 @@ async fn on_local(reading: &Reading<'_>) -> HandlerOutcome {
 /// The server's app, on tokio.
 fn server() -> RustStream {
     RustStream::new(AppInfo::new("levels", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(on_reading).out(Alerts, Publish).include(on_audit)
+        b.include(on_reading).include(on_audit)
     })
 }
 
@@ -96,10 +74,7 @@ fn server_with_local() -> RustStream {
 #[ruststream::app(runtime = embassy)]
 fn device(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
-        b.include(on_reading)
-            .out(Alerts, LocalMemoryPublish)
-            .include(on_audit)
-            .include(on_local)
+        b.include(on_reading).include(on_audit).include(on_local)
     })
 }
 
@@ -119,7 +94,6 @@ async fn the_server_runs_the_shared_handlers() -> Result<(), Box<dyn Error>> {
         .assert_called(1)
         .settled(HandlerOutcome::ack());
     broker.subscriber("audit").assert_called(1);
-    broker.published::<()>("alerts").assert_called(1);
     Ok(())
 }
 
@@ -139,7 +113,6 @@ fn the_device_runs_the_same_handlers() -> Result<(), Box<dyn Error>> {
         bus.subscriber("local")
             .assert_called(1)
             .settled(HandlerOutcome::ack());
-        bus.published::<()>("alerts").assert_called(1);
         tb.shutdown().await?;
         Ok(())
     })

@@ -2,6 +2,9 @@
 //! handlers with `#[subscriber]`, the app with `#[ruststream::app(runtime = embassy)]`, and the test handing the app
 //! function its bus.
 
+// An `Out` publisher on the local bus is not `Send`, which only the embedded runtime alone allows,
+// so the file is empty where the tokio runtime is on too.
+#![cfg(not(feature = "tokio"))]
 // The app and its handlers are not `Send`: the harness polls them inside the test's future.
 #![allow(clippy::future_not_send)]
 
