@@ -204,9 +204,12 @@ impl Publisher for Reading {
 /// what every broker crate used to clone the whole map for.
 const STAMP: &str = "x-stamp";
 
+/// What a publisher was handed: the destination, the bytes and the headers.
+type Handed = (String, Vec<u8>, HeaderMap);
+
 /// A publisher that keeps everything it was handed, for the assertions about contents.
 #[derive(Clone, Default)]
-struct Keeper(Arc<Mutex<Option<(String, Vec<u8>, HeaderMap)>>>);
+struct Keeper(Arc<Mutex<Option<Handed>>>);
 
 impl Keeper {
     /// The destination, the payload and the headers of the last publish.
