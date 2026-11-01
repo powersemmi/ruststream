@@ -94,6 +94,29 @@ on a `threads(n)` subscription, on the delivery's thread. The continuation's fut
 the tokio runtime on; with the embedded runtime alone it carries no `Send` and may hold the local
 bus's publisher or an `Rc`.
 
+## A failed runtime publish (`.error`)
+
+The runtime publishes the delayed `retry_after` copy, the copy for a declared dead letter and the
+reply of `out_reply`. When such a publish fails, `.error(async move |err, message| ..)` on the
+returned `HandlerOutcome` (or `ctx.after(outcome).error(..)` from the context) learns of it: `err`
+is the cause, `message` the `FailedMessage` that did not go out. The handler never runs again
+because of it, and a failed reply no longer requeues the delivery. A `.then` chained beside it
+(`and_after(..).error(..)` on the outcome, `.then(..).error(..)` or `.error(..).then(..)` on the
+context) runs only when the publish succeeded. Without `.error` the failure is logged with the
+subscription, the destination, the message type and the error, and the copy is lost.
+
+```rust
+use ruststream::prelude::*;
+
+#[subscriber("payments")]
+async fn reconcile(payment: &Payment) -> HandlerOutcome {
+    let id = payment.id;
+    HandlerOutcome::retry_after(std::time::Duration::from_secs(5)).error(async move |err, lost| {
+        tracing::error!(id, %err, destination = lost.destination(), "the retry is lost");
+    })
+}
+```
+
 ## Settings the mount site fills in
 
 A `#[subscriber]` with no source in the attribute leaves the name to the mount; the definition

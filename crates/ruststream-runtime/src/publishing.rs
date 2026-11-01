@@ -653,8 +653,9 @@ where
 /// `DecodeCodec` decodes the incoming message; the reply leaves through the reply sink
 /// `Wiring` (encoded by the reply stack, or byte-for-byte through a bare publisher) to the
 /// definition's reply name. A handler returning `Err(result)`
-/// skips the publish; a failed reply publish nacks the incoming message with `requeue = true`,
-/// so the broker redelivers it instead of silently losing the reply.
+/// skips the publish; a failed reply publish is logged and the incoming message is acknowledged,
+/// because the handler already did its work: the `.error` continuation the context registered
+/// learns of the loss.
 pub struct PublishingHandler<Def: PublishingDef, DecodeCodec, Wiring, Pipeline = PublishIdentity> {
     pub(crate) def: Def,
     pub(crate) codec: DecodeCodec,

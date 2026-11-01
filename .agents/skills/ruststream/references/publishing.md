@@ -61,7 +61,7 @@ or any of these on a `Serialized` (byte-for-byte) reply, is a compile error.
 Return `Result<Reply, HandlerOutcome>` to control acknowledgement: `Ok(reply)` publishes and acks,
 `Err(outcome)` publishes nothing and the dispatcher acts on the returned `HandlerOutcome`. Spell the
 `Result` out in the signature (a type alias is treated as a plain reply type). A failed reply
-publish nacks the incoming message with `requeue = true`.
+publish is logged and the delivery is acked: register `ctx.after(HandlerOutcome::ack()).error(async move |err, reply| ..)` to learn of it.
 
 The `reply(..)` clause takes a string literal, and a name template does not resolve here.
 Answering somewhere else per delivery (a direct `reply-to`, a `ROUTER` peer identity) is a

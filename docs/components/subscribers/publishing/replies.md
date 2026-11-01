@@ -17,7 +17,8 @@ A type that names nothing takes the destination from the clause, `reply("dest")`
 A destination declared on the type wins over a name at the mount site, and startup logs a warning for such a registration.
 The forms of a destination are on the [Destinations](./outgoing.md) page.
 `Result<Reply, HandlerOutcome>` keeps the settlement in the handler's hands: `Ok` publishes the reply and acks, `Err` publishes nothing and settles by the [outcome](../messages/handler-outcome.md).
-A reply whose publish fails nacks the delivery with requeue, so a replying handler has to be safe to run twice.
+A reply whose publish fails is logged and lost, and the delivery is acknowledged: the handler already did its work, and a requeue would repeat it.
+`ctx.after(HandlerOutcome::ack()).error(..)` registers the [continuation](../messages/error.md) that learns of it.
 A [batch handler](../batches.md) returns one `Vec` of replies per batch.
 
 With nothing else said, the reply leaves through the broker's default policy under the default codec.

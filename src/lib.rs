@@ -75,9 +75,7 @@
 //!   lifecycle and the generated entry point ([`runtime::cli`]).
 //! * `embassy`: the embedded runner on embassy's executor and clock, for a device with a heap
 //!   and no operating system. Its items (the `EmbeddedApp` application object, its `Control`
-//!   and `Health`, the `EmbassyClock`) are re-exported in [`runtime`], and their reference is the
-//!   documentation of
-//!   [`ruststream-runtime-embassy`](https://docs.rs/ruststream-runtime-embassy).
+//!   and `Health`, the `EmbassyClock`) are re-exported in [`runtime`], where their reference is.
 //!
 //! Codec features are mutually compatible and enable only the deserializers you need. They work
 //! on either runtime. On a device without the standard library `json` and `cbor` build, with the
