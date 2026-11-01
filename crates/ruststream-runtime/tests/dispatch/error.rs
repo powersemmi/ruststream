@@ -670,3 +670,52 @@ async fn a_published_reply_runs_the_context_then_and_not_the_error() {
         .assert_called_once()
         .with(&Answer { id: 4 });
 }
+
+/// Asks for a retry later, and sends the alert through its own `Out` publisher if the copy is lost.
+#[subscriber(Queue { name: "outs" })]
+async fn on_job_out(job: &Job, Out(alerts): Out<impl Publisher + Clone>) -> HandlerOutcome {
+    let id = job.id;
+    let alerts = alerts.clone();
+    HandlerOutcome::retry_after(RETRY_DELAY).error(async move |err, lost| {
+        let alert = Alert {
+            destination: lost.destination().to_owned(),
+            error: err.to_string(),
+            bytes: usize::try_from(id).expect("small id"),
+        };
+        alerts
+            .message(&alert)
+            .to("alerts")
+            .publish()
+            .await
+            .expect("alert published");
+    })
+}
+
+/// The `.error` closure publishes through a cloned `Out` publisher it captured.
+#[tokio::test(start_paused = true)]
+async fn the_error_continuation_publishes_through_a_captured_out_publisher() {
+    let app =
+        RustStream::new(AppInfo::new("errors", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(on_job_out)
+                .out(DefaultSlot, Publish)
+                .out_retry(DownPublish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&Job { id: 7 })
+        .to("outs")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("advance");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Alert>("alerts")
+        .assert_called_once()
+        .with(&Alert {
+            destination: "outs".to_owned(),
+            error: "broker down".to_owned(),
+            bytes: 7,
+        });
+}

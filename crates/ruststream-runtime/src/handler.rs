@@ -42,6 +42,23 @@ pub trait MaybeSend {}
 #[cfg(not(feature = "tokio"))]
 impl<Value: ?Sized> MaybeSend for Value {}
 
+/// `Send + Sync` where the runtime crate's `tokio` feature is on, and nothing otherwise: what an
+/// arena entry a body clones into a continuation, and borrows across a publish, must be.
+#[cfg(feature = "tokio")]
+#[doc(hidden)]
+pub trait MaybeSendSync: Send + Sync {}
+
+#[cfg(feature = "tokio")]
+impl<Value: Send + Sync + ?Sized> MaybeSendSync for Value {}
+
+/// See the `tokio` form: without the feature every type is `MaybeSendSync`.
+#[cfg(not(feature = "tokio"))]
+#[doc(hidden)]
+pub trait MaybeSendSync {}
+
+#[cfg(not(feature = "tokio"))]
+impl<Value: ?Sized> MaybeSendSync for Value {}
+
 /// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: `Send` where the
 /// runtime crate's `tokio` feature is on.
 ///
@@ -488,6 +505,44 @@ impl HandlerOutcome {
     ///     }
     ///     HandlerOutcome::retry_after(Duration::from_secs(5)).error(async move |err, lost| {
     ///         tracing::error!(%err, destination = lost.destination(), "the retry is lost");
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    ///
+    /// A lost copy is announced through an `Out` publisher the handler clones into the closure
+    /// (`Out<impl Publisher + Clone>`):
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::prelude::*;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Outgoing, Serialize)]
+    /// #[outgoing(name = "alerts")]
+    /// struct Alert {
+    ///     order: u64,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(
+    ///     order: &Order,
+    ///     Out(alerts): Out<impl Publisher + Clone>,
+    /// ) -> HandlerOutcome {
+    ///     let id = order.id;
+    ///     let alerts = alerts.clone();
+    ///     HandlerOutcome::retry_after(Duration::from_secs(5)).error(async move |_err, _lost| {
+    ///         // The alert itself may fail too; there is nobody left to tell.
+    ///         let _ = alerts.message(&Alert { order: id }).publish().await;
     ///     })
     /// }
     /// # }

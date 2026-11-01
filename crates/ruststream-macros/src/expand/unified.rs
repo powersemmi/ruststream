@@ -672,8 +672,9 @@ impl NeutralArena {
             // `LocalPublisher`, and the multi-thread runner checks `Send` at its mount.
             let capability = Runtime::Embassy.capability(out.bounds);
             let body = body_ty(out.bodies.as_ref());
+            // `'static` so a body can move a clone of the entry into a continuation.
             bounds.push(quote! {
-                #entry: ::ruststream::runtime::SlotEntry<#marker, #body, Wire: #capability>
+                #entry: 'static + ::ruststream::runtime::SlotEntry<#marker, #body, Wire: #capability>
             });
             if out.bounds.iter().any(|bound| {
                 capability_named(

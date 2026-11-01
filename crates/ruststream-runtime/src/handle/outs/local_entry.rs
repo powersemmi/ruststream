@@ -52,6 +52,20 @@ pub struct LocalSlot<M, W, E, Pipe = LocalPipeline, Body = ()> {
     origin: Origin,
 }
 
+/// A clone is another handle on the same wired value, as the publisher's own clone is.
+impl<M, W: Clone, E: Clone, Pipe: Clone, Body> Clone for LocalSlot<M, W, E, Pipe, Body> {
+    fn clone(&self) -> Self {
+        Self {
+            wired: self.wired.clone(),
+            codec: self.codec.clone(),
+            pipeline: self.pipeline.clone(),
+            _declared: PhantomData,
+            #[cfg(feature = "testing")]
+            origin: self.origin,
+        }
+    }
+}
+
 impl<M, W, E, Pipe, Body> fmt::Debug for LocalSlot<M, W, E, Pipe, Body> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LocalSlot").finish_non_exhaustive()
