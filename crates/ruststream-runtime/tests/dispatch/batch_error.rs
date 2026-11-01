@@ -454,3 +454,48 @@ async fn a_published_batch_reply_runs_the_context_then() {
 
     assert_eq!(*log.lock().expect("log"), ["then"]);
 }
+
+/// Answers a whole batch with one receipt per job, and records which replies the `.error` was
+/// told of.
+#[subscriber(UniformQueue::new(Queue { name: "partial" }).max_wait(Duration::from_secs(1)), reply)]
+async fn partial(jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> Vec<Receipt> {
+    let error = ctx.state().clone();
+    ctx.after(HandlerOutcome::ack())
+        .error(async move |failures: Failures| {
+            let each: Vec<String> = failures
+                .map(|failed| {
+                    let payload = String::from_utf8_lossy(failed.message().payload()).into_owned();
+                    format!(" {payload}")
+                })
+                .collect();
+            error
+                .lock()
+                .expect("log")
+                .push(format!("error{}", each.concat()));
+        });
+    jobs.iter().map(|job| Receipt { id: job.id }).collect()
+}
+
+/// The broker takes the first reply and refuses the second: the `.error` is told of the refused
+/// reply and of the one never sent, not of the reply that went out.
+#[tokio::test(start_paused = true)]
+async fn a_batch_reply_that_fails_midway_reports_the_failed_and_the_unsent_replies() {
+    let log = Log::default();
+    let startup = Arc::clone(&log);
+    let app = RustStream::new(AppInfo::new("batch", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(startup))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(partial.batch(nonzero!(3)))
+                .out_reply(RefusesJobPublish(2))
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+    join_all([
+        publish_job(&tb, 1, "partial"),
+        publish_job(&tb, 2, "partial"),
+        publish_job(&tb, 3, "partial"),
+    ])
+    .await;
+    tb.settle().await.expect("settle");
+
+    assert_eq!(*log.lock().expect("log"), [r#"error {"id":2} {"id":3}"#]);
+}

@@ -1,5 +1,8 @@
 //! Reply wirings: how a handler's return value reaches a publisher.
 
+use core::error::Error as StdError;
+use core::fmt;
+
 use serde::Serialize;
 use tracing::warn;
 
@@ -10,6 +13,46 @@ use crate::codec::Codec;
 use crate::lifecycle::BoxError;
 use crate::publish::sealed::Sealed;
 use crate::{PayloadForm, Publisher, TransactionalPublisher};
+
+/// Why a batch of replies did not leave whole, and how many of them had left before it failed.
+///
+/// Machinery of the batch dispatch; never named directly.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct PublishBatchError {
+    sent: usize,
+    error: BoxError,
+}
+
+impl PublishBatchError {
+    fn new(sent: usize, error: BoxError) -> Self {
+        Self { sent, error }
+    }
+
+    /// How many replies, from the front of the batch, were published before the failure.
+    #[must_use]
+    pub const fn sent(&self) -> usize {
+        self.sent
+    }
+
+    /// The error of the publish that failed.
+    #[must_use]
+    pub fn into_error(self) -> BoxError {
+        self.error
+    }
+}
+
+impl fmt::Display for PublishBatchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.error, f)
+    }
+}
+
+impl StdError for PublishBatchError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        Some(&*self.error)
+    }
+}
 
 /// The live reply sink a batch's replies travel through.
 ///
@@ -40,7 +83,7 @@ pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         encode: <Self::Payload as PayloadForm>::Encode<'a>,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send
+    ) -> impl Future<Output = Result<(), PublishBatchError>> + Send
     where
         T: Serialize + Sync,
         PP: PublishPipeline;
@@ -70,15 +113,16 @@ where
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         mut encode: <P::Payload as PayloadForm>::Encode<'a>,
-    ) -> Result<(), BoxError>
+    ) -> Result<(), PublishBatchError>
     where
         T: Serialize + Sync,
         PP: PublishPipeline,
     {
-        for reply in replies {
+        for (sent, reply) in replies.iter().enumerate() {
             let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
             self.publish_batched(name, reply, pipeline, cx, slot)
-                .await?;
+                .await
+                .map_err(|error| PublishBatchError::new(sent, error))?;
         }
         Ok(())
     }
@@ -108,18 +152,20 @@ where
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         mut encode: <P::Payload as PayloadForm>::Encode<'a>,
-    ) -> Result<(), BoxError>
+    ) -> Result<(), PublishBatchError>
     where
         T: Serialize + Sync,
         PP: PublishPipeline,
     {
+        // The transaction aborts as a whole, so a failure leaves none of the replies sent.
+        let aborted = |error| PublishBatchError::new(0, error);
         let publisher = &self.inner.publisher;
         #[cfg(feature = "std")]
         let _turn = self.turn.lock().await;
         publisher
             .begin_transaction()
             .await
-            .map_err(BoxError::from)?;
+            .map_err(|error| aborted(BoxError::from(error)))?;
         for reply in replies {
             let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
             if let Err(err) = self
@@ -128,12 +174,15 @@ where
                 .await
             {
                 abort_quietly(publisher).await;
-                return Err(err);
+                return Err(aborted(err));
             }
         }
         // Per the TransactionalPublisher contract a failed commit closes the transaction, so
         // there is nothing left to abort here; the error alone settles the batch as failed.
-        publisher.commit().await.map_err(BoxError::from)
+        publisher
+            .commit()
+            .await
+            .map_err(|error| aborted(BoxError::from(error)))
     }
 }
 

@@ -266,7 +266,11 @@ where
                         // The `.error` the context registered is told of every reply.
                         (Err(err), Some(reaction)) => {
                             let codec = self.publisher.reply_codec();
-                            let lost = replies
+                            // A plain publish stops at the first failure: the replies before
+                            // it went out and are not lost.
+                            let sent = err.sent();
+                            let err = err.into_error();
+                            let lost = replies[sent..]
                                 .iter()
                                 .map(|reply| {
                                     let bytes = reply.encoded_with(codec);

@@ -291,9 +291,9 @@ pub use publish::{
     DestinationSettled, DestinationUse, Direct, Either, EncodeOutcome, FitsOffer, FitsTaken,
     InTransaction, LocalOutPipeline, LowerOutTransforms, MapReplyPolicy, NameReplyCodec,
     NamedDestinationSend, NamesDestination, NamingOffered, NamingUntaken, NarrowToUse,
-    PayloadError, PublishingDirectly, RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy,
-    SlotStackUse, SlotTransforms, Transactional, TransactionalReply, TypedPublisher, WireBytes,
-    WirePayload,
+    PayloadError, PublishBatchError, PublishingDirectly, RawReplyWiring, ReplyPublisher,
+    ReplyWiring, SendOnlyPolicy, SlotStackUse, SlotTransforms, Transactional, TransactionalReply,
+    TypedPublisher, WireBytes, WirePayload,
 };
 #[cfg(feature = "alloc")]
 pub use publish::{
