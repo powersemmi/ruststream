@@ -327,16 +327,16 @@ impl<C: Clone> SlotEncoding for C {}
 /// ```
 pub trait LocalOutEntry<M, Body = ()> {
     /// The wired live value: the bound policy's live form.
-    type Wire;
+    type Wire: MaybeSendSync;
 
     /// The codec the entry's typed publishes encode with: the include site's, or
     /// [`UnnamedCodec`](crate::UnnamedCodec) in a build without one, where the entry publishes
     /// only the types that carry their own bytes.
-    type Enc: SlotEncoding;
+    type Enc: SlotEncoding + MaybeSendSync;
 
     /// The publish path every message leaving the entry travels: the slot's transforms above
     /// the leaf call.
-    type Pipe: LocalOutPipeline<Self::Wire>;
+    type Pipe: LocalOutPipeline<Self::Wire> + MaybeSendSync;
 
     /// The entry behind the bound. Machinery: [`Outs::get`](super::Outs::get) resolves the
     /// concrete slot through it.
@@ -346,8 +346,9 @@ pub trait LocalOutEntry<M, Body = ()> {
 
 impl<M, W, E, Pipe, Body> LocalOutEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body>
 where
-    E: SlotEncoding,
-    Pipe: LocalOutPipeline<W>,
+    W: MaybeSendSync,
+    E: SlotEncoding + MaybeSendSync,
+    Pipe: LocalOutPipeline<W> + MaybeSendSync,
 {
     type Wire = W;
     type Enc = E;

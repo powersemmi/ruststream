@@ -149,7 +149,6 @@ where
     Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
-    Def::Context: MaybeSendSync + 'static,
     RetryPipeline: Clone,
     Source::Subscriber: MaybeSendSync + 'static,
     SourceMessage<B, Source>: Settle + 'static,
@@ -229,7 +228,6 @@ where
     Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
-    Def::Context: MaybeSendSync + 'static,
     RetryPipeline: Clone,
     Source::Subscriber: BatchSubscriber + MaybeSendSync + 'static,
     SourceMessage<B, Source>: Settle + 'static,

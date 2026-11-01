@@ -748,71 +748,78 @@ mod tests {
         );
     }
 
-    /// A delivery of a broker whose types stay on one thread: it records its settlement in an
-    /// `Rc`, so it is neither `Send` nor `Sync`, and it implements only the local contract twin.
-    struct OnOneThread {
-        headers: HeaderMap,
-        nacked: Rc<Cell<bool>>,
-    }
+    // A delivery that is not `Sync` holds an `Rc`: it exists where no multi-thread runtime asks
+    // for `Send`, which is the build without the `tokio` feature.
+    #[cfg(not(feature = "tokio"))]
+    mod one_thread {
+        use super::*;
 
-    impl IncomingMessage for OnOneThread {
-        fn payload(&self) -> &[u8] {
-            b"reading"
+        /// A delivery of a broker whose types stay on one thread: it records its settlement in an
+        /// `Rc`, so it is neither `Send` nor `Sync`, and it implements only the local contract twin.
+        struct OnOneThread {
+            headers: HeaderMap,
+            nacked: Rc<Cell<bool>>,
         }
 
-        fn headers(&self) -> &HeaderMap {
-            &self.headers
+        impl IncomingMessage for OnOneThread {
+            fn payload(&self) -> &[u8] {
+                b"reading"
+            }
+
+            fn headers(&self) -> &HeaderMap {
+                &self.headers
+            }
         }
-    }
 
-    impl Settle for OnOneThread {
-        fn ack(self) -> impl Future<Output = Result<(), AckError>> {
-            ready(Ok(()))
+        impl Settle for OnOneThread {
+            fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+                ready(Ok(()))
+            }
+
+            fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+                self.nacked.set(true);
+                ready(Ok(()))
+            }
         }
 
-        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
-            self.nacked.set(true);
-            ready(Ok(()))
+        #[tokio::test]
+        async fn a_delivery_that_is_not_sync_is_lent_to_the_handler_with_its_headers() {
+            let nacked = Rc::new(Cell::new(false));
+            let mut headers = HeaderMap::new();
+            headers.insert("sensor", "north");
+            let mut slot = Slot::new(OnOneThread {
+                headers,
+                nacked: Rc::clone(&nacked),
+            });
+            let delivery: Delivery<()> = Delivery::empty();
+            let failure = DispatchFailure::new(FailurePolicies::default(), Shutdown::new());
+            let host = Tracked(TaskTracker::new());
+            let read_header = |_: &OnOneThread, ctx: &mut Context<'_>| {
+                let north = ctx.headers().get("sensor") == Some(b"north".as_slice());
+                ready(if north {
+                    HandlerOutcome::drop()
+                } else {
+                    HandlerOutcome::ack()
+                })
+            };
+
+            dispatch(
+                &Arc::new(read_header),
+                &mut slot,
+                &mut BytesMut::new(),
+                "readings",
+                &(),
+                &delivery,
+                &host,
+                &failure,
+                HeadersAtOnce,
+            )
+            .await;
+
+            assert!(
+                nacked.get(),
+                "the handler read the header and dropped the delivery"
+            );
         }
-    }
-
-    #[tokio::test]
-    async fn a_delivery_that_is_not_sync_is_lent_to_the_handler_with_its_headers() {
-        let nacked = Rc::new(Cell::new(false));
-        let mut headers = HeaderMap::new();
-        headers.insert("sensor", "north");
-        let mut slot = Slot::new(OnOneThread {
-            headers,
-            nacked: Rc::clone(&nacked),
-        });
-        let delivery: Delivery<()> = Delivery::empty();
-        let failure = DispatchFailure::new(FailurePolicies::default(), Shutdown::new());
-        let host = Tracked(TaskTracker::new());
-        let read_header = |_: &OnOneThread, ctx: &mut Context<'_>| {
-            let north = ctx.headers().get("sensor") == Some(b"north".as_slice());
-            ready(if north {
-                HandlerOutcome::drop()
-            } else {
-                HandlerOutcome::ack()
-            })
-        };
-
-        dispatch(
-            &Arc::new(read_header),
-            &mut slot,
-            &mut BytesMut::new(),
-            "readings",
-            &(),
-            &delivery,
-            &host,
-            &failure,
-            HeadersAtOnce,
-        )
-        .await;
-
-        assert!(
-            nacked.get(),
-            "the handler read the header and dropped the delivery"
-        );
     }
 }

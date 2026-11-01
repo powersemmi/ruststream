@@ -48,6 +48,8 @@ mod in_process;
 mod lane_traits_without_macros;
 mod lanes;
 #[cfg(all(feature = "memory", feature = "testing"))]
+// Its brokers hold `Rc`, which does not compile next to a multi-thread runtime.
+#[cfg(not(feature = "tokio"))]
 mod local_family;
 mod macro_params;
 mod macro_subscriber;

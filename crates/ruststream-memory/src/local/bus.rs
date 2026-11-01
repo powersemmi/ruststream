@@ -19,7 +19,7 @@ use ruststream_runtime::testing::Coordinator;
 
 use super::LocalMemoryError;
 use super::alloc_prelude::*;
-use super::share::{Guarded, RawLock, Shared};
+use super::share::{Guarded, RawLock, Share, Shared, Sharing};
 
 /// One message as a subscription holds it: the payload and the headers the publish handed over,
 /// and how many times it has been delivered.
@@ -191,7 +191,7 @@ impl<const CAP: usize> Bus<CAP> {
                 subscriptions: Vec::new(),
             }),
             #[cfg(feature = "testing")]
-            harness: Shared::default(),
+            harness: Sharing::new(Harness::default()),
         }
     }
 
@@ -208,7 +208,7 @@ impl<const CAP: usize> Bus<CAP> {
             if !state.live {
                 return Err(LocalMemoryError::ShutDown);
             }
-            let subscription = Shared::new(Subscription {
+            let subscription = Sharing::new(Subscription {
                 name: name.into(),
                 queue: Channel::new(),
                 state: Guarded::new(SubscriptionState {
@@ -217,9 +217,9 @@ impl<const CAP: usize> Bus<CAP> {
                     closing: WakerRegistration::new(),
                 }),
                 #[cfg(feature = "testing")]
-                harness: Shared::clone(&self.harness),
+                harness: Clone::clone(&self.harness),
             });
-            state.subscriptions.push(Shared::clone(&subscription));
+            state.subscriptions.push(Clone::clone(&subscription));
             Ok(subscription)
         })
     }
@@ -228,7 +228,7 @@ impl<const CAP: usize> Bus<CAP> {
         self.state.with(|state| {
             state
                 .subscriptions
-                .retain(|open| !Shared::ptr_eq(open, subscription));
+                .retain(|open| !Sharing::same(open, subscription));
         });
         subscription.unsubscribe();
     }

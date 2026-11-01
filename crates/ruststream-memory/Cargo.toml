@@ -35,7 +35,6 @@ std = [
     "dep:tokio",
     "dep:tracing",
     "tracing/std",
-    "ruststream-core/send",
     "dep:critical-section",
     "critical-section/std",
     "tracing/attributes",

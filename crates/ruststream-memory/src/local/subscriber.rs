@@ -189,7 +189,7 @@ impl<const CAP: usize> LocalMemorySubscriber<CAP> {
         LocalMemoryMessage {
             delivery,
             settled: false,
-            subscription: Shared::clone(&self.subscription),
+            subscription: Clone::clone(&self.subscription),
         }
     }
 }
