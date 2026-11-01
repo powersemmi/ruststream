@@ -6,6 +6,7 @@ use alloc::sync::Arc;
 use core::time::Duration;
 
 use bytes::Bytes;
+use futures::FutureExt;
 use tracing::warn;
 
 #[cfg(feature = "testing")]
@@ -13,7 +14,7 @@ use super::harness_scope;
 use super::{Delivery, RETRY_COUNT_HEADER, Slot};
 #[cfg(doc)]
 use crate::IncomingMessage;
-use crate::handler::{Continuation, HandlerResult};
+use crate::handler::HandlerResult;
 use crate::host::{HostDetach, PrepareKept};
 use crate::publish::PublishContext;
 #[cfg(feature = "tokio")]
@@ -680,6 +681,12 @@ where
     }
     // The original is gone, so the runtime publishes the copy: what its result is handed to
     // travels with the copy from here.
+    #[cfg(feature = "tokio")]
+    let reaction = reaction.take().map(|mut reaction| {
+        reaction.hold_headers(headers.clone());
+        reaction
+    });
+    #[cfg(not(feature = "tokio"))]
     let reaction = reaction.take();
 
     // The copy's future is built when it is due, not when it is scheduled: the task that waits
@@ -691,21 +698,17 @@ where
     // handed on to it: the copy is one of the delivery's publishes.
     #[cfg(feature = "testing")]
     let scope = harness_scope(delivery);
-    let input = route.input;
     // The registration's retry publisher exists only on a runner that spawns onto a thread pool,
     // whose build has the `tokio` feature and so a `Send` continuation.
     #[cfg(not(feature = "tokio"))]
     drop(reaction);
-    let republish = move || {
+    let republish = move |run_here: bool| {
         let republish = async move {
             let cx = PublishContext::new(&subscription, &delivered, &context);
-            // The headers are copied for the continuation only where the outcome asked for one.
-            #[cfg(feature = "tokio")]
-            let failed_headers = reaction.is_some().then(|| headers.clone());
             let copy =
                 OutgoingMessage::new(target.as_ref(), payload.as_ref()).with_headers(headers);
             let sent = route.publisher.publish_copy(copy, &cx).await;
-            match sent {
+            let done = match sent {
                 Ok(()) => {
                     #[cfg(feature = "tokio")]
                     let done = publish_done(reaction);
@@ -715,15 +718,28 @@ where
                 }
                 Err(err) => {
                     #[cfg(feature = "tokio")]
-                    let lost = publish_lost(reaction, &subscription, &target, input, err, || {
-                        FailedMessage::new(&target, payload, failed_headers.unwrap_or_default())
-                    });
+                    let lost = {
+                        let mut reaction = reaction;
+                        let held = reaction.as_mut().map(Reaction::take_headers);
+                        let input = route.input;
+                        publish_lost(reaction, &subscription, &target, input, err, || {
+                            FailedMessage::new(&target, payload, held.unwrap_or_default())
+                        })
+                    };
                     #[cfg(not(feature = "tokio"))]
-                    let lost = publish_lost(None, &subscription, &target, input, err, || {
+                    let lost = publish_lost(None, &subscription, &target, route.input, err, || {
                         FailedMessage::new(&target, payload, HeaderMap::new())
                     });
                     lost
                 }
+            };
+            // A delayed copy runs the continuation in its own task; an immediate one hands it back.
+            match done {
+                Some(reaction) if run_here => {
+                    reaction.await;
+                    None
+                }
+                other => other,
             }
         };
         #[cfg(feature = "testing")]
@@ -737,7 +753,7 @@ where
         // An immediate copy is awaited on the dispatch path: there is no timer to wait for, and a
         // detached task would let the loop pull the next delivery before this one is back. What
         // the handler's `.error` makes of a failure runs beside the loop.
-        if let Some(reaction) = republish().await {
+        if let Some(reaction) = republish(false).await {
             host.detach_boxed(reaction);
         }
         return Ok(());
@@ -748,29 +764,13 @@ where
     // drives the reaction, so a test sees the copy rather than a race.
     #[cfg(feature = "testing")]
     if let Some(coordinator) = delivery.hooks.coordinator() {
-        coordinator.schedule_redelivery_future(delay, reacting(republish()));
+        coordinator.schedule_redelivery_future(delay, republish(true).map(drop));
         return Ok(());
     }
     // The timer is the delivery's own work, so it runs where the delivery ran; being tracked, a
     // graceful shutdown waits for it and the copy leaves before the broker closes.
-    host.detach_after_with(delay, move || reacting(republish()));
+    host.detach_after_with(delay, move || republish(true).map(drop));
     Ok(())
-}
-
-/// Runs a copy's publish and, when it failed, what the handler's `.error` made of the failure:
-/// the task that waited out the delay is already tracked, so the reaction runs in it.
-#[cfg(feature = "tokio")]
-async fn reacting(publish: impl Future<Output = Option<Continuation>>) {
-    if let Some(reaction) = publish.await {
-        reaction.await;
-    }
-}
-
-/// Without the `tokio` feature no runner publishes a deferred copy through the registration's
-/// retry publisher, and a copy that fails there has no continuation to run.
-#[cfg(not(feature = "tokio"))]
-async fn reacting(publish: impl Future<Output = Option<Continuation>>) {
-    let _ = publish.await.is_none();
 }
 
 #[cfg(test)]

@@ -169,6 +169,9 @@ pub struct Reaction(Box<Registered>);
 struct Registered {
     error: ErrorHook,
     then: Option<Continuation>,
+    /// The headers of the failed copy, kept here (boxed with the registration) so the task that
+    /// publishes the copy carries one pointer for them and nothing when no `.error` was set.
+    headers: HeaderMap,
 }
 
 impl fmt::Debug for Reaction {
@@ -181,11 +184,25 @@ impl Reaction {
     /// A reaction handing a failure to `error` and a success to `then`.
     #[must_use]
     pub fn new(error: ErrorHook, then: Option<Continuation>) -> Self {
-        Self(Box::new(Registered { error, then }))
+        Self(Box::new(Registered {
+            error,
+            then,
+            headers: HeaderMap::new(),
+        }))
     }
 
     /// The continuation registered beside `.error`, which a delivery that made no publish runs
     /// once it is settled.
+    /// Keeps the headers the failed copy carries, for the [`FailedMessage`] a failure builds.
+    pub(crate) fn hold_headers(&mut self, headers: HeaderMap) {
+        self.0.headers = headers;
+    }
+
+    /// Takes the headers kept with [`hold_headers`](Self::hold_headers).
+    pub(crate) fn take_headers(&mut self) -> HeaderMap {
+        core::mem::take(&mut self.0.headers)
+    }
+
     pub(crate) fn into_then(self) -> Option<Continuation> {
         self.0.then
     }

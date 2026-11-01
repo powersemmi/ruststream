@@ -811,9 +811,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// delivery that registered none pays the emptiness check alone.
     #[inline]
     pub(crate) fn take_reaction_for(&mut self, outcome: HandlerResult) -> Option<Reaction> {
-        if self.errors.is_none() {
-            return None;
-        }
+        self.errors.as_ref()?;
         self.reaction_registered_for(outcome)
     }
 
