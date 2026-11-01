@@ -125,23 +125,23 @@ fn memory_broker_meets_every_capability_twin_through_the_blanket_impls() {
     >();
 }
 
-/// Every Send trait that admits an unsized implementor reaches its twin through the blanket impl
-/// (a publisher is `Clone`, so always sized).
+/// Every Send trait reaches its twin through the blanket impl; the subscribers admit an unsized
+/// implementor, the publishers are `Clone` and so sized.
 #[test]
-fn unsized_implementations_meet_their_local_twins() {
+fn implementations_meet_their_local_twins() {
     fn local<Sub, Pub, Req>()
     where
         Sub: ?Sized + LocalSubscriber + LocalBatchSubscriber + LocalSeekable,
-        Pub: ?Sized + LocalPublisher + LocalTransactionalPublisher + LocalOwnedTransactions,
-        Req: ?Sized + LocalRequestReply,
+        Pub: LocalPublisher + LocalTransactionalPublisher + LocalOwnedTransactions,
+        Req: LocalRequestReply,
     {
     }
 
     fn send<Sub, Pub, Req>()
     where
         Sub: ?Sized + Subscriber + BatchSubscriber + Seekable,
-        Pub: ?Sized + Publisher + TransactionalPublisher + OwnedTransactions,
-        Req: ?Sized + RequestReply,
+        Pub: Publisher + TransactionalPublisher + OwnedTransactions,
+        Req: RequestReply,
     {
         local::<Sub, Pub, Req>();
     }
