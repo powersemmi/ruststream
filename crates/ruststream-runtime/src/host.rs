@@ -12,6 +12,7 @@
 
 #[cfg(feature = "alloc")]
 use bytes::Bytes;
+#[cfg(feature = "alloc")]
 use core::pin::Pin;
 use core::time::Duration;
 
