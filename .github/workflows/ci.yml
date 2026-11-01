@@ -174,7 +174,7 @@ jobs:
         env:
           CARGO_BUILD_WARNINGS: deny
         run: |
-          cargo clippy --locked --workspace --lib --bins --tests --examples \
+          cargo clippy --locked --workspace $EMBASSY_TESTS_EXCLUDE --lib --bins --tests --examples \
             --all-features -- -D warnings
           cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
 

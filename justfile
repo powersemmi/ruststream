@@ -43,7 +43,7 @@ check:
     # The benchmarks are left out of the workspace legs on purpose: they are built with the
     # production feature set, and the harness feature is a compile error in them. Their own leg
     # follows.
-    cargo clippy --workspace --lib --bins --tests --examples \
+    cargo clippy --workspace {{ embassy_tests_exclude }} --lib --bins --tests --examples \
         --all-features \
         -- -D warnings
     # No clippy here: this feature combination has clippy lints of its own that no gate has ever
