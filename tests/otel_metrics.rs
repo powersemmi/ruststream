@@ -340,8 +340,8 @@ async fn a_panicking_handler_does_not_leak_the_in_flight_gauge() {
     );
 }
 
-/// Replies once, on a broker of its own that the test shuts down before the request arrives; the
-/// redelivery the failed reply causes settles quietly.
+/// Replies on a broker of its own that the test shuts down before the request arrives; the failed
+/// reply is acknowledged, so the handler runs once.
 #[subscriber("otel.failing", reply("otel.nowhere"))]
 async fn confirm_once(
     order: &Order,
@@ -384,7 +384,7 @@ async fn a_failed_publish_keeps_error_type_low_cardinality() {
         .expect("publish failed");
     tb.broker_named("ingress")
         .subscriber("otel.failing")
-        .assert_called(2);
+        .assert_called_once();
 
     provider.force_flush().expect("flush failed");
     let errors = sum_attr_values(&exporter, "messaging.client.sent.messages", "error.type");
