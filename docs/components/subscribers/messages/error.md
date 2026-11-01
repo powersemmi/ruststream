@@ -32,16 +32,23 @@ A failed reply settles the same way: the delivery is acknowledged, and the `.err
 
 Without `.error` the failure is logged with the subscription, the destination, the message type and the error, and the copy is lost.
 
-## On the outcome
+## Example
+
+### On the outcome
 
 `HandlerOutcome::error` covers the publishes the runtime makes for that outcome: the delayed retry copy, and the dead-letter copy when the mount's `max_attempts(..).dead_letter(..)` turns this retry into a dead letter at the cap.
+The handler below retries once at its cap, so the retry becomes a dead letter, and the broker refuses the dead-letter copy.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-The handler below retries once at its cap, so the retry becomes a dead letter, and the broker refuses the dead-letter copy.
-
 ```rust reference="examples/retry_error.rs#error"
+```
+
+</TabItem>
+<TabItem value="manual" label="Manual">
+
+```rust reference="examples/manual/retry_error.rs#error"
 ```
 
 </TabItem>
@@ -54,51 +61,37 @@ A `Vec<HandlerOutcome>` attaches a one-shot `.error` to the outcome of the eleme
 A single `HandlerOutcome` returned for the whole batch runs its `.error` once, with the failure of every element whose copy failed, in the batch's order.
 The list is allocated only when a copy fails.
 The [`and_after`](./and-after.md) beside a uniform outcome runs once, after the batch, when at least one copy was published; when every copy fails it does not run.
+Both continuations run beside each other, so neither waits for the other.
 
-## From the context
+### From the context
 
 The context form covers a delivery whose handler returns no outcome of its own, and the reply of `out_reply`:
 [`ctx.after(outcome).error(..)`](api:ruststream::runtime::After::error) names the settlement it stands behind, as [`then`](./hooks.md) does.
+A batch handler that returns replies registers it the same way; when the replies of a batch fail to publish, the continuation receives every reply of the batch.
 
-```rust
-# #[cfg(feature = "json")]
-# mod demo {
-use ruststream::prelude::*;
-use serde::{Deserialize, Serialize};
+<Tabs groupId="api">
+<TabItem value="macros" label="Macros">
 
-#[derive(Deserialize)]
-struct QuoteRequest {
-    id: u64,
-}
-
-#[derive(Outgoing, Serialize)]
-#[outgoing(name = "quotes")]
-struct Quote {
-    id: u64,
-}
-
-#[subscriber("prices", reply)]
-async fn quote(req: &QuoteRequest, ctx: &mut Context<'_>) -> Quote {
-    let id = req.id;
-    ctx.after(HandlerOutcome::ack())
-        .error(async move |failures: Failures| {
-            for failed in failures {
-                tracing::warn!(id, error = %failed.error(), "the quote was not sent");
-            }
-        });
-    Quote { id }
-}
-# }
+```rust reference="examples/retry_error.rs#reply"
 ```
 
-## With a continuation that follows the publish
+</TabItem>
+<TabItem value="manual" label="Manual">
+
+```rust reference="examples/manual/retry_error.rs#reply"
+```
+
+</TabItem>
+</Tabs>
+
+### With a continuation that follows the publish
 
 `.then` and `.error` combine on both forms, in either order: `.and_after(..).error(..)` on the outcome, `.then(..).error(..)` or `.error(..).then(..)` on the context.
 With both registered, `.then` waits for the publish: it runs once the publish succeeded and never when it failed, and `.error` runs when it failed and never when it succeeded.
 Each runs once.
 Where the runtime makes no publish for the delivery, the `.then` runs once the delivery is settled.
 
-## The closure and the runtime
+### The closure and the runtime
 
 With the tokio runtime on, the closure and its future are `Send`.
 On the embedded runtime alone they carry no `Send`, so they may hold the local bus's publisher or an `Rc`.

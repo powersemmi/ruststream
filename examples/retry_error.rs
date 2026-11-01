@@ -1,5 +1,5 @@
-//! A dead-letter copy the broker refuses: the handler's `.error` continuation learns of it and
-//! records an alert. Each scenario is a test.
+//! A dead-letter copy or a reply the broker refuses: the handler's `.error` continuation learns of
+//! it and records what was lost. Each scenario is a test.
 //!
 //! ```text
 //! cargo test --example retry_error --features testing,macros,memory,json
@@ -128,6 +128,77 @@ mod error_continuation {
         tb.broker::<MemoryBroker>()
             .subscriber("payments")
             .assert_called_once();
+        Ok(())
+    }
+}
+
+mod reply_error {
+    use std::convert::Infallible;
+    use std::error::Error;
+    use std::sync::{Arc, Mutex};
+
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+    use serde::{Deserialize, Serialize};
+
+    use super::DownPublish;
+
+    /// What the handler recorded about the quotes it could not send.
+    type Notes = Arc<Mutex<Vec<String>>>;
+
+    #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
+    #[outgoing(name = "prices")]
+    struct PriceRequest {
+        id: u64,
+    }
+
+    #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
+    #[outgoing(name = "quotes")]
+    struct Quote {
+        id: u64,
+    }
+
+    // --8<-- [start:reply]
+    #[subscriber("prices", reply)]
+    async fn quote(req: &PriceRequest, ctx: &mut Context<'_, (), Notes>) -> Quote {
+        let id = req.id;
+        let notes = Arc::clone(ctx.state());
+        ctx.after(HandlerOutcome::ack())
+            .error(async move |failures: Failures| {
+                for failed in failures {
+                    tracing::warn!(id, error = %failed.error(), "the quote was not sent");
+                    notes
+                        .lock()
+                        .expect("notes")
+                        .push(format!("{id}: {}", failed.error()));
+                }
+            });
+        Quote { id }
+    }
+    // --8<-- [end:reply]
+
+    fn app(notes: &Notes) -> impl App<State = Notes> {
+        let notes = Arc::clone(notes);
+        RustStream::new(AppInfo::new("prices", "0.1.0"))
+            .on_startup(async move |()| Ok::<_, Infallible>(notes))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(quote).out_reply(DownPublish)
+            })
+    }
+
+    #[tokio::test]
+    async fn a_lost_quote_reaches_the_handler() -> Result<(), Box<dyn Error>> {
+        let notes = Notes::default();
+        let tb = TestApp::start(app(&notes)).await?;
+
+        tb.message(&PriceRequest { id: 7 }).publish().await?;
+        tb.settle().await?;
+
+        assert_eq!(*notes.lock().expect("notes"), ["7: broker down"]);
+        tb.broker::<MemoryBroker>()
+            .subscriber("prices")
+            .assert_called_once()
+            .settled(HandlerOutcome::ack());
         Ok(())
     }
 }

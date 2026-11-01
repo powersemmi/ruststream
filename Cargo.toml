@@ -247,6 +247,11 @@ path = "examples/manual/post_settle.rs"
 required-features = ["testing", "memory", "json"]
 
 [[example]]
+name = "manual_retry_error"
+path = "examples/manual/retry_error.rs"
+required-features = ["testing", "memory", "json"]
+
+[[example]]
 name = "manual_routing"
 path = "examples/manual/routing.rs"
 required-features = ["testing", "memory", "json"]

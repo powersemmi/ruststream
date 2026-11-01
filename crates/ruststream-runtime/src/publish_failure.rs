@@ -663,7 +663,6 @@ mod tests {
     use core::sync::atomic::{AtomicBool, Ordering};
     use std::io;
 
-
     use super::*;
 
     fn lost() -> (BoxError, FailedMessage) {
