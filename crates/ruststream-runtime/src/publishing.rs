@@ -762,6 +762,10 @@ impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline>
         let publish = publishing_to(self.origin, publish);
         let sent = publish.await;
         let reaction = ctx.take_reaction_for(HandlerResult::Ack);
+        // The reply left and nothing waits on it: the common case ends here.
+        if sent.is_ok() && reaction.is_none() {
+            return HandlerOutcome::ack();
+        }
         if let Err(err) = sent {
             // The reply is published after the handler's work is done, so a failure never asks
             // the broker for the delivery again: the handler would repeat its side effects. It

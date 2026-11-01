@@ -438,8 +438,13 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     if let Some(status) = settle {
         // Named for the same reason as the delivery's own future above: the settle path is
         // built where it is polled instead of being copied into this future's state.
-        let settling = settle_reacting(slot, status, reaction, name, delivery, host, C::build);
-        settling.await;
+        if reaction.is_some() {
+            let settling = settle_reacting(slot, status, reaction, name, delivery, host, C::build);
+            settling.await;
+        } else {
+            let settling = settle_outcome(slot, status, name, delivery, host, C::build);
+            settling.await;
+        }
         // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.

@@ -56,7 +56,24 @@ pub(crate) async fn settle_outcome<M, C, Host>(
     C: Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
-    settle_reacting(slot, outcome, None, name, delivery, host, build_cx).await;
+    let ack_result = match outcome {
+        HandlerResult::Ack => slot.take().ack().await,
+        HandlerResult::Nack { requeue: false } => slot.take().nack(false).await,
+        HandlerResult::Nack { requeue: true } => {
+            settle_retry(slot, name, &mut None, delivery, host, build_cx).await
+        }
+        HandlerResult::NackAfter { delay } => {
+            settle_nack_after(slot, name, delay, &mut None, delivery, host, build_cx).await
+        }
+    };
+    if let Err(err) = ack_result {
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %name,
+            error = %err,
+            "ack / nack failed",
+        );
+    }
 }
 
 /// [`settle_outcome`] for an outcome that may carry the handler's `.error` continuation, which a
