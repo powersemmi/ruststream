@@ -116,10 +116,10 @@ async fn a_fail_fast_decode_failure_tears_the_service_down() {
     );
 }
 
-/// A reply the publisher rejects nacks the delivery with requeue instead of losing the reply:
-/// the redelivered message publishes it.
+/// A reply the publisher rejects is lost, and the delivery is acknowledged: the handler already
+/// did its work, and running it again would repeat that work.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_rejected_reply_publish_retries_the_delivery() {
+async fn a_rejected_reply_publish_acks_the_delivery() {
     let app = RustStream::new(AppInfo::new("flaky", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(flaky).out(Reply, FailsOncePolicy)
@@ -132,14 +132,12 @@ async fn a_rejected_reply_publish_retries_the_delivery() {
         .await
         .expect("publish failed");
 
-    // The first attempt nacks with requeue rather than losing the reply; the redelivery publishes
-    // it exactly once.
+    // The handler runs once and is acknowledged; the reply it could not send is not retried.
     assert_eq!(
         tb.broker::<MemoryBroker>().subscriber("flaky").outcomes(),
-        [Outcome::Nack, Outcome::Ack],
+        [Outcome::Ack],
     );
     tb.broker::<MemoryBroker>()
         .published::<u32>("flaky.out")
-        .assert_called_once()
-        .with_raw(b"7");
+        .assert_not_called();
 }

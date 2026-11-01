@@ -13,9 +13,12 @@ use super::harness_scope;
 use super::{Delivery, RETRY_COUNT_HEADER, Slot};
 #[cfg(doc)]
 use crate::IncomingMessage;
-use crate::handler::HandlerResult;
+use crate::handler::{Continuation, HandlerResult};
 use crate::host::{HostDetach, PrepareKept};
 use crate::publish::PublishContext;
+#[cfg(feature = "tokio")]
+use crate::publish_failure::publish_done;
+use crate::publish_failure::{FailedMessage, Reaction, publish_lost};
 use crate::redelivery::{RetryCopies, RetryRoute};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Coordinator, in_harness_scope};
@@ -52,14 +55,48 @@ pub(crate) async fn settle_outcome<M, C, Host>(
     C: Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
+    settle_reacting(slot, outcome, None, name, delivery, host, build_cx).await;
+}
+
+/// [`settle_outcome`] for an outcome that may carry the handler's `.error` continuation, which a
+/// publish the runtime makes for the settlement hands its failure to.
+///
+/// On a mount where the runtime publishes no copy (the broker moves deliveries itself) the
+/// continuation can never run, and a warning says so each time such an outcome arrives.
+// Each part is the delivery's own or the runner's; bundling them would hide which is which.
+#[allow(clippy::too_many_arguments)]
+// `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
+#[allow(clippy::future_not_send)]
+pub(crate) async fn settle_reacting<M, C, Host>(
+    slot: &mut Slot<M>,
+    outcome: HandlerResult,
+    mut reaction: Option<Reaction>,
+    name: &str,
+    delivery: &Delivery<C>,
+    host: &Host,
+    build_cx: fn(&M) -> C,
+) where
+    M: LocalSettle,
+    C: Send + Sync + 'static,
+    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
+{
+    if reaction.is_some() && copy_path(host).is_none() {
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %name,
+            "the outcome carries an `.error` continuation, but the runtime publishes no copy for \
+             this subscription (the broker moves its deliveries itself); the continuation never \
+             runs",
+        );
+    }
     let ack_result = match outcome {
         HandlerResult::Ack => slot.take().ack().await,
         HandlerResult::Nack { requeue: false } => slot.take().nack(false).await,
         HandlerResult::Nack { requeue: true } => {
-            settle_retry(slot, name, delivery, host, build_cx).await
+            settle_retry(slot, name, &mut reaction, delivery, host, build_cx).await
         }
         HandlerResult::NackAfter { delay } => {
-            settle_nack_after(slot, name, delay, delivery, host, build_cx).await
+            settle_nack_after(slot, name, delay, &mut reaction, delivery, host, build_cx).await
         }
     };
     if let Err(err) = ack_result {
@@ -69,6 +106,11 @@ pub(crate) async fn settle_outcome<M, C, Host>(
             error = %err,
             "ack / nack failed",
         );
+    }
+    // No publish took the reaction: the delivery settled without the runtime publishing a copy,
+    // so what the handler registered beside `.error` runs now.
+    if let Some(then) = reaction.and_then(Reaction::into_then) {
+        host.detach_boxed(then);
     }
 }
 
@@ -143,6 +185,7 @@ fn redelivery_of<'d, M: LocalSettle>(msg: &M, declaration: &'d RetryDeclaration)
 async fn settle_retry<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
+    reaction: &mut Option<Reaction>,
     delivery: &Delivery<C>,
     host: &Host,
     build_cx: fn(&M) -> C,
@@ -173,6 +216,7 @@ where
                 name,
                 Target::Subscription,
                 None,
+                reaction,
                 path,
                 delivery,
                 host,
@@ -189,6 +233,7 @@ where
                 name,
                 destination,
                 at_cap,
+                reaction,
                 path,
                 delivery,
                 host,
@@ -243,6 +288,7 @@ async fn send_copy<M, C, Host>(
     name: &str,
     target: Target<'_>,
     delay: Option<Duration>,
+    reaction: &mut Option<Reaction>,
     path: CopyPath<'_, Host::Retry, Host::Kept>,
     delivery: &Delivery<C>,
     host: &Host,
@@ -264,6 +310,7 @@ where
                 name,
                 destination,
                 delay,
+                reaction,
                 retry,
                 delivery,
                 host,
@@ -272,16 +319,7 @@ where
             .await
         }
         CopyPath::Kept(kept) => {
-            keep_copy(
-                slot,
-                name,
-                target,
-                delay,
-                delivery.declaration.dead_letter(),
-                kept,
-                build_cx,
-            )
-            .await
+            keep_copy(slot, name, target, delay, reaction, kept, host, build_cx).await
         }
     }
 }
@@ -340,6 +378,7 @@ async fn settle_nack_after<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
     delay: Duration,
+    reaction: &mut Option<Reaction>,
     delivery: &Delivery<C>,
     host: &Host,
     build_cx: fn(&M) -> C,
@@ -367,6 +406,7 @@ where
                         name,
                         destination,
                         true,
+                        reaction,
                         path,
                         delivery,
                         host,
@@ -401,6 +441,7 @@ where
                 name,
                 Target::Subscription,
                 Some(delay),
+                reaction,
                 path,
                 delivery,
                 host,
@@ -419,6 +460,7 @@ where
                 name,
                 destination,
                 at_cap,
+                reaction,
                 path,
                 delivery,
                 host,
@@ -483,6 +525,7 @@ async fn dead_letter<M, C, Host>(
     name: &str,
     destination: &str,
     at_cap: bool,
+    reaction: &mut Option<Reaction>,
     path: CopyPath<'_, Host::Retry, Host::Kept>,
     delivery: &Delivery<C>,
     host: &Host,
@@ -501,6 +544,7 @@ where
         name,
         Target::DeadLetter(destination),
         None,
+        reaction,
         path,
         delivery,
         host,
@@ -574,6 +618,7 @@ async fn publish_copy<M, C, Host>(
     name: &str,
     destination: Option<Arc<str>>,
     delay: Option<Duration>,
+    reaction: &mut Option<Reaction>,
     retry: &Arc<RetryRoute<Host::Retry>>,
     delivery: &Delivery<C>,
     host: &Host,
@@ -633,6 +678,9 @@ where
             return Err(err);
         }
     }
+    // The original is gone, so the runtime publishes the copy: what its result is handed to
+    // travels with the copy from here.
+    let reaction = reaction.take();
 
     // The copy's future is built when it is due, not when it is scheduled: the task that waits
     // out the delay then holds the copy's data and the timer, and the publish future takes the
@@ -643,19 +691,39 @@ where
     // handed on to it: the copy is one of the delivery's publishes.
     #[cfg(feature = "testing")]
     let scope = harness_scope(delivery);
+    let input = route.input;
+    // The registration's retry publisher exists only on a runner that spawns onto a thread pool,
+    // whose build has the `tokio` feature and so a `Send` continuation.
+    #[cfg(not(feature = "tokio"))]
+    drop(reaction);
     let republish = move || {
         let republish = async move {
             let cx = PublishContext::new(&subscription, &delivered, &context);
+            // The headers are copied for the continuation only where the outcome asked for one.
+            #[cfg(feature = "tokio")]
+            let failed_headers = reaction.is_some().then(|| headers.clone());
             let copy =
                 OutgoingMessage::new(target.as_ref(), payload.as_ref()).with_headers(headers);
-            if let Err(err) = route.publisher.publish_copy(copy, &cx).await {
-                warn!(
-                    target: "ruststream::dispatch",
-                    subscription = %subscription,
-                    destination = %target,
-                    error = %err,
-                    "publishing the retry copy failed; message lost",
-                );
+            let sent = route.publisher.publish_copy(copy, &cx).await;
+            match sent {
+                Ok(()) => {
+                    #[cfg(feature = "tokio")]
+                    let done = publish_done(reaction);
+                    #[cfg(not(feature = "tokio"))]
+                    let done = None;
+                    done
+                }
+                Err(err) => {
+                    #[cfg(feature = "tokio")]
+                    let lost = publish_lost(reaction, &subscription, &target, input, err, || {
+                        FailedMessage::new(&target, payload, failed_headers.unwrap_or_default())
+                    });
+                    #[cfg(not(feature = "tokio"))]
+                    let lost = publish_lost(None, &subscription, &target, input, err, || {
+                        FailedMessage::new(&target, payload, Default::default())
+                    });
+                    lost
+                }
             }
         };
         #[cfg(feature = "testing")]
@@ -667,8 +735,11 @@ where
     // two scheduler turns to publish the same copy a little later.
     let Some(delay) = delay else {
         // An immediate copy is awaited on the dispatch path: there is no timer to wait for, and a
-        // detached task would let the loop pull the next delivery before this one is back.
-        republish().await;
+        // detached task would let the loop pull the next delivery before this one is back. What
+        // the handler's `.error` makes of a failure runs beside the loop.
+        if let Some(reaction) = republish().await {
+            host.detach_boxed(reaction);
+        }
         return Ok(());
     };
 
@@ -677,13 +748,29 @@ where
     // drives the reaction, so a test sees the copy rather than a race.
     #[cfg(feature = "testing")]
     if let Some(coordinator) = delivery.hooks.coordinator() {
-        coordinator.schedule_redelivery_future(delay, republish());
+        coordinator.schedule_redelivery_future(delay, reacting(republish()));
         return Ok(());
     }
     // The timer is the delivery's own work, so it runs where the delivery ran; being tracked, a
     // graceful shutdown waits for it and the copy leaves before the broker closes.
-    host.detach_after_with(delay, republish);
+    host.detach_after_with(delay, move || reacting(republish()));
     Ok(())
+}
+
+/// Runs a copy's publish and, when it failed, what the handler's `.error` made of the failure:
+/// the task that waited out the delay is already tracked, so the reaction runs in it.
+#[cfg(feature = "tokio")]
+async fn reacting(publish: impl Future<Output = Option<Continuation>>) {
+    if let Some(reaction) = publish.await {
+        reaction.await;
+    }
+}
+
+/// Without the `tokio` feature no runner publishes a deferred copy through the registration's
+/// retry publisher, and a copy that fails there has no continuation to run.
+#[cfg(not(feature = "tokio"))]
+async fn reacting(publish: impl Future<Output = Option<Continuation>>) {
+    let _ = publish.await.is_none();
 }
 
 #[cfg(test)]
@@ -794,6 +881,7 @@ mod tests {
             &mut Slot::new(plain(&[], &settled)),
             "orders",
             Duration::from_secs(1),
+            &mut None,
             &delivery,
             &host,
             unit_cx,
@@ -835,6 +923,7 @@ mod tests {
             &mut Slot::new(delivered),
             "orders",
             Duration::from_secs(30),
+            &mut None,
             &delivery,
             &host,
             unit_cx,
@@ -868,6 +957,7 @@ mod tests {
             &mut Slot::new(msg),
             "orders-workers",
             Duration::from_secs(30),
+            &mut None,
             &delivery,
             &host,
             unit_cx,
@@ -907,6 +997,7 @@ mod tests {
             &mut Slot::new(msg),
             "orders",
             Duration::from_secs(30),
+            &mut None,
             &delivery,
             &host,
             unit_cx,
@@ -942,6 +1033,7 @@ mod tests {
             &mut Slot::new(msg),
             "orders",
             Duration::from_secs(30),
+            &mut None,
             &delivery,
             &host,
             unit_cx,
@@ -973,6 +1065,7 @@ mod tests {
             &mut Slot::new(msg),
             "orders",
             Duration::from_secs(1),
+            &mut None,
             &delivery,
             &host,
             unit_cx,
@@ -1054,6 +1147,7 @@ mod tests {
             &mut Slot::new(plain(&[], &settled)),
             "orders",
             Duration::from_secs(30),
+            &mut None,
             &delivery,
             &host,
             unit_cx,
@@ -1080,6 +1174,7 @@ mod tests {
             &mut Slot::new(plain(&[], &settled)),
             "orders",
             Duration::from_secs(30),
+            &mut None,
             &delivery,
             &host,
             unit_cx,
@@ -1109,6 +1204,7 @@ mod tests {
             &mut Slot::new(plain_on(&[], &settled, Settlement::Rejected)),
             "orders",
             Duration::from_secs(30),
+            &mut None,
             &delivery,
             &host,
             unit_cx,
@@ -1129,6 +1225,7 @@ mod tests {
             &mut Slot::new(msg),
             "orders",
             Duration::from_secs(30),
+            &mut None,
             &delivery,
             &host,
             unit_cx,
@@ -1166,6 +1263,7 @@ mod tests {
             &mut Slot::new(msg),
             "orders",
             Duration::from_secs(5),
+            &mut None,
             &delivery,
             &host,
             unit_cx,

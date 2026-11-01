@@ -24,7 +24,7 @@ use crate::redelivery::{
     open_subscription,
 };
 use crate::retry::RetryOpen;
-use crate::retry::{Absent, DestinationDeclared, Present};
+use crate::retry::{Absent, DestinationDeclared};
 use crate::{BrokerMoves, CopyPath, RetryDeclaration};
 
 use super::head::{Plain, PoisonAt};
@@ -239,23 +239,6 @@ impl<Route, Dead> DeclaredRoute<Route, Dead> {
         }
     }
 }
-
-/// A registration whose mount chain declared a dead-letter destination with `.dead_letter(..)`,
-/// so a delivery can be sent there. Machinery; never named directly.
-#[doc(hidden)]
-#[diagnostic::on_unimplemented(
-    message = "`DeadLetter` sends a delivery to the destination `.dead_letter(..)` declares, and \
-               this registration declares none",
-    label = "`.dead_letter(..)` is missing on this registration",
-    note = "declare it right after `include(..)`, before `.retry_capacity::<CAP>()`: \
-            `b.include(job).max_attempts(nonzero!(3u32)).dead_letter(\"jobs.dead\")\
-            .retry_capacity::<4>().when_retry_full(DeadLetter)`"
-)]
-pub trait DeadLetterDeclared {}
-
-impl<Route> DeadLetterDeclared for DeclaredRoute<Route, Present> {}
-
-impl<Route: DeadLetterDeclared> DeadLetterDeclared for DeclaredRoute<Route, Absent> {}
 
 impl<Route: RouteMeta, Dead> RouteMeta for DeclaredRoute<Route, Dead> {
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {

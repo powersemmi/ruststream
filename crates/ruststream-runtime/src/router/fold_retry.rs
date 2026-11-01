@@ -31,7 +31,7 @@ use super::fold_plan::{
 };
 use super::local::LocalPipeline;
 use super::routes::SubscribeRoute;
-use super::routes::{DeadLetterDeclared, DeclaredRoute, RetryDestinationsDeclared, RouteMetadata};
+use super::routes::{DeclaredRoute, RetryDestinationsDeclared, RouteMetadata};
 use super::routes_inject::InjectRoute;
 use super::routes_publish::{PublishingRoute, RawReplyRoute};
 
@@ -148,11 +148,6 @@ where
 // The registration that bound the position said where its copies go.
 impl<Route, Policy, Stack> RetryDestinationsDeclared
     for LocalRetriedRoute<Route, Policy, Stack, DestinationDeclared>
-{
-}
-
-impl<Route: DeadLetterDeclared, Policy, Stack, Settled> DeadLetterDeclared
-    for LocalRetriedRoute<Route, Policy, Stack, Settled>
 {
 }
 

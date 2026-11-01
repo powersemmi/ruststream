@@ -35,7 +35,7 @@ use crate::{
 use super::builder::Router;
 use super::fold::{OpenLayered, OpenedRoute, RunRoutes};
 use super::local::LocalPipeline;
-use super::routes::{DeadLetterDeclared, DeclaredRoute, RetryDestinationsDeclared, SubscribeRoute};
+use super::routes::{DeclaredRoute, RetryDestinationsDeclared, SubscribeRoute};
 use super::routes_inject::InjectRoute;
 use super::routes_publish::{PublishingRoute, RawReplyRoute};
 
@@ -205,9 +205,7 @@ impl_planless!(
     InjectRoute<Source, Def, DecodeCodec, Extra>,
 );
 
-// A plan changes how deliveries run, never where their retry copies go, nor what was declared.
-impl<Route: DeadLetterDeclared, Plan> DeadLetterDeclared for Dispatched<Route, Plan> {}
-
+// A plan changes how deliveries run, never where their retry copies go.
 impl<Route: RetryDestinationsDeclared, Plan> RetryDestinationsDeclared for Dispatched<Route, Plan> {}
 
 // A declaration rides the registration, so a step after it plans the registration it wraps.

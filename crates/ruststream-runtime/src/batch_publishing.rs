@@ -259,9 +259,11 @@ where
                             reply = %name,
                             reply_type = any::type_name::<D::Reply>(),
                             error = %err,
-                            "batch reply publish failed",
+                            "batch reply publish failed; replies lost",
                         );
-                        BatchResult::Uniform(HandlerOutcome::retry())
+                        // The batch is acknowledged: the handler already did its work, and a
+                        // requeue would run it again for the same elements.
+                        BatchResult::Uniform(HandlerOutcome::ack())
                     }
                 }
             }

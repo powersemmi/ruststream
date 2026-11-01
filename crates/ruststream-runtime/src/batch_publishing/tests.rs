@@ -281,11 +281,11 @@ impl Publisher for HalfwayPublisher {
     }
 }
 
-/// A failed reply publish retries the whole batch instead of losing the replies. With a plain
-/// (non-transactional) publisher the replies published before the failure stay visible, so the
-/// redelivery republishes them: at-least-once, as documented.
+/// A failed reply publish acknowledges the whole batch: the handler already did its work for
+/// every element, and a redelivery would do it again. With a plain (non-transactional) publisher
+/// the replies published before the failure stay visible; the rest are lost.
 #[tokio::test]
-async fn a_failed_reply_publish_retries_the_whole_batch() {
+async fn a_failed_reply_publish_acks_the_whole_batch() {
     let broker = MemoryBroker::new();
     let mut input = broker.subscribe("orders");
     let mut replies = broker.subscribe("confirmations");
@@ -320,11 +320,10 @@ async fn a_failed_reply_publish_retries_the_whole_batch() {
         msg.ack().await.unwrap();
     }
 
-    let redelivered = pull_batch(&mut input).await;
-    assert_eq!(redelivered.len(), 2);
-    for msg in redelivered {
-        msg.ack().await.unwrap();
-    }
+    assert!(
+        futures::FutureExt::now_or_never(pull_batch(&mut input)).is_none(),
+        "the batch is acknowledged, not redelivered",
+    );
 }
 
 /// The publish-failure diagnostic names the subscription, the reply channel, the reply type and
@@ -360,7 +359,7 @@ async fn a_failed_reply_publish_is_logged_with_its_reply_channel() {
     handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
     drop(guard);
 
-    let failure = log_capture::find(&events, "batch reply publish failed");
+    let failure = log_capture::find(&events, "batch reply publish failed; replies lost");
     assert_eq!(
         failure.get("subscription").map(String::as_str),
         Some("orders")
@@ -377,9 +376,8 @@ async fn a_failed_reply_publish_is_logged_with_its_reply_channel() {
         "{failure:?}"
     );
 
-    let redelivered = pull_batch(&mut input).await;
-    assert_eq!(redelivered.len(), 1);
-    for msg in redelivered {
-        msg.ack().await.unwrap();
-    }
+    assert!(
+        futures::FutureExt::now_or_never(pull_batch(&mut input)).is_none(),
+        "the batch is acknowledged, not redelivered",
+    );
 }

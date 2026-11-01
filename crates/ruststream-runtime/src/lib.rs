@@ -102,6 +102,8 @@ pub(crate) mod poll_diagnostics;
 #[cfg(feature = "alloc")]
 mod publish;
 #[cfg(feature = "alloc")]
+mod publish_failure;
+#[cfg(feature = "alloc")]
 mod publishing;
 #[cfg(feature = "alloc")]
 // The redelivery path serves the local contract, whose futures carry no Send.
@@ -151,7 +153,7 @@ pub use batch::{
     BatchHandler, LocalBatch, LocalBatchHandler, TakenBatch, batch_verdict, uniform_batch,
 };
 #[cfg(feature = "alloc")]
-pub use context::{After, Context};
+pub use context::{After, AfterError, AfterThen, Context};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use dispatch::{
@@ -214,9 +216,14 @@ pub use host::{Copying, SendHost};
 pub use host::{Detach, Halt, HostDetach, LocalDetach, OnOneThread};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept, WhenFull};
+pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept};
 #[cfg(feature = "tokio")]
 pub use main_runtime::MainRuntime;
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use publish_failure::{ErrorHook, Reaction, publish_done, publish_lost};
+#[cfg(feature = "alloc")]
+pub use publish_failure::{FailedMessage, NoFreeRecordError};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use slot::{BindSlotsBody, LocalBindSlotsBody};
@@ -331,8 +338,8 @@ pub use retry::{
 #[doc(hidden)]
 pub use router::{
     AttachDeclaration, AttachRetry, Balance, BatchPublishInjectMount, BatchPublishMount, BodyFits,
-    ChainHead, DeadLetterDeclared, DefaultReply, LayerFits, MountSink, OpenLayered, OpenRoutes,
-    Opened, OpenedBatchRoute, OpenedRoute, Plain, Poison, PoisonAt, PoisonMode, Poisoned, PoolFits,
+    ChainHead, DefaultReply, LayerFits, MountSink, OpenLayered, OpenRoutes, Opened,
+    OpenedBatchRoute, OpenedRoute, Plain, Poison, PoisonAt, PoisonMode, Poisoned, PoolFits,
     PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
     RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker, RouterCommit,
     RouterMount, RouterPipe, RunRoutes, RunsBatches, SplitHead, TakesWorkers,

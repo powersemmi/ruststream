@@ -5,6 +5,8 @@ use alloc::sync::Arc;
 use core::{convert::Infallible, fmt, pin::Pin, time::Duration};
 
 use super::context::Context;
+use crate::lifecycle::BoxError;
+use crate::publish_failure::{ErrorHook, FailedMessage};
 
 /// A boxed, owned continuation run after a message is settled: what a [`HandlerOutcome`] hands
 /// the dispatcher, and what the dispatcher hands the runner's host.
@@ -252,6 +254,7 @@ impl HandlerResult {
 pub struct HandlerOutcome {
     outcome: HandlerResult,
     after: Option<Continuation>,
+    error: Option<ErrorHook>,
 }
 
 impl HandlerOutcome {
@@ -282,6 +285,7 @@ impl HandlerOutcome {
         Self {
             outcome: HandlerResult::Ack,
             after: None,
+            error: None,
         }
     }
 
@@ -297,6 +301,7 @@ impl HandlerOutcome {
         Self {
             outcome: HandlerResult::retry(),
             after: None,
+            error: None,
         }
     }
 
@@ -355,6 +360,7 @@ impl HandlerOutcome {
         Self {
             outcome: HandlerResult::retry_after(delay),
             after: None,
+            error: None,
         }
     }
 
@@ -363,6 +369,7 @@ impl HandlerOutcome {
         Self {
             outcome: HandlerResult::drop(),
             after: None,
+            error: None,
         }
     }
 
@@ -414,7 +421,68 @@ impl HandlerOutcome {
         Self {
             outcome: self.outcome,
             after: Some(Box::pin(fut)),
+            error: self.error,
         }
+    }
+
+    /// Reacts to a failed publish the runtime makes for this outcome: the delayed retry copy of a
+    /// [`retry_after`](Self::retry_after), and the dead-letter copy the mount's
+    /// `max_attempts(..).dead_letter(..)` turns this retry into at the cap.
+    ///
+    /// The continuation receives the [`BoxError`] and the [`FailedMessage`] and returns
+    /// nothing. It runs after the delivery is settled, as an [`and_after`](Self::and_after)
+    /// continuation does, and the handler never runs again because of the failure. Whatever the
+    /// reaction needs (an `Out` publisher, state, a counter) the handler moves into the closure.
+    /// Attaching a second one replaces the first.
+    ///
+    /// Without `.error` a failed copy is logged with the subscription, the destination, the
+    /// message type and the error, and is lost. On a mount whose broker retries and dead-letters
+    /// natively the runtime publishes nothing, so the continuation never runs; a warning names the
+    /// subscription each time such an outcome is returned. With the Tokio runner on, the closure
+    /// and its future are `Send`; on the embedded runtime alone they carry no `Send`.
+    ///
+    /// # Cancel safety
+    ///
+    /// At-most-once, like [`and_after`](Self::and_after): the message is already settled when the
+    /// continuation runs.
+    ///
+    /// # Examples
+    ///
+    /// A retry copy that cannot be published is logged with the bytes it carried instead of
+    /// being lost silently:
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Payment {
+    ///     settled: bool,
+    /// }
+    ///
+    /// #[subscriber("payments")]
+    /// async fn reconcile(payment: &Payment) -> HandlerOutcome {
+    ///     if payment.settled {
+    ///         return HandlerOutcome::ack();
+    ///     }
+    ///     HandlerOutcome::retry_after(Duration::from_secs(5)).error(async move |err, lost| {
+    ///         tracing::error!(%err, destination = lost.destination(), "the retry is lost");
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    pub fn error<React, Reaction>(mut self, react: React) -> Self
+    where
+        React: FnOnce(BoxError, FailedMessage) -> Reaction + MaybeSend + 'static,
+        Reaction: ContinuationFuture,
+    {
+        self.error = Some(ErrorHook::new(react));
+        self
     }
 
     /// Whether this outcome acknowledges the message.
@@ -462,6 +530,16 @@ impl HandlerOutcome {
         self.after.is_some()
     }
 
+    /// Attaches an already boxed continuation, as [`and_after`](Self::and_after) does a future.
+    pub(crate) fn and_after_boxed(mut self, after: Continuation) -> Self {
+        self.after = Some(after);
+        self
+    }
+
+    pub(crate) fn take_error(&mut self) -> Option<ErrorHook> {
+        self.error.take()
+    }
+
     pub(crate) fn take_after(&mut self) -> Option<Continuation> {
         self.after.take()
     }
@@ -472,6 +550,7 @@ impl fmt::Debug for HandlerOutcome {
         f.debug_struct("HandlerOutcome")
             .field("outcome", &self.outcome)
             .field("after", &self.after.is_some())
+            .field("error", &self.error.is_some())
             .finish()
     }
 }
@@ -481,6 +560,7 @@ impl From<HandlerResult> for HandlerOutcome {
         Self {
             outcome,
             after: None,
+            error: None,
         }
     }
 }

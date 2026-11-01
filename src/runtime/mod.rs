@@ -35,7 +35,7 @@ pub use ruststream_runtime::{
     ReplyLast, ReplyOffer, ReplyOpen, ReplyStep, SlotCodec, SlotPolicy, SlotPos, TransactionalLast,
     TransformAt, TransformLast, WithSource,
 };
-pub use ruststream_runtime::{After, Context};
+pub use ruststream_runtime::{After, AfterError, AfterThen, Context};
 pub use ruststream_runtime::{
     AllOpen, BatchSized, BatchStep, Declared, FailureStep, Fixed, MapSourceStep, NameStep, Open,
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
@@ -108,6 +108,7 @@ pub use ruststream_runtime::{
     UnbuiltDefinition, WireDocs, declared_reply_destination, reply_destination,
 };
 pub use ruststream_runtime::{DynMiddleware, DynStack, DynStackHandler, Next};
+pub use ruststream_runtime::{FailedMessage, NoFreeRecordError};
 pub use ruststream_runtime::{FailurePolicies, FailurePolicy};
 pub use ruststream_runtime::{Handler, HandlerOutcome, LocalHandler};
 pub use ruststream_runtime::{
@@ -165,11 +166,11 @@ pub use ruststream_runtime_embassy::{Bindable as EmbeddedBindable, Bound as Embe
 #[cfg(feature = "embassy")]
 #[doc(hidden)]
 pub use ruststream_runtime_embassy::{
-    BrokerMount, CloseAll, EmbeddedPlan, FullPolicy, HasRetryRoom, HookList, Hooks, Keyed, Lanes,
-    NoHooks, OneLane, PolicyFits, Pool, Room, SoFar, StartMounts,
+    BrokerMount, CloseAll, EmbeddedPlan, HookList, Hooks, Keyed, Lanes, NoHooks, OneLane, Pool,
+    Room, SoFar, StartMounts,
 };
 #[cfg(feature = "embassy")]
 pub use ruststream_runtime_embassy::{
-    Control, DeadLetter, EmbassyClock, EmbeddedApp, Health, MountSteps, Mounts, Panic, Parts,
-    RunError, Scope, SkipDelay, Stopping,
+    Control, EmbassyClock, EmbeddedApp, Health, MountSteps, Mounts, Parts, RunError, Scope,
+    Stopping,
 };

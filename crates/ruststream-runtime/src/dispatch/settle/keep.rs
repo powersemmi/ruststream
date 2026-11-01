@@ -2,14 +2,13 @@
 //! takes the copy before the delivery settles, and the store publishes it.
 
 use alloc::string::ToString;
+use bytes::Bytes;
 use core::time::Duration;
-
-use tracing::warn;
 
 use super::super::{RETRY_COUNT_HEADER, Slot};
 use super::{Target, current_retry_count};
-use crate::host::{KeptDelivery, PrepareKept, WhenFull};
-use crate::lifecycle::BoxError;
+use crate::host::{HostDetach, KeptDelivery, PrepareKept};
+use crate::publish_failure::Reaction;
 use crate::{AckError, HeaderMap, LocalSettle, Str};
 
 /// Drops the original delivery and sends a copy of it to `target` through a record of the
@@ -21,48 +20,54 @@ use crate::{AckError, HeaderMap, LocalSettle, Str};
 /// The store prepares the copy there too, while the delivery is at hand: the mount site's
 /// transforms read it, and the copy leaves as they left it.
 ///
-/// A store with every record taken answers a copy that would wait for its delay as the mount
-/// chose ([`WhenFull`]): `declared` is the destination `.dead_letter(..)` named, which the
-/// `DeadLetter` choice sends the delivery to, and the `SkipDelay` choice publishes the copy to
-/// the subscription at once. Either way the copy takes no record: it is prepared in a buffer of
-/// its own, which allocates. The copy leaves first and the original is dropped once the broker
-/// took it; a copy the broker refuses requeues the original, so nothing is lost. A copy that never
-/// waits (a dead letter, a zero delay) takes the same way out, whatever the choice.
+/// A copy that would wait for its delay in a store with every record taken is a failed publish
+/// with its own error, "no free record". A copy that never waits (a dead letter, a zero delay)
+/// takes no record then, and is prepared in a buffer of its own, which allocates. The original
+/// is dropped before the copy leaves, as on the published path; a copy that fails is lost, and
+/// the handler's `error` continuation, when the outcome carried one, is given the failure and
+/// runs beside the delivery.
 ///
 /// # Errors
 ///
 /// Returns the [`AckError`] from dropping the original, as [`publish_copy`] does; the record is
-/// freed then.
-///
-/// # Panics
-///
-/// When the store is full and the mount chose to panic (the default): a device resets rather than
-/// losing a retry or spinning. The message names the subscription, the message type and the
-/// capacity.
+/// freed then, and no copy leaves.
 // `Send` exactly where the runner's store is.
 #[allow(clippy::future_not_send)]
-pub(super) async fn keep_copy<M, C, Kept>(
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn keep_copy<M, C, Kept, Host>(
     slot: &mut Slot<M>,
     name: &str,
     target: Target<'_>,
     delay: Option<Duration>,
-    declared: Option<&str>,
+    reaction: &mut Option<Reaction>,
     kept: &Kept,
+    host: &Host,
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
     M: LocalSettle,
     Kept: PrepareKept<C>,
+    Host: HostDetach,
 {
     let delay = delay.filter(|delay| !delay.is_zero());
-    let Some(record) = kept.take_record() else {
-        return spill_copy(slot, name, target, delay, declared, kept, build_cx).await;
-    };
-    let msg = slot.get();
     let destination = match target {
         Target::Subscription => None,
         Target::DeadLetter(destination) => Some(destination),
     };
+    let Some(record) = kept.take_record() else {
+        return spill_copy(
+            slot,
+            name,
+            destination,
+            delay,
+            reaction,
+            kept,
+            host,
+            build_cx,
+        )
+        .await;
+    };
+    let msg = slot.get();
     kept.fill(record, msg.payload(), counted(msg));
     kept.prepare(
         record,
@@ -79,10 +84,10 @@ where
     }
     // Only a copy back to the subscription carries a delay: a dead letter leaves at once.
     match delay {
-        Some(delay) => kept.arm(record, delay),
+        Some(delay) => kept.arm(record, delay, reaction.take()),
         None => {
-            if let Err(err) = kept.send_now(record, destination).await {
-                warn_lost(name, destination, &err);
+            if let Some(follow) = kept.send_now(record, destination, reaction.take()).await {
+                host.detach_boxed(follow);
             }
         }
     }
@@ -91,41 +96,38 @@ where
 
 /// Sends the copy without a record, because the store has none free.
 ///
-/// # Panics
-///
-/// When the copy would wait for its delay and the mount chose to panic.
+/// A copy that would wait for its delay has nowhere to wait: it is the "no free record" failure.
 // `Send` exactly where the runner's store is.
 #[allow(clippy::future_not_send)]
-async fn spill_copy<M, C, Kept>(
+#[allow(clippy::too_many_arguments)]
+async fn spill_copy<M, C, Kept, Host>(
     slot: &mut Slot<M>,
     name: &str,
-    target: Target<'_>,
+    destination: Option<&str>,
     delay: Option<Duration>,
-    declared: Option<&str>,
+    reaction: &mut Option<Reaction>,
     kept: &Kept,
+    host: &Host,
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
     M: LocalSettle,
     Kept: PrepareKept<C>,
+    Host: HostDetach,
 {
-    let destination = match (target, delay) {
-        (Target::DeadLetter(destination), _) => Some(destination),
-        (Target::Subscription, None) => None,
-        (Target::Subscription, Some(_)) => match kept.when_full() {
-            WhenFull::Panic => panic!(
-                "the store of retry copies of subscription `{name}` is full (capacity {}) while \
-                 a `{}` waits for a retry: raise it with `.retry_capacity::<N>()`, or choose what \
-                 a full store does with `.when_retry_full(DeadLetter)` or \
-                 `.when_retry_full(SkipDelay)`",
-                kept.capacity(),
-                kept.input(),
-            ),
-            WhenFull::DeadLetter => declared,
-            WhenFull::SkipDelay => None,
-        },
-    };
     let msg = slot.get();
+    if destination.is_none() && delay.is_some() {
+        // Copied for the continuation only: a failure nobody asked about copies nothing.
+        let payload = reaction
+            .is_some()
+            .then(|| Bytes::copy_from_slice(msg.payload()));
+        let headers = counted(msg);
+        drop_original(slot).await?;
+        if let Some(follow) = kept.full(payload, headers, reaction.take()) {
+            host.detach_boxed(follow);
+        }
+        return Ok(());
+    }
     let spilled = kept.spill(
         msg.payload(),
         counted(msg),
@@ -136,20 +138,16 @@ where
             build_cx,
         },
     );
-    // The copy leaves before the original is dropped, so a refusal loses nothing: the broker
-    // takes the original back. Dropping the original can still fail after the copy left, which
-    // leaves both with the broker.
-    if let Err(err) = kept.send_spilled(spilled, destination).await {
-        warn!(
-            target: "ruststream::dispatch",
-            subscription = %name,
-            destination = destination.unwrap_or(name),
-            error = %err,
-            "the retry copy was refused; requeuing the delivery",
-        );
-        return slot.take().nack(true).await;
+    // The original is dropped before the copy leaves, so a copy that fails is lost and the
+    // delivery never runs again because of it.
+    drop_original(slot).await?;
+    if let Some(follow) = kept
+        .send_spilled(spilled, destination, reaction.take())
+        .await
+    {
+        host.detach_boxed(follow);
     }
-    drop_original(slot).await
+    Ok(())
 }
 
 /// The delivery's headers with the retry count advanced: what the copy carries.
@@ -169,16 +167,6 @@ async fn drop_original<M: LocalSettle>(slot: &mut Slot<M>) -> Result<(), AckErro
     }
 }
 
-fn warn_lost(name: &str, destination: Option<&str>, err: &BoxError) {
-    warn!(
-        target: "ruststream::dispatch",
-        subscription = %name,
-        destination = destination.unwrap_or(name),
-        error = %err,
-        "publishing the retry copy failed; message lost",
-    );
-}
-
 #[cfg(test)]
 // The store double is a plain cell, as a one-thread runner's store is.
 #[allow(clippy::future_not_send)]
@@ -196,13 +184,14 @@ mod tests {
     use bytes::Bytes;
 
     use super::super::super::fixtures::{PlainMessage, Settlement};
-    use super::super::settle_outcome;
+    use super::super::{settle_outcome, settle_reacting};
     use crate::dispatch::{Delivery, RETRY_COUNT_HEADER, Slot};
+    use crate::handler::Continuation;
     use crate::handler::HandlerResult;
-    use crate::host::{
-        Keeping, KeptCopies, KeptDelivery, LocalDetach, OnOneThread, PrepareKept, WhenFull,
+    use crate::host::{Keeping, KeptCopies, KeptDelivery, LocalDetach, OnOneThread, PrepareKept};
+    use crate::publish_failure::{
+        ErrorHook, FailedMessage, NoFreeRecordError, Reaction, publish_lost,
     };
-    use crate::lifecycle::BoxError;
     use crate::testkit::log_capture;
     use crate::{HeaderMap, LocalSettle, RetryDeclaration};
 
@@ -213,15 +202,18 @@ mod tests {
             payload: Vec<u8>,
             count: Option<String>,
         },
-        Arm(Duration),
-        SendNow(Option<String>),
+        Arm(Duration, bool),
+        SendNow(Option<String>, bool),
         Free,
         Spill {
             payload: Vec<u8>,
             count: Option<String>,
             destination: Option<String>,
         },
-        SendSpilled(Option<String>),
+        SendSpilled(Option<String>, bool),
+        Full {
+            payload: Option<Vec<u8>>,
+        },
     }
 
     /// A store with `room` records that records what it is asked, and fails every publish when
@@ -229,7 +221,6 @@ mod tests {
     struct Store {
         room: usize,
         failing: bool,
-        when_full: WhenFull,
         asked: RefCell<Vec<Asked>>,
     }
 
@@ -238,13 +229,33 @@ mod tests {
             Self {
                 room,
                 failing: false,
-                when_full: WhenFull::Panic,
                 asked: RefCell::new(Vec::new()),
             }
         }
 
         fn asked(&self) -> Vec<Asked> {
             self.asked.borrow().clone()
+        }
+
+        /// What a publish of the copy leaves behind: nothing when it succeeds, and when the
+        /// store is `failing` what the failure makes of the handler's continuation.
+        fn outcome_of_publish(
+            &self,
+            reaction: Option<Reaction>,
+            destination: Option<&str>,
+        ) -> Option<Continuation> {
+            if !self.failing {
+                return None;
+            }
+            let target = destination.unwrap_or("orders");
+            publish_lost(
+                reaction,
+                "orders",
+                target,
+                "Order",
+                io::Error::other("connection closed").into(),
+                || FailedMessage::new(target, Bytes::from_static(b"body"), HeaderMap::new()),
+            )
         }
     }
 
@@ -259,10 +270,6 @@ mod tests {
             "Order"
         }
 
-        fn when_full(&self) -> WhenFull {
-            self.when_full
-        }
-
         fn take_record(&self) -> Option<usize> {
             (self.room > 0).then_some(0)
         }
@@ -271,16 +278,32 @@ mod tests {
             &self,
             (): (),
             destination: Option<&str>,
-        ) -> impl Future<Output = Result<(), BoxError>> {
-            self.asked
-                .borrow_mut()
-                .push(Asked::SendSpilled(destination.map(ToOwned::to_owned)));
-            let sent: Result<(), BoxError> = if self.failing {
-                Err(io::Error::other("connection closed").into())
-            } else {
-                Ok(())
-            };
-            ready(sent)
+            reaction: Option<Reaction>,
+        ) -> impl Future<Output = Option<Continuation>> {
+            self.asked.borrow_mut().push(Asked::SendSpilled(
+                destination.map(ToOwned::to_owned),
+                reaction.is_some(),
+            ));
+            ready(self.outcome_of_publish(reaction, destination))
+        }
+
+        fn full(
+            &self,
+            payload: Option<Bytes>,
+            _headers: HeaderMap,
+            reaction: Option<Reaction>,
+        ) -> Option<Continuation> {
+            self.asked.borrow_mut().push(Asked::Full {
+                payload: payload.as_ref().map(|bytes| bytes.to_vec()),
+            });
+            publish_lost(
+                reaction,
+                "orders",
+                "orders",
+                "Order",
+                NoFreeRecordError::new(self.room).into(),
+                || FailedMessage::new("orders", payload.unwrap_or_default(), HeaderMap::new()),
+            )
         }
 
         fn fill(&self, _record: usize, payload: &[u8], headers: HeaderMap) {
@@ -290,24 +313,23 @@ mod tests {
             });
         }
 
-        fn arm(&self, _record: usize, delay: Duration) {
-            self.asked.borrow_mut().push(Asked::Arm(delay));
+        fn arm(&self, _record: usize, delay: Duration, reaction: Option<Reaction>) {
+            self.asked
+                .borrow_mut()
+                .push(Asked::Arm(delay, reaction.is_some()));
         }
 
         fn send_now(
             &self,
             _record: usize,
             destination: Option<&str>,
-        ) -> impl Future<Output = Result<(), BoxError>> {
-            self.asked
-                .borrow_mut()
-                .push(Asked::SendNow(destination.map(ToOwned::to_owned)));
-            let sent: Result<(), BoxError> = if self.failing {
-                Err(io::Error::other("connection closed").into())
-            } else {
-                Ok(())
-            };
-            ready(sent)
+            reaction: Option<Reaction>,
+        ) -> impl Future<Output = Option<Continuation>> {
+            self.asked.borrow_mut().push(Asked::SendNow(
+                destination.map(ToOwned::to_owned),
+                reaction.is_some(),
+            ));
+            ready(self.outcome_of_publish(reaction, destination))
         }
 
         fn free(&self, _record: usize) {
@@ -340,10 +362,17 @@ mod tests {
         }
     }
 
-    /// The app's host beside the store: the copies never reach it.
-    struct NoWork;
+    /// The app's host beside the store: the copies never reach it, and it counts the
+    /// continuations a failed publish leaves with it.
+    struct NoWork {
+        boxed: core::cell::Cell<usize>,
+    }
 
     impl LocalDetach for NoWork {
+        fn detach_boxed(&self, _work: core::pin::Pin<alloc::boxed::Box<dyn Future<Output = ()>>>) {
+            self.boxed.set(self.boxed.get() + 1);
+        }
+
         fn detach<Work>(&self, _work: Work)
         where
             Work: Future<Output = ()> + 'static,
@@ -360,13 +389,26 @@ mod tests {
     fn unit_cx<M>(_msg: &M) {}
 
     /// Settles one delivery carrying `headers` by `outcome` on a host keeping its copies in
-    /// `store`; returns how the delivery was settled (1 dropped, 2 requeued).
+    /// `store`; returns how the delivery was settled (1 dropped, 2 requeued) and how many
+    /// continuations the failed publishes left with the host.
     async fn settle_on(
         store: &Store,
         outcome: HandlerResult,
         delivery: &Delivery,
         settlement: Settlement,
     ) -> u8 {
+        settle_reacting_on(store, outcome, None, delivery, settlement)
+            .await
+            .0
+    }
+
+    async fn settle_reacting_on(
+        store: &Store,
+        outcome: HandlerResult,
+        reaction: Option<Reaction>,
+        delivery: &Delivery,
+        settlement: Settlement,
+    ) -> (u8, usize) {
         let settled = Arc::new(AtomicU8::new(0));
         let msg = PlainMessage {
             payload: Bytes::from_static(b"body"),
@@ -374,16 +416,25 @@ mod tests {
             settled: Arc::clone(&settled),
             settlement,
         };
-        settle_outcome(
+        let work = NoWork {
+            boxed: core::cell::Cell::new(0),
+        };
+        settle_reacting(
             &mut Slot::new(msg),
             outcome,
+            reaction,
             "orders",
             delivery,
-            &Keeping(&NoWork, store),
+            &Keeping(&work, store),
             unit_cx,
         )
         .await;
-        settled.load(Ordering::SeqCst)
+        (settled.load(Ordering::SeqCst), work.boxed.get())
+    }
+
+    /// A handler's `.error` continuation, for the tests that only watch whether it is asked.
+    fn hook() -> Reaction {
+        Reaction::new(ErrorHook::new(async move |_error, _lost| {}), None)
     }
 
     const LATER: Duration = Duration::from_secs(5);
@@ -406,25 +457,57 @@ mod tests {
         )
         .await;
         assert_eq!(settled, 1, "the original is dropped");
-        assert_eq!(store.asked(), [filled(), Asked::Arm(LATER)]);
+        assert_eq!(store.asked(), [filled(), Asked::Arm(LATER, false)]);
     }
 
-    fn spilled(destination: Option<&str>) -> [Asked; 2] {
+    #[tokio::test]
+    async fn a_record_holds_the_error_continuation_until_the_copy_is_published() {
+        let store = Store::with_room(1);
+        settle_reacting_on(
+            &store,
+            HandlerResult::retry_after(LATER),
+            Some(hook()),
+            &Delivery::empty(),
+            Settlement::Accepted,
+        )
+        .await;
+        assert_eq!(store.asked(), [filled(), Asked::Arm(LATER, true)]);
+    }
+
+    fn spilled(destination: Option<&str>, has_error: bool) -> [Asked; 2] {
         [
             Asked::Spill {
                 payload: b"body".to_vec(),
                 count: Some("1".to_owned()),
                 destination: destination.map(ToOwned::to_owned),
             },
-            Asked::SendSpilled(destination.map(ToOwned::to_owned)),
+            Asked::SendSpilled(destination.map(ToOwned::to_owned), has_error),
         ]
     }
 
     #[tokio::test]
-    #[should_panic(
-        expected = "the store of retry copies of subscription `orders` is full (capacity 0) while a `"
-    )]
-    async fn a_full_store_panics_by_default_naming_the_subscription_the_type_and_the_capacity() {
+    async fn a_delayed_copy_finding_no_free_record_is_a_failed_publish_of_its_own() {
+        let store = Store::with_room(0);
+        let (settled, reactions) = settle_reacting_on(
+            &store,
+            HandlerResult::retry_after(LATER),
+            Some(hook()),
+            &Delivery::empty(),
+            Settlement::Accepted,
+        )
+        .await;
+        assert_eq!(settled, 1, "the original is dropped, never requeued");
+        assert_eq!(
+            store.asked(),
+            [Asked::Full {
+                payload: Some(b"body".to_vec())
+            }]
+        );
+        assert_eq!(reactions, 1, "the continuation runs beside the delivery");
+    }
+
+    #[tokio::test]
+    async fn a_full_store_copies_the_bytes_only_for_a_continuation() {
         let store = Store::with_room(0);
         settle_on(
             &store,
@@ -433,50 +516,38 @@ mod tests {
             Settlement::Accepted,
         )
         .await;
+        assert_eq!(store.asked(), [Asked::Full { payload: None }]);
     }
 
     #[tokio::test]
-    async fn a_full_store_sends_the_delivery_to_the_dead_letter_when_the_mount_chose_it() {
-        let store = Store {
-            when_full: WhenFull::DeadLetter,
-            ..Store::with_room(0)
-        };
-        let delivery = Delivery::empty().declaring(
-            RetryDeclaration::new()
-                .with_max_attempts(crate::nonzero!(3u32))
-                .with_dead_letter("orders.dead"),
-        );
-        let settled = settle_on(
-            &store,
-            HandlerResult::retry_after(LATER),
-            &delivery,
-            Settlement::Accepted,
-        )
-        .await;
-        assert_eq!(settled, 1, "the original is dropped");
-        assert_eq!(store.asked(), spilled(Some("orders.dead")));
-    }
-
-    #[tokio::test]
-    async fn a_full_store_publishes_the_copy_at_once_when_the_mount_skips_the_delay() {
-        let store = Store {
-            when_full: WhenFull::SkipDelay,
-            ..Store::with_room(0)
-        };
-        let settled = settle_on(
+    async fn a_full_store_warns_naming_the_subscription_the_type_and_the_error() {
+        let (events, _guard) = log_capture::start();
+        let store = Store::with_room(0);
+        settle_on(
             &store,
             HandlerResult::retry_after(LATER),
             &Delivery::empty(),
             Settlement::Accepted,
         )
         .await;
-        assert_eq!(settled, 1, "the original is dropped");
-        assert_eq!(store.asked(), spilled(None));
+        let fields = log_capture::find(&events, "publishing the message failed; message lost");
+        assert_eq!(
+            fields.get("subscription").map(String::as_str),
+            Some("orders")
+        );
+        assert_eq!(
+            fields.get("message_type").map(String::as_str),
+            Some("Order")
+        );
+        assert_eq!(
+            fields.get("error").map(String::as_str),
+            Some("no free record in the store of retry copies (capacity 0)")
+        );
     }
 
     #[tokio::test]
     async fn a_full_store_does_not_hold_a_copy_that_leaves_at_once() {
-        // The default choice would panic for a copy that waits; these never wait.
+        // A copy that waits has nowhere to wait; these never wait.
         let store = Store::with_room(0);
         settle_on(
             &store,
@@ -485,7 +556,7 @@ mod tests {
             Settlement::Accepted,
         )
         .await;
-        assert_eq!(store.asked(), spilled(None));
+        assert_eq!(store.asked(), spilled(None, false));
 
         let store = Store::with_room(0);
         let delivery =
@@ -497,56 +568,47 @@ mod tests {
             Settlement::Accepted,
         )
         .await;
-        assert_eq!(store.asked(), spilled(Some("orders.dead")));
+        assert_eq!(store.asked(), spilled(Some("orders.dead"), false));
     }
 
     #[tokio::test]
-    async fn a_spilled_copy_is_published_before_the_original_is_dropped() {
-        // A refused copy requeues the original, which a dropped original could not be.
-        for when_full in [WhenFull::DeadLetter, WhenFull::SkipDelay] {
-            let store = Store {
-                failing: true,
-                when_full,
-                ..Store::with_room(0)
-            };
-            let delivery = Delivery::empty().declaring(
-                RetryDeclaration::new()
-                    .with_max_attempts(crate::nonzero!(3u32))
-                    .with_dead_letter("orders.dead"),
-            );
-            let settled = settle_on(
-                &store,
-                HandlerResult::retry_after(LATER),
-                &delivery,
-                Settlement::Accepted,
-            )
-            .await;
-            assert_eq!(
-                settled, 2,
-                "{when_full:?}: the original is requeued, not lost"
-            );
-            assert_eq!(
-                store.asked().len(),
-                2,
-                "{when_full:?}: the copy was tried once"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn a_failed_settle_after_the_spilled_copy_left_is_reported() {
+    async fn a_refused_spilled_copy_is_lost_and_the_delivery_is_not_requeued() {
         let store = Store {
-            when_full: WhenFull::SkipDelay,
+            failing: true,
             ..Store::with_room(0)
         };
+        let (settled, reactions) = settle_reacting_on(
+            &store,
+            HandlerResult::retry_after(Duration::ZERO),
+            Some(hook()),
+            &Delivery::empty(),
+            Settlement::Accepted,
+        )
+        .await;
+        assert_eq!(settled, 1, "the original is dropped, not requeued");
+        assert_eq!(store.asked(), spilled(None, true));
+        assert_eq!(reactions, 1, "the continuation runs beside the delivery");
+    }
+
+    #[tokio::test]
+    async fn a_failed_settle_sends_no_spilled_copy() {
+        let store = Store::with_room(0);
         settle_on(
             &store,
-            HandlerResult::retry_after(LATER),
+            HandlerResult::retry_after(Duration::ZERO),
             &Delivery::empty(),
             Settlement::Rejected,
         )
         .await;
-        assert_eq!(store.asked(), spilled(None), "the copy had left already");
+        assert_eq!(
+            store.asked(),
+            [Asked::Spill {
+                payload: b"body".to_vec(),
+                count: Some("1".to_owned()),
+                destination: None,
+            }],
+            "a copy on top of a delivery the broker keeps would duplicate it",
+        );
     }
 
     #[tokio::test]
@@ -559,7 +621,7 @@ mod tests {
             Settlement::Accepted,
         )
         .await;
-        assert_eq!(store.asked(), [filled(), Asked::SendNow(None)]);
+        assert_eq!(store.asked(), [filled(), Asked::SendNow(None, false)]);
     }
 
     #[tokio::test]
@@ -585,7 +647,7 @@ mod tests {
             Settlement::Unsupported,
         )
         .await;
-        assert_eq!(store.asked(), [filled(), Asked::Arm(LATER)]);
+        assert_eq!(store.asked(), [filled(), Asked::Arm(LATER, false)]);
     }
 
     #[tokio::test]
@@ -602,7 +664,10 @@ mod tests {
         .await;
         assert_eq!(
             store.asked(),
-            [filled(), Asked::SendNow(Some("orders.dead".to_owned()))]
+            [
+                filled(),
+                Asked::SendNow(Some("orders.dead".to_owned()), false)
+            ]
         );
     }
 
@@ -619,7 +684,7 @@ mod tests {
         )
         .await;
         assert_eq!(settled, 1, "the original is dropped");
-        assert_eq!(store.asked(), [filled(), Asked::SendNow(None)]);
+        assert_eq!(store.asked(), [filled(), Asked::SendNow(None, false)]);
     }
 
     /// A one-thread runner whose copies wait in a store of the mount's own, run with none.
@@ -679,6 +744,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_copy_is_logged_rather_than_propagated() {
+        let (events, _guard) = log_capture::start();
         let store = Store {
             failing: true,
             ..Store::with_room(1)
@@ -691,6 +757,15 @@ mod tests {
         )
         .await;
         assert_eq!(settled, 1, "the original is dropped; the copy is lost");
-        assert_eq!(store.asked(), [filled(), Asked::SendNow(None)]);
+        assert_eq!(store.asked(), [filled(), Asked::SendNow(None, false)]);
+        let fields = log_capture::find(&events, "publishing the message failed; message lost");
+        assert_eq!(
+            fields.get("destination").map(String::as_str),
+            Some("orders")
+        );
+        assert_eq!(
+            fields.get("error").map(String::as_str),
+            Some("connection closed")
+        );
     }
 }

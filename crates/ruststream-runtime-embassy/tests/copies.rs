@@ -1,9 +1,10 @@
-//! The copies of one record allocate nothing once it is warm: a dead-letter copy its broker
-//! refuses stays in its record and is published again every few milliseconds, and the copies
-//! published at once reuse the same record's buffers.
+//! The copies of one record allocate nothing once it is warm: the copies published at once reuse
+//! the same record's buffers, and a dead-letter copy its broker refuses is lost and gives its
+//! record back at once.
 //!
 //! The driver task fills the dead-letter subscription, so the broker refuses the next copy, moves
-//! embassy-time's mock clock over many re-publications and reads how many allocations they made.
+//! embassy-time's mock clock past the point where the old design published it again and reads
+//! that nothing reaches the handler.
 
 // A thread-mode embassy task is never sent anywhere, and the app holds a bus that is not `Send`.
 #![allow(clippy::future_not_send)]
@@ -12,7 +13,6 @@ use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use core::time::Duration;
 use std::alloc::System;
-use std::error::Error;
 
 use bytes::BytesMut;
 use embassy_executor::{Executor, Spawner};
@@ -21,10 +21,8 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
-use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER};
-use ruststream::{
-    Broker, Deserialized, HeaderMap, LocalPublisher, OutgoingMessage, Str, nonzero, subscriber,
-};
+use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts};
+use ruststream::{Broker, Deserialized, LocalPublisher, OutgoingMessage, nonzero, subscriber};
 use static_cell::StaticCell;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 
@@ -44,7 +42,7 @@ const COPIES: u32 = 100;
 /// What a warm job allocates from its publish to the dead-letter handler: the delivery's and
 /// the copy's header maps, and the broker's copy of the payload. The record's buffers add none, so
 /// a change that reallocates one per copy moves this number.
-const WARM_JOB_ALLOCATIONS: usize = 4;
+const WARM_JOB_ALLOCATIONS: usize = 3;
 
 /// Messages the dead-letter subscription holds: its four slots and the one its handler is on.
 const ROOM: u8 = 4;
@@ -138,29 +136,6 @@ async fn allocations_of_a_job(bus: &Bus, job: u8) -> usize {
     delivery.change().allocations
 }
 
-/// Allocations one refused publish makes at the broker's boundary: the payload and the header map
-/// handed over, the refusal and its box. A copy kept in its record costs no more.
-async fn allocations_of_a_refusal(bus: &Bus, subject: &'static str) -> usize {
-    let connected = bus.clone().connect().await.expect("the bus connects");
-    let publisher = connected.publisher();
-    let refusal = Region::new(ALLOCATOR);
-    // The copy's own steps: the payload handed over as a buffer the broker keeps, and the error
-    // boxed for the store.
-    let mut headers = HeaderMap::new();
-    headers.insert(Str::from_static(RETRY_COUNT_HEADER), "2");
-    let message = OutgoingMessage::assembled(subject, BytesMut::from(&b"r"[..]), headers);
-    let refused = publisher
-        .publish(message, None)
-        .await
-        .map_err(Box::<dyn Error + Send + Sync>::from);
-    let allocations = refusal.change().allocations;
-    assert!(
-        refused.is_err(),
-        "the full subscription refuses the publish"
-    );
-    allocations
-}
-
 async fn check_copies(spawner: Spawner, stand: &'static Stand) {
     spawner.spawn(app::task(stand.bus.clone()).expect("the app task is free"));
     settle().await;
@@ -179,8 +154,7 @@ async fn check_copies(spawner: Spawner, stand: &'static Stand) {
     }
     let delivered = DEAD.load(Ordering::Relaxed) - dead_before;
 
-    // The dead-letter subscription is full: the broker refuses the next copy, which stays in its
-    // record and is published again every few milliseconds.
+    // The dead-letter subscription is full: the broker refuses the next copy, which is lost.
     HOLD.store(true, Ordering::Relaxed);
     for filler in 0..ROOM {
         publish(&stand.bus, "bus/jobs.dead", filler).await;
@@ -191,15 +165,12 @@ async fn check_copies(spawner: Spawner, stand: &'static Stand) {
     publish(&stand.bus, "bus/jobs", b'x').await;
     settle().await;
     let before_refusals = DEAD.load(Ordering::Relaxed);
-    let by_the_broker = allocations_of_a_refusal(&stand.bus, "bus/jobs.dead").await;
-    let refusals = Region::new(ALLOCATOR);
     for _ in 0..COPIES {
         advance(RETRY_STEP).await;
     }
-    let refused_allocations = refusals.change().allocations;
     let while_refused = DEAD.load(Ordering::Relaxed);
 
-    // The room frees: the copy kept in the record reaches the handler.
+    // The room frees: the fillers reach the handler, and the refused copy never does.
     HOLD.store(false, Ordering::Relaxed);
     for _ in 0..=ROOM {
         RELEASE.signal(());
@@ -225,20 +196,15 @@ async fn check_copies(spawner: Spawner, stand: &'static Stand) {
     );
     passed("copies published at once on one record allocate what a warm one did");
     assert_eq!(
-        refused_allocations,
-        by_the_broker * usize::try_from(COPIES).unwrap_or(0),
-        "allocations of {COPIES} copies refused and published again, against the publish alone"
-    );
-    assert_eq!(
         while_refused, before_refusals,
         "dead letters while the broker refuses the copy"
     );
     assert_eq!(
         after_release,
-        before_refusals + u32::from(ROOM) + 1,
-        "dead letters once the room freed: the fillers and the kept copy"
+        before_refusals + u32::from(ROOM),
+        "dead letters once the room freed: the fillers alone, the refused copy is lost"
     );
-    passed("a copy the broker refuses is published again at the cost of the publish alone");
+    passed("a copy the broker refuses is lost and never published again");
 }
 
 #[embassy_executor::task]
