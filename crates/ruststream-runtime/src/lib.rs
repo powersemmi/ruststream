@@ -237,6 +237,7 @@ pub use handler::Continuation;
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 #[doc(hidden)]
 pub use handler::HandlerResult;
+#[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use handler::MaybeSendSync;
 #[cfg(feature = "alloc")]
