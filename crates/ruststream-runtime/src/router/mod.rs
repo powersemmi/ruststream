@@ -73,7 +73,7 @@ pub use mount::{
 #[doc(hidden)]
 pub use mount_sink::{MountSink, Opened};
 #[doc(hidden)]
-pub use routes::{RetryDestinationsDeclared, RouteMetadata, RouteSubscription};
+pub use routes::{DeadLetterDeclared, RetryDestinationsDeclared, RouteMetadata, RouteSubscription};
 pub use routes::{RouterDef, RouterHandlers};
 
 use crate::Connected;

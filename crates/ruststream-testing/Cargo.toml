@@ -124,3 +124,10 @@ required-features = ["embassy", "json"]
 name = "embedded_quiescence"
 path = "tests/embedded_quiescence.rs"
 required-features = ["embassy", "json"]
+
+# What a delayed retry does when the mount's store of copies is full: panic, dead letter, or skip
+# the delay, through the embedded `TestApp`.
+[[test]]
+name = "embedded_retry_full"
+path = "tests/embedded_retry_full.rs"
+required-features = ["embassy", "json"]

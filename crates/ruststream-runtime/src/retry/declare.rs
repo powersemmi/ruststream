@@ -372,9 +372,9 @@ forward_steps!([] ReplyLast, [const POS: usize] SlotPos<POS>);
 impl<Mount, R, Def, Under, Cap, Dead> RouterCommit<Mount, R, Def> for Declaring<Under, Cap, Dead>
 where
     Under: RouterCommit<Mount, R, Def>,
-    Under::Out: AttachDeclaration,
+    Under::Out: AttachDeclaration<Dead>,
 {
-    type Out = <Under::Out as AttachDeclaration>::Out;
+    type Out = <Under::Out as AttachDeclaration<Dead>>::Out;
 
     fn commit(self, def: Def, router: R) -> Self::Out {
         self.under

@@ -203,7 +203,7 @@ pub use host::{Copying, SendHost};
 pub use host::{Detach, Halt, HostDetach, LocalDetach, OnOneThread};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept};
+pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept, WhenFull};
 #[cfg(feature = "tokio")]
 pub use main_runtime::MainRuntime;
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
@@ -314,11 +314,11 @@ pub use retry::{
 #[doc(hidden)]
 pub use router::{
     AttachDeclaration, AttachRetry, Balance, BatchPublishInjectMount, BatchPublishMount, ChainHead,
-    DefaultReply, LayerFits, MountSink, OpenLayered, OpenRoutes, Opened, OpenedBatchRoute,
-    OpenedRoute, Plain, Poison, PoisonAt, PoisonMode, Poisoned, PoolFits, PublishInjectMount,
-    PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment, RetryDestinationsDeclared,
-    RouteMetadata, RouteSubscription, RouterBroker, RouterCommit, RouterMount, RouterPipe,
-    RunRoutes, RunsBatches, SplitHead, TakesWorkers,
+    DeadLetterDeclared, DefaultReply, LayerFits, MountSink, OpenLayered, OpenRoutes, Opened,
+    OpenedBatchRoute, OpenedRoute, Plain, Poison, PoisonAt, PoisonMode, Poisoned, PoolFits,
+    PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
+    RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker, RouterCommit,
+    RouterMount, RouterPipe, RunRoutes, RunsBatches, SplitHead, TakesWorkers,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]

@@ -14,6 +14,8 @@ use core::time::Duration;
 
 #[cfg(feature = "alloc")]
 use alloc::sync::Arc;
+#[cfg(feature = "alloc")]
+use core::convert::Infallible;
 
 #[cfg(feature = "alloc")]
 use crate::lifecycle::BoxError;
@@ -560,25 +562,59 @@ impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept>
     }
 }
 
+/// What a mount does with a delayed retry when its store of copies has no free record. Machinery;
+/// the mount site picks one with `.when_retry_full(..)`.
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WhenFull {
+    /// Panic: a device resets rather than losing a retry or spinning.
+    #[default]
+    Panic,
+    /// Send the delivery to the mount's dead-letter destination.
+    DeadLetter,
+    /// Publish the copy at once instead of holding it for its delay.
+    SkipDelay,
+}
+
 /// Retry copies kept in place: a fixed number of records, each holding one copy's bytes and
 /// headers until it is published, by the store's own driver once it is due or by the delivery
 /// body at once.
 ///
-/// The body fills a record before it settles the delivery the record copies, so a store with
-/// every record taken makes the delivery wait for a free one, unless the store is saturated by
-/// copies its broker refuses: those need the room the waiting delivery holds, so the delivery is
-/// requeued. A record reuses its buffer from one copy to the next. Machinery; never named directly.
+/// The body fills a record before it settles the delivery the record copies. A store with every
+/// record taken does what the mount chose ([`WhenFull`]): it panics, or the copy leaves without
+/// a record, at once. A record reuses its buffer from one copy to the next. Machinery; never
+/// named directly.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub trait KeptCopies {
+    /// A copy that leaves without a record: the mount's answer to a full store. It holds what
+    /// the copy is made of until [`send_spilled`](Self::send_spilled) publishes it.
+    type Spilled;
+
+    /// How many records the store has.
+    fn capacity(&self) -> usize;
+
+    /// The name of the type the handler receives, for the diagnostic of a full store.
+    fn input(&self) -> &'static str;
+
+    /// What a delivery does when no record is free.
+    fn when_full(&self) -> WhenFull;
+
     /// Takes a free record for one copy; `None` when every record holds one.
     fn take_record(&self) -> Option<usize>;
 
-    /// Waits until a record is free and takes it: the answer to a full store, so the
-    /// subscription holds the delivery rather than requeuing it. `None` once the store is
-    /// saturated: a copy of its own was refused while the delivery waited, which means the copy
-    /// needs the room the delivery holds, and the delivery goes back to the broker instead.
-    fn wait_record(&self) -> impl Future<Output = Option<usize>>;
+    /// Publishes a copy that took no record, now, to `destination` or, without one, to the
+    /// subscription.
+    ///
+    /// # Errors
+    ///
+    /// What the publisher returned; the copy is lost.
+    fn send_spilled(
+        &self,
+        spilled: Self::Spilled,
+        destination: Option<&str>,
+    ) -> impl Future<Output = Result<(), BoxError>>;
 
     /// Writes the copy into `record`, taken by [`take_record`](Self::take_record).
     fn fill(&self, record: usize, payload: &[u8], headers: HeaderMap);
@@ -632,6 +668,16 @@ pub trait PrepareKept<Cx>: KeptCopies {
         destination: Option<&str>,
         delivery: &KeptDelivery<'_, M, Cx>,
     );
+
+    /// Prepares a copy bound for `destination` or, without one, for the subscription, in a
+    /// buffer of its own because no record is free; it allocates.
+    fn spill<M: LocalSettle>(
+        &self,
+        payload: &[u8],
+        headers: HeaderMap,
+        destination: Option<&str>,
+        delivery: &KeptDelivery<'_, M, Cx>,
+    ) -> Self::Spilled;
 }
 
 /// The store of a host that keeps no retry copy in place: there is none.
@@ -645,11 +691,29 @@ pub enum NoKept {}
 #[cfg(feature = "alloc")]
 #[allow(clippy::uninhabited_references, clippy::unused_async_trait_impl)]
 impl KeptCopies for NoKept {
+    type Spilled = Infallible;
+
+    fn capacity(&self) -> usize {
+        match *self {}
+    }
+
+    fn input(&self) -> &'static str {
+        match *self {}
+    }
+
+    fn when_full(&self) -> WhenFull {
+        match *self {}
+    }
+
     fn take_record(&self) -> Option<usize> {
         match *self {}
     }
 
-    async fn wait_record(&self) -> Option<usize> {
+    async fn send_spilled(
+        &self,
+        _spilled: Self::Spilled,
+        _destination: Option<&str>,
+    ) -> Result<(), BoxError> {
         match *self {}
     }
 
@@ -679,6 +743,16 @@ impl<Cx> PrepareKept<Cx> for NoKept {
         _destination: Option<&str>,
         _delivery: &KeptDelivery<'_, M, Cx>,
     ) {
+        match *self {}
+    }
+
+    fn spill<M: LocalSettle>(
+        &self,
+        _payload: &[u8],
+        _headers: HeaderMap,
+        _destination: Option<&str>,
+        _delivery: &KeptDelivery<'_, M, Cx>,
+    ) -> Self::Spilled {
         match *self {}
     }
 }

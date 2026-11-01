@@ -271,7 +271,18 @@ where
             )
             .await
         }
-        CopyPath::Kept(kept) => keep_copy(slot, name, target, delay, kept, build_cx).await,
+        CopyPath::Kept(kept) => {
+            keep_copy(
+                slot,
+                name,
+                target,
+                delay,
+                delivery.declaration.dead_letter(),
+                kept,
+                build_cx,
+            )
+            .await
+        }
     }
 }
 

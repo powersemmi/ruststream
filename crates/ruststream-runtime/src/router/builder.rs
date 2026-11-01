@@ -769,7 +769,7 @@ where
 /// gains the declaration itself, which the runtime hands the subscription descriptor at startup.
 /// Machinery; never named directly.
 #[doc(hidden)]
-pub trait AttachDeclaration: Sized {
+pub trait AttachDeclaration<Dead>: Sized {
     /// The router with that registration's declaration wired.
     type Out;
 
@@ -777,11 +777,12 @@ pub trait AttachDeclaration: Sized {
     fn attach_declaration(self, declaration: RetryDeclaration) -> Self::Out;
 }
 
-impl<B, Head, Tail, C, Layers, Pipe> AttachDeclaration for Router<B, (Head, Tail), C, Layers, Pipe>
+impl<B, Head, Tail, C, Layers, Pipe, Dead> AttachDeclaration<Dead>
+    for Router<B, (Head, Tail), C, Layers, Pipe>
 where
     Head: RetryOpen + RouteMetadata,
 {
-    type Out = Router<B, (DeclaredRoute<Head>, Tail), C, Layers, Pipe>;
+    type Out = Router<B, (DeclaredRoute<Head, Dead>, Tail), C, Layers, Pipe>;
 
     fn attach_declaration(self, declaration: RetryDeclaration) -> Self::Out {
         let (mut head, tail) = self.routes;

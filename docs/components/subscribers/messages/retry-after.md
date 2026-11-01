@@ -23,6 +23,15 @@ A batch body sets a delay per element, and only those elements come back.
 A test runs on a paused clock (`#[tokio::test(start_paused = true)]`), and [`tb.advance(delay)`](api:ruststream::testing::TestApp::advance) brings the delivery back, as the [advance](../../application/testing/driving/advance.md) page shows.
 How many times a delivery may come back is the registration's declaration, [`max_attempts`](../retry-cap.md).
 
+On the embedded runner a copy waits in a store the mount sizes with `retry_capacity::<N>()`.
+When a delayed retry finds every record taken, the mount's choice applies.
+Without one the run panics: a device resets rather than losing the retry or spinning, and the message names the subscription, the message type and the capacity.
+`when_retry_full(DeadLetter)` sends the delivery to the destination `dead_letter(..)` declared and settles the original; a mount without that declaration does not compile.
+`when_retry_full(SkipDelay)` publishes the copy at once with its retry count advanced, so `max_attempts` still counts the attempt.
+Both choices take no record, so the copy is prepared in buffers of its own, which allocates.
+The copy leaves before the original is dropped, and a copy the broker refuses requeues the original, so nothing is lost.
+The reference is the documentation of [`ruststream-runtime-embassy`](https://docs.rs/ruststream-runtime-embassy).
+
 ## Example
 
 <Tabs groupId="api">

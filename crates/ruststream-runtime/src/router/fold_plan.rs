@@ -19,7 +19,7 @@ use crate::dispatch::{Delivery, HeadersAtOnce, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::LocalHandler;
 use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, PrepareKept, ShutdownWait};
-use crate::input::Materialize;
+use crate::input::{InputKind, Materialize};
 use crate::lifecycle::BoxError;
 use crate::middleware::LocalBlanketLayer;
 use crate::redelivery::{
@@ -35,7 +35,7 @@ use crate::{
 use super::builder::Router;
 use super::fold::{OpenLayered, OpenedRoute, RunRoutes};
 use super::local::LocalPipeline;
-use super::routes::{DeclaredRoute, RetryDestinationsDeclared, SubscribeRoute};
+use super::routes::{DeadLetterDeclared, DeclaredRoute, RetryDestinationsDeclared, SubscribeRoute};
 use super::routes_inject::InjectRoute;
 use super::routes_publish::{PublishingRoute, RawReplyRoute};
 
@@ -88,6 +88,9 @@ pub struct LocalRoute<Sub, Body, Cx> {
     pub delivery: Delivery<Cx>,
     /// The registration's failure policies.
     pub policies: FailurePolicies,
+    /// The name of the type the handler receives, decoded: what a diagnostic about the
+    /// subscription's store of copies calls its messages. Read once when the registration opens.
+    pub input: &'static str,
 }
 
 impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
@@ -202,12 +205,14 @@ impl_planless!(
     InjectRoute<Source, Def, DecodeCodec, Extra>,
 );
 
-// A plan changes how deliveries run, never where their retry copies go.
+// A plan changes how deliveries run, never where their retry copies go, nor what was declared.
+impl<Route: DeadLetterDeclared, Plan> DeadLetterDeclared for Dispatched<Route, Plan> {}
+
 impl<Route: RetryDestinationsDeclared, Plan> RetryDestinationsDeclared for Dispatched<Route, Plan> {}
 
 // A declaration rides the registration, so a step after it plans the registration it wraps.
-impl<Route: LocalPlanned> LocalPlanned for DeclaredRoute<Route> {
-    type Route = DeclaredRoute<Route::Route>;
+impl<Route: LocalPlanned, Dead> LocalPlanned for DeclaredRoute<Route, Dead> {
+    type Route = DeclaredRoute<Route::Route, Dead>;
     type Plan = Route::Plan;
 
     fn into_planned(self) -> (Self::Route, Self::Plan) {
@@ -320,7 +325,7 @@ impl<Source, Def, DecodeCodec, Extra> UnboundRetry
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 {
 }
-impl<Route: UnboundRetry> UnboundRetry for DeclaredRoute<Route> {}
+impl<Route: UnboundRetry, Dead> UnboundRetry for DeclaredRoute<Route, Dead> {}
 
 /// Implements the plain opening of every [`OpenLocalRoute`] registration: no plan, the router's
 /// layer stack beside the handler.
@@ -364,11 +369,11 @@ open_plain!(
     [Source, Def, DecodeCodec, Wiring, Extra] PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     [Source, Def, DecodeCodec, Wiring, Extra] RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra>,
-    [Route] DeclaredRoute<Route>,
+    [Route, Dead] DeclaredRoute<Route, Dead>,
 );
 
 // A declared registration opens as the one it wraps, with the declaration its mount chain made.
-impl<B, State, Route> OpenLocalRoute<B, State> for DeclaredRoute<Route>
+impl<B, State, Route, Dead> OpenLocalRoute<B, State> for DeclaredRoute<Route, Dead>
 where
     B: Broker,
     Route: OpenLocalRoute<B, State, Declaration = Undeclared>,
@@ -429,6 +434,7 @@ where
             name,
             delivery,
             policies: self.policies,
+            input: <Input as InputKind>::input_label(),
         })
     }
 }
@@ -491,7 +497,7 @@ open_dispatched!(
     [Source, Def, DecodeCodec, Wiring, Extra] PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     [Source, Def, DecodeCodec, Wiring, Extra] RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra>,
-    [Route] DeclaredRoute<Route>,
+    [Route, Dead] DeclaredRoute<Route, Dead>,
 );
 
 impl<State, Sub, Body, Cx, Layers, Plan, Path> RunRoutes<State>
@@ -525,6 +531,7 @@ where
             name: route.name,
             delivery: route.delivery,
             policies: route.policies,
+            input: route.input,
         };
         plan.run(route, path, signal, state, host).await;
     }
