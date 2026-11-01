@@ -218,12 +218,12 @@
       "name": "request and reply, one round trip",
       "messages": 1000,
       "framework": {
-        "instructions": 8959.3,
-        "allocations": 11.0
+        "instructions": 8920.9,
+        "allocations": 10.0
       },
       "cold": {
-        "instructions": 24881,
-        "allocations": 37
+        "instructions": 24823,
+        "allocations": 36
       },
       "gated": true
     },
