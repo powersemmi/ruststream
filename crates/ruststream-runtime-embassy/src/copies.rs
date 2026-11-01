@@ -17,7 +17,7 @@ use core::time::Duration;
 use bytes::{Bytes, BytesMut};
 use ruststream_core::{HeaderMap, Settle};
 use ruststream_runtime::{
-    Clock, Continuation, CopyPublisher, FailedMessage, KeptCopies, KeptDelivery, LocalDetach,
+    Clock, Continuation, CopyPublisher, Detach, FailedMessage, KeptCopies, KeptDelivery,
     NoFreeRecordError, PrepareCopy, PrepareKept, Reaction, Refusal, publish_done, publish_lost,
 };
 
@@ -147,7 +147,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
     /// Publishes every copy once it is due, until [`close`](Self::close) and the last copy sent.
     /// What a failed publish's `.error` continuation makes of it runs on `host`, beside the
     /// driver.
-    pub(crate) async fn drive<Host: LocalDetach>(&self, host: &Host) {
+    pub(crate) async fn drive<Host: Detach>(&self, host: &Host) {
         let mut timer: Option<(Timers::Instant, Timers::Sleep)> = None;
         while let Some(record) = self.next_due(&mut timer).await {
             if let Some(reaction) = self.send(record).await {
@@ -456,7 +456,7 @@ mod tests {
 
     use ruststream_core::{HeaderMap, Lend, OutgoingMessage, PublishMessageError};
     use ruststream_runtime::{
-        Clock, CopyPublisher, ErrorHook, Failures, KeptCopies, LocalDetach, Reaction, Refusal,
+        Clock, CopyPublisher, Detach, ErrorHook, Failures, KeptCopies, Reaction, Refusal,
     };
 
     // The store on embassy's clock polls embassy's timer, whose queue lives in the executor.
@@ -540,7 +540,7 @@ mod tests {
         boxed: Cell<usize>,
     }
 
-    impl LocalDetach for Beside {
+    impl Detach for Beside {
         fn detach_boxed(&self, _work: Pin<Box<dyn Future<Output = ()>>>) {
             self.boxed.set(self.boxed.get() + 1);
         }

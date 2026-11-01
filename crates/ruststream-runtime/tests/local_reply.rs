@@ -19,7 +19,7 @@ use ruststream_core::{
 };
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
-    Context, ContextKind, Deserialized, Halt, HandlerOutcome, Input, LocalDetach, LocalHandle,
+    Context, ContextKind, Deserialized, Detach, Halt, HandlerOutcome, Input, LocalHandle,
     OpenRoutes, Outgoing, PublishTransform, Reads, Router, RunRoutes, ScopeDelivery, ShutdownWait,
     SoloDeserialized, local_subscriber,
 };
@@ -69,7 +69,7 @@ impl Halt for &Stop {
 #[derive(Default)]
 struct CountDetached(AtomicUsize);
 
-impl LocalDetach for CountDetached {
+impl Detach for CountDetached {
     fn detach<Work>(&self, _work: Work)
     where
         Work: Future<Output = ()> + 'static,

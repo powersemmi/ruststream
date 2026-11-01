@@ -216,7 +216,7 @@ pub use host::{Clock, ShutdownWait};
 #[doc(hidden)]
 pub use host::{Copying, SendHost};
 #[doc(hidden)]
-pub use host::{Detach, Halt, HostDetach, LocalDetach, OnOneThread};
+pub use host::{Detach, Halt, HostDetach};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept};

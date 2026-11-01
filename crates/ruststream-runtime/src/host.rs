@@ -13,12 +13,10 @@
 #[cfg(feature = "alloc")]
 use bytes::Bytes;
 #[cfg(feature = "alloc")]
-use core::pin::Pin;
 use core::time::Duration;
 use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
 #[cfg(feature = "alloc")]
-use alloc::boxed::Box;
 #[cfg(feature = "alloc")]
 use alloc::sync::Arc;
 #[cfg(feature = "alloc")]
@@ -209,6 +207,10 @@ pub trait Halt: MaybeSync {
 /// form takes the delay rather than a timer, so the runner arms it on its own clock.
 #[doc(hidden)]
 pub trait Detach: MaybeSendSync {
+    /// Whether this runner keeps a mount's retry copies in a store the mount sizes itself, so a
+    /// delayed retry on a mount without one names the step that adds it.
+    const STORES_COPIES: bool = false;
+
     /// Runs `work` beside the delivery that left it.
     fn detach<Work>(&self, work: Work)
     where
@@ -221,7 +223,9 @@ pub trait Detach: MaybeSendSync {
     /// runner built on this trait is a multi-thread one, so it is built with that feature, and
     /// it spawns the box as the future it is.
     #[cfg(feature = "alloc")]
-    fn detach_boxed(&self, work: Continuation);
+    fn detach_boxed(&self, work: Continuation) {
+        self.detach(work);
+    }
 
     /// Runs `work` once `delay` has passed on the runner's clock.
     ///
@@ -259,15 +263,12 @@ pub trait Detach: MaybeSendSync {
     fn release(&self) {}
 }
 
-/// Where the delivery body hands the work a delivery leaves behind, on a runner of either
-/// family: every [`Detach`] is one, and a [`LocalDetach`] is one through [`OnOneThread`].
-///
-/// The body's own leftovers (an `and_after` continuation, a post-settle hook) are `Send`, so a
-/// one-thread runner takes them as they are. Machinery; never named directly.
+/// Where the delivery body hands the work a delivery leaves behind: every [`Detach`] is one, and
+/// so is a host with a retry route or a store of copies. Machinery; never named directly.
 #[doc(hidden)]
 pub trait HostDetach {
     /// Whether the runner keeps a mount's retry copies in a store the mount sizes itself: see
-    /// [`LocalDetach::STORES_COPIES`].
+    /// [`Detach::STORES_COPIES`].
     const STORES_COPIES: bool = false;
 
     /// Runs work the delivery already boxed: an `and_after` continuation or a post-settle hook.
@@ -310,6 +311,8 @@ pub trait HostDetach {
 }
 
 impl<Host: Detach> HostDetach for Host {
+    const STORES_COPIES: bool = Host::STORES_COPIES;
+
     #[cfg(feature = "alloc")]
     #[inline]
     fn detach_boxed(&self, work: Continuation) {
@@ -333,59 +336,6 @@ impl<Host: Detach> HostDetach for Host {
     #[inline]
     fn release(&self) {
         Detach::release(self);
-    }
-
-    #[cfg(feature = "alloc")]
-    type Kept = NoKept;
-
-    #[cfg(feature = "alloc")]
-    #[inline]
-    fn kept(&self) -> Option<&NoKept> {
-        None
-    }
-
-    #[cfg(feature = "alloc")]
-    type Retry = NoRetry;
-
-    #[cfg(feature = "alloc")]
-    #[inline]
-    fn retry(&self) -> Option<&Arc<RetryRoute<NoRetry>>> {
-        None
-    }
-}
-
-/// A [`LocalDetach`] lent to the delivery body: a one-thread runner's host, taking the body's
-/// leftovers into its own storage. Machinery; never named directly.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct OnOneThread<'host, Host>(pub &'host Host);
-
-impl<Host: LocalDetach> HostDetach for OnOneThread<'_, Host> {
-    const STORES_COPIES: bool = Host::STORES_COPIES;
-
-    #[cfg(feature = "alloc")]
-    #[inline]
-    fn detach_boxed(&self, work: Continuation) {
-        LocalDetach::detach_boxed(self.0, work);
-    }
-
-    #[inline]
-    fn detach_after_with<Make, Work>(&self, delay: Duration, make: Make)
-    where
-        Make: FnOnce() -> Work + MaybeSend + 'static,
-        Work: Future<Output = ()> + MaybeSend + 'static,
-    {
-        LocalDetach::detach_after(self.0, delay, make());
-    }
-
-    #[inline]
-    fn reserve(&self) -> bool {
-        LocalDetach::reserve(self.0)
-    }
-
-    #[inline]
-    fn release(&self) {
-        LocalDetach::release(self.0);
     }
 
     #[cfg(feature = "alloc")]
@@ -484,7 +434,7 @@ impl<Host: Detach, Retry: 'static> HostDetach for Copying<Host, Retry> {
     }
 }
 
-/// A [`LocalDetach`] lent to the delivery body together with a store of retry copies kept in
+/// A [`Detach`] lent to the delivery body together with a store of retry copies kept in
 /// place: the host of a registration that declared room for its delayed copies. Its copies
 /// wait in `Kept`'s records rather than as detached work. Machinery; never named directly.
 #[cfg(feature = "alloc")]
@@ -493,13 +443,13 @@ impl<Host: Detach, Retry: 'static> HostDetach for Copying<Host, Retry> {
 pub struct Keeping<'host, Host, Kept>(pub &'host Host, pub &'host Kept);
 
 #[cfg(feature = "alloc")]
-impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept> {
+impl<Host: Detach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept> {
     const STORES_COPIES: bool = Host::STORES_COPIES;
 
     #[cfg(feature = "alloc")]
     #[inline]
     fn detach_boxed(&self, work: Continuation) {
-        LocalDetach::detach_boxed(self.0, work);
+        Detach::detach_boxed(self.0, work);
     }
 
     #[inline]
@@ -508,17 +458,17 @@ impl<Host: LocalDetach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept>
         Make: FnOnce() -> Work + MaybeSend + 'static,
         Work: Future<Output = ()> + MaybeSend + 'static,
     {
-        LocalDetach::detach_after(self.0, delay, make());
+        Detach::detach_after_with(self.0, delay, make);
     }
 
     #[inline]
     fn reserve(&self) -> bool {
-        LocalDetach::reserve(self.0)
+        Detach::reserve(self.0)
     }
 
     #[inline]
     fn release(&self) {
-        LocalDetach::release(self.0);
+        Detach::release(self.0);
     }
 
     type Kept = Kept;
@@ -721,49 +671,4 @@ impl<Cx> PrepareKept<Cx> for NoKept {
     ) -> Self::Spilled {
         match *self {}
     }
-}
-
-/// Work a delivery leaves behind on a runner that polls every delivery on one thread: the
-/// [`Detach`] of the local family, whose work need not be `Send`.
-///
-/// A runner that hosts the whole app in one task (embassy's) keeps what it is handed in storage
-/// of its own and polls it from that task, so the work may hold the local broker's `Rc`s and its
-/// `!Send` publishers. A store of fixed capacity answers [`reserve`](Self::reserve) with `false`
-/// when it is full, and the body requeues the delivery instead of dropping it for a copy it could
-/// not keep.
-#[doc(hidden)]
-pub trait LocalDetach {
-    /// Whether this runner keeps a mount's retry copies in a store the mount sizes itself, so a
-    /// delayed retry on a mount without one names the step that adds it.
-    const STORES_COPIES: bool = false;
-
-    /// Runs `work` beside the delivery that left it.
-    fn detach<Work>(&self, work: Work)
-    where
-        Work: Future<Output = ()> + 'static;
-
-    /// Runs work the delivery already boxed. A runner that keeps its work boxed takes the box as
-    /// it is; the default hands it to [`detach`](Self::detach).
-    #[cfg(feature = "alloc")]
-    fn detach_boxed(&self, work: Pin<Box<dyn Future<Output = ()>>>) {
-        self.detach(work);
-    }
-
-    /// Runs `work` once `delay` has passed on the runner's clock.
-    ///
-    /// The body calls it only after a [`reserve`](Self::reserve) that returned `true`, and the
-    /// call takes that reservation.
-    fn detach_after<Work>(&self, delay: Duration, work: Work)
-    where
-        Work: Future<Output = ()> + 'static;
-
-    /// Reserves room for one delayed piece of work, before the delivery it copies is settled.
-    ///
-    /// A runner with room for any amount keeps the default, `true`.
-    fn reserve(&self) -> bool {
-        true
-    }
-
-    /// Gives back a reservation the body did not use: the settle it was made for failed.
-    fn release(&self) {}
 }

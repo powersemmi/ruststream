@@ -172,14 +172,12 @@ async fn drop_original<M: Settle>(slot: &mut Slot<M>) -> Result<(), AckError> {
 #[allow(clippy::future_not_send)]
 mod tests {
     use alloc::borrow::ToOwned;
-    use alloc::boxed::Box;
     use alloc::string::String;
     use alloc::sync::Arc;
     use alloc::vec::Vec;
-    use core::cell::{Cell, RefCell};
+    use core::cell::RefCell;
     use core::future::ready;
-    use core::pin::Pin;
-    use core::sync::atomic::{AtomicU8, Ordering};
+    use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
     use core::time::Duration;
     use std::io;
 
@@ -190,7 +188,7 @@ mod tests {
     use crate::dispatch::{Delivery, RETRY_COUNT_HEADER, Slot};
     use crate::handler::Continuation;
     use crate::handler::HandlerResult;
-    use crate::host::{Keeping, KeptCopies, KeptDelivery, LocalDetach, OnOneThread, PrepareKept};
+    use crate::host::{Detach, Keeping, KeptCopies, KeptDelivery, PrepareKept};
     use crate::publish_failure::{
         ErrorHook, FailedMessage, Failures, NoFreeRecordError, Reaction, publish_lost,
     };
@@ -359,12 +357,12 @@ mod tests {
     /// The app's host beside the store: the copies never reach it, and it counts the
     /// continuations a failed publish leaves with it.
     struct NoWork {
-        boxed: Cell<usize>,
+        boxed: AtomicUsize,
     }
 
-    impl LocalDetach for NoWork {
-        fn detach_boxed(&self, _work: Pin<Box<dyn Future<Output = ()>>>) {
-            self.boxed.set(self.boxed.get() + 1);
+    impl Detach for NoWork {
+        fn detach_boxed(&self, _work: Continuation) {
+            self.boxed.fetch_add(1, Ordering::SeqCst);
         }
 
         fn detach<Work>(&self, _work: Work)
@@ -411,7 +409,7 @@ mod tests {
             settlement,
         };
         let work = NoWork {
-            boxed: Cell::new(0),
+            boxed: AtomicUsize::new(0),
         };
         settle_reacting(
             &mut Slot::new(msg),
@@ -423,7 +421,10 @@ mod tests {
             unit_cx,
         )
         .await;
-        (settled.load(Ordering::SeqCst), work.boxed.get())
+        (
+            settled.load(Ordering::SeqCst),
+            work.boxed.load(Ordering::SeqCst),
+        )
     }
 
     /// A handler's `.error` continuation, for the tests that only watch whether it is asked.
@@ -684,7 +685,7 @@ mod tests {
     /// A one-thread runner whose copies wait in a store of the mount's own, run with none.
     struct StoreRunner;
 
-    impl LocalDetach for StoreRunner {
+    impl Detach for StoreRunner {
         const STORES_COPIES: bool = true;
 
         fn detach<Work>(&self, _work: Work)
@@ -715,7 +716,7 @@ mod tests {
             HandlerResult::retry_after(LATER),
             "orders",
             &Delivery::empty(),
-            &OnOneThread(&StoreRunner),
+            &StoreRunner,
             unit_cx,
         )
         .await;

@@ -28,8 +28,7 @@ use ruststream_core::{
 };
 use ruststream_runtime::{
     Clock, Context, Continuation, Delivery, Detach, DispatchFailure, FailurePolicies,
-    HandlerOutcome, HeadersAtOnce, INSTRUMENTED_BODY, LocalDetach, LocalHandler, ScopeDelivery,
-    run_sequential,
+    HandlerOutcome, HeadersAtOnce, INSTRUMENTED_BODY, LocalHandler, ScopeDelivery, run_sequential,
 };
 use ruststream_runtime::{
     Deserialized, Input, LocalBlanketLayer, LocalHandle, LocalOutEntry, MessageWire, OpenRoutes,
@@ -145,7 +144,7 @@ struct App {
 #[derive(Default)]
 struct LocalCount(Cell<usize>);
 
-impl LocalDetach for LocalCount {
+impl Detach for LocalCount {
     fn detach<Work>(&self, _work: Work)
     where
         Work: Future<Output = ()> + 'static,

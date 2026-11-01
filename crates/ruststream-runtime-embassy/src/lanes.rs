@@ -24,10 +24,10 @@ use futures::future::{Either, join, select};
 use hash32::{FnvHasher, Hasher as _};
 use ruststream_core::{BuildContext, IncomingMessage, Settle, Subscriber};
 use ruststream_runtime::{
-    Delivery, DeliverySlot, DispatchFailure, Dispatched, Halt, HeadersAtOnce, HostDetach,
-    KeepCopies, Keeping, LocalDetach, LocalDispatch, LocalHandler, LocalPipeline, LocalPlanned,
-    LocalRoute, NoCopies, OnOneThread, PrepareCopy, PrepareKept, RetryCopies,
-    RetryDestinationsDeclared, Router, RouterCommit, RouterWith, ShutdownWait, dispatch,
+    Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, Halt, HeadersAtOnce, HostDetach,
+    KeepCopies, Keeping, LocalDispatch, LocalHandler, LocalPipeline, LocalPlanned, LocalRoute,
+    NoCopies, PrepareCopy, PrepareKept, RetryCopies, RetryDestinationsDeclared, Router,
+    RouterCommit, RouterWith, ShutdownWait, dispatch,
 };
 use tracing::error;
 
@@ -159,12 +159,10 @@ impl<L: Lanes> LocalDispatch for EmbeddedPlan<L, NoRoom> {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach,
+        Host: Detach,
         Path: PrepareCopy<Cx>,
     {
-        self.lanes
-            .run(route, signal, state, &OnOneThread(host))
-            .await;
+        self.lanes.run(route, signal, state, host).await;
     }
 }
 
@@ -183,13 +181,11 @@ impl<L: Lanes, const CAPACITY: usize> LocalDispatch for EmbeddedPlan<L, Room<CAP
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach,
+        Host: Detach,
         Path: PrepareCopy<Cx>,
     {
         let Some(path) = path else {
-            self.lanes
-                .run(route, signal, state, &OnOneThread(host))
-                .await;
+            self.lanes.run(route, signal, state, host).await;
             return;
         };
         // The registration's own store: its copies wait in its records, and its driver

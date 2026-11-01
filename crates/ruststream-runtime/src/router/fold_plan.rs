@@ -19,7 +19,7 @@ use crate::coop::Cooperative;
 use crate::dispatch::{Delivery, HeadersAtOnce, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::LocalHandler;
-use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, PrepareKept, ShutdownWait};
+use crate::host::{Detach, Halt, HostDetach, PrepareKept, ShutdownWait};
 use crate::input::{InputKind, Materialize};
 use crate::lifecycle::BoxError;
 use crate::middleware::LocalBlanketLayer;
@@ -68,7 +68,7 @@ pub trait LocalDispatch {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach,
+        Host: Detach,
         Path: PrepareCopy<Cx>;
 }
 
@@ -144,12 +144,10 @@ impl LocalDispatch for SequentialPlan {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach,
+        Host: Detach,
         Path: PrepareCopy<Cx>,
     {
-        route
-            .run_sequential(signal, state, &OnOneThread(host))
-            .await;
+        route.run_sequential(signal, state, host).await;
     }
 }
 
@@ -511,7 +509,7 @@ where
     async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach,
+        Host: Detach,
     {
         let Self {
             route,

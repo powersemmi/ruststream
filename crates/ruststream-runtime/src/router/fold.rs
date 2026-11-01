@@ -34,7 +34,7 @@ use crate::dispatch::{Delivery, HeadersAtOnce, Turn, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handle::Deserialized;
 use crate::handler::LocalHandler;
-use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, PrepareKept, ShutdownWait};
+use crate::host::{Detach, Halt, HostDetach, PrepareKept, ShutdownWait};
 use crate::lifecycle::BoxError;
 use crate::middleware::{LocalBlanketLayer, Stack};
 use crate::redelivery::{RetryCopies, ScopeDelivery, open_local_subscription};
@@ -85,7 +85,7 @@ pub trait RunRoutes<State> {
     ) -> impl Future<Output = ()>
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach;
+        Host: Detach;
 }
 
 /// One registration of a router's list, opened under the layer stack that wraps its handler:
@@ -169,7 +169,7 @@ impl<State> RunRoutes<State> for () {
     ) -> impl Future<Output = ()>
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach,
+        Host: Detach,
     {
         ready(())
     }
@@ -210,7 +210,7 @@ where
     ) -> impl Future<Output = ()>
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach,
+        Host: Detach,
     {
         // A named future, not an `async` block: each pair of the tree is one type level of the
         // app's future, so a device's many routes stay inside the compiler's layout depth.
@@ -362,10 +362,9 @@ where
     async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach,
+        Host: Detach,
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
-        let host = OnOneThread(host);
         // Applied here, where the loop starts: the wrapped handler's type is the layer's own
         // and cannot be named in the opened list.
         let handler =
@@ -376,7 +375,7 @@ where
             signal,
             self.name,
             Arc::clone(state),
-            (&self.delivery, &host),
+            (&self.delivery, host),
             failure,
             (),
             HeadersAtOnce,
@@ -445,9 +444,8 @@ where
     async fn run<Signal, Host>(mut self, signal: Signal, state: &Arc<State>, host: &Host)
     where
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach,
+        Host: Detach,
     {
-        let host = OnOneThread(host);
         let failure = DispatchFailure::new(self.policies, signal.clone());
         let mut stream = pin!(Bounded::new(
             self.subscriber.batches(self.batch_size),
@@ -479,7 +477,7 @@ where
                             &self.name,
                             &**state,
                             &self.delivery,
-                            &host,
+                            host,
                             &failure,
                         )
                         .await;
