@@ -21,7 +21,7 @@ use crate::codec::{CodecError, JsonCodec};
 use crate::testkit::Shutdown;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 use crate::testkit::log_capture;
-use crate::{AckError, HeaderMap, Name, Subscriber, SubscriptionSource};
+use crate::{AckError, HeaderMap, IncomingMessage, Name, Subscriber, SubscriptionSource};
 use crate::{Input, SoloDeserialized};
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
 
@@ -57,7 +57,7 @@ async fn per_element_outcomes_settle_individually() {
     let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
     assert_eq!(payloads, [b"1"]);
     for msg in redelivered {
-        IncomingMessage::ack(msg).await.unwrap();
+        Settle::ack(msg).await.unwrap();
     }
     let mut stream = core::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
@@ -109,7 +109,7 @@ async fn per_element_continuations_run_after_settle() {
     let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
     assert_eq!(payloads, [b"1"]);
     for msg in redelivered {
-        IncomingMessage::ack(msg).await.unwrap();
+        Settle::ack(msg).await.unwrap();
     }
 }
 
@@ -137,7 +137,7 @@ async fn unmatched_remainder_is_retried() {
     let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
     assert_eq!(payloads, [b"1", b"2"]);
     for msg in redelivered {
-        IncomingMessage::ack(msg).await.unwrap();
+        Settle::ack(msg).await.unwrap();
     }
 }
 
@@ -175,7 +175,7 @@ async fn per_element_outcomes_carry_delays() {
 
     let redelivered = stream.next().await.unwrap().unwrap();
     assert_eq!(IncomingMessage::payload(&redelivered), b"1");
-    IncomingMessage::ack(redelivered).await.unwrap();
+    Settle::ack(redelivered).await.unwrap();
 }
 
 #[tokio::test]
@@ -200,7 +200,7 @@ async fn uniform_outcome_settles_the_whole_batch() {
     let redelivered = pull_batch(&mut sub).await;
     assert_eq!(redelivered.len(), 2);
     for msg in redelivered {
-        IncomingMessage::ack(msg).await.unwrap();
+        Settle::ack(msg).await.unwrap();
     }
 }
 
@@ -359,7 +359,9 @@ impl IncomingMessage for UnsettleableMessage {
         static EMPTY: OnceLock<HeaderMap> = OnceLock::new();
         EMPTY.get_or_init(HeaderMap::new)
     }
+}
 
+impl Settle for UnsettleableMessage {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         self.0.fetch_add(1, Ordering::SeqCst);
         ready(Err(AckError::Timeout))
@@ -645,7 +647,9 @@ impl IncomingMessage for PlainMessage {
         static EMPTY: OnceLock<HeaderMap> = OnceLock::new();
         EMPTY.get_or_init(HeaderMap::new)
     }
+}
 
+impl Settle for PlainMessage {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         ready(Ok(()))
     }
@@ -687,7 +691,7 @@ async fn deferred_copies(
                 .map(str::to_owned),
         ));
         // Settled, because a delivery dropped unsettled comes back.
-        IncomingMessage::ack(msg)
+        Settle::ack(msg)
             .await
             .expect("the memory broker acknowledges");
     }

@@ -1,4 +1,7 @@
 //! Integration test for `AsyncAPI` document generation.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(feature = "asyncapi", feature = "memory", feature = "macros"))]
 
 use std::convert::Infallible;
@@ -1312,7 +1315,7 @@ mod protocol_bindings {
         fn redelivery_address(
             &self,
             _connected: &C,
-        ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+        ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
             future::ready(Ok(RedeliveryAddress::new(self.name)))
         }
     }
@@ -1445,7 +1448,7 @@ mod protocol_bindings {
             fn redelivery_address(
                 &self,
                 _connected: &C,
-            ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+            ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
                 future::ready(Ok(RedeliveryAddress::new("orders")))
             }
         }

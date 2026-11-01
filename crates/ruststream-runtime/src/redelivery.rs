@@ -34,9 +34,8 @@ use crate::publish::{
 };
 use crate::{
     AddressedCopies, Broker, BrokerMoves, Connected, ConnectedBroker, DeclareRetryError,
-    DefaultPublish, LocalBroker, LocalConnected, LocalSubscriptionSource, NamedCopies,
-    OutgoingMessage, PairError, PayloadForm, PublishPolicy, Publisher, RedeliveryAddress,
-    RedeliveryAddressed, RetryDeclaration, SubscriptionSource,
+    DefaultPublish, NamedCopies, OutgoingMessage, PairError, PayloadForm, PublishPolicy, Publisher,
+    RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, SubscriptionSource,
 };
 
 #[cfg(feature = "testing")]
@@ -277,6 +276,7 @@ macro_rules! impl_default_pairing {
             B: Broker + 'static,
             Cx: Send + Sync + 'static,
             Connected<B>: DefaultPublish,
+            DefaultPolicy<B>: Send + 'static,
             DefaultLive<B>: Publisher + Send + Sync + 'static,
             Pipeline: OutPipeline<DefaultLive<B>> + 'static,
         {
@@ -315,7 +315,7 @@ pub trait CopyPathAddress<C: ConnectedBroker, Source> {
     fn address(
         source: &Source,
         connected: &C,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send;
+    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>>;
 }
 
 impl<C, Source> CopyPathAddress<C, Source> for AddressedCopies
@@ -338,7 +338,7 @@ macro_rules! impl_no_address {
             fn address(
                 _source: &Source,
                 _connected: &C,
-            ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
+            ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> {
                 ready(Ok(None))
             }
         }
@@ -514,7 +514,7 @@ pub trait BoundRetry<B: Broker, Cx>: Send + 'static {
     fn pair(
         self,
         connected: &Connected<B>,
-    ) -> impl Future<Output = Result<Option<Self::Leaf>, PairError>> + Send;
+    ) -> impl Future<Output = Result<Option<Self::Leaf>, PairError>>;
 }
 
 /// The pairing of a registration whose broker moves a spent delivery itself: it publishes no
@@ -531,7 +531,7 @@ impl<B: Broker + 'static, Cx> BoundRetry<B, Cx> for NoPairing {
     fn pair(
         self,
         _connected: &Connected<B>,
-    ) -> impl Future<Output = Result<Option<NoRetry>, PairError>> + Send {
+    ) -> impl Future<Output = Result<Option<NoRetry>, PairError>> {
         ready(Ok(None))
     }
 }
@@ -907,13 +907,13 @@ fn announce(subscription: &str, declaration: &RetryDeclaration, publishes_copies
 #[allow(clippy::future_not_send)]
 pub(crate) async fn open_local_subscription<B, Source, Cx>(
     source: Source,
-    connected: &LocalConnected<B>,
+    connected: &Connected<B>,
     scope: &ScopeDelivery,
     declaration: RetryDeclaration,
 ) -> Result<(Arc<str>, Source::Subscriber, Delivery<Cx>), BoxError>
 where
-    B: LocalBroker,
-    Source: LocalSubscriptionSource<LocalConnected<B>>,
+    B: Broker,
+    Source: SubscriptionSource<Connected<B>>,
 {
     let name: Arc<str> = Arc::from(source.name());
     source

@@ -12,166 +12,144 @@ use core::time::Duration;
 use tokio::time;
 use tokio::time::Instant;
 
-use crate::{BoxError, BoxFuture, InProcessConnect};
-use crate::{
-    Broker, DefaultPublish, LocalBroker, OutgoingMessage, PublishPolicy, Publisher, RawMessage,
-};
+use crate::{BoxError, InProcessConnect, LocalBoxFuture, SendBroker};
+use crate::{Broker, DefaultPublish, OutgoingMessage, PublishPolicy, Publisher, RawMessage};
 
 use super::Coordinator;
 
-ruststream_core::__contract_twin! {
-    send {
-        /// A broker that runs inside the test process.
-        ///
-        /// [`connect_in_process`](Self::connect_in_process) is the consuming transition a test
-        /// takes instead of [`connect`](Broker::connect): it produces the broker's own connected
-        /// form, backed by an in-process transport, with no I/O. The connected form is the one
-        /// production gets, so the app's routes, publish policies and subscription descriptors
-        /// resolve against it unchanged, and
-        /// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html)
-        /// runs the service's production app as it is.
-        ///
-        /// The transport has no configuration of its own. It reads every setting from the broker it
-        /// was built from (default group, prefetch, topology declaration, whatever the real broker
-        /// applies), so a test cannot run against settings production does not have. It never
-        /// succeeds where the real broker fails: a publish, a settlement or a subscription the
-        /// server would reject is rejected in process the same way.
-        ///
-        /// A broker crate implements this under its `testing` feature, next to
-        /// [`TestableBroker`] on the connected form, and registers the broker with
-        /// [`register_testable_broker!`](crate::register_testable_broker).
-        /// [`MemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.MemoryBroker.html)
-        /// is the reference: it has no server, so its in-process transition is its ordinary
-        /// `connect`.
-        ///
-        /// The in-process mode lives in the production types: the connected form, its subscriber,
-        /// its publishers and its delivery each gain an in-process variant that exists only under
-        /// the `testing` feature. Without the feature there is one variant and no branch, and a
-        /// service's production build is unchanged, because Cargo does not enable a
-        /// dev-dependency's features in a production binary. A mount that compiles against the
-        /// broker compiles in process, and a capability is the same type in both.
-        ///
-        /// The same test also runs against a stand:
-        /// [`TestApp::start_live`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html#method.start_live)
-        /// connects the broker through its ordinary `connect` and needs nothing beyond the
-        /// connected form and its [`DefaultPublish`] policy, through which the harness publishes a
-        /// test's input.
-        ///
-        /// # Writing one you can trust
-        ///
-        /// A service's whole test suite runs against this transport, so every difference from the
-        /// real one is a green test for behaviour production does not have.
-        ///
-        /// - Run the
-        ///   [`conformance`](https://docs.rs/ruststream/latest/ruststream/conformance/index.html)
-        ///   suites in process, not only against a server:
-        ///   [`run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html),
-        ///   then `lifecycle` and the capability suites through
-        ///   [`InProcessBroker`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/struct.InProcessBroker.html).
-        ///   `lifecycle` asks what an in-process transport is rarely asked: whether a publisher
-        ///   created before the shutdown errors afterwards. A transport whose publish is a channel
-        ///   send accepts the message instead.
-        /// - Settle the way the transport settles. Where the real `ack` answers
-        ///   [`AckError::Unsupported`](crate::AckError::Unsupported), the in-process one answers
-        ///   the same; `Ok(())` there is how a handler returning `retry()` passes in a test and
-        ///   loses the message in production.
-        /// - Reproduce what the client does; do not fake what the broker does. Competing consumers,
-        ///   group distribution, correlation, reply routing and buffering until commit are
-        ///   client-side or routing-level, and an in-process copy of them is exact. Cluster
-        ///   atomicity, fencing, broker-held timeouts and exactly-once are broker-side, and the
-        ///   live mode covers them. Competing consumers matter most: handing every message of a
-        ///   queue to every subscriber of it is a fan-out, and two workers sharing the queue then
-        ///   each run the whole stream with no error anywhere.
-        /// - Keep what the real broker keeps. A queue or a log that exists before the subscription
-        ///   delivers what reached it earlier; declare that with [`TestableBroker::backlog`], and
-        ///   read a setting that decides it (an earliest offset, a deliver-all consumer) off the
-        ///   connected form.
-        ///   [`backlog_matches_server`](https://docs.rs/ruststream/latest/ruststream/conformance/in_process/fn.backlog_matches_server.html)
-        ///   checks the declaration against the server.
-        /// - Read the production wiring. A check the real broker makes at subscribe or publish time
-        ///   (a declaration it refuses, a name too long for the protocol, a header it cannot carry)
-        ///   runs in process through the same code.
-        /// - Give every gap a comment naming the assertion it makes unsound and what covers it
-        ///   instead, and pin the gap with a test asserting the handler is not reached, which fails
-        ///   the day someone routes what the transport deliberately does not.
-        ///
-        /// ```text
-        /// // No fencing: a second producer claiming the same transactional id is not rejected here, so a
-        /// // test cannot assert the first one is fenced out. `capabilities::transactions` against a real
-        /// // server is what covers that.
-        /// ```
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// # mod demo {
-        /// use std::future::Future;
-        ///
-        /// use ruststream::Broker;
-        /// use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError};
-        /// use ruststream::testing::InProcess;
-        ///
-        /// /// A broker crate built over the in-memory bus: its connected form is the bus's own, so its
-        /// /// in-process transition is the bus's too.
-        /// pub struct EdgeBroker(MemoryBroker);
-        ///
-        /// impl Broker for EdgeBroker {
-        ///     type Error = MemoryError;
-        ///     type Connected = ConnectedMemoryBroker;
-        ///
-        ///     fn connect(
-        ///         self,
-        ///     ) -> impl Future<Output = Result<ConnectedMemoryBroker, MemoryError>> + Send {
-        ///         self.0.connect()
-        ///     }
-        /// }
-        ///
-        /// impl InProcess for EdgeBroker {
-        ///     fn connect_in_process(
-        ///         self,
-        ///     ) -> impl Future<Output = Result<ConnectedMemoryBroker, MemoryError>> + Send {
-        ///         self.0.connect_in_process()
-        ///     }
-        /// }
-        ///
-        /// // Under the crate's `testing` feature: `TestApp::start` now runs an app on `EdgeBroker`.
-        /// ruststream::register_testable_broker!(EdgeBroker);
-        /// # }
-        /// # fn main() {}
-        /// ```
-        #[diagnostic::on_unimplemented(
-            message = "`{Self}` has no in-process mode, so the test harness cannot run it",
-            label = "not an in-process broker",
-            note = "a broker crate implements `InProcess` under its `testing` feature: a service \
+/// A broker that runs inside the test process.
+///
+/// [`connect_in_process`](Self::connect_in_process) is the consuming transition a test
+/// takes instead of [`connect`](Broker::connect): it produces the broker's own connected
+/// form, backed by an in-process transport, with no I/O. The connected form is the one
+/// production gets, so the app's routes, publish policies and subscription descriptors
+/// resolve against it unchanged, and
+/// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html)
+/// runs the service's production app as it is.
+///
+/// The transport has no configuration of its own. It reads every setting from the broker it
+/// was built from (default group, prefetch, topology declaration, whatever the real broker
+/// applies), so a test cannot run against settings production does not have. It never
+/// succeeds where the real broker fails: a publish, a settlement or a subscription the
+/// server would reject is rejected in process the same way.
+///
+/// A broker crate implements this under its `testing` feature, next to
+/// [`TestableBroker`] on the connected form, and registers the broker with
+/// [`register_testable_broker!`](crate::register_testable_broker).
+/// [`MemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.MemoryBroker.html)
+/// is the reference: it has no server, so its in-process transition is its ordinary
+/// `connect`.
+///
+/// The in-process mode lives in the production types: the connected form, its subscriber,
+/// its publishers and its delivery each gain an in-process variant that exists only under
+/// the `testing` feature. Without the feature there is one variant and no branch, and a
+/// service's production build is unchanged, because Cargo does not enable a
+/// dev-dependency's features in a production binary. A mount that compiles against the
+/// broker compiles in process, and a capability is the same type in both.
+///
+/// The same test also runs against a stand:
+/// [`TestApp::start_live`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html#method.start_live)
+/// connects the broker through its ordinary `connect` and needs nothing beyond the
+/// connected form and its [`DefaultPublish`] policy, through which the harness publishes a
+/// test's input.
+///
+/// # Writing one you can trust
+///
+/// A service's whole test suite runs against this transport, so every difference from the
+/// real one is a green test for behaviour production does not have.
+///
+/// - Run the
+///   [`conformance`](https://docs.rs/ruststream/latest/ruststream/conformance/index.html)
+///   suites in process, not only against a server:
+///   [`run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html),
+///   then `lifecycle` and the capability suites through
+///   [`InProcessBroker`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/struct.InProcessBroker.html).
+///   `lifecycle` asks what an in-process transport is rarely asked: whether a publisher
+///   created before the shutdown errors afterwards. A transport whose publish is a channel
+///   send accepts the message instead.
+/// - Settle the way the transport settles. Where the real `ack` answers
+///   [`AckError::Unsupported`](crate::AckError::Unsupported), the in-process one answers
+///   the same; `Ok(())` there is how a handler returning `retry()` passes in a test and
+///   loses the message in production.
+/// - Reproduce what the client does; do not fake what the broker does. Competing consumers,
+///   group distribution, correlation, reply routing and buffering until commit are
+///   client-side or routing-level, and an in-process copy of them is exact. Cluster
+///   atomicity, fencing, broker-held timeouts and exactly-once are broker-side, and the
+///   live mode covers them. Competing consumers matter most: handing every message of a
+///   queue to every subscriber of it is a fan-out, and two workers sharing the queue then
+///   each run the whole stream with no error anywhere.
+/// - Keep what the real broker keeps. A queue or a log that exists before the subscription
+///   delivers what reached it earlier; declare that with [`TestableBroker::backlog`], and
+///   read a setting that decides it (an earliest offset, a deliver-all consumer) off the
+///   connected form.
+///   [`backlog_matches_server`](https://docs.rs/ruststream/latest/ruststream/conformance/in_process/fn.backlog_matches_server.html)
+///   checks the declaration against the server.
+/// - Read the production wiring. A check the real broker makes at subscribe or publish time
+///   (a declaration it refuses, a name too long for the protocol, a header it cannot carry)
+///   runs in process through the same code.
+/// - Give every gap a comment naming the assertion it makes unsound and what covers it
+///   instead, and pin the gap with a test asserting the handler is not reached, which fails
+///   the day someone routes what the transport deliberately does not.
+///
+/// ```text
+/// // No fencing: a second producer claiming the same transactional id is not rejected here, so a
+/// // test cannot assert the first one is fenced out. `capabilities::transactions` against a real
+/// // server is what covers that.
+/// ```
+///
+/// # Examples
+///
+/// ```
+/// # mod demo {
+/// use std::future::Future;
+///
+/// use ruststream::Broker;
+/// use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError};
+/// use ruststream::testing::InProcess;
+///
+/// /// A broker crate built over the in-memory bus: its connected form is the bus's own, so its
+/// /// in-process transition is the bus's too.
+/// pub struct EdgeBroker(MemoryBroker);
+///
+/// impl Broker for EdgeBroker {
+///     type Error = MemoryError;
+///     type Connected = ConnectedMemoryBroker;
+///
+///     fn connect(
+///         self,
+///     ) -> impl Future<Output = Result<ConnectedMemoryBroker, MemoryError>> + Send {
+///         self.0.connect()
+///     }
+/// }
+///
+/// impl InProcess for EdgeBroker {
+///     fn connect_in_process(
+///         self,
+///     ) -> impl Future<Output = Result<ConnectedMemoryBroker, MemoryError>> + Send {
+///         self.0.connect_in_process()
+///     }
+/// }
+///
+/// // Under the crate's `testing` feature: `TestApp::start` now runs an app on `EdgeBroker`.
+/// ruststream::register_testable_broker!(EdgeBroker);
+/// # }
+/// # fn main() {}
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` has no in-process mode, so the test harness cannot run it",
+    label = "not an in-process broker",
+    note = "a broker crate implements `InProcess` under its `testing` feature: a service \
                     enables that feature in `[dev-dependencies]`, a broker author implements the \
                     trait there"
-        )]
-        pub trait InProcess: Broker<Connected: TestableBroker>
-    }
-    local {
-        #[doc = include_str!("local/inprocess.md")]
-        #[diagnostic::on_unimplemented(
-            message = "`{Self}` has no in-process mode of the local family",
-            label = "not an in-process broker",
-            note = "a broker crate whose types are not `Send` implements `LocalInProcess` under \
-                    its `testing` feature; every `InProcess` broker is one through the blanket \
-                    impl"
-        )]
-        pub trait LocalInProcess: LocalBroker<Connected: LocalTestableBroker>
-    }
-    blanket { impl<T: InProcess> LocalInProcess for T }
-    forward { <T as InProcess> }
-    docs { InProcess }
-    fns {
-        /// Connects to the in-process transport, consuming the configuration.
-        ///
-        /// # Errors
-        ///
-        /// Returns the broker's own error where the configuration is one the real broker refuses at
-        /// `connect`.
-        fn connect_in_process(self)
-            -> [impl Future<Output = Result<Self::Connected, Self::Error>> @send { + Send }];
-    }
+)]
+pub trait InProcess: Broker<Connected: LocalTestableBroker> {
+    /// Connects to the in-process transport, consuming the configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns the broker's own error where the configuration is one the real broker refuses at
+    /// `connect`.
+    fn connect_in_process(self) -> impl Future<Output = Result<Self::Connected, Self::Error>>;
 }
 
 ruststream_core::__contract_twin! {
@@ -232,7 +210,7 @@ ruststream_core::__contract_twin! {
             message = "the connected form `{Self}` cannot be driven by the test harness",
             label = "no `LocalTestableBroker` view",
             note = "the in-process mode of a broker whose types are not `Send` implements \
-                    `LocalTestableBroker` on the connected form its `LocalInProcess` transition \
+                    `LocalTestableBroker` on the connected form its `InProcess` transition \
                     produces"
         )]
         pub trait LocalTestableBroker
@@ -409,7 +387,7 @@ pub struct TestableRegistration {
 pub type LivePublish = for<'m> fn(
     &'m (dyn Any + Send + Sync),
     OutgoingMessage<'m>,
-) -> BoxFuture<'m, Result<(), BoxError>>;
+) -> LocalBoxFuture<'m, Result<(), BoxError>>;
 
 /// Publishes `msg` onto `connected`, the connected form of `B`, through the broker's own
 /// [`DefaultPublish`] policy: the way an external producer reaches a live broker.
@@ -417,9 +395,9 @@ pub type LivePublish = for<'m> fn(
 pub fn live_publish<'m, B>(
     connected: &'m (dyn Any + Send + Sync),
     msg: OutgoingMessage<'m>,
-) -> BoxFuture<'m, Result<(), BoxError>>
+) -> LocalBoxFuture<'m, Result<(), BoxError>>
 where
-    B: Broker + 'static,
+    B: SendBroker,
     B::Connected: DefaultPublish,
     <<B::Connected as DefaultPublish>::Policy as PublishPolicy<B::Connected>>::Live: Publisher,
 {
@@ -471,8 +449,8 @@ impl TestableRegistration {
     #[must_use]
     pub const fn of<B>() -> Self
     where
-        B: InProcess + 'static,
-        B::Connected: DefaultPublish,
+        B: InProcess + SendBroker,
+        B::Connected: TestableBroker + DefaultPublish,
         <<B::Connected as DefaultPublish>::Policy as PublishPolicy<B::Connected>>::Live: Publisher,
     {
         Self {
@@ -514,9 +492,9 @@ impl TestableRegistration {
 
 /// `B`'s in-process transition over erased values: the harness hands it the broker it found under
 /// `B`'s type, and gets the connected form back the same way.
-fn connect_erased<B: InProcess + 'static>(
+fn connect_erased<B: InProcess + SendBroker>(
     broker: Box<dyn Any + Send>,
-) -> BoxFuture<'static, Result<Box<dyn Any + Send>, BoxError>> {
+) -> LocalBoxFuture<'static, Result<Box<dyn Any + Send>, BoxError>> {
     Box::pin(async move {
         let broker = broker.downcast::<B>().map_err(|_| {
             BoxError::from(format!(
@@ -531,7 +509,11 @@ fn connect_erased<B: InProcess + 'static>(
 }
 
 /// The [`TestableBroker`] view of `B`'s connected form, when `any` is one.
-fn testable_view<B: InProcess + 'static>(any: &dyn Any) -> Option<&dyn TestableBroker> {
+fn testable_view<B>(any: &dyn Any) -> Option<&dyn TestableBroker>
+where
+    B: InProcess + SendBroker,
+    B::Connected: TestableBroker,
+{
     let connected: &dyn TestableBroker = any.downcast_ref::<B::Connected>()?;
     Some(connected)
 }

@@ -11,9 +11,9 @@ use futures_core::Stream;
 
 use crate::subscription::copy_path::Sealed as CopyPathDeclares;
 use crate::{
-    ConnectedBroker, CopyPath, DeclareRetryError, HeaderMap, IncomingMessage, LocalConnectedBroker,
-    LocalIncomingMessage, LocalPublisher, LocalSubscriber, OutgoingFor, PayloadForm, Publisher,
-    RetryDeclaration, Subscriber,
+    ConnectedBroker, CopyPath, DeclareRetryError, HeaderMap, IncomingMessage, LocalPublisher,
+    LocalSettle, LocalSubscriber, OutgoingFor, PayloadForm, Publisher, RetryDeclaration, Settle,
+    Subscriber,
 };
 
 crate::__contract_twin! {
@@ -217,49 +217,36 @@ crate::__contract_twin! {
     }
 }
 
-crate::__contract_twin! {
-    send {
-        /// A delivered message that knows its own position in the broker's replayable log.
-        ///
-        /// The captured half of the seek capability, next to broker-constructed positions:
-        /// [`position`](Self::position) returns a value [`Seeker::seek`] accepts, with pinned
-        /// semantics - seeking to it redelivers this exact message. Generic replay code and the
-        /// conformance suite rely on that contract; positions built by broker constructors keep
-        /// broker-documented semantics instead.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use ruststream::{Positioned, Seekable, Seeker};
-        ///
-        /// async fn replay_from<S>(
-        ///     subscriber: &S,
-        ///     msg: &S::Message,
-        /// ) -> Result<(), <S::Seeker as Seeker>::Error>
-        /// where
-        ///     S: Seekable,
-        ///     S::Message: Positioned<Position = <S::Seeker as Seeker>::Position>,
-        /// {
-        ///     subscriber.seeker().seek(msg.position()).await
-        /// }
-        /// ```
-        pub trait Positioned: IncomingMessage
-    }
-    local {
-        #[doc = include_str!("local/positioned.md")]
-        pub trait LocalPositioned: LocalIncomingMessage
-    }
-    blanket { impl<T: Positioned> LocalPositioned for T }
-    forward { <T as Positioned> }
-    docs { Positioned }
-    types {
-        /// The position type, matching the subscription's [`Seeker::Position`].
-        type Position: [@send { Send }];
-    }
-    fns {
-        /// Returns the position of this delivery; seeking to it redelivers this message.
-        fn position(&self) -> [Self::Position];
-    }
+/// A delivered message that knows its own position in the broker's replayable log.
+///
+/// The captured half of the seek capability, next to broker-constructed positions:
+/// [`position`](Self::position) returns a value [`Seeker::seek`] accepts, with pinned
+/// semantics - seeking to it redelivers this exact message. Generic replay code and the
+/// conformance suite rely on that contract; positions built by broker constructors keep
+/// broker-documented semantics instead.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{Positioned, Seekable, Seeker};
+///
+/// async fn replay_from<S>(
+///     subscriber: &S,
+///     msg: &S::Message,
+/// ) -> Result<(), <S::Seeker as Seeker>::Error>
+/// where
+///     S: Seekable,
+///     S::Message: Positioned<Position = <S::Seeker as Seeker>::Position>,
+/// {
+///     subscriber.seeker().seek(msg.position()).await
+/// }
+/// ```
+pub trait Positioned: IncomingMessage {
+    /// The position type, matching the subscription's [`Seeker::Position`].
+    type Position;
+
+    /// Returns the position of this delivery; seeking to it redelivers this message.
+    fn position(&self) -> Self::Position;
 }
 
 crate::__contract_twin! {
@@ -604,7 +591,7 @@ crate::__contract_twin! {
     docs { RequestReply }
     types {
         /// The reply message type.
-        type Reply: [@twin { IncomingMessage } { LocalIncomingMessage }];
+        type Reply: [@twin { Settle } { LocalSettle }];
     }
     fns {
         /// Publishes `msg` and awaits a single correlated reply, or fails after `timeout`.
@@ -634,127 +621,162 @@ pub trait Partitioned {
     fn partition_key(&self) -> Option<&[u8]>;
 }
 
-crate::__contract_twin! {
-    send {
-        /// A connected broker whose subscriptions are fully determined by a name string.
-        ///
-        /// A broker implements this when a name alone identifies one of its subscriptions: it maps
-        /// the name onto the subscription kind it treats as its default (a `NATS` core subject, a
-        /// `Redis` stream). Whatever that kind needs beyond a name, such as a consumer group or a
-        /// durable subscription name, is configured once on the broker itself; a broker left
-        /// without that setting rejects the subscription with an error naming the fix rather than
-        /// inventing a default. Kinds outside that default are described with a broker-specific
-        /// [`SubscriptionSource`](crate::SubscriptionSource) instead.
-        ///
-        /// Implemented on the [`ConnectedBroker`](crate::ConnectedBroker) form: a subscription
-        /// needs a live connection. `#[subscriber("orders")]` and every mount by a bare name
-        /// subscribe through it, so opening the subscription and saying where a publish reaches it
-        /// (the [`Copies`](Self::Copies) answer) is all a broker writes for that form; the
-        /// in-memory broker's implementation is the reference.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use ruststream::Subscribe;
-        ///
-        /// async fn open<C: Subscribe>(connected: &C) -> Result<C::Subscriber, C::Error> {
-        ///     connected.subscribe("orders").await
-        /// }
-        /// ```
-        pub trait Subscribe: ConnectedBroker
-    }
-    local {
-        #[doc = include_str!("local/subscribe.md")]
-        pub trait LocalSubscribe: LocalConnectedBroker
-    }
-    blanket { impl<T: Subscribe> LocalSubscribe for T }
-    forward { <T as Subscribe> }
-    docs { Subscribe }
-    types {
-        /// The subscriber type opened by a by-name subscription.
-        type Subscriber: [@twin { Subscriber } { LocalSubscriber }];
+/// A connected broker whose subscriptions are fully determined by a name string.
+///
+/// A broker implements this when a name alone identifies one of its subscriptions: it maps
+/// the name onto the subscription kind it treats as its default (a `NATS` core subject, a
+/// `Redis` stream). Whatever that kind needs beyond a name, such as a consumer group or a
+/// durable subscription name, is configured once on the broker itself; a broker left
+/// without that setting rejects the subscription with an error naming the fix rather than
+/// inventing a default. Kinds outside that default are described with a broker-specific
+/// [`SubscriptionSource`](crate::SubscriptionSource) instead.
+///
+/// Implemented on the [`ConnectedBroker`](crate::ConnectedBroker) form: a subscription
+/// needs a live connection. `#[subscriber("orders")]` and every mount by a bare name
+/// subscribe through it, so opening the subscription and saying where a publish reaches it
+/// (the [`Copies`](Self::Copies) answer) is all a broker writes for that form; the
+/// in-memory broker's implementation is the reference.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::Subscribe;
+///
+/// async fn open<C: Subscribe>(connected: &C) -> Result<C::Subscriber, C::Error> {
+///     connected.subscribe("orders").await
+/// }
+/// ```
+pub trait Subscribe: ConnectedBroker {
+    /// The subscriber type opened by a by-name subscription.
+    type Subscriber: LocalSubscriber;
 
-        /// Who publishes the copies a retry of a by-name subscription is made of, and who names
-        /// where they go. This is what the [`Name`](crate::Name) source reports, so it decides how
-        /// `#[subscriber("orders")]` retries on this broker.
-        ///
-        /// Answer [`AddressedCopies`](crate::AddressedCopies) where a publish under a subscribe
-        /// name reaches the subscription opened by it - a subject, a topic, a stream, a queue name
-        /// usually is both ends - and the name itself is then the address. Answer
-        /// [`NamedCopies`](crate::NamedCopies) where it is not: an MQTT filter and a wildcard
-        /// subject read many destinations and name none, so the mount site names one. Answer
-        /// [`BrokerMoves`](crate::BrokerMoves) where the broker moves a spent delivery itself.
-        type Copies: [CopyPath];
-    }
-    fns {
-        /// Opens a subscription to `name`, producing this broker's
-        /// [`Subscriber`](Self::Subscriber).
-        ///
-        /// # Errors
-        ///
-        /// Returns [`ConnectedBroker::Error`](crate::ConnectedBroker::Error) when the broker
-        /// rejects the subscription or the transport fails.
-        fn subscribe(&self, name: &str)
-            -> [impl Future<Output = Result<Self::Subscriber, Self::Error>> @send { + Send }];
+    /// Who publishes the copies a retry of a by-name subscription is made of, and who names
+    /// where they go. This is what the [`Name`](crate::Name) source reports, so it decides how
+    /// `#[subscriber("orders")]` retries on this broker.
+    ///
+    /// Answer [`AddressedCopies`](crate::AddressedCopies) where a publish under a subscribe
+    /// name reaches the subscription opened by it - a subject, a topic, a stream, a queue name
+    /// usually is both ends - and the name itself is then the address. Answer
+    /// [`NamedCopies`](crate::NamedCopies) where it is not: an MQTT filter and a wildcard
+    /// subject read many destinations and name none, so the mount site names one. Answer
+    /// [`BrokerMoves`](crate::BrokerMoves) where the broker moves a spent delivery itself.
+    type Copies: CopyPath;
 
-        /// Takes what a registration mounted by a bare name declared about its retries, before the
-        /// subscription opens.
-        ///
-        /// Called once per registration whose source is the [`Name`](crate::Name) one, with what
-        /// the mount site declared with `max_attempts(..)` and `dead_letter(..)`, at the point a
-        /// descriptor is handed the same through
-        /// [`SubscriptionSource::declare_retry`](crate::SubscriptionSource::declare_retry). A
-        /// broker that applies a delivery limit and a dead-letter destination itself maps them onto
-        /// the subscription `name` opens - a Pub/Sub dead-letter policy, an SQS redrive policy, a
-        /// Pulsar `DeadLetterPolicy` - and only when both are declared, because a native
-        /// dead-letter policy needs the limit and the address together.
-        ///
-        /// The default accepts a registration that declared nothing, and accepts any declaration
-        /// where [`Copies`](Self::Copies) says this process publishes the copies: the runtime
-        /// applies the cap and the destination there. On a [`BrokerMoves`](crate::BrokerMoves)
-        /// broker it refuses a non-empty one, because nothing in this process would apply it and a
-        /// bare name carries nowhere else to declare it.
-        ///
-        /// # Errors
-        ///
-        /// Returns [`DeclareRetryError::Unsupported`] from the default on a
-        /// [`BrokerMoves`](crate::BrokerMoves) broker, and [`DeclareRetryError::Broker`] where an
-        /// implementation of your own rejects the declaration. Either fails the registration at
-        /// startup.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use ruststream::{DeclareRetryError, RetryDeclaration, Subscribe, nonzero};
-        ///
-        /// fn cap<C: Subscribe>(connected: &C) -> Result<(), DeclareRetryError> {
-        ///     let declared = RetryDeclaration::new()
-        ///         .with_max_attempts(nonzero!(5u32))
-        ///         .with_dead_letter("orders.dead");
-        ///     connected.declare_retry("orders", &declared)?;
-        ///     Ok(())
-        /// }
-        /// ```
-        fn declare_retry(&self, name: &str, declaration: &RetryDeclaration)
-            -> [Result<(), DeclareRetryError>] {
-            let _ = name;
-            if declaration.declares_nothing() {
-                return Ok(());
-            }
-            // Which arm this is comes from the copy-path type, at compile time. What cannot be
-            // settled there is the name: a bare-name registration carries no descriptor for the
-            // mount site to read an answer off, so a declaration this broker maps nowhere is
-            // refused at startup.
-            <Self::Copies as CopyPathDeclares>::declared_by_name(type_name::<Self>())
+    /// Opens a subscription to `name`, producing this broker's
+    /// [`Subscriber`](Self::Subscriber).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConnectedBroker::Error`](crate::ConnectedBroker::Error) when the broker
+    /// rejects the subscription or the transport fails.
+    fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>>;
+
+    /// Takes what a registration mounted by a bare name declared about its retries, before the
+    /// subscription opens.
+    ///
+    /// Called once per registration whose source is the [`Name`](crate::Name) one, with what
+    /// the mount site declared with `max_attempts(..)` and `dead_letter(..)`, at the point a
+    /// descriptor is handed the same through
+    /// [`SubscriptionSource::declare_retry`](crate::SubscriptionSource::declare_retry). A
+    /// broker that applies a delivery limit and a dead-letter destination itself maps them onto
+    /// the subscription `name` opens - a Pub/Sub dead-letter policy, an SQS redrive policy, a
+    /// Pulsar `DeadLetterPolicy` - and only when both are declared, because a native
+    /// dead-letter policy needs the limit and the address together.
+    ///
+    /// The default accepts a registration that declared nothing, and accepts any declaration
+    /// where [`Copies`](Self::Copies) says this process publishes the copies: the runtime
+    /// applies the cap and the destination there. On a [`BrokerMoves`](crate::BrokerMoves)
+    /// broker it refuses a non-empty one, because nothing in this process would apply it and a
+    /// bare name carries nowhere else to declare it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeclareRetryError::Unsupported`] from the default on a
+    /// [`BrokerMoves`](crate::BrokerMoves) broker, and [`DeclareRetryError::Broker`] where an
+    /// implementation of your own rejects the declaration. Either fails the registration at
+    /// startup.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{DeclareRetryError, RetryDeclaration, Subscribe, nonzero};
+    ///
+    /// fn cap<C: Subscribe>(connected: &C) -> Result<(), DeclareRetryError> {
+    ///     let declared = RetryDeclaration::new()
+    ///         .with_max_attempts(nonzero!(5u32))
+    ///         .with_dead_letter("orders.dead");
+    ///     connected.declare_retry("orders", &declared)?;
+    ///     Ok(())
+    /// }
+    /// ```
+    fn declare_retry(
+        &self,
+        name: &str,
+        declaration: &RetryDeclaration,
+    ) -> Result<(), DeclareRetryError> {
+        let _ = name;
+        if declaration.declares_nothing() {
+            return Ok(());
         }
+        // Which arm this is comes from the copy-path type, at compile time. What cannot be
+        // settled there is the name: a bare-name registration carries no descriptor for the
+        // mount site to read an answer off, so a declaration this broker maps nowhere is
+        // refused at startup.
+        <Self::Copies as CopyPathDeclares>::declared_by_name(type_name::<Self>())
     }
+}
+
+/// A connected broker whose by-name subscriptions open a [`Subscriber`]: the form the tokio runner
+/// spawns a subscription loop for.
+///
+/// [`Subscribe::Subscriber`] is a [`LocalSubscriber`], so a connected form whose types are not
+/// `Send` implements [`Subscribe`] as it is. The tokio runner moves the subscriber to a task and
+/// asks for this bound where it does; every connected broker whose subscriber is a [`Subscriber`]
+/// implements it, so a broker crate writes nothing for it.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{SendSubscribe, Subscriber};
+///
+/// fn subscriber_of<C: SendSubscribe>(_connected: &C)
+/// where
+///     C::Subscriber: Subscriber,
+/// {
+/// }
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` opens no by-name subscription the tokio runner can spawn",
+    label = "not a connected broker whose subscriber is a `Subscriber`",
+    note = "the tokio runner moves a subscriber to a task, so the subscriber's futures must be \
+            `Send`: implement `Subscriber` for it",
+    note = "a subscriber that is not `Send` implements `LocalSubscriber` and runs on the \
+            embedded runner"
+)]
+pub trait SendSubscribe:
+    Subscribe<
+    Subscriber: LocalSubscriber<Message: Settle>
+                    + Subscriber<
+        Message = <<Self as Subscribe>::Subscriber as LocalSubscriber>::Message,
+        Error = <<Self as Subscribe>::Subscriber as LocalSubscriber>::Error,
+    >,
+>
+{
+}
+
+impl<C> SendSubscribe for C where
+    C: Subscribe<
+        Subscriber: LocalSubscriber<Message: Settle>
+                        + Subscriber<
+            Message = <<C as Subscribe>::Subscriber as LocalSubscriber>::Message,
+            Error = <<C as Subscribe>::Subscriber as LocalSubscriber>::Error,
+        >,
+    >
+{
 }
 
 mod carries;
 mod server;
 
 pub use carries::{Carries, CarriesBatch};
-pub use server::{
-    ApiKeyLocation, DescribeServer, HttpApiKeyLocation, LocalDescribeServer, SecurityScheme,
-    ServerSpec,
-};
+pub use server::{ApiKeyLocation, DescribeServer, HttpApiKeyLocation, SecurityScheme, ServerSpec};

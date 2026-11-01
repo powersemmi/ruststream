@@ -6,6 +6,9 @@
 //! and an extension trait bounded on the options type so its steps appear on a builder over this
 //! publisher and nowhere else. The in-memory bus has no protocol field to put a priority in, so
 //! the publisher folds the resolved value into a header the assertions read back.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "memory",
     feature = "macros",

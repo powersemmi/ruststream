@@ -12,8 +12,8 @@ use core::task::{Context, Poll};
 
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, AddressedCopies, FromName, HeaderMap, LocalBatchSubscriber, LocalIncomingMessage,
-    LocalRedeliveryAddressed, LocalSubscriber, LocalSubscriptionSource, RedeliveryAddress,
+    AckError, AddressedCopies, FromName, HeaderMap, IncomingMessage, LocalBatchSubscriber,
+    LocalSettle, LocalSubscriber, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -107,9 +107,7 @@ impl IntoSource for LocalMemorySource {
     }
 }
 
-impl<const CAP: usize> LocalSubscriptionSource<ConnectedLocalMemoryBroker<CAP>>
-    for LocalMemorySource
-{
+impl<const CAP: usize> SubscriptionSource<ConnectedLocalMemoryBroker<CAP>> for LocalMemorySource {
     type Subscriber = LocalMemorySubscriber<CAP>;
     // The bus moves nothing on its own, and one name is both ends of it, so a copy goes back to
     // the name the subscription reads.
@@ -127,9 +125,7 @@ impl<const CAP: usize> LocalSubscriptionSource<ConnectedLocalMemoryBroker<CAP>>
     }
 }
 
-impl<const CAP: usize> LocalRedeliveryAddressed<ConnectedLocalMemoryBroker<CAP>>
-    for LocalMemorySource
-{
+impl<const CAP: usize> RedeliveryAddressed<ConnectedLocalMemoryBroker<CAP>> for LocalMemorySource {
     fn redelivery_address(
         &self,
         _connected: &ConnectedLocalMemoryBroker<CAP>,
@@ -388,7 +384,7 @@ impl<const CAP: usize> fmt::Debug for LocalMemoryMessage<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalIncomingMessage for LocalMemoryMessage<CAP> {
+impl<const CAP: usize> IncomingMessage for LocalMemoryMessage<CAP> {
     fn payload(&self) -> &[u8] {
         &self.delivery.payload
     }
@@ -400,7 +396,9 @@ impl<const CAP: usize> LocalIncomingMessage for LocalMemoryMessage<CAP> {
     fn redelivery_count(&self) -> Option<u64> {
         Some(self.delivery.deliveries.get())
     }
+}
 
+impl<const CAP: usize> LocalSettle for LocalMemoryMessage<CAP> {
     fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {
         self.settled = true;
         ready(Ok(()))
@@ -428,8 +426,7 @@ mod tests {
     use embassy_futures::block_on;
     use futures::{FutureExt, StreamExt};
     use ruststream_core::{
-        BytesMut, LocalBroker, LocalConnectedBroker, LocalPublisher, LocalSubscribe,
-        OutgoingMessage,
+        Broker, BytesMut, ConnectedBroker, LocalPublisher, OutgoingMessage, Subscribe,
     };
 
     #[cfg(feature = "testing")]

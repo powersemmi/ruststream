@@ -65,9 +65,7 @@ impl Broker for Declaring {
 }
 
 impl InProcess for Declaring {
-    fn connect_in_process(
-        self,
-    ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect_in_process(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.connect()
     }
 }
@@ -76,7 +74,7 @@ impl ConnectedBroker for Declared {
     type Error = MemoryError;
     type Closed = <ConnectedMemoryBroker<Retaining> as ConnectedBroker>::Closed;
 
-    fn shutdown(self) -> impl Future<Output = Result<Self::Closed, Self::Error>> + Send {
+    fn shutdown(self) -> impl Future<Output = Result<Self::Closed, Self::Error>> {
         self.bus.shutdown()
     }
 }

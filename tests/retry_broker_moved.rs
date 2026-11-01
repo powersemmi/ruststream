@@ -35,7 +35,7 @@ use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, State};
 use ruststream::testing::TestApp;
 use ruststream::{
     AckError, BrokerMoves, FromRef, HeaderMap, IncomingMessage, OutgoingMessage, Publisher,
-    RetryDeclaration, Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
+    RetryDeclaration, Settle, Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
 };
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -135,7 +135,9 @@ impl IncomingMessage for MovedMessage {
     fn redelivery_count(&self) -> Option<u64> {
         self.inner.redelivery_count()
     }
+}
 
+impl Settle for MovedMessage {
     async fn ack(self) -> Result<(), AckError> {
         self.inner.ack().await
     }

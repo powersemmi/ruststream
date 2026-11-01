@@ -1,5 +1,8 @@
 //! Integration tests for the unified failure policy: handler panics and decode failures, settled
 //! by the per-subscriber `on_failure(panic = .., decode = ..)` policy. Driven over `MemoryBroker`.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "macros",
     feature = "memory",

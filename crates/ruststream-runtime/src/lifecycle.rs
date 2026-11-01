@@ -23,12 +23,15 @@ use core::{error::Error as StdError, pin::Pin};
 #[cfg(feature = "std")]
 use crate::bindable::ConnectedSlot;
 #[cfg(feature = "std")]
-use crate::{Broker, ConnectedBroker};
+use crate::{Broker, ConnectedBroker, SendBroker};
 
 /// A broker's error, erased.
 pub type BoxError = Box<dyn StdError + Send + Sync>;
-/// A lifecycle step's future, erased.
+/// A future, erased, that may move between tasks.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+/// A lifecycle step's future, erased. It is not `Send`: a step runs once, on the task that starts
+/// or stops the app, and the contract's lifecycle futures carry no `Send`.
+pub type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 /// The in-process transition of one registered broker type, erased.
 ///
@@ -37,7 +40,7 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// which transport it is.
 #[cfg(feature = "testing")]
 pub type InProcessConnect =
-    fn(Box<dyn Any + Send>) -> BoxFuture<'static, Result<Box<dyn Any + Send>, BoxError>>;
+    fn(Box<dyn Any + Send>) -> LocalBoxFuture<'static, Result<Box<dyn Any + Send>, BoxError>>;
 
 /// An unconnected broker, with its concrete type and error erased. Consuming `connect` yields
 /// the erased connected form.
@@ -45,7 +48,7 @@ pub trait BrokerLifecycle: Send + Sync {
     /// Connects the broker, yielding its erased connected form.
     fn connect(
         self: Box<Self>,
-    ) -> BoxFuture<'static, Result<Box<dyn ConnectedLifecycle>, BoxError>>;
+    ) -> LocalBoxFuture<'static, Result<Box<dyn ConnectedLifecycle>, BoxError>>;
 
     /// The concrete broker type, which is what a test registration is keyed by.
     #[cfg(feature = "testing")]
@@ -62,14 +65,14 @@ pub trait BrokerLifecycle: Send + Sync {
     fn connect_in_process(
         self: Box<Self>,
         transition: InProcessConnect,
-    ) -> BoxFuture<'static, Result<Box<dyn ConnectedLifecycle>, BoxError>>;
+    ) -> LocalBoxFuture<'static, Result<Box<dyn ConnectedLifecycle>, BoxError>>;
 }
 
 /// A connected broker, erased. Consuming `shutdown` drives the typed
 /// [`ConnectedBroker::shutdown`] and discards the typed witness (it carries no erasable surface).
 pub trait ConnectedLifecycle: Send + Sync {
     /// Shuts the broker down, discarding the typed witness.
-    fn shutdown(self: Box<Self>) -> BoxFuture<'static, Result<(), BoxError>>;
+    fn shutdown(self: Box<Self>) -> LocalBoxFuture<'static, Result<(), BoxError>>;
     /// The concrete broker type's name, for diagnostics and logging.
     fn name(&self) -> &'static str;
 
@@ -108,10 +111,10 @@ impl<B: Broker> fmt::Debug for BrokerCell<B> {
 }
 
 #[cfg(feature = "std")]
-impl<B: Broker + 'static> BrokerLifecycle for BrokerCell<B> {
+impl<B: SendBroker> BrokerLifecycle for BrokerCell<B> {
     fn connect(
         self: Box<Self>,
-    ) -> BoxFuture<'static, Result<Box<dyn ConnectedLifecycle>, BoxError>> {
+    ) -> LocalBoxFuture<'static, Result<Box<dyn ConnectedLifecycle>, BoxError>> {
         Box::pin(async move {
             let connected = self.broker.connect().await.map_err(BoxError::from)?;
             Ok(publish_connected::<B>(connected, self.slot))
@@ -132,7 +135,7 @@ impl<B: Broker + 'static> BrokerLifecycle for BrokerCell<B> {
     fn connect_in_process(
         self: Box<Self>,
         transition: InProcessConnect,
-    ) -> BoxFuture<'static, Result<Box<dyn ConnectedLifecycle>, BoxError>> {
+    ) -> LocalBoxFuture<'static, Result<Box<dyn ConnectedLifecycle>, BoxError>> {
         let Self { broker, slot } = *self;
         let connecting = transition(Box::new(broker));
         Box::pin(async move {
@@ -150,7 +153,7 @@ impl<B: Broker + 'static> BrokerLifecycle for BrokerCell<B> {
 #[cfg(feature = "std")]
 /// Publishes a freshly connected broker into its slot, for the starters to open subscriptions
 /// against, and keeps it for teardown.
-fn publish_connected<B: Broker + 'static>(
+fn publish_connected<B: SendBroker>(
     connected: B::Connected,
     slot: ConnectedSlot<B>,
 ) -> Box<dyn ConnectedLifecycle> {
@@ -167,7 +170,7 @@ struct ConnectedCell<B: Broker> {
 }
 
 #[cfg(feature = "std")]
-impl<B: Broker + 'static> ConnectedLifecycle for ConnectedCell<B> {
+impl<B: SendBroker> ConnectedLifecycle for ConnectedCell<B> {
     fn name(&self) -> &'static str {
         type_name::<B>()
     }
@@ -185,7 +188,7 @@ impl<B: Broker + 'static> ConnectedLifecycle for ConnectedCell<B> {
         TypeId::of::<B>()
     }
 
-    fn shutdown(self: Box<Self>) -> BoxFuture<'static, Result<(), BoxError>> {
+    fn shutdown(self: Box<Self>) -> LocalBoxFuture<'static, Result<(), BoxError>> {
         Box::pin(async move {
             // Starters cloned the slot's reference only for the duration of opening their
             // subscriptions, so after startup the slot and this cell hold the last two

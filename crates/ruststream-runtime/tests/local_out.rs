@@ -15,9 +15,8 @@ use std::time::Duration;
 use futures::StreamExt;
 use futures::future::join;
 use ruststream_core::{
-    BytesMut, CallerName, LocalBroker, LocalIncomingMessage, LocalPublishPolicy, LocalPublisher,
-    LocalSubscriber, LocalSubscriptionSource, MessageHeaders, NoHeaders, OutgoingDestination,
-    OutgoingMessage,
+    Broker, BytesMut, CallerName, IncomingMessage, LocalPublisher, LocalSubscriber, MessageHeaders,
+    NoHeaders, OutgoingDestination, OutgoingMessage, PublishPolicy, SubscriptionSource,
 };
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
@@ -207,7 +206,7 @@ async fn a_body_publishes_through_its_slot_to_a_local_broker() {
     .await;
 
     let audited = audited.expect("an audit").expect("a delivery");
-    assert_eq!(LocalIncomingMessage::payload(&audited), br#"{"id":5}"#);
+    assert_eq!(IncomingMessage::payload(&audited), br#"{"id":5}"#);
     assert_eq!(
         host.0.load(Ordering::Relaxed),
         0,
@@ -258,9 +257,9 @@ async fn a_slot_transform_stamps_what_the_body_publishes_through_a_local_chain()
     .await;
 
     let audited = audited.expect("an audit").expect("a delivery");
-    assert_eq!(LocalIncomingMessage::payload(&audited), br#"{"id":5}"#);
+    assert_eq!(IncomingMessage::payload(&audited), br#"{"id":5}"#);
     assert_eq!(
-        LocalIncomingMessage::headers(&audited).get_str("stamped"),
+        IncomingMessage::headers(&audited).get_str("stamped"),
         Some("yes"),
         "the slot transform's header"
     );

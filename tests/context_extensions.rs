@@ -27,7 +27,7 @@ use ruststream::runtime::{
     AppInfo, Context, Handler, HandlerExt, HandlerMetadata, HandlerOutcome, Layer, RustStream,
 };
 use ruststream::testing::TestApp;
-use ruststream::{AckError, BuildContext, Field, FieldMut, HeaderMap, IncomingMessage};
+use ruststream::{AckError, BuildContext, Field, FieldMut, HeaderMap, IncomingMessage, Settle};
 
 /// A broker that attaches native per-delivery metadata: `TaggedMessage` carries a tag, and the
 /// `TagContext` reads it off the message via `BuildContext`, standing in for an offset / commit
@@ -45,7 +45,9 @@ impl IncomingMessage for TaggedMessage {
     fn headers(&self) -> &HeaderMap {
         self.inner.headers()
     }
+}
 
+impl Settle for TaggedMessage {
     async fn ack(self) -> Result<(), AckError> {
         self.inner.ack().await
     }

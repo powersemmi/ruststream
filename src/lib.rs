@@ -200,16 +200,14 @@ pub use ruststream_core::{
     DefaultPublish, Lend, OutgoingFor, PairError, PayloadForm, PublishPolicy, Publisher, Take,
 };
 pub use ruststream_core::{DeserializeHeadersError, SerializeHeadersError};
-pub use ruststream_core::{IncomingMessage, OutgoingMessage, RawMessage};
-// The `Local*` twins of the contract traits, for brokers whose types are not `Send`. The prelude
+pub use ruststream_core::{IncomingMessage, OutgoingMessage, RawMessage, Settle};
+pub use ruststream_core::{SendBroker, SendSource, SendSubscribe};
+// The `Local*` twins of the per-message traits, for brokers whose types are not `Send`. The prelude
 // carries the Send family alone: a crate importing both would find every method call on a broker's
 // type ambiguous.
 pub use ruststream_core::{
-    LocalBatchSubscriber, LocalBroker, LocalConnectedBroker, LocalDefaultPublish,
-    LocalDescribeServer, LocalIncomingMessage, LocalOwnedTransactions, LocalPositioned,
-    LocalPublishPolicy, LocalPublisher, LocalRedeliveryAddressed, LocalRequestReply, LocalSeekable,
-    LocalSeeker, LocalSubscribe, LocalSubscriber, LocalSubscriptionSource, LocalTransaction,
-    LocalTransactionalPublisher,
+    LocalBatchSubscriber, LocalOwnedTransactions, LocalPublisher, LocalRequestReply, LocalSeekable,
+    LocalSeeker, LocalSettle, LocalSubscriber, LocalTransaction, LocalTransactionalPublisher,
 };
 
 pub use ruststream_core::nonzero;

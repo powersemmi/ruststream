@@ -20,8 +20,8 @@ use crate::redelivery::{
 };
 use crate::retry::{RetryOffer, RetryOpen, SettlesDestination};
 use crate::{
-    DestinationDeclared, LocalBroker, LocalConnected, LocalSubscriptionSource, OutAttachment,
-    Reads, Retry, RetryDeclaration,
+    Broker, Connected, DestinationDeclared, OutAttachment, Reads, Retry, RetryDeclaration,
+    SubscriptionSource,
 };
 
 use super::builder::{AttachRetry, Router};
@@ -67,7 +67,7 @@ impl<Route: LocalRouteSource> LocalRouteSource for DeclaredRoute<Route> {
 
 /// What the descriptor of a local registration declares about its retry copies.
 type LocalCopies<B, Head> =
-    <<Head as LocalRouteSource>::Source as LocalSubscriptionSource<LocalConnected<B>>>::Copies;
+    <<Head as LocalRouteSource>::Source as SubscriptionSource<Connected<B>>>::Copies;
 
 /// Whether the registration says where its copies go: the descriptor's address, or a `.to(name)`.
 type LocalSettled<B, Head, Dest> =
@@ -93,9 +93,9 @@ impl<B, Head, Tail, C, Layers, Pipe, Policy, Transforms, Enc, Dest>
     AttachRetry<OutAttachment<Retry, Policy, Transforms, Enc>, Dest>
     for Router<B, (Head, Tail), C, Layers, LocalPipeline<Pipe>>
 where
-    B: LocalBroker,
+    B: Broker,
     Head: RetryOpen + RouteMetadata + LocalRouteSource,
-    Head::Source: LocalSubscriptionSource<LocalConnected<B>>,
+    Head::Source: SubscriptionSource<Connected<B>>,
     // Where the broker moves the delivery itself, this is the bound that refuses the position and
     // names the descriptor, as on the multi-thread runner.
     LocalCopies<B, Head>: PublishesCopiesHere<Head::Source> + RetryOffer<Dest>,
@@ -176,7 +176,7 @@ impl<Route: LocalPlanned, Policy, Stack, Settled> LocalPlanned
 impl<B, State, Route, Policy, Stack, Settled> OpenLayered<B, State>
     for LocalRetriedRoute<Route, Policy, Stack, Settled>
 where
-    B: LocalBroker,
+    B: Broker,
     Route: OpenLocalRoute<B, State>,
     NoCopies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>
         + AppliesDeclaration<Route::Declaration>,
@@ -192,7 +192,7 @@ where
 
     fn open_layered<Layers: LocalBlanketLayer + Clone>(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         layers: &Layers,
         scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
@@ -203,7 +203,7 @@ where
 impl<B, State, Route, Policy, Stack, Settled, Plan> OpenLayered<B, State>
     for Dispatched<LocalRetriedRoute<Route, Policy, Stack, Settled>, Plan>
 where
-    B: LocalBroker,
+    B: Broker,
     Route: OpenLocalRoute<B, State>,
     Plan: LocalDispatch<
         Copies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>
@@ -221,7 +221,7 @@ where
 
     fn open_layered<Layers: LocalBlanketLayer + Clone>(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         layers: &Layers,
         scope: &ScopeDelivery,
     ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
@@ -239,7 +239,7 @@ where
 async fn open_retried<B, State, Route, Policy, Stack, Settled, Plan, Layers>(
     retried: LocalRetriedRoute<Route, Policy, Stack, Settled>,
     plan: Plan,
-    connected: &LocalConnected<B>,
+    connected: &Connected<B>,
     layers: &Layers,
     scope: &ScopeDelivery,
 ) -> Result<
@@ -254,7 +254,7 @@ async fn open_retried<B, State, Route, Policy, Stack, Settled, Plan, Layers>(
     BoxError,
 >
 where
-    B: LocalBroker,
+    B: Broker,
     Route: OpenLocalRoute<B, State>,
     Plan: LocalDispatch<Copies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>,
     Layers: LocalBlanketLayer + Clone,

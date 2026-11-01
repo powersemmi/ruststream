@@ -21,7 +21,7 @@ use embassy_sync::channel::Channel;
 use futures::StreamExt;
 use futures::future::{Either, join, select};
 use hash32::{FnvHasher, Hasher as _};
-use ruststream_core::{BuildContext, LocalIncomingMessage, LocalSubscriber};
+use ruststream_core::{BuildContext, IncomingMessage, LocalSettle, LocalSubscriber};
 use ruststream_runtime::{
     Delivery, DeliverySlot, DispatchFailure, Dispatched, Halt, HeadersAtOnce, HostDetach,
     KeepCopies, Keeping, LocalDetach, LocalDispatch, LocalHandler, LocalPipeline, LocalPlanned,
@@ -324,7 +324,7 @@ async fn work<Message, Body, Cx, State, Signal, Host, const COUNT: usize>(
     free: Option<(&Channel<NoopRawMutex, usize, COUNT>, usize)>,
     shared: &Shared<'_, Body, Cx, State, Signal, Host>,
 ) where
-    Message: LocalIncomingMessage,
+    Message: LocalSettle,
     Body: LocalHandler<Message, Cx, State>,
     Cx: BuildContext<Message> + Send + Sync + 'static,
     Signal: Halt,

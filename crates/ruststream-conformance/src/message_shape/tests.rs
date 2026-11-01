@@ -24,7 +24,7 @@ use ruststream::memory::{
 };
 use ruststream_core::{
     AckError, AddressedCopies, HeaderMap, IncomingMessage, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, Subscribe, Subscriber, SubscriptionSource, Take,
+    PublishPolicy, Publisher, Settle, Subscribe, Subscriber, SubscriptionSource, Take,
 };
 
 /// What a double reports when it refuses, alongside what the memory broker reports.
@@ -449,7 +449,9 @@ impl IncomingMessage for ShapeMessage {
     fn headers(&self) -> &HeaderMap {
         self.inner.headers()
     }
+}
 
+impl Settle for ShapeMessage {
     async fn ack(self) -> Result<(), AckError> {
         match self.fault {
             StreamFault::AckFails => Err(AckError::Timeout),
@@ -885,7 +887,7 @@ mod credentials {
         type Error = MemoryError;
         type Connected = ConnectedMemoryBroker;
 
-        fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+        fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
             MemoryBroker::new().connect()
         }
     }

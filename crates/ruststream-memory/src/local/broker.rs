@@ -9,12 +9,11 @@ use bytes::Bytes;
 #[cfg(feature = "testing")]
 use ruststream_core::RawMessage;
 use ruststream_core::{
-    AddressedCopies, BytesMut, LocalBroker, LocalConnectedBroker, LocalDefaultPublish,
-    LocalDescribeServer, LocalPublishPolicy, LocalPublisher, LocalSubscribe, OutgoingMessage,
-    PairError, ServerSpec, Take,
+    AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
+    LocalPublisher, OutgoingMessage, PairError, PublishPolicy, ServerSpec, Subscribe, Take,
 };
 #[cfg(feature = "testing")]
-use ruststream_runtime::testing::{Backlog, Coordinator, LocalInProcess, LocalTestableBroker};
+use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, LocalTestableBroker};
 use thiserror::Error;
 
 use super::LocalMemorySubscriber;
@@ -148,7 +147,7 @@ impl<const CAP: usize> fmt::Debug for LocalMemoryBroker<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalBroker for LocalMemoryBroker<CAP> {
+impl<const CAP: usize> Broker for LocalMemoryBroker<CAP> {
     type Error = LocalMemoryError;
     type Connected = ConnectedLocalMemoryBroker<CAP>;
 
@@ -158,7 +157,7 @@ impl<const CAP: usize> LocalBroker for LocalMemoryBroker<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalDescribeServer for LocalMemoryBroker<CAP> {
+impl<const CAP: usize> DescribeServer for LocalMemoryBroker<CAP> {
     fn describe_server(&self) -> ServerSpec {
         ServerSpec::in_process("memory")
     }
@@ -260,7 +259,7 @@ impl<const CAP: usize> fmt::Debug for ConnectedLocalMemoryBroker<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalConnectedBroker for ConnectedLocalMemoryBroker<CAP> {
+impl<const CAP: usize> ConnectedBroker for ConnectedLocalMemoryBroker<CAP> {
     type Error = LocalMemoryError;
     type Closed = ClosedLocalMemoryBroker;
 
@@ -271,7 +270,7 @@ impl<const CAP: usize> LocalConnectedBroker for ConnectedLocalMemoryBroker<CAP> 
     }
 }
 
-impl<const CAP: usize> LocalSubscribe for ConnectedLocalMemoryBroker<CAP> {
+impl<const CAP: usize> Subscribe for ConnectedLocalMemoryBroker<CAP> {
     type Subscriber = LocalMemorySubscriber<CAP>;
     // One name is both ends of the bus, so a publish under the name a subscription reads reaches
     // it, and the name is the address of its retry copies.
@@ -352,7 +351,7 @@ impl ClosedLocalMemoryBroker {
 #[must_use]
 pub struct LocalMemoryPublish;
 
-impl<const CAP: usize> LocalPublishPolicy<ConnectedLocalMemoryBroker<CAP>> for LocalMemoryPublish {
+impl<const CAP: usize> PublishPolicy<ConnectedLocalMemoryBroker<CAP>> for LocalMemoryPublish {
     type Live = LocalMemoryPublisher<CAP>;
 
     fn pair(
@@ -363,7 +362,7 @@ impl<const CAP: usize> LocalPublishPolicy<ConnectedLocalMemoryBroker<CAP>> for L
     }
 }
 
-impl<const CAP: usize> LocalDefaultPublish for ConnectedLocalMemoryBroker<CAP> {
+impl<const CAP: usize> DefaultPublish for ConnectedLocalMemoryBroker<CAP> {
     type Policy = LocalMemoryPublish;
 }
 
@@ -477,7 +476,7 @@ pub enum LocalMemoryError {
 // The bus lives in the process by nature, so the transition the harness connects through is the
 // ordinary `connect`: the connected form a test drives is the one production gets.
 #[cfg(feature = "testing")]
-impl<const CAP: usize> LocalInProcess for LocalMemoryBroker<CAP> {
+impl<const CAP: usize> InProcess for LocalMemoryBroker<CAP> {
     fn connect_in_process(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.connect()
     }
@@ -513,10 +512,11 @@ impl<const CAP: usize> LocalTestableBroker for ConnectedLocalMemoryBroker<CAP> {
 #[cfg(test)]
 mod tests {
     use core::pin::pin;
+    use ruststream_core::IncomingMessage;
 
     use embassy_futures::block_on;
     use futures::{FutureExt, StreamExt};
-    use ruststream_core::{LocalIncomingMessage, LocalSubscriber, OutgoingFor};
+    use ruststream_core::{LocalSettle, LocalSubscriber, OutgoingFor};
 
     use super::*;
     use crate::local::drive::{ended, waiting};

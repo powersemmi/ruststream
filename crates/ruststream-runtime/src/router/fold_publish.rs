@@ -22,8 +22,8 @@ use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Origin;
 use crate::{
-    BuildContext, LocalBroker, LocalConnected, LocalIncomingMessage, LocalPublishPolicy,
-    LocalPublisher, LocalSubscriber, LocalSubscriptionSource, RetryDeclaration, Serialized,
+    Broker, BuildContext, Connected, LocalPublisher, LocalSettle, LocalSubscriber, PublishPolicy,
+    RetryDeclaration, Serialized, SubscriptionSource,
 };
 
 use super::fold_plan::{LocalRoute, OpenLocalRoute};
@@ -31,11 +31,8 @@ use super::local::LocalPipeline;
 use super::routes_publish::{PublishingRoute, RawReplyRoute};
 
 /// The live typed stack an encoded reply wiring pairs into on broker `B`.
-type LocalStack<Policy, B, Enc, PL> = TypedPublisher<
-    <Policy as LocalPublishPolicy<LocalConnected<B>>>::Live,
-    <Enc as PublishCodec>::Codec,
-    PL,
->;
+type LocalStack<Policy, B, Enc, PL> =
+    TypedPublisher<<Policy as PublishPolicy<Connected<B>>>::Live, <Enc as PublishCodec>::Codec, PL>;
 
 /// The local handler of a reply definition whose reply leaves through `Wiring`.
 type LocalReply<Def, DecodeCodec, Wiring> =
@@ -52,16 +49,16 @@ impl<B, State, Source, M, Def, DecodeCodec, Policy, Enc, PL, Extra> OpenLocalRou
         Extra,
     >
 where
-    B: LocalBroker,
-    Source: LocalSubscriptionSource<LocalConnected<B>>,
+    B: Broker,
+    Source: SubscriptionSource<Connected<B>>,
     Source::Subscriber: LocalSubscriber<Message = M>,
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     Def: LocalPublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
     Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
     Def::Reply: EncodeReply,
     Def::Context: BuildContext<M> + Send + Sync + 'static,
-    Policy: LocalPublishPolicy<LocalConnected<B>>,
+    Policy: PublishPolicy<Connected<B>>,
     Policy::Live: LocalPublisher,
     Enc: PublishCodec<Codec: Clone>,
     PL: PublishTransform<ForReply<Def::Context>, <Policy::Live as LocalPublisher>::Options>,
@@ -78,7 +75,7 @@ where
 
     async fn open_route(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
@@ -129,16 +126,16 @@ where
 impl<B, State, Source, M, Def, DecodeCodec, Policy, Extra> OpenLocalRoute<B, State>
     for RawReplyRoute<Source, Def, DecodeCodec, RawReplyWiring<Policy>, Extra>
 where
-    B: LocalBroker,
-    Source: LocalSubscriptionSource<LocalConnected<B>>,
+    B: Broker,
+    Source: SubscriptionSource<Connected<B>>,
     Source::Subscriber: LocalSubscriber<Message = M>,
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     Def: LocalPublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
     Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
     Def::Reply: Serialized,
     Def::Context: BuildContext<M> + Send + Sync + 'static,
-    Policy: LocalPublishPolicy<LocalConnected<B>>,
+    Policy: PublishPolicy<Connected<B>>,
     Policy::Live: LocalPublisher,
 {
     type Source = Source;
@@ -153,7 +150,7 @@ where
 
     async fn open_route(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {

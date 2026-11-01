@@ -1,7 +1,7 @@
 The local form of [`Subscriber`]: a stream of deliveries whose types are not `Send`.
 
 The items are those of [`Subscriber`] without the `Send` bounds, and [`Message`](Self::Message)
-is a [`LocalIncomingMessage`]. Every [`Subscriber`] is a `LocalSubscriber` through a blanket impl.
+is a [`LocalSettle`]. Every [`Subscriber`] is a `LocalSubscriber` through a blanket impl.
 
 # Examples
 
@@ -15,7 +15,7 @@ is a [`LocalIncomingMessage`]. Every [`Subscriber`] is a `LocalSubscriber` throu
 # use futures::{Stream, stream};
 #
 use ruststream::{HeaderMap, LocalSubscriber};
-# use ruststream::{AckError, LocalIncomingMessage};
+# use ruststream::{AckError, IncomingMessage, LocalSettle};
 # /// The client's state: shared by `Rc`, so nothing built on it is `Send`.
 # #[derive(Default)]
 # struct Client {
@@ -28,7 +28,7 @@ use ruststream::{HeaderMap, LocalSubscriber};
 #     client: Rc<Client>,
 # }
 #
-# impl LocalIncomingMessage for Delivery {
+# impl IncomingMessage for Delivery {
 #     fn payload(&self) -> &[u8] {
 #         &self.payload
 #     }
@@ -36,7 +36,9 @@ use ruststream::{HeaderMap, LocalSubscriber};
 #     fn headers(&self) -> &HeaderMap {
 #         &self.headers
 #     }
+# }
 #
+# impl LocalSettle for Delivery {
 #     async fn ack(self) -> Result<(), AckError> {
 #         self.client.acked.set(self.client.acked.get() + 1);
 #         Ok(())

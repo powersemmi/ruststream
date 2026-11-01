@@ -11,13 +11,13 @@ use core::fmt;
 
 use crate::redelivery::ScopeDelivery;
 
-use super::broker::{LocalInProcess, LocalTestableBroker};
+use super::broker::{InProcess, LocalTestableBroker};
 use super::coordinator::{Coordinator, Origin, TestHooks};
 
 /// The record of one in-process run of an app that runs as one future, shared by the runner,
 /// which notes each broker it connects, and the harness, which reads them.
 ///
-/// The runner connects each broker through its [`LocalInProcess`] transition, hands the connected
+/// The runner connects each broker through its [`InProcess`] transition, hands the connected
 /// form here with [`connected`](Self::connected), and opens the broker's routes under the scope
 /// that returns. The harness addresses a broker by its type through [`brokers`](Self::brokers).
 /// The run keeps each connected form weakly: the app owns it and shuts it down.
@@ -107,7 +107,7 @@ impl InProcessRun {
     /// the run's coordinator into it, and returns the scope its routes open under.
     pub fn connected<B>(&self, connected: &Rc<B::Connected>) -> ScopeDelivery
     where
-        B: LocalInProcess + 'static,
+        B: InProcess + 'static,
         B::Connected: 'static,
     {
         connected.install_coordinator(self.coordinator.clone());

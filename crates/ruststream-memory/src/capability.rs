@@ -97,6 +97,7 @@ impl<Log: LogMode> Partitioned for MemoryMessage<Log> {
 #[cfg(test)]
 mod tests {
     use futures::StreamExt;
+    use ruststream_core::Settle;
 
     use super::*;
     use crate::{MemoryBroker, Retaining, Retention};

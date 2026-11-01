@@ -47,7 +47,7 @@ impl Broker for Dialling {
     type Error = DialError;
     type Connected = ConnectedMemoryBroker<Retaining>;
 
-    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         ready(Err(DialError::NoServer))
     }
 }
@@ -130,15 +130,13 @@ impl Broker for Misconfigured {
     type Error = DialError;
     type Connected = ConnectedMemoryBroker;
 
-    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         ready(Err(DialError::NoServer))
     }
 }
 
 impl InProcess for Misconfigured {
-    fn connect_in_process(
-        self,
-    ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect_in_process(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         ready(Err(DialError::NoServer))
     }
 }

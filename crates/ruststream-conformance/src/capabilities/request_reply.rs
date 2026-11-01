@@ -13,8 +13,8 @@ use crate::harness::{expect_next, on_foreign_runtime};
 use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
-    Broker, Connected, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, RequestReply,
-    Subscriber, SubscriptionSource,
+    Connected, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, RequestReply, SendBroker,
+    SendSource, Settle, Subscriber,
 };
 
 /// Verifies the [`RequestReply`] contract.
@@ -61,9 +61,9 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
     make_requester: MkReq,
     make_publisher: MkPub,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Req: RequestReply + 'static,
@@ -137,7 +137,7 @@ where
     Req: RequestReply + 'static,
     Pub: Publisher,
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let respond = async {
@@ -219,7 +219,7 @@ async fn late_reply_resolves_no_later_request<Req, Pub, S, M, E>(
     Req: RequestReply,
     Pub: Publisher,
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let (timed_out, held_back) = oneshot::channel::<()>();
@@ -304,7 +304,7 @@ async fn concurrent_requests_get_their_own_replies<Req, Pub, S, M, E>(
     Req: RequestReply,
     Pub: Publisher,
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let requests = async {
@@ -373,7 +373,7 @@ async fn concurrent_requests_get_their_own_replies<Req, Pub, S, M, E>(
 async fn answer<Pub, M>(publisher: &Pub, request: &M, payload: &[u8]) -> Result<(), Pub::Error>
 where
     Pub: Publisher,
-    M: IncomingMessage,
+    M: Settle,
 {
     let reply_to = request
         .headers()
@@ -399,6 +399,6 @@ where
 /// Settles a reply the way a caller that read it does. A reply is a delivery, and one left
 /// unsettled may be handed back to whatever reads the reply subscription next. A transport with no
 /// settlement for replies answers what it answers; the check asserts the reply, not the answer.
-async fn settle_reply<M: IncomingMessage>(reply: M) {
+async fn settle_reply<M: Settle>(reply: M) {
     let _settled = within(reply.ack(), "request_reply: settling a reply").await;
 }

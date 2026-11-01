@@ -20,6 +20,7 @@ use bytes::BytesMut;
 use embassy_executor::{Executor, SpawnError, Spawner};
 use embassy_futures::yield_now;
 use futures::{FutureExt, StreamExt};
+use ruststream::IncomingMessage;
 use ruststream::memory::local::{
     ConnectedLocalMemoryBroker, LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource,
     LocalMemorySubscriber,
@@ -28,8 +29,8 @@ use ruststream::runtime::{
     EmbeddedApp, HandlerOutcome, Health, Message, Mounts, Out, SubscriberSettings,
 };
 use ruststream::{
-    Deserialized, LocalBroker, LocalIncomingMessage, LocalPublisher, LocalSubscriber,
-    LocalSubscriptionSource, OutSlot, Outgoing, OutgoingMessage, Publisher, Serialized, subscriber,
+    Broker, Deserialized, LocalPublisher, LocalSubscriber, OutSlot, Outgoing, OutgoingMessage,
+    Publisher, Serialized, SubscriptionSource, subscriber,
 };
 use serde::Serialize;
 use static_cell::StaticCell;

@@ -3,6 +3,9 @@
 //! `TestApp` runs a `threads(n)` subscription as `n` workers on the test's own runtime, so these
 //! tests assert what the harness keeps of the declaration: the concurrency, the per-key order and
 //! the clock. Placement itself is the subject of `threads_placement.rs`.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "macros",
     feature = "memory",

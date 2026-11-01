@@ -15,6 +15,7 @@
 #[cfg(test)]
 mod parity_tests;
 
+use crate::SendBroker;
 use crate::{BlanketLayer, Broker, Declared, PublishIdentity, PublishPipeline};
 use crate::{ChainHead, Identity, PoolFits, RetryDestinationsDeclared, SplitHead};
 use crate::{Router, RouterCommit, RouterDef, RouterMount, RouterWith};
@@ -59,7 +60,7 @@ pub trait MountChain<B: Broker, Layers = Identity, State = (), Pipeline = Publis
 impl<B, Layers, C, State, Pipeline, Pre> MountChain<B, Layers, State, Pipeline>
     for BrokerScope<B, Layers, C, State, Pipeline, Pre>
 where
-    B: Broker + 'static,
+    B: SendBroker,
     Pre: ScopeRegistrations<B, Layers, State, Pipeline>,
 {
     fn mount_chain(
@@ -78,7 +79,7 @@ where
 impl<B, Layers, State, Pipeline, Routes, RC, RL, RP> MountChain<B, Layers, State, Pipeline>
     for Router<B, Routes, RC, RL, RP>
 where
-    B: Broker + 'static,
+    B: SendBroker,
     Routes: SplitHead,
     Routes::Pre: ScopeRegistrations<B, Layers, State, Pipeline>,
     Routes::Rest: RouterDef<B, State, RP>,
@@ -107,7 +108,7 @@ where
 impl<B, Layers, State, Pipeline, Mount, R, Def, Attach, Last> MountChain<B, Layers, State, Pipeline>
     for RouterWith<Mount, R, Def, Attach, Last>
 where
-    B: Broker + 'static,
+    B: SendBroker,
     Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
     Attach::Out: MountChain<B, Layers, State, Pipeline>,
 {
@@ -122,7 +123,7 @@ where
     }
 }
 
-impl<B: Broker + 'static, Layers, C, State, Pipeline, Pre>
+impl<B: SendBroker, Layers, C, State, Pipeline, Pre>
     BrokerScope<B, Layers, C, State, Pipeline, Pre>
 {
     /// Mounts a definition of any form on this broker and returns the mount chain, which the

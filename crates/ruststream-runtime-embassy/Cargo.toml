@@ -127,5 +127,11 @@ name = "settle"
 path = "tests/settle.rs"
 harness = false
 
+# Every input form of a device handler, without a reply and with one.
+[[test]]
+name = "input_forms"
+path = "tests/input/forms.rs"
+harness = false
+
 [lints]
 workspace = true

@@ -73,7 +73,7 @@ impl RedeliveryAddressed<ConnectedMemoryBroker> for StreamSource {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
         ready(Ok(RedeliveryAddress::new(self.name.clone())))
     }
 }

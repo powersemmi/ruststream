@@ -7,6 +7,9 @@
 //! whole value stays pure declaration - it pairs with the connected broker at startup, like any
 //! other [`PublishPolicy`].
 
+// The shared body serves the local contract, whose futures carry no Send.
+#![allow(clippy::future_not_send)]
+
 use core::fmt;
 use core::marker::PhantomData;
 
@@ -16,10 +19,7 @@ use super::{
 };
 #[cfg(feature = "asyncapi")]
 use crate::bindings::Bindings;
-use crate::{
-    ConnectedBroker, LocalConnectedBroker, LocalPublishPolicy, PairError, PublishPolicy,
-    TransactionalPublisher,
-};
+use crate::{ConnectedBroker, PairError, PublishPolicy, TransactionalPublisher};
 
 /// The publish policy of a byte-for-byte reply, as the mount chain carries it.
 ///
@@ -54,8 +54,8 @@ impl<Policy> RawReplyWiring<Policy> {
     #[allow(clippy::future_not_send)]
     pub(crate) async fn pair_local<CB>(self, connected: &CB) -> Result<Policy::Live, PairError>
     where
-        CB: LocalConnectedBroker,
-        Policy: LocalPublishPolicy<CB>,
+        CB: ConnectedBroker,
+        Policy: PublishPolicy<CB>,
     {
         self.0.pair(connected).await
     }
@@ -420,8 +420,8 @@ impl<Policy, Enc, PL, BL> ReplyWiring<Policy, Enc, PL, BL, Direct> {
         connected: &CB,
     ) -> Result<TypedPublisher<Policy::Live, Enc::Codec, PL, BL>, PairError>
     where
-        CB: LocalConnectedBroker,
-        Policy: LocalPublishPolicy<CB>,
+        CB: ConnectedBroker,
+        Policy: PublishPolicy<CB>,
         Enc: PublishCodec<Codec: Clone>,
     {
         let codec = self.enc.codec().clone();

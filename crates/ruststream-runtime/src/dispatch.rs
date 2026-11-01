@@ -28,7 +28,7 @@ use futures::Stream;
 use tracing::error;
 
 use crate::redelivery::RetryCopies;
-use crate::{BuildContext, HeaderMap, LocalIncomingMessage, LocalSubscriber};
+use crate::{BuildContext, HeaderMap, LocalSettle, LocalSubscriber};
 
 use super::batch::{LocalBatchHandler, TakenBatch};
 use super::context::Context;
@@ -323,7 +323,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     // A deferred retry copy carries the broker's context into the work the delivery leaves
     // behind, which may run on another thread.
     C: BuildContext<M> + Send + Sync + 'static,
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     Signal: Halt,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
     Headers: LendHeaders<M>,
@@ -661,6 +661,7 @@ mod workers;
 
 #[cfg(test)]
 mod tests {
+    use crate::IncomingMessage;
     use alloc::rc::Rc;
     use alloc::sync::Arc;
     use core::cell::Cell;
@@ -675,7 +676,7 @@ mod tests {
     use crate::failure::{DispatchFailure, FailurePolicies};
     use crate::handler::{HandlerOutcome, LocalHandler};
     use crate::testkit::{Shutdown, Tracked};
-    use crate::{AckError, HeaderMap, LocalIncomingMessage};
+    use crate::{AckError, HeaderMap, LocalSettle};
     use tokio::task::yield_now;
     use tokio_util::task::TaskTracker;
 
@@ -736,7 +737,7 @@ mod tests {
         nacked: Rc<Cell<bool>>,
     }
 
-    impl LocalIncomingMessage for OnOneThread {
+    impl IncomingMessage for OnOneThread {
         fn payload(&self) -> &[u8] {
             b"reading"
         }
@@ -744,7 +745,9 @@ mod tests {
         fn headers(&self) -> &HeaderMap {
             &self.headers
         }
+    }
 
+    impl LocalSettle for OnOneThread {
         fn ack(self) -> impl Future<Output = Result<(), AckError>> {
             ready(Ok(()))
         }

@@ -12,14 +12,14 @@
 //! broker's own source expression, builder chain included, and a value constructor takes it as
 //! its first argument - so there is nothing to override from the mount site.
 
-use crate::LocalBroker;
+use crate::Broker;
 
 use super::builder::Router;
 use super::local::PoolFits;
 use super::mount::RouterMount;
 use crate::settings::Declared;
 
-impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
+impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Mounts a `#[subscriber]` definition of any form, on the source the definition names: a

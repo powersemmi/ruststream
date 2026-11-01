@@ -21,7 +21,7 @@ use ruststream::memory::{
 use ruststream_core::{
     AckError, AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, HeaderMap,
     IncomingMessage, Name, OutgoingFor, OutgoingMessage, PairError, PublishPolicy, Publisher,
-    RawMessage, Seekable, Seeker, Subscribe, Subscriber, Take, nonzero,
+    RawMessage, Seekable, Seeker, Settle, Subscribe, Subscriber, Take, nonzero,
 };
 use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, TestableBroker};
 
@@ -142,15 +142,13 @@ impl Broker for Faulty {
     type Error = MemoryError;
     type Connected = FaultyConnected;
 
-    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.open(true)
     }
 }
 
 impl InProcess for Faulty {
-    fn connect_in_process(
-        self,
-    ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect_in_process(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.open(false)
     }
 }
@@ -217,7 +215,7 @@ impl ConnectedBroker for FaultyConnected {
     type Error = MemoryError;
     type Closed = ClosedMemoryBroker;
 
-    fn shutdown(self) -> impl Future<Output = Result<Self::Closed, Self::Error>> + Send {
+    fn shutdown(self) -> impl Future<Output = Result<Self::Closed, Self::Error>> {
         self.inner.shutdown()
     }
 }
@@ -417,7 +415,9 @@ impl IncomingMessage for FaultyMessage {
     fn headers(&self) -> &HeaderMap {
         self.inner().headers()
     }
+}
 
+impl Settle for FaultyMessage {
     async fn ack(self) -> Result<(), AckError> {
         if self.fault == Fault::AckFailsWhenCounted && self.counted {
             return Err(settlement_lost());
@@ -468,7 +468,7 @@ impl PublishPolicy<FaultyConnected> for FaultyPublish {
     fn pair(
         self,
         connected: &FaultyConnected,
-    ) -> impl Future<Output = Result<Self::Live, PairError>> + Send {
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
         ready(Ok(connected.publisher()))
     }
 }

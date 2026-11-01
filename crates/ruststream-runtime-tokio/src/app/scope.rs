@@ -2,6 +2,7 @@
 
 use std::{error::Error as StdError, fmt, marker::PhantomData, sync::Arc};
 
+use crate::SendBroker;
 use crate::{Broker, Connected, Subscriber};
 
 use crate::FailurePolicies;
@@ -130,7 +131,7 @@ impl<B: Broker, Layers, State, Pipeline> ScopeRegistrations<B, Layers, State, Pi
 impl<B, Layers, State, Pipeline, R> ScopeRegistrations<B, Layers, State, Pipeline>
     for ScopedRouter<R>
 where
-    B: Broker + 'static,
+    B: SendBroker,
     R: RouterDef<B, State>,
     State: Send + Sync + 'static,
     Layers: BlanketLayer + Clone + Send + Sync + 'static,
@@ -152,7 +153,7 @@ where
 impl<B, Layers, State, Pipeline, S, H, Cx> ScopeRegistrations<B, Layers, State, Pipeline>
     for ScopedHandle<S, H, Cx>
 where
-    B: Broker + 'static,
+    B: SendBroker,
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
     State: Send + Sync + 'static,
@@ -179,7 +180,7 @@ where
     }
 }
 
-impl<B: Broker + 'static, Layers, C, State, Pipeline, Pre>
+impl<B: SendBroker, Layers, C, State, Pipeline, Pre>
     BrokerScope<B, Layers, C, State, Pipeline, Pre>
 {
     /// Grows the scope by one registration, keeping everything else.

@@ -21,9 +21,7 @@ use tracing::warn;
 use crate::codec::Codec;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Origin, PipelinePublish, publishing_to};
-use crate::{
-    IncomingMessage, LocalIncomingMessage, LocalPublisher, OutgoingMessage, PayloadForm, Publisher,
-};
+use crate::{LocalPublisher, LocalSettle, OutgoingMessage, PayloadForm, Publisher, Settle};
 
 use super::context::Context;
 use super::dispatch::Workers;
@@ -620,7 +618,7 @@ impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline> fmt::Debug
 impl<Msg, Def, DecodeCodec, Wiring, Pipeline, State> Handler<Msg, Def::Context, State>
     for PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>
 where
-    Msg: IncomingMessage,
+    Msg: Settle,
     Def: PublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, Msg>,
     Def::Injections: Send + Sync,
@@ -658,7 +656,7 @@ impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline>
         ctx: &mut Context<'_, Def::Context, State>,
     ) -> HandlerOutcome
     where
-        Msg: LocalIncomingMessage,
+        Msg: LocalSettle,
         Via: CallPublishing<Def, State>,
         Def::Input: Materialize<DecodeCodec, Msg>,
         Sink: LocalReplySink<Def::Reply, Def::Context, Pipeline>,
@@ -725,7 +723,7 @@ pub struct LocalPublishing<Publishing>(pub(crate) Publishing);
 impl<Msg, Def, DecodeCodec, Wiring, Pipeline, State> LocalHandler<Msg, Def::Context, State>
     for LocalPublishing<PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>>
 where
-    Msg: LocalIncomingMessage,
+    Msg: LocalSettle,
     Def: LocalPublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, Msg>,
     for<'w> &'w Wiring: LocalReplySink<Def::Reply, Def::Context, Pipeline>,

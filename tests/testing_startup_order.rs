@@ -4,6 +4,8 @@
 //! [`Counted`] is a broker that counts its connects, whichever transition makes them, so a test
 //! reads how many brokers were connected at any point of the start.
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "testing",
     feature = "memory",
@@ -48,7 +50,7 @@ impl Broker for Counted {
     type Error = MemoryError;
     type Connected = ConnectedMemoryBroker;
 
-    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.connects.fetch_add(1, Ordering::SeqCst);
         self.bus.connect()
     }

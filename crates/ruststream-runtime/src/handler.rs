@@ -28,7 +28,7 @@ pub enum HandlerResult {
     /// `delay` from now.
     ///
     /// A broker with native delayed redelivery (`JetStream` `NAK` with delay) honours the delay
-    /// itself, through [`IncomingMessage::nack_after`](crate::IncomingMessage::nack_after); on one
+    /// itself, through [`Settle::nack_after`](crate::Settle::nack_after); on one
     /// without, the runtime drops the delivery and re-publishes a copy of it to its own source
     /// after the delay.
     NackAfter {
@@ -199,7 +199,7 @@ impl HandlerOutcome {
     /// not arrived, an upstream is rate-limited), where an immediate redelivery would just spin.
     ///
     /// A broker with native delayed redelivery (`JetStream` `NAK` with delay) honours the delay
-    /// itself, through [`IncomingMessage::nack_after`](crate::IncomingMessage::nack_after); on one
+    /// itself, through [`Settle::nack_after`](crate::Settle::nack_after); on one
     /// without, the runtime drops the delivery and re-publishes a copy of it to its own source
     /// after the delay, with the [`RETRY_COUNT_HEADER`](super::RETRY_COUNT_HEADER) incremented.
     /// The publisher that copy leaves through is on every registration already, from the broker's

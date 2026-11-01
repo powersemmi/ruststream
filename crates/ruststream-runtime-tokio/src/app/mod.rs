@@ -31,14 +31,15 @@ use tokio::task::{JoinError, JoinHandle};
 
 use crate::shutdown::Shutdown;
 use crate::{AppId, Contact, ExternalDocs, License, Tag};
-use crate::{BoxError, BoxFuture};
+use crate::{BoxError, BoxFuture, LocalBoxFuture};
 
 /// A registration deferred until [`RustStream::run`].
 ///
 /// Given the app's shutdown signal, it opens the subscription (after the broker is connected) and
 /// spawns the dispatch task. The broker, source and handler are captured and type-erased.
 pub type Starter<St> = Box<
-    dyn FnOnce(Arc<St>, Shutdown) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>> + Send,
+    dyn FnOnce(Arc<St>, Shutdown) -> LocalBoxFuture<'static, Result<JoinHandle<()>, BoxError>>
+        + Send,
 >;
 
 /// The state initializer: produces the app state `St` once at startup (before brokers connect).
@@ -50,7 +51,7 @@ pub(crate) type StateInit<St> =
 /// A read-only lifespan hook (`after_startup` / `on_shutdown` / `after_shutdown`): runs once at the
 /// corresponding lifecycle point with a shared `Arc<St>` handle to the app state.
 pub type LifecycleHook<St> =
-    Box<dyn FnOnce(Arc<St>) -> BoxFuture<'static, Result<(), BoxError>> + Send>;
+    Box<dyn FnOnce(Arc<St>) -> LocalBoxFuture<'static, Result<(), BoxError>> + Send>;
 
 /// Which read-only lifecycle hook list a hook is appended to.
 #[derive(Clone, Copy)]
@@ -285,7 +286,7 @@ pub(super) mod lifecycle_hooks {
     use crate::BoxError;
     use crate::bindable::ConnectedSlot;
     use crate::bindable::pair_bound;
-    use crate::{Broker, Connected, PublishPolicy};
+    use crate::{Connected, PublishPolicy, SendBroker};
 
     use super::LifecycleHook;
 
@@ -298,7 +299,7 @@ pub(super) mod lifecycle_hooks {
         hook: Hook,
     ) -> LifecycleHook<State>
     where
-        B: Broker + 'static,
+        B: SendBroker,
         Source: PublishPolicy<Connected<B>> + Send + 'static,
         Source::Live: Send,
         Hook: FnOnce(Source::Live) -> Fut + Send + 'static,

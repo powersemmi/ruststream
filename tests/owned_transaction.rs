@@ -7,6 +7,7 @@ use std::convert::Infallible;
 use std::pin::pin;
 
 use futures::{FutureExt, Stream, StreamExt};
+use ruststream::Settle;
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::{
     IncomingMessage, OutgoingMessage, OwnedTransactions, Publisher, Subscriber, Transaction,

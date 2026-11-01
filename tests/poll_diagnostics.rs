@@ -7,6 +7,9 @@
 //!
 //! The warning tests capture the log with a subscriber installed for the test's own thread, so
 //! they run on the current-thread runtime, where the harness drives every handler on that thread.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "poll-diagnostics",
     feature = "macros",

@@ -11,8 +11,8 @@ use crate::harness::{expect_next, expect_no_more, on_foreign_runtime};
 use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
-    Broker, Connected, IncomingMessage, Positioned, Publisher, Seekable, Seeker, Subscriber,
-    SubscriptionSource,
+    Connected, IncomingMessage, Positioned, Publisher, Seekable, Seeker, SendBroker, SendSource,
+    Subscriber,
 };
 
 /// How many messages the first subscription reads before it starts seeking.
@@ -58,9 +58,9 @@ pub async fn seeking<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_source: MkSrc,
     make_publisher: MkPub,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: Seekable + Send,
     <Src::Subscriber as Subscriber>::Message:
         Positioned<Position = <<Src::Subscriber as Seekable>::Seeker as Seeker>::Position>,
@@ -323,9 +323,9 @@ pub async fn seeking_unknown_position<B, MkBroker, Src, MkSrc, Pub, MkPub, MkUnk
     make_publisher: MkPub,
     make_unknown: MkUnknown,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Send,
+    Src: SendSource<Connected<B>> + Send,
     Src::Subscriber: Seekable + Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,

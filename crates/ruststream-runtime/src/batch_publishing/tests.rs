@@ -17,7 +17,10 @@ use crate::input::Decoded;
 use crate::testkit::Tracked;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 use crate::testkit::log_capture;
-use crate::{HeaderMap, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource, Take};
+use crate::{
+    HeaderMap, IncomingMessage, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource,
+    Take,
+};
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher};
 
 struct Confirm {

@@ -10,7 +10,6 @@ use core::error::Error as StdError;
 use core::pin::pin;
 
 use futures::future::{Either, join, select};
-use ruststream_core::LocalBroker;
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::InProcessRun;
 use ruststream_runtime::{Balance, BoxError, Identity, LocalPipeline, Router, RunRoutes};
@@ -21,7 +20,7 @@ use crate::hooks::{HookList, Hooks, NoHooks};
 use crate::host::AppHost;
 #[cfg(feature = "testing")]
 use crate::in_process::StartInProcess;
-use crate::mounts::{BrokerMount, CloseAll, MountChain, StartMounts};
+use crate::mounts::{BrokerMount, CloseAll, MountChain, Registration, StartMounts};
 
 /// The router a broker's scope hands the closure of [`EmbeddedApp::with_broker`].
 ///
@@ -221,22 +220,26 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
     /// # let _ = app(LocalMemoryBroker::new(), LocalMemoryBroker::new());
     /// ```
     #[allow(clippy::type_complexity)] // the app's own type, which the caller names as `impl Mounts`
-    pub fn with_broker<B, Mount, Chain>(
+    pub fn with_broker<Enrolled, Mount, Chain>(
         self,
-        broker: B,
+        broker: Enrolled,
         mount: Mount,
     ) -> EmbeddedApp<
         Parts<
             State,
-            (BrokerMount<B, Chain::Routes>, Brokers),
+            (
+                BrokerMount<Enrolled::Broker, Chain::Routes, Enrolled::Slot>,
+                Brokers,
+            ),
             Hooks<AfterStartup, OnShutdown, AfterShutdown>,
         >,
     >
     where
-        B: LocalBroker + 'static,
-        Mount: FnOnce(Scope<B>) -> Chain,
+        Enrolled: Registration,
+        Mount: FnOnce(Scope<Enrolled::Broker>) -> Chain,
         Chain: MountChain,
     {
+        let (broker, slot) = broker.into_parts();
         let routes = mount(Router::local()).finish();
         let Parts {
             state,
@@ -246,7 +249,14 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
         EmbeddedApp {
             mounts: Parts {
                 state,
-                brokers: (BrokerMount { broker, routes }, brokers),
+                brokers: (
+                    BrokerMount {
+                        broker,
+                        routes,
+                        slot,
+                    },
+                    brokers,
+                ),
                 hooks,
             },
         }

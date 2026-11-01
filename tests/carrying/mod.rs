@@ -41,8 +41,8 @@ use ruststream::memory::{
 use ruststream::runtime::{Input, IntoSource, SoloCarried};
 use ruststream::{
     AckError, AddressedCopies, BatchSubscriber, BuildBatchContext, Carries, CarriesBatch, CopyPath,
-    Field, HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed, Seekable, Subscribe,
-    Subscriber, SubscriptionSource,
+    Field, HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed, Seekable, Settle,
+    Subscribe, Subscriber, SubscriptionSource,
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::yield_now;
@@ -201,7 +201,7 @@ impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for Rows {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker<Log>,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
         ready(Ok(RedeliveryAddress::new(self.name.clone())))
     }
 }
@@ -337,7 +337,9 @@ impl<Log: LogMode> IncomingMessage for RowDelivery<Log> {
     fn redelivery_count(&self) -> Option<u64> {
         self.inner.redelivery_count()
     }
+}
 
+impl<Log: LogMode> Settle for RowDelivery<Log> {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {
         let settled = self.inner.ack();
         let slot = self.slot;

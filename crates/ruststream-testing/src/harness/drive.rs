@@ -9,7 +9,7 @@ use tokio::task;
 use tokio::time;
 
 use ruststream_core::OutgoingDestination;
-use ruststream_core::{Broker, DefaultPublish, PublishPolicy, Publisher};
+use ruststream_core::{DefaultPublish, PublishPolicy, Publisher, SendBroker};
 use ruststream_runtime::message_of;
 use ruststream_runtime::{HeadersUnset, MessageBody, OutSlot, PublishBuilder, UnnamedCodec};
 use ruststream_runtime_tokio::RustStreamError;
@@ -35,7 +35,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     #[must_use]
     pub fn broker<B>(&self) -> BrokerHandle<'_>
     where
-        B: Broker + 'static,
+        B: SendBroker,
         B::Connected: DefaultPublish,
         <<B::Connected as DefaultPublish>::Policy as PublishPolicy<B::Connected>>::Live: Publisher,
     {

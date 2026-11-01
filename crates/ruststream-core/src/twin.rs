@@ -13,7 +13,7 @@
 //!
 //! - `@send { .. }`: tokens that appear in the Send trait only (`@send { + Send }`);
 //! - `@twin { .. } { .. }`: the Send trait's tokens, then the twin's
-//!   (`@twin { IncomingMessage } { LocalIncomingMessage }`).
+//!   (`@twin { Settle } { LocalSettle }`).
 //!
 //! A marker may stand in an associated type's bounds and in a method's return type, the two
 //! places the flavors differ. A method's `where` clause, its parameters and its default body are

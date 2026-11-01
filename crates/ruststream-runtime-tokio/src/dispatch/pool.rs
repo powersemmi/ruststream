@@ -22,7 +22,7 @@ use super::{
     DispatchFailure, Handler, HeadersOnDemand, Hosted, Shutdown, Slot, Turn, Workers, dispatch,
     lane_of, log_worker_exit,
 };
-use crate::{BuildContext, IncomingMessage, RetryCopies, Subscriber};
+use crate::{BuildContext, IncomingMessage, RetryCopies, Settle, Subscriber};
 
 /// What the loop shares with every worker it starts, behind one reference count taken once per
 /// worker.
@@ -84,7 +84,7 @@ async fn work<Message, Body, Cx, State, Retry>(
     idle: Option<Idle>,
 ) where
     Retry: RetryCopies<Cx>,
-    Message: IncomingMessage,
+    Message: Settle,
     Body: Handler<Message, Cx, State>,
     Cx: BuildContext<Message> + Send + Sync + 'static,
     State: Send + Sync,
@@ -133,7 +133,7 @@ fn start<Message, Body, Cx, State, Retry>(
 ) -> Started<Message>
 where
     Retry: RetryCopies<Cx>,
-    Message: IncomingMessage + Send + 'static,
+    Message: Settle + 'static,
     Body: Handler<Message, Cx, State> + 'static,
     Cx: BuildContext<Message> + Send + Sync + 'static,
     State: Send + Sync + 'static,

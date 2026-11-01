@@ -24,7 +24,7 @@ use bytes::BytesMut;
 
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::RecordedValue;
-use crate::{Field, FieldMut, HeaderMap, LocalIncomingMessage};
+use crate::{Field, FieldMut, HeaderMap, LocalSettle};
 
 use super::dispatch::Delivery;
 use super::failure::FailurePolicy;
@@ -99,7 +99,7 @@ impl<M> fmt::Debug for FromDelivery<'_, M> {
     }
 }
 
-impl<M: LocalIncomingMessage> HeaderSource for FromDelivery<'_, M> {
+impl<M: LocalSettle> HeaderSource for FromDelivery<'_, M> {
     fn headers(&self) -> &HeaderMap {
         self.0.headers()
     }

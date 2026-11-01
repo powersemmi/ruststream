@@ -83,7 +83,7 @@ use routes::{BatchRoute, SubscribeRoute};
 use routes_inject::{BatchInjectRoute, InjectRoute};
 use routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 
-pub(crate) use crate::{LocalConnected, LocalSourceMessage, SourceBatch, SourceMessage};
+pub(crate) use crate::{LocalSourceMessage, SourceBatch, SourceMessage};
 
 /// The route a [`SubscriberDef`] `D` mounted on source `S` (decoded with `C`) becomes. Names the
 /// otherwise unwieldy registration type.

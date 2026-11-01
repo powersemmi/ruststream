@@ -1,5 +1,8 @@
 //! Hooks on the harness's handles: a test acts at the moment a subscription is called or a message
 //! is published, instead of reading the record once the publish returned.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "testing",
     feature = "memory",

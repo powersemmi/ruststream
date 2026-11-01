@@ -33,6 +33,7 @@ use tracing::subscriber::DefaultGuard;
 
 use super::*;
 use crate::HeaderMap;
+use crate::Settle;
 #[cfg(feature = "json")]
 use crate::Take;
 #[cfg(feature = "json")]

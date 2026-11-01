@@ -22,8 +22,8 @@ use crate::testing::coordinator::Coordinator;
 use crate::testkit::Shutdown;
 use crate::testkit::Tracked;
 use crate::{
-    AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, NamedCopies, Subscriber,
-    SubscriptionSource,
+    AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, NamedCopies, Settle,
+    Subscriber, SubscriptionSource,
 };
 use ruststream::memory::{ConnectedMemoryBroker, MemoryError};
 
@@ -49,7 +49,9 @@ impl IncomingMessage for Claim {
     fn headers(&self) -> &HeaderMap {
         &self.0
     }
+}
 
+impl Settle for Claim {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {
         ready(Ok(()))
     }
@@ -97,7 +99,7 @@ impl SubscriptionSource<ConnectedMemoryBroker> for Pages {
     fn subscribe(
         self,
         _connected: &ConnectedMemoryBroker,
-    ) -> impl Future<Output = Result<PageSubscriber, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<PageSubscriber, MemoryError>> {
         ready(Ok(PageSubscriber))
     }
 }

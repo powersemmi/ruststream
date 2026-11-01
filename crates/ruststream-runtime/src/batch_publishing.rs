@@ -19,7 +19,7 @@ use tracing::warn;
 
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Origin, publishing_to};
-use crate::{BuildBatchContext, IncomingMessage, PayloadForm};
+use crate::{BuildBatchContext, PayloadForm, Settle};
 
 use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
 use super::context::Context;
@@ -195,7 +195,7 @@ impl<Batch, M, D, C, R, PP, S> BatchHandler<Batch, D::Context, S>
     for BatchPublishingHandler<D, C, R, PP>
 where
     Batch: IntoIterator<Item = M>,
-    M: IncomingMessage,
+    M: Settle,
     D: BatchPublishingCall<S>,
     D::Input: DecodeWith<C>,
     D::Injections: Send + Sync,

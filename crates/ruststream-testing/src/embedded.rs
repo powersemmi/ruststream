@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use ruststream_runtime::OutSlot;
 use ruststream_runtime::testing::{
-    Coordinator, InProcessRun, LocalInProcess, PublishedAssertions, TestError, Within,
+    Coordinator, InProcess, InProcessRun, PublishedAssertions, TestError, Within,
 };
 use ruststream_runtime_embassy::{Control, EmbeddedApp, Health, Mounts, RunError};
 
@@ -47,7 +47,7 @@ type HookRun = Pin<Box<dyn Future<Output = ()>>>;
 ///
 /// Takes the [`EmbeddedApp`] the device's `app` function builds, unchanged, with the brokers the
 /// test hands that function. [`start`](Self::start) connects each broker through its
-/// [`LocalInProcess`] transition instead of `connect`, so the same connected forms carry the
+/// [`InProcess`] transition instead of `connect`, so the same connected forms carry the
 /// routes with no hardware. The test then drives input through a broker, addressed by its
 /// production type, and reads what the handlers saw and what the app published.
 ///
@@ -160,7 +160,7 @@ impl Wake for AppWaker {
 
 impl TestApp {
     /// Starts the device service's `app` in process: each broker connects through its
-    /// [`LocalInProcess`] transition, every subscription opens, and the `after_startup` hooks
+    /// [`InProcess`] transition, every subscription opens, and the `after_startup` hooks
     /// run, in the production order.
     ///
     /// A connection or a subscription that waits on the clock is waited for: the clock moves
@@ -456,7 +456,7 @@ impl TestApp {
     ///
     /// See [`TestApp`].
     #[must_use]
-    pub fn broker<B: LocalInProcess + 'static>(&self) -> BrokerHandle<'_> {
+    pub fn broker<B: InProcess + 'static>(&self) -> BrokerHandle<'_> {
         let brokers = self.record.brokers();
         let mut matches = brokers.iter().filter(|broker| broker.is::<B>());
         let first = matches

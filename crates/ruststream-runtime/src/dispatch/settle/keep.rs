@@ -11,7 +11,7 @@ use tracing::warn;
 use super::super::{RETRY_COUNT_HEADER, Slot};
 use super::{Target, current_retry_count};
 use crate::host::{KeptDelivery, PrepareKept};
-use crate::{AckError, LocalIncomingMessage, Str};
+use crate::{AckError, LocalSettle, Str};
 
 /// Drops the original delivery and sends a copy of it to `target` through a record of the
 /// host's store: published at once without a delay (or with a zero one), by the store's driver
@@ -40,7 +40,7 @@ pub(super) async fn keep_copy<M, C, Kept>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     Kept: PrepareKept<C>,
 {
     let Some(record) = kept.take_record() else {
@@ -138,7 +138,7 @@ mod tests {
     use crate::host::{Keeping, KeptCopies, KeptDelivery, LocalDetach, OnOneThread, PrepareKept};
     use crate::lifecycle::BoxError;
     use crate::testkit::log_capture;
-    use crate::{HeaderMap, LocalIncomingMessage, RetryDeclaration};
+    use crate::{HeaderMap, LocalSettle, RetryDeclaration};
 
     /// What the store was asked to do, in order.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,7 +213,7 @@ mod tests {
 
     // The settlement under test, not the transforms: a record is kept as it was filled.
     impl<Cx> PrepareKept<Cx> for Store {
-        fn prepare<M: LocalIncomingMessage>(
+        fn prepare<M: LocalSettle>(
             &self,
             _record: usize,
             _destination: Option<&str>,

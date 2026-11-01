@@ -18,9 +18,7 @@
 
 // The typed default reply needs a default codec to encode with, so those pieces are gated the
 // same way; the byte-reply default publishes bare bytes and needs only `DefaultPublish`.
-use crate::{
-    BatchSubscriber, Broker, Connected, DefaultPublish, PublishPolicy, SubscriptionSource,
-};
+use crate::{BatchSubscriber, Broker, Connected, DefaultPublish, PublishPolicy, SendSource};
 
 use crate::batch_inject::BatchInjectDef;
 use crate::batch_publishing::BatchPublishingDef;
@@ -144,7 +142,7 @@ macro_rules! impl_inject_out_commit {
             >,
             Def: MountsWith<<Bound as InjectDef>::Input, RouteCodec, Connected<B>>,
             Bound: InjectDef + 'static,
-            Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+            Bound::Source: SendSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Send + 'static,
             Bound::Input: Materialize<
                 BoundDecoder<Def, <Bound as InjectDef>::Input, RouteCodec, B>,
@@ -215,7 +213,7 @@ macro_rules! impl_inject_out_commit {
             >,
             Def: MountsWith<<Bound as BatchInjectDef>::Input, RouteCodec, Connected<B>>,
             Bound: BatchInjectDef + BatchSized + 'static,
-            Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+            Bound::Source: SendSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Send + 'static,
             Bound::Input:
                 DecodeWith<BoundDecoder<Def, <Bound as BatchInjectDef>::Input, RouteCodec, B>>,
@@ -297,7 +295,7 @@ macro_rules! impl_publishing_out_commit {
             >,
             Def: MountsWith<<Bound as PublishingDef>::Input, RouteCodec, Connected<B>>,
             Bound: PublishingDef + 'static,
-            Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+            Bound::Source: SendSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Send + 'static,
             Bound::Input: Materialize<
                 BoundDecoder<Def, <Bound as PublishingDef>::Input, RouteCodec, B>,
@@ -373,7 +371,7 @@ macro_rules! impl_publishing_out_commit {
             >,
             Def: MountsWith<<Bound as PublishingDef>::Input, RouteCodec, Connected<B>>,
             Bound: PublishingDef + 'static,
-            Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+            Bound::Source: SendSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Send + 'static,
             Bound::Input: Materialize<
                 BoundDecoder<Def, <Bound as PublishingDef>::Input, RouteCodec, B>,
@@ -449,7 +447,7 @@ macro_rules! impl_publishing_out_commit {
             >,
             Def: MountsWith<<Bound as BatchPublishingDef>::Input, RouteCodec, Connected<B>>,
             Bound: BatchPublishingDef + BatchSized + 'static,
-            Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
+            Bound::Source: SendSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Send + 'static,
             Bound::Input:
                 DecodeWith<BoundDecoder<Def, <Bound as BatchPublishingDef>::Input, RouteCodec, B>>,

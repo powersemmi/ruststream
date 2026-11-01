@@ -100,9 +100,7 @@ impl<Answer: Send + Sync + 'static> ConnectedBroker for ConnectedBus<Answer> {
 /// The bus has no server, so the transition the harness connects through is its ordinary
 /// `connect`.
 impl<Answer: Send + Sync + 'static> InProcess for Bus<Answer> {
-    fn connect_in_process(
-        self,
-    ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect_in_process(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.connect()
     }
 }
@@ -136,7 +134,7 @@ impl<Answer: Send + Sync + 'static> PublishPolicy<ConnectedBus<Answer>> for BusP
     fn pair(
         self,
         connected: &ConnectedBus<Answer>,
-    ) -> impl Future<Output = Result<Self::Live, PairError>> + Send {
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
         MemoryPublish.pair(&connected.inner)
     }
 }

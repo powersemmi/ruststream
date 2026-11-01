@@ -24,7 +24,7 @@ use tokio::{
     time::sleep,
 };
 
-use super::{CONSTRUCTION_BUDGET, ladder, shared_handle_closes, shutdown_flushes};
+use super::{CONSTRUCTION_BUDGET, Settle, ladder, shared_handle_closes, shutdown_flushes};
 use ruststream::memory::{
     ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
     MemoryPublisher, MemorySubscriber,
@@ -519,7 +519,9 @@ impl IncomingMessage for FaultyMessage {
             .expect("an unsettled delivery")
             .headers()
     }
+}
 
+impl Settle for FaultyMessage {
     async fn ack(mut self) -> Result<(), AckError> {
         let inner = self.take();
         match self.fault {

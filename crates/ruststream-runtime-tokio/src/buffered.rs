@@ -11,6 +11,9 @@
 //! [`BatchSubscriber::batches`]; what stays the adapter's own is the deadline that closes a
 //! partial batch.
 
+// A subscriber wrapper generic over a subscriber that need not be Send.
+#![allow(clippy::future_not_send)]
+
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
@@ -18,7 +21,8 @@ use futures::{Stream, StreamExt, stream};
 
 use crate::{
     AddressedCopies, BatchSubscriber, Clock, ConnectedBroker, DeclareRetryError, RedeliveryAddress,
-    RedeliveryAddressed, RetryDeclaration, Seekable, Subscriber, SubscriptionSource, Tokio,
+    RedeliveryAddressed, RetryDeclaration, Seekable, SendSource, Subscriber, SubscriptionSource,
+    Tokio,
 };
 
 const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
@@ -120,7 +124,7 @@ impl<C, S> SubscriptionSource<C> for Buffered<S>
 where
     C: ConnectedBroker,
     // `Sync` on the wrapped source is what lets the redelivery address be asked for by reference.
-    S: SubscriptionSource<C> + Send + Sync,
+    S: SendSource<C> + Send + Sync,
     S::Subscriber: Send,
 {
     type Subscriber = BufferedSubscriber<S::Subscriber>;
@@ -164,7 +168,7 @@ where
     fn redelivery_address(
         &self,
         connected: &C,
-    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> {
         self.source.redelivery_address(connected)
     }
 }
@@ -353,7 +357,7 @@ mod tests {
     use std::sync::LazyLock;
 
     use super::*;
-    use crate::IncomingMessage;
+    use crate::{IncomingMessage, Settle};
 
     /// The batch size the checks below open their stream at, spelled once.
     fn batch(size: usize) -> NonZeroUsize {
@@ -375,7 +379,9 @@ mod tests {
             static EMPTY: LazyLock<crate::HeaderMap> = LazyLock::new(crate::HeaderMap::new);
             &EMPTY
         }
+    }
 
+    impl Settle for Frame {
         fn ack(self) -> impl Future<Output = Result<(), crate::AckError>> {
             ready(Ok(()))
         }

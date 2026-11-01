@@ -9,7 +9,7 @@ use ruststream_runtime::{
     Context, Deserialized, HandlerOutcome, Input, LocalHandle, SoloDeserialized, local_subscriber,
 };
 use ruststream_runtime_embassy::{EmbeddedApp, Mounts};
-use ruststream_core::{BrokerMoves, LocalSubscriptionSource};
+use ruststream_core::{BrokerMoves, SubscriptionSource};
 use ruststream_runtime::IntoSource;
 
 /// A descriptor of the device's own, with no `Clone`.
@@ -23,12 +23,12 @@ impl IntoSource for Sensor {
     }
 }
 
-impl<const CAP: usize> LocalSubscriptionSource<ConnectedLocalMemoryBroker<CAP>> for Sensor {
+impl<const CAP: usize> SubscriptionSource<ConnectedLocalMemoryBroker<CAP>> for Sensor {
     type Subscriber = LocalMemorySubscriber<CAP>;
     type Copies = BrokerMoves;
 
     fn name(&self) -> &str {
-        LocalSubscriptionSource::<ConnectedLocalMemoryBroker<CAP>>::name(&self.0)
+        SubscriptionSource::<ConnectedLocalMemoryBroker<CAP>>::name(&self.0)
     }
 
     fn subscribe(

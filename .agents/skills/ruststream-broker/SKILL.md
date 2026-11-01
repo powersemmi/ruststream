@@ -26,8 +26,9 @@ Depth:
    `ConnectedBroker::shutdown(self) -> Result<Closed, Error>` tears it down and never blocks or
    panics. Keep `tokio::runtime::Handle::current()` from `connect` in the connected form and spawn
    the broker's own tasks (timers, reply dispatchers) through it.
-2. **Deliveries.** `Subscriber::stream(&mut self)` yields `IncomingMessage`s. `ack(self)` and
-   `nack(self, requeue)` consume the delivery; a transport without acks answers
+2. **Deliveries.** `Subscriber::stream(&mut self)` yields deliveries that implement
+   `IncomingMessage` (payload, headers, redelivery count) and `Settle`. `Settle::ack(self)` and
+   `Settle::nack(self, requeue)` consume the delivery; a transport without acks answers
    `AckError::Unsupported`. Override `redelivery_count(&self) -> Option<u64>` where the transport
    counts deliveries (the first delivery answers 1). The trait has no error type of its own.
 3. **Subscribing.** `Subscribe` on the connected form for `#[subscriber("name")]`, and a
@@ -105,17 +106,17 @@ async fn lifecycle() {
 }
 ```
 
-### A client whose types are not `Send` implements the `Local*` family
+### A client whose types are not `Send` implements the local twins of the per-message traits
 
-A client that holds `Rc` or `RefCell` (a thread-per-core client, an embedded network stack) cannot
-implement `Broker`, `Subscriber` and the rest: they require `Send` and `Sync`. Its crate implements
-the twins instead: `LocalBroker`, `LocalConnectedBroker`, `LocalSubscriber`,
-`LocalIncomingMessage`, `LocalPublisher`, `LocalPublishPolicy`, `LocalSubscriptionSource`, a
-`Local*` form of each capability, and `LocalInProcess` / `LocalTestableBroker` under `testing`.
-The items are the same, without `Send` and `Sync`; error types stay `Send + Sync + 'static`.
-Every Send implementation is already a local one through a blanket impl, so a crate implements one
-family, never both, and imports one: with both in scope a method call on its own type is ambiguous
-(E0034). The tokio runtime of the core takes the Send family.
+A client that holds `Rc` or `RefCell` (a thread-per-core client, an embedded network stack) has
+no `Send` futures to promise. The lifecycle traits (`Broker`, `ConnectedBroker`, `Subscribe`,
+`SubscriptionSource`, `PublishPolicy`) carry no `Send`, so it implements them as they are. The
+per-message traits come in pairs: it implements `LocalSubscriber`, `LocalSettle`, `LocalPublisher`
+and the local form of each capability, and `IncomingMessage` for the accessors of a delivery. Error
+types stay `Send + Sync + 'static`. Every Send implementation is already a local one through a
+blanket impl, so a crate implements one family of the pairs, never both, and imports one: with both
+in scope a method call on its own type is ambiguous (E0034). The tokio runner asks for `Send + Sync`
+where it spawns a subscription loop.
 
 ### Report a coordinate, never credentials
 

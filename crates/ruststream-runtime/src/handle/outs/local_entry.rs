@@ -23,8 +23,8 @@ use crate::testing::coordinator::{
     Origin, PipelinePublish, paired, publishing_to, record_slot_publish,
 };
 use crate::{
-    HeaderMap, LocalBroker, LocalConnected, LocalPublishPolicy, LocalPublisher,
-    OutgoingDestination, OutgoingFor, PairError,
+    Broker, Connected, HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, PairError,
+    PublishPolicy,
 };
 
 use super::arena::SlotDictionary;
@@ -129,15 +129,15 @@ where
 // Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
 #[allow(clippy::future_not_send)]
 impl<B, Sub, Policy, E, Pipe, M, Body> LocalFromStartup<B, Sub, (Policy, E, Pipe)>
-    for LocalSlot<M, <Policy as LocalPublishPolicy<LocalConnected<B>>>::Live, E, Pipe, Body>
+    for LocalSlot<M, <Policy as PublishPolicy<Connected<B>>>::Live, E, Pipe, Body>
 where
-    B: LocalBroker,
-    Policy: LocalPublishPolicy<LocalConnected<B>>,
+    B: Broker,
+    Policy: PublishPolicy<Connected<B>>,
     M: OutSlot,
 {
     async fn resolve_local(
         (policy, codec, pipeline): (Policy, E, Pipe),
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         _subscriber: &Sub,
     ) -> Result<Self, PairError> {
         let pairing = policy.pair(connected);

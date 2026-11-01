@@ -5,6 +5,8 @@
 //! The publish builder's own surface (every destination form, every publisher kind) is covered
 //! by `tests/publish_builder.rs`; what these cases add is the header half next to it.
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "memory",
     feature = "macros",

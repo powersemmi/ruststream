@@ -20,7 +20,7 @@ use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemo
 use ruststream::runtime::{
     ContextKind, EmbeddedApp, HandlerOutcome, MountSteps, Mounts, Outgoing, PublishTransform, Reads,
 };
-use ruststream::{Deserialized, LocalBroker, LocalPublisher, OutgoingMessage, subscriber};
+use ruststream::{Broker, Deserialized, LocalPublisher, OutgoingMessage, subscriber};
 use static_cell::StaticCell;
 
 /// Executor rounds a step yields: a round polls every task woken before it began.

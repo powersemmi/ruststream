@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use futures::StreamExt;
 
+use ruststream::Settle;
 use ruststream::memory::{LogMode, MemoryBroker, MemoryPosition, MemorySubscriber, Retention};
 use ruststream::{
     BatchSubscriber, Broker, Buffered, BufferedSubscriber, IncomingMessage, Name, OutgoingMessage,

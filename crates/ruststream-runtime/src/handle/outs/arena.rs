@@ -1,13 +1,16 @@
 //! The arena itself: the entries a body declared, picked by marker, and the marker tuple an
 //! entry tuple stands for.
 
+// The shared body serves the local contract, whose futures carry no Send.
+#![allow(clippy::future_not_send)]
+
 use alloc::vec::Vec;
 use core::fmt;
 
 use crate::inject::{FromStartup, LocalFromStartup};
 use crate::metadata::OutgoingMessageMetadata;
 use crate::slot::OutSlot;
-use crate::{Connected, LocalBroker, LocalConnected, PairError};
+use crate::{Broker, Connected, PairError};
 
 use super::entry::{OutEntry, Slot};
 use super::local_entry::{LocalOutEntry, LocalSlot};
@@ -126,12 +129,12 @@ impl_local_select_slot! {
 #[allow(clippy::future_not_send)]
 impl<B, Sub, Extra, E> LocalFromStartup<B, Sub, Extra> for Outs<E>
 where
-    B: LocalBroker,
+    B: Broker,
     E: LocalFromStartup<B, Sub, Extra>,
 {
     async fn resolve_local(
         extra: Extra,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         subscriber: &Sub,
     ) -> Result<Self, PairError> {
         Ok(Self {
@@ -151,7 +154,7 @@ impl_select_slot! {
 
 impl<B, Sub, Extra, E> FromStartup<B, Sub, Extra> for Outs<E>
 where
-    B: crate::Broker,
+    B: Broker,
     Sub: Sync,
     Extra: Send,
     E: FromStartup<B, Sub, Extra>,

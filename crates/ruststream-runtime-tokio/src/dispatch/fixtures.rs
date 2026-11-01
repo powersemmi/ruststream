@@ -7,7 +7,7 @@ use bytes::Bytes;
 use tokio_util::task::TaskTracker;
 
 use crate::detach::Hosted;
-use crate::{AckError, Delivery, HeaderMap, IncomingMessage, NoRetry};
+use crate::{AckError, Delivery, HeaderMap, IncomingMessage, NoRetry, Settle};
 
 /// What a test delivery's transport does when asked to settle. The cases differ in kind, not
 /// degree, so they are variants rather than a flag.
@@ -46,7 +46,9 @@ impl IncomingMessage for PlainMessage {
     fn headers(&self) -> &HeaderMap {
         &self.headers
     }
+}
 
+impl Settle for PlainMessage {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         ready(self.settlement.apply())
     }

@@ -7,6 +7,8 @@
 //! has neither handled the publish nor started a handler while its namesake is done with it: a
 //! settle that counted by name returned in that window.
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "testing",
     feature = "memory",

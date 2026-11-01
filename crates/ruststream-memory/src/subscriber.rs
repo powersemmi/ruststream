@@ -15,7 +15,7 @@ use std::{
 use futures::{Stream, stream};
 use ruststream_core::{
     AckError, AddressedCopies, FromName, HeaderMap, IncomingMessage, RawMessage, RedeliveryAddress,
-    RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
+    RedeliveryAddressed, Settle, Subscribe, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 #[cfg(feature = "testing")]
@@ -85,7 +85,7 @@ impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for MemorySou
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker<Log>,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
         // One subject is both ends of the bus, and no lookup is needed to say so.
         ready(Ok(RedeliveryAddress::new(self.name.clone())))
     }
@@ -290,10 +290,10 @@ impl<Log: LogMode> MemorySubscriber<Log> {
 
 /// A delivery yielded by [`MemorySubscriber::stream`].
 ///
-/// Consumers call [`IncomingMessage::ack`] to confirm processing or
-/// [`IncomingMessage::nack`] to negatively acknowledge. `nack` with `requeue = true` pushes the
+/// Consumers call [`Settle::ack`] to confirm processing or
+/// [`Settle::nack`] to negatively acknowledge. `nack` with `requeue = true` pushes the
 /// delivery back to the same subscriber's queue; with `requeue = false` it is dropped.
-/// [`nack_after`](IncomingMessage::nack_after) pushes it back once the delay has elapsed, and at
+/// [`nack_after`](Settle::nack_after) pushes it back once the delay has elapsed, and at
 /// once for a zero delay. A delivery dropped without a settlement is pushed back too: only a
 /// settlement consumes it.
 pub struct MemoryMessage<Log = Discarding> {
@@ -413,7 +413,9 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
     fn redelivery_count(&self) -> Option<u64> {
         self.delivery.as_ref().map(|d| d.deliveries.get())
     }
+}
 
+impl<Log: LogMode> Settle for MemoryMessage<Log> {
     fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {
         self.delivery.take();
         ready(Ok(()))

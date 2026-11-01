@@ -14,6 +14,7 @@ use ruststream::memory::{MemoryBroker, MemoryPublish};
 
 use super::fixtures::{PlainMessage, Settlement, Unscoped};
 use super::*;
+use crate::Settle;
 use crate::testkit::log_capture;
 use crate::{
     CallerName, Connected, Handle, Name, OutgoingDestination, Router, SubscriberBuilder,

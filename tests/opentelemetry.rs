@@ -1,5 +1,8 @@
 //! End-to-end W3C trace context propagation: the consume layer stamps the consumer span and the
 //! publish layer carries it onto the reply.
+
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "otel",
     feature = "macros",

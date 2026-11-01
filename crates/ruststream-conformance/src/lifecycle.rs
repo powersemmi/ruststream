@@ -58,7 +58,7 @@ use super::harness::{expect_next, on_foreign_runtime, unknown_backlog};
 use super::helpers::unique_subject;
 use ruststream_core::{
     AckError, Broker, Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher,
-    Subscriber, SubscriptionSource,
+    SendBroker, SendSource, Settle, Subscriber,
 };
 use ruststream_runtime::testing::Backlog;
 
@@ -100,9 +100,9 @@ pub(crate) async fn ladder<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_source: MkSrc,
     make_publisher: MkPub,
 ) where
-    B: Broker + Send + 'static,
+    B: SendBroker,
     MkBroker: Fn() -> B + Send + Sync + 'static,
-    Src: SubscriptionSource<Connected<B>> + Clone + Send + 'static,
+    Src: SendSource<Connected<B>> + Clone + Send + 'static,
     Src::Subscriber: Send + 'static,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,
@@ -213,7 +213,7 @@ pub(crate) async fn ladder<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 /// where a scoped thread would be joined first and hold the check forever.
 fn construct_off_runtime<B, MkBroker>(make_broker: Arc<MkBroker>) -> B
 where
-    B: Broker + Send + 'static,
+    B: SendBroker,
     MkBroker: Fn() -> B + Send + Sync + 'static,
 {
     let (built, returned) = mpsc::channel();
@@ -248,7 +248,7 @@ where
 async fn redeliver_after_delay<S, M, E>(stream: &mut S, msg: M) -> M
 where
     S: Stream<Item = Result<M, E>> + Unpin + Send,
-    M: IncomingMessage + 'static,
+    M: Settle + 'static,
     E: fmt::Debug,
 {
     if !msg.supports_nack_after() {
@@ -297,11 +297,11 @@ where
 async fn requeue_from_foreign<S, M, E>(stream: &mut S, msg: M)
 where
     S: Stream<Item = Result<M, E>> + Unpin + Send,
-    M: IncomingMessage + 'static,
+    M: Settle + 'static,
     E: fmt::Debug,
 {
     // A transport with nothing to take back has no redelivery to observe.
-    if !settle_on_foreign(msg, Settle::Requeue).await {
+    if !settle_on_foreign(msg, HowSettled::Requeue).await {
         return;
     }
     let again = deliver_until(
@@ -320,7 +320,7 @@ where
         FIRST,
         "lifecycle: nack(requeue = true) must redeliver the same message",
     );
-    settle_on_foreign(again, Settle::Ack).await;
+    settle_on_foreign(again, HowSettled::Ack).await;
 }
 
 /// Publishes once more through a publisher whose first publish came from a runtime that has since
@@ -348,7 +348,7 @@ async fn foreign_after_stop<Pub: Publisher + 'static>(publisher: Pub, subject: &
 async fn receive_again<S, M, E>(stream: &mut S)
 where
     S: Stream<Item = Result<M, E>> + Unpin + Send,
-    M: IncomingMessage + 'static,
+    M: Settle + 'static,
     E: fmt::Debug,
 {
     let deadline = TokioInstant::now() + REDELIVERY_TIMEOUT;
@@ -377,9 +377,9 @@ where
             );
         };
         let how = if pending.swap_remove(at) == FROM_BROKER_RUNTIME {
-            Settle::Drop
+            HowSettled::Drop
         } else {
-            Settle::Ack
+            HowSettled::Ack
         };
         settle_on_foreign(msg, how).await;
     }
@@ -402,11 +402,11 @@ async fn held_across_shutdown<S, M, E, B, MkBroker, Src, MkSrc>(
     make_source: MkSrc,
 ) where
     S: Stream<Item = Result<M, E>> + Unpin + Send,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>>,
+    Src: SendSource<Connected<B>>,
     MkSrc: Fn(&str) -> Src,
 {
     let answer = within(
@@ -517,9 +517,9 @@ pub async fn shutdown_flushes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_publisher: MkPub,
     backlog: Backlog,
 ) where
-    B: Broker,
+    B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>>,
+    Src: SendSource<Connected<B>>,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
@@ -657,10 +657,10 @@ pub async fn shared_handle_closes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_source: MkSrc,
     make_publisher: MkPub,
 ) where
-    B: Broker,
+    B: SendBroker,
     Connected<B>: Clone,
     MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>>,
+    Src: SendSource<Connected<B>>,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
@@ -713,8 +713,8 @@ pub async fn shared_handle_closes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 /// Connects a broker from `make_broker` and opens a subscription to `subject` on it.
 async fn connect_and_subscribe<B, Src>(broker: B, source: Src) -> (Connected<B>, Src::Subscriber)
 where
-    B: Broker,
-    Src: SubscriptionSource<Connected<B>>,
+    B: SendBroker,
+    Src: SendSource<Connected<B>>,
 {
     let connected = connect_within(broker, "shutdown_flushes").await;
     let subject = source.name().to_owned();
@@ -811,7 +811,7 @@ async fn publish_on_foreign<Pub: Publisher + 'static>(
 
 /// A settlement the check makes.
 #[derive(Debug, Clone, Copy)]
-enum Settle {
+enum HowSettled {
     Ack,
     Requeue,
     Drop,
@@ -820,17 +820,17 @@ enum Settle {
 /// Settles `msg` from a runtime of its own that stops right after. Returns whether the
 /// settlement was performed: `false` for [`AckError::Unsupported`], a panic for any other error
 /// and for a settlement that hangs.
-async fn settle_on_foreign<M: IncomingMessage + 'static>(msg: M, how: Settle) -> bool {
+async fn settle_on_foreign<M: Settle + 'static>(msg: M, how: HowSettled) -> bool {
     let what = match how {
-        Settle::Ack => "lifecycle: ack",
-        Settle::Requeue => "lifecycle: nack(requeue = true)",
-        Settle::Drop => "lifecycle: nack(requeue = false)",
+        HowSettled::Ack => "lifecycle: ack",
+        HowSettled::Requeue => "lifecycle: nack(requeue = true)",
+        HowSettled::Drop => "lifecycle: nack(requeue = false)",
     };
     let answer = on_foreign_runtime(async move || {
         match how {
-            Settle::Ack => timeout(STEP_TIMEOUT, msg.ack()).await,
-            Settle::Requeue => timeout(STEP_TIMEOUT, msg.nack(true)).await,
-            Settle::Drop => timeout(STEP_TIMEOUT, msg.nack(false)).await,
+            HowSettled::Ack => timeout(STEP_TIMEOUT, msg.ack()).await,
+            HowSettled::Requeue => timeout(STEP_TIMEOUT, msg.nack(true)).await,
+            HowSettled::Drop => timeout(STEP_TIMEOUT, msg.nack(false)).await,
         }
         .ok()
     })
@@ -901,7 +901,7 @@ where
 async fn expect_payload<S, M, E>(stream: &mut S, payload: &[u8], scenario: &str) -> M
 where
     S: Stream<Item = Result<M, E>> + Unpin + Send,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let msg = expect_next(stream, scenario).await;

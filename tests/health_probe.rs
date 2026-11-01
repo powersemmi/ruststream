@@ -197,7 +197,7 @@ impl SubscriptionSource<ConnectedMemoryBroker> for DeletedQueue {
     fn subscribe(
         self,
         _connected: &ConnectedMemoryBroker,
-    ) -> impl Future<Output = Result<CancelledConsumer, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<CancelledConsumer, MemoryError>> {
         ready(Ok(CancelledConsumer))
     }
 }
@@ -343,7 +343,7 @@ impl SubscriptionSource<ConnectedMemoryBroker> for DeletedOnShutdown {
     fn subscribe(
         self,
         _connected: &ConnectedMemoryBroker,
-    ) -> impl Future<Output = Result<CancelledOnNotice, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<CancelledOnNotice, MemoryError>> {
         ready(Ok(CancelledOnNotice(self.0)))
     }
 }

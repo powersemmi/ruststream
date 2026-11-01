@@ -5,8 +5,9 @@ use std::{
     sync::Arc, time::Duration,
 };
 
+use crate::SendBroker;
 use crate::bindable::BrokerRegistration;
-use crate::{Broker, DescribeServer, ServerSpec};
+use crate::{DescribeServer, ServerSpec};
 use ruststream_runtime::codec::Codec;
 
 use tokio_util::task::TaskTracker;
@@ -847,7 +848,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         label: Option<String>,
         build: F,
     ) where
-        B: Broker + 'static,
+        B: SendBroker,
         Layers: Clone,
         Pipeline: Clone,
         State: Send + Sync + 'static,
@@ -888,7 +889,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         sink: RouterSink<B, State>,
         label: Option<String>,
     ) where
-        B: Broker + 'static,
+        B: SendBroker,
         State: Send + Sync + 'static,
     {
         self.after_startup.extend(startup_hooks);

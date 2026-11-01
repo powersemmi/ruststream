@@ -13,7 +13,7 @@ use std::{
 use futures::{Stream, StreamExt, stream};
 use tokio::{runtime::Handle, time::sleep};
 
-use super::{Answer, Answers, matches_in_process, suite};
+use super::{Answer, Answers, Settle, matches_in_process, suite};
 use crate::harness::{self, InProcessBroker};
 use ruststream::memory::{
     ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
@@ -120,15 +120,13 @@ impl Broker for Flawed {
     type Error = MemoryError;
     type Connected = FlawedConnected;
 
-    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.connect_as(false)
     }
 }
 
 impl InProcess for Flawed {
-    fn connect_in_process(
-        self,
-    ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+    fn connect_in_process(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.connect_as(true)
     }
 }
@@ -315,7 +313,9 @@ impl IncomingMessage for FlawedMessage {
     fn headers(&self) -> &HeaderMap {
         self.present().headers()
     }
+}
 
+impl Settle for FlawedMessage {
     fn ack(mut self) -> impl Future<Output = Result<(), AckError>> + Send {
         let inner = self.take();
         let (flaw, in_process) = (self.flaw, self.in_process);

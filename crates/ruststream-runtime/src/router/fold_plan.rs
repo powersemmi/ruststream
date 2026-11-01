@@ -27,8 +27,8 @@ use crate::redelivery::{
 use crate::redelivery::{ScopeDelivery, open_local_subscription};
 use crate::typed::{LocalTyped, Typed};
 use crate::{
-    BuildContext, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
-    LocalSubscriptionSource, RetryDeclaration,
+    Broker, BuildContext, Connected, LocalSettle, LocalSubscriber, RetryDeclaration,
+    SubscriptionSource,
 };
 
 use super::builder::Router;
@@ -265,7 +265,7 @@ where
 /// what each delivery runs under. Every single-message registration of a local router is one;
 /// its plain opening and its planned one ([`Dispatched`]) both go through it.
 #[doc(hidden)]
-pub trait OpenLocalRoute<B: LocalBroker, State> {
+pub trait OpenLocalRoute<B: Broker, State> {
     /// The descriptor the registration subscribes through.
     type Source;
     /// What the registration declared about its retries: [`Undeclared`], or
@@ -292,7 +292,7 @@ pub trait OpenLocalRoute<B: LocalBroker, State> {
     #[allow(clippy::type_complexity)] // the route's own parts, named once here
     fn open_route(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
     ) -> impl Future<Output = Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError>>;
@@ -327,7 +327,7 @@ macro_rules! open_plain {
     ($([$($param:ident),+] $route:ty),+ $(,)?) => {$(
         impl<B, State, $($param),+> OpenLayered<B, State> for $route
         where
-            B: LocalBroker,
+            B: Broker,
             $route: OpenLocalRoute<B, State>,
             NoCopies: AppliesDeclaration<<$route as OpenLocalRoute<B, State>>::Declaration>,
         {
@@ -340,7 +340,7 @@ macro_rules! open_plain {
 
             async fn open_layered<Layers: LocalBlanketLayer + Clone>(
                 self,
-                connected: &LocalConnected<B>,
+                connected: &Connected<B>,
                 layers: &Layers,
                 scope: &ScopeDelivery,
             ) -> Result<Self::Opened<Layers>, BoxError> {
@@ -369,13 +369,12 @@ open_plain!(
 // A declared registration opens as the one it wraps, with the declaration its mount chain made.
 impl<B, State, Route> OpenLocalRoute<B, State> for DeclaredRoute<Route>
 where
-    B: LocalBroker,
+    B: Broker,
     Route: OpenLocalRoute<B, State, Declaration = Undeclared>,
-    Route::Source: LocalSubscriptionSource<LocalConnected<B>>,
+    Route::Source: SubscriptionSource<Connected<B>>,
 {
     type Source = Route::Source;
-    type Declaration =
-        DeclaredOn<<Route::Source as LocalSubscriptionSource<LocalConnected<B>>>::Copies>;
+    type Declaration = DeclaredOn<<Route::Source as SubscriptionSource<Connected<B>>>::Copies>;
     type Sub = Route::Sub;
     type Body = Route::Body;
     type Cx = Route::Cx;
@@ -386,7 +385,7 @@ where
 
     fn open_route(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         scope: &ScopeDelivery,
         _declaration: RetryDeclaration,
     ) -> impl Future<Output = Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError>> {
@@ -397,10 +396,10 @@ where
 impl<B, State, Source, M, Input, DecodeCodec, Inner, Cx> OpenLocalRoute<B, State>
     for SubscribeRoute<Source, Typed<M, Input, DecodeCodec, Inner>, Cx>
 where
-    B: LocalBroker,
-    Source: LocalSubscriptionSource<LocalConnected<B>>,
+    B: Broker,
+    Source: SubscriptionSource<Connected<B>>,
     Source::Subscriber: LocalSubscriber<Message = M>,
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     Input: Materialize<DecodeCodec, M>,
     Inner: LocalHandler<Input::Target, Cx, State>,
     Cx: BuildContext<M> + Send + Sync + 'static,
@@ -417,7 +416,7 @@ where
 
     async fn open_route(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
     ) -> Result<LocalRoute<Self::Sub, Self::Body, Cx>, BoxError> {
@@ -435,7 +434,7 @@ where
 
 impl<B, State, Route, Plan> OpenLayered<B, State> for Dispatched<Route, Plan>
 where
-    B: LocalBroker,
+    B: Broker,
     Route: OpenLocalRoute<B, State> + UnboundRetry,
     Plan: LocalDispatch<
         Copies: PairCopies<B, Route::Source> + AppliesDeclaration<Route::Declaration>,
@@ -453,7 +452,7 @@ where
 
     async fn open_layered<Layers: LocalBlanketLayer + Clone>(
         self,
-        connected: &LocalConnected<B>,
+        connected: &Connected<B>,
         layers: &Layers,
         scope: &ScopeDelivery,
     ) -> Result<Self::Opened<Layers>, BoxError> {

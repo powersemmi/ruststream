@@ -19,7 +19,7 @@ use crate::testing::coordinator::Delivered;
 use crate::testing::coordinator::PendingRecord;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::RecordedValue;
-use crate::{BuildBatchContext, LocalIncomingMessage};
+use crate::{BuildBatchContext, LocalSettle};
 
 /// Settles a batch whose rejected elements were deferred past the handler call: each rejected
 /// index settles by its recorded outcome, and the accepted remainder settles by the handler's
@@ -34,7 +34,7 @@ pub(super) async fn settle_split_batch<M, C, Host>(
     delivery: &Delivery<C>,
     host: &Host,
 ) where
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     C: BuildBatchContext<M> + Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
@@ -106,7 +106,7 @@ pub(crate) async fn settle_batch<M, C, Host>(
     delivery: &Delivery<C>,
     host: &Host,
 ) where
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     C: BuildBatchContext<M> + Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
@@ -177,7 +177,7 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
     host: &Host,
     lent: LentValues,
 ) where
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     C: BuildBatchContext<M> + Send + Sync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
@@ -256,7 +256,7 @@ struct BatchLog {
 
 #[cfg(feature = "testing")]
 impl BatchLog {
-    fn of<'m, M: LocalIncomingMessage + 'm>(
+    fn of<'m, M: LocalSettle + 'm>(
         accepted: impl IntoIterator<Item = &'m M>,
         lent: LentValues,
     ) -> Self {
@@ -276,10 +276,7 @@ impl BatchLog {
     }
 
     /// The log of a split batch: the deliveries the body saw, which are the ones not `rejected`.
-    fn of_accepted<M: LocalIncomingMessage>(
-        batch: &[M],
-        rejected: &[(usize, HandlerResult)],
-    ) -> Self {
+    fn of_accepted<M: LocalSettle>(batch: &[M], rejected: &[(usize, HandlerResult)]) -> Self {
         Self::of(
             batch
                 .iter()

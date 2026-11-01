@@ -4,7 +4,7 @@ use std::any::{Any, type_name};
 use std::fmt;
 use std::rc::Rc;
 
-use ruststream_runtime::testing::{LocalInProcess, RunBroker};
+use ruststream_runtime::testing::{InProcess, RunBroker};
 
 #[cfg(doc)]
 use super::TestApp;
@@ -109,7 +109,7 @@ impl<'a> TestBrokers<'a> {
     /// # }
     /// ```
     #[must_use]
-    pub fn broker<B: LocalInProcess + 'static>(&self) -> &B::Connected {
+    pub fn broker<B: InProcess + 'static>(&self) -> &B::Connected {
         let mut found = self
             .brokers
             .iter()

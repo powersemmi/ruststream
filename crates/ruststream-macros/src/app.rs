@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn a_generic_builder_is_refused_on_embassy() {
         let func: ItemFn = syn::parse_quote! {
-            fn app<B: LocalBroker>(bus: B) -> EmbeddedApp<impl Mounts> {
+            fn app<B: Broker>(bus: B) -> EmbeddedApp<impl Mounts> {
                 EmbeddedApp::new().with_broker(bus, |b| b)
             }
         };

@@ -13,7 +13,7 @@ impl Broker for Networked {
     type Error = io::Error;
     type Connected = ConnectedNetworked;
 
-    fn connect(self) -> impl Future<Output = Result<ConnectedNetworked, io::Error>> + Send {
+    fn connect(self) -> impl Future<Output = Result<ConnectedNetworked, io::Error>> {
         ready(Ok(ConnectedNetworked))
     }
 }
@@ -22,7 +22,7 @@ impl ConnectedBroker for ConnectedNetworked {
     type Error = io::Error;
     type Closed = ();
 
-    fn shutdown(self) -> impl Future<Output = Result<(), io::Error>> + Send {
+    fn shutdown(self) -> impl Future<Output = Result<(), io::Error>> {
         ready(Ok(()))
     }
 }

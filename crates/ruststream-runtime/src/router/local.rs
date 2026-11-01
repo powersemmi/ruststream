@@ -2,7 +2,7 @@
 //!
 //! [`Router::local`] starts a chain whose publish pipeline is a [`LocalPipeline`]. The marker is
 //! what selects the local family's mounts: a definition included there mounts on a
-//! [`LocalBroker`], whose subscriber, messages and handler futures need not be `Send`. The chain
+//! [`Broker`], whose subscriber, messages and handler futures need not be `Send`. The chain
 //! [`Router::new`] starts keeps the mounts of the multi-thread runner, which ask for `Send` and
 //! name a source of the wrong broker in their errors.
 
@@ -17,8 +17,8 @@ use crate::publish::{LocalOutPipeline, Outgoing, PublishIdentity, PublishPipelin
 use crate::settings::{BatchSized, DefMountCodec, MountsWith, Sequential};
 use crate::subscriber_def::SubscriberDef;
 use crate::{
-    LocalBatchSubscriber, LocalBroker, LocalConnected, LocalPublisher, LocalSourceMessage,
-    LocalSourceSubscriber, LocalSubscriptionSource, OutgoingFor, PayloadForm,
+    Broker, Connected, LocalBatchSubscriber, LocalPublisher, LocalSourceMessage, OutgoingFor,
+    PayloadForm, SourceSubscriber, SubscriptionSource,
 };
 
 use super::builder::Router;
@@ -46,7 +46,7 @@ use super::{IncludedRawBatchRouter, IncludedRouter, forms};
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LocalPipeline<Pipe = PublishIdentity>(pub(crate) Pipe);
 
-impl<B: LocalBroker + 'static> Router<B, (), (), Identity, LocalPipeline> {
+impl<B: Broker + 'static> Router<B, (), (), Identity, LocalPipeline> {
     /// Creates an empty router for a broker of the local family, decoding with the
     /// [`DefaultCodec`](crate::codec::DefaultCodec).
     ///
@@ -256,15 +256,15 @@ impl<W> LocalOutPipeline<W> for LocalPipeline<PublishIdentity> {
 /// What a definition's single-delivery input decodes with when it mounts on a local router of
 /// broker `B` with the surface codec `RouteCodec`.
 type SoloDecoder<Def, B, RouteCodec> =
-    DefMountCodec<Def, <Def as SubscriberDef>::Input, RouteCodec, LocalConnected<B>>;
+    DefMountCodec<Def, <Def as SubscriberDef>::Input, RouteCodec, Connected<B>>;
 
 impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
     for forms::Subscribing
 where
-    B: LocalBroker + 'static,
-    Def: SubscriberDef + MountsWith<<Def as SubscriberDef>::Input, RouteCodec, LocalConnected<B>>,
-    Def::Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
+    B: Broker + 'static,
+    Def: SubscriberDef + MountsWith<<Def as SubscriberDef>::Input, RouteCodec, Connected<B>>,
+    Def::Source: SubscriptionSource<Connected<B>> + 'static,
     Def::Input: Materialize<SoloDecoder<Def, B, RouteCodec>, LocalSourceMessage<B, Def::Source>>,
     Def::Handler: 'static,
 {
@@ -295,9 +295,9 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def, F>
     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
     for forms::RawSubscribing
 where
-    B: LocalBroker + 'static,
+    B: Broker + 'static,
     Def: SubscriberDef<Input = Provided<F>>,
-    Def::Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + 'static,
     Def::Handler: 'static,
     F: Send + Sync + 'static,
 {
@@ -327,10 +327,10 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def, F>
     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
     for forms::RawBatch
 where
-    B: LocalBroker + 'static,
+    B: Broker + 'static,
     Def: BatchDef<Input = Provided<F>> + BatchSized,
-    Def::Source: LocalSubscriptionSource<LocalConnected<B>> + 'static,
-    LocalSourceSubscriber<B, Def::Source>: LocalBatchSubscriber,
+    Def::Source: SubscriptionSource<Connected<B>> + 'static,
+    SourceSubscriber<B, Def::Source>: LocalBatchSubscriber,
     Def::Handler: 'static,
     F: Send + Sync + 'static,
 {

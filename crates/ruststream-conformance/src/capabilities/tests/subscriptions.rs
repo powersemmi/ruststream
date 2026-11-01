@@ -20,7 +20,7 @@ use ruststream::memory::{
 };
 use ruststream_core::{
     AckError, AddressedCopies, BatchSubscriber, Broker, HeaderMap, IncomingMessage, Positioned,
-    Seekable, Seeker, Subscribe, Subscriber, SubscriptionSource, nonzero,
+    Seekable, Seeker, Settle, Subscribe, Subscriber, SubscriptionSource, nonzero,
 };
 
 // The in-memory reference passes the opt-in suites; the others run in `tests/conformance_self.rs`.
@@ -298,7 +298,9 @@ impl<Log: LogMode> IncomingMessage for FaultyMessage<Log> {
     fn headers(&self) -> &HeaderMap {
         self.inner.headers()
     }
+}
 
+impl<Log: LogMode> Settle for FaultyMessage<Log> {
     async fn ack(self) -> Result<(), AckError> {
         match self.settle {
             Some(SettleFault::AckFails) => Err(AckError::Timeout),

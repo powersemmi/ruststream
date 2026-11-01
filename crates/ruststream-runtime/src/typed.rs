@@ -11,7 +11,7 @@ use alloc::format;
 use core::{fmt, marker::PhantomData};
 
 use crate::codec::{Codec, CodecError};
-use crate::{IncomingMessage, LocalIncomingMessage};
+use crate::{LocalSettle, Settle};
 use serde::de::DeserializeOwned;
 use tracing::warn;
 
@@ -29,7 +29,7 @@ use super::input::{Decoded, Materialize, REPORTED};
 /// kind (a raw `&[u8]` handler included) is [`Typed::over`].
 pub fn typed<M, T, C, H>(codec: C, inner: H) -> Typed<M, Decoded<T>, C, H>
 where
-    M: IncomingMessage,
+    M: Settle,
     T: DeserializeOwned + Send + Sync + 'static,
     C: Codec,
 {
@@ -81,7 +81,7 @@ impl<M, Input, DecodeCodec, Inner> fmt::Debug for Typed<M, Input, DecodeCodec, I
 impl<M, Input, DecodeCodec, Inner, Cx, St> Handler<M, Cx, St>
     for Typed<M, Input, DecodeCodec, Inner>
 where
-    M: IncomingMessage,
+    M: Settle,
     Input: Materialize<DecodeCodec, M>,
     DecodeCodec: Send + Sync,
     Cx: Send,
@@ -109,7 +109,7 @@ impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
         ctx: &mut Context<'_, Cx, St>,
     ) -> HandlerOutcome
     where
-        M: LocalIncomingMessage,
+        M: LocalSettle,
         Input: Materialize<DecodeCodec, M>,
         Via: CallHandler<Inner, Input::Target, Cx, St>,
     {
@@ -139,7 +139,7 @@ pub struct LocalTyped<Adapter>(pub(crate) Adapter);
 impl<M, Input, DecodeCodec, Inner, Cx, St> LocalHandler<M, Cx, St>
     for LocalTyped<Typed<M, Input, DecodeCodec, Inner>>
 where
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     Input: Materialize<DecodeCodec, M>,
     Inner: LocalHandler<Input::Target, Cx, St>,
 {
@@ -170,7 +170,7 @@ pub(crate) fn refused<Input, Decoder, M, Cx, St>(
 ) -> Option<HandlerOutcome>
 where
     Input: Materialize<Decoder, M>,
-    M: LocalIncomingMessage,
+    M: LocalSettle,
 {
     msg.decode_error()
         .map(|err| refuse::<Input, Decoder, M, Cx, St>(err, decode, ctx))
@@ -236,6 +236,8 @@ where
 
 #[cfg(all(test, feature = "json"))]
 mod tests {
+    use crate::IncomingMessage;
+    use crate::Settle;
     use alloc::format;
     use alloc::string::String;
     use alloc::vec::Vec;
@@ -256,7 +258,7 @@ mod tests {
     use crate::handler::{Handler, HandlerOutcome, HandlerResult};
     use crate::input::DecodedPair;
     use crate::testkit::delivery::one_delivery;
-    use crate::{AckError, HeaderMap, IncomingMessage};
+    use crate::{AckError, HeaderMap};
     use ruststream::memory::{MemoryBroker, MemoryMessage};
 
     fn counting_inner(seen: &Arc<AtomicU32>) -> impl Handler<u32> {
@@ -436,7 +438,9 @@ mod tests {
             self.reads.fetch_add(1, Ordering::SeqCst);
             &self.headers
         }
+    }
 
+    impl Settle for CountingMsg {
         fn ack(self) -> impl Future<Output = Result<(), AckError>> {
             ready(Ok(()))
         }

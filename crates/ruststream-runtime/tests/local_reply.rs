@@ -14,8 +14,8 @@ use std::time::Duration;
 use futures::StreamExt;
 use futures::future::join;
 use ruststream_core::{
-    BytesMut, LocalBroker, LocalIncomingMessage, LocalPublishPolicy, LocalPublisher,
-    LocalSubscriber, LocalSubscriptionSource, OutgoingMessage,
+    Broker, BytesMut, IncomingMessage, LocalPublisher, LocalSubscriber, OutgoingMessage,
+    PublishPolicy, SubscriptionSource,
 };
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
@@ -174,9 +174,9 @@ async fn an_encoded_reply_leaves_through_the_codec_to_a_local_broker() {
     .await;
 
     let answer = answer.expect("an answer").expect("a delivery");
-    assert_eq!(LocalIncomingMessage::payload(&answer), b"\"ping\"");
+    assert_eq!(IncomingMessage::payload(&answer), b"\"ping\"");
     assert_eq!(
-        LocalIncomingMessage::headers(&answer).get_str("stamped"),
+        IncomingMessage::headers(&answer).get_str("stamped"),
         Some("yes"),
         "the reply transform's header"
     );

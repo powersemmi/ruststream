@@ -23,9 +23,9 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::{Channel, Receiver};
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, BrokerMoves, HeaderMap, Lend, LocalBatchSubscriber, LocalBroker,
-    LocalConnectedBroker, LocalDefaultPublish, LocalIncomingMessage, LocalPublishPolicy,
-    LocalPublisher, LocalSubscriber, LocalSubscriptionSource, OutgoingMessage, PairError,
+    AckError, Broker, BrokerMoves, ConnectedBroker, DefaultPublish, HeaderMap, IncomingMessage,
+    Lend, LocalBatchSubscriber, LocalPublisher, LocalSettle, LocalSubscriber, OutgoingMessage,
+    PairError, PublishPolicy, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -191,7 +191,7 @@ pub struct FrameDelivery {
     settled: &'static Settlements,
 }
 
-impl LocalIncomingMessage for FrameDelivery {
+impl IncomingMessage for FrameDelivery {
     fn payload(&self) -> &[u8] {
         &self.frame.0
     }
@@ -199,7 +199,9 @@ impl LocalIncomingMessage for FrameDelivery {
     fn headers(&self) -> &HeaderMap {
         &self.headers
     }
+}
 
+impl LocalSettle for FrameDelivery {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         count(&self.settled.acked);
         ready(Ok(()))
@@ -288,7 +290,7 @@ pub struct FrameConnected {
     settled: &'static Settlements,
 }
 
-impl LocalBroker for FrameBroker {
+impl Broker for FrameBroker {
     type Error = Infallible;
     type Connected = FrameConnected;
 
@@ -304,7 +306,7 @@ impl LocalBroker for FrameBroker {
     }
 }
 
-impl LocalConnectedBroker for FrameConnected {
+impl ConnectedBroker for FrameConnected {
     type Error = Infallible;
     type Closed = ();
 
@@ -369,7 +371,7 @@ impl FrameSource {
     }
 }
 
-impl LocalSubscriptionSource<FrameConnected> for FrameSource {
+impl SubscriptionSource<FrameConnected> for FrameSource {
     type Subscriber = FrameSubscriber;
     // A frame the handler retries goes back on the channel by the device's own logic, not by a
     // copy this process publishes.
@@ -405,7 +407,7 @@ impl IntoSource for FrameSource {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FramePublish;
 
-impl LocalPublishPolicy<FrameConnected> for FramePublish {
+impl PublishPolicy<FrameConnected> for FramePublish {
     type Live = FramePublisher;
 
     fn pair(
@@ -418,7 +420,7 @@ impl LocalPublishPolicy<FrameConnected> for FramePublish {
     }
 }
 
-impl LocalDefaultPublish for FrameConnected {
+impl DefaultPublish for FrameConnected {
     type Policy = FramePublish;
 }
 
@@ -477,7 +479,7 @@ mod tests {
     use alloc::string::ToString;
 
     use embassy_futures::block_on;
-    use ruststream_core::{LocalBroker, LocalPublishPolicy, LocalPublisher, OutgoingMessage};
+    use ruststream_core::{Broker, LocalPublisher, OutgoingMessage, PublishPolicy};
 
     // The channels lock through embassy-sync, which the executor's critical section serves.
     use embassy_executor as _;

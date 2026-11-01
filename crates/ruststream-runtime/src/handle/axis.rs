@@ -271,7 +271,7 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 /// #     use ruststream::memory::{ConnectedMemoryBroker, MemoryError};
 /// #     use ruststream::runtime::{Input, SoloCarried};
 /// #     use ruststream::{AckError, AddressedCopies, BatchSubscriber, Carries, CarriesBatch};
-/// #     use ruststream::{HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed};
+/// #     use ruststream::{HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed, Settle};
 /// #     use ruststream::{Subscriber, SubscriptionSource};
 /// #     use super::SendEmail;
 /// #     pub mod prelude {
@@ -328,6 +328,8 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 /// #     impl IncomingMessage for Claimed {
 /// #         fn payload(&self) -> &[u8] { &self.bytes }
 /// #         fn headers(&self) -> &HeaderMap { &self.headers }
+/// #     }
+/// #     impl Settle for Claimed {
 /// #         async fn ack(self) -> Result<(), AckError> { Ok(()) }
 /// #         async fn nack(self, _: bool) -> Result<(), AckError> { Ok(()) }
 /// #     }

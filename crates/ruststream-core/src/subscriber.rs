@@ -4,7 +4,7 @@ use core::error::Error as StdError;
 
 use futures_core::Stream;
 
-use crate::{IncomingMessage, LocalIncomingMessage};
+use crate::{LocalSettle, Settle};
 
 crate::__contract_twin! {
     send {
@@ -12,7 +12,8 @@ crate::__contract_twin! {
         ///
         /// `Subscriber` yields messages via a [`Stream`], so users get back-pressure and
         /// integration with the rest of the futures ecosystem for free. Each yielded item is a
-        /// broker-specific [`IncomingMessage`] that must be acknowledged.
+        /// broker-specific delivery ([`IncomingMessage`](crate::IncomingMessage), settled through
+        /// [`Settle`]) that must be acknowledged.
         ///
         /// # Cancel safety
         ///
@@ -32,7 +33,7 @@ crate::__contract_twin! {
     docs { Subscriber }
     types {
         /// The message type yielded by this subscriber.
-        type Message: [@twin { IncomingMessage } { LocalIncomingMessage }];
+        type Message: [@twin { Settle } { LocalSettle }];
 
         /// The error type yielded by the stream when delivery fails.
         type Error: [StdError + Send + Sync + 'static];

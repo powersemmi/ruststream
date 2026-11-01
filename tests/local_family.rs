@@ -1,6 +1,6 @@
 //! The `Local*` contract family: a broker whose types are not `Send` implements it, every Send
-//! broker implements it through the blanket impls, and a body written once over it is spawned on
-//! tokio's multi-thread pool when the broker is a Send one.
+//! broker implements it through the blanket impls, and a body written once over it runs on the
+//! test's own thread.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -17,16 +17,14 @@ use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemoryPublisher, MemoryRequester,
     MemorySource, MemorySubscriber, MemoryTransaction, Retaining,
 };
-use ruststream::testing::LocalInProcess;
+use ruststream::testing::InProcess;
 use ruststream::{
-    AckError, BatchSubscriber, Broker, BrokerMoves, BytesMut, DefaultPublish, HeaderMap, Lend,
-    LocalBatchSubscriber, LocalBroker, LocalConnectedBroker, LocalDefaultPublish,
-    LocalDescribeServer, LocalIncomingMessage, LocalOwnedTransactions, LocalPositioned,
-    LocalPublishPolicy, LocalPublisher, LocalRedeliveryAddressed, LocalRequestReply, LocalSeekable,
-    LocalSeeker, LocalSubscribe, LocalSubscriber, LocalSubscriptionSource, LocalTransaction,
-    LocalTransactionalPublisher, OutgoingFor, OutgoingMessage, OwnedTransactions, PairError,
-    PublishPolicy, Publisher, RequestReply, Seekable, Subscribe, Subscriber, Take,
-    TransactionalPublisher,
+    AckError, BatchSubscriber, Broker, BrokerMoves, BytesMut, ConnectedBroker, DefaultPublish,
+    DescribeServer, HeaderMap, IncomingMessage, Lend, LocalBatchSubscriber, LocalOwnedTransactions,
+    LocalPublisher, LocalRequestReply, LocalSeekable, LocalSeeker, LocalSettle, LocalSubscriber,
+    LocalTransaction, LocalTransactionalPublisher, OutgoingFor, OutgoingMessage, OwnedTransactions,
+    PairError, Positioned, PublishPolicy, Publisher, RedeliveryAddressed, RequestReply, Seekable,
+    Subscribe, Subscriber, SubscriptionSource, Take, TransactionalPublisher,
 };
 use tokio::task::{self, LocalSet};
 
@@ -35,19 +33,19 @@ type BoxError = Box<dyn Error + Send + Sync>;
 const ORDERS: &[&[u8]] = &[b"order-1", b"order-2", b"order-3"];
 
 /// The live form a broker's default policy pairs into, read through the local family.
-type LocalLive<C> = <<C as LocalDefaultPublish>::Policy as LocalPublishPolicy<C>>::Live;
+type LocalLive<C> = <<C as DefaultPublish>::Policy as PublishPolicy<C>>::Live;
 
 /// What a runtime over the local family runs: connect, subscribe, publish, receive, settle,
 /// shut down. Written once, it accepts a `!Send` broker and a Send one alike.
 async fn round_trip<B>(broker: B, orders: &[&[u8]]) -> Result<Vec<Vec<u8>>, BoxError>
 where
-    B: LocalBroker,
-    B::Connected: LocalSubscribe + LocalDefaultPublish,
+    B: Broker,
+    B::Connected: Subscribe + DefaultPublish,
     LocalLive<B::Connected>: LocalPublisher<Payload = Take>,
 {
     let connected = broker.connect().await?;
     let mut subscriber = connected.subscribe("orders").await?;
-    let publisher = <B::Connected as LocalDefaultPublish>::Policy::default()
+    let publisher = <B::Connected as DefaultPublish>::Policy::default()
         .pair(&connected)
         .await?;
     for order in orders {
@@ -66,19 +64,6 @@ where
     }
     connected.shutdown().await?;
     Ok(received)
-}
-
-/// A tokio-only spawn site: generic, and bounded on the Send family alone. The local body it
-/// spawns is `Send` because every local method of `B` resolves to the Send trait's method, whose
-/// future carries `+ Send`.
-fn spawn_on_pool<B>(broker: B) -> task::JoinHandle<Result<Vec<Vec<u8>>, BoxError>>
-where
-    B: Broker + 'static,
-    B::Connected: Subscribe + DefaultPublish,
-    <<B::Connected as DefaultPublish>::Policy as PublishPolicy<B::Connected>>::Live:
-        Publisher<Payload = Take>,
-{
-    tokio::spawn(round_trip(broker, ORDERS))
 }
 
 fn expected() -> Vec<Vec<u8>> {
@@ -109,22 +94,14 @@ async fn memory_broker_meets_the_local_bounds_through_the_blanket_impls() -> Res
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_local_body_of_a_send_broker_spawns_on_the_multi_thread_pool() -> Result<(), BoxError> {
-    let received = spawn_on_pool(MemoryBroker::new()).await??;
-
-    assert_eq!(received, expected());
-    Ok(())
-}
-
 /// The bounds a runtime over the local family states for every capability, met by the reference
 /// broker's types through the blanket impls alone.
 fn capability_twins<Conn, Src, Sub, Msg, Pub, Tx, Req>()
 where
-    Conn: LocalSubscribe + LocalDefaultPublish,
-    Src: LocalSubscriptionSource<Conn> + LocalRedeliveryAddressed<Conn>,
+    Conn: Subscribe + DefaultPublish,
+    Src: SubscriptionSource<Conn> + RedeliveryAddressed<Conn>,
     Sub: LocalBatchSubscriber + LocalSeekable<Seeker: LocalSeeker>,
-    Msg: LocalPositioned,
+    Msg: Positioned,
     Pub: LocalTransactionalPublisher + LocalOwnedTransactions<Transaction = Tx>,
     Tx: LocalTransaction,
     Req: LocalRequestReply,
@@ -133,7 +110,7 @@ where
 
 #[test]
 fn memory_broker_meets_every_capability_twin_through_the_blanket_impls() {
-    fn broker<B: LocalBroker + LocalDescribeServer + LocalInProcess>() {}
+    fn broker<B: Broker + DescribeServer + InProcess>() {}
 
     broker::<MemoryBroker<Retaining>>();
     capability_twins::<
@@ -260,7 +237,7 @@ struct RcPublisher {
 
 // The broker is not `Send` on purpose: a future that hands out its types cannot be either.
 #[allow(clippy::future_not_send)]
-impl LocalBroker for RcBroker {
+impl Broker for RcBroker {
     type Error = Infallible;
     type Connected = RcConnected;
 
@@ -269,7 +246,7 @@ impl LocalBroker for RcBroker {
     }
 }
 
-impl LocalConnectedBroker for RcConnected {
+impl ConnectedBroker for RcConnected {
     type Error = Infallible;
     type Closed = ();
 
@@ -280,7 +257,7 @@ impl LocalConnectedBroker for RcConnected {
 
 // The broker is not `Send` on purpose: a future that hands out its types cannot be either.
 #[allow(clippy::future_not_send)]
-impl LocalSubscribe for RcConnected {
+impl Subscribe for RcConnected {
     type Subscriber = RcSubscriber;
     type Copies = BrokerMoves;
 
@@ -320,7 +297,7 @@ impl LocalSubscriber for RcSubscriber {
     }
 }
 
-impl LocalIncomingMessage for RcDelivery {
+impl IncomingMessage for RcDelivery {
     fn payload(&self) -> &[u8] {
         &self.payload
     }
@@ -328,7 +305,9 @@ impl LocalIncomingMessage for RcDelivery {
     fn headers(&self) -> &HeaderMap {
         &self.headers
     }
+}
 
+impl LocalSettle for RcDelivery {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         self.state.acked.set(self.state.acked.get() + 1);
         ready(Ok(()))
@@ -341,7 +320,7 @@ impl LocalIncomingMessage for RcDelivery {
 
 // The broker is not `Send` on purpose: a future that hands out its types cannot be either.
 #[allow(clippy::future_not_send)]
-impl LocalPublishPolicy<RcConnected> for RcPublish {
+impl PublishPolicy<RcConnected> for RcPublish {
     type Live = RcPublisher;
 
     fn pair(self, connected: &RcConnected) -> impl Future<Output = Result<RcPublisher, PairError>> {
@@ -351,7 +330,7 @@ impl LocalPublishPolicy<RcConnected> for RcPublish {
     }
 }
 
-impl LocalDefaultPublish for RcConnected {
+impl DefaultPublish for RcConnected {
     type Policy = RcPublish;
 }
 

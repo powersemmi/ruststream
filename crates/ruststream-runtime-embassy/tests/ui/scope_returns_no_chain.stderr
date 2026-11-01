@@ -20,7 +20,7 @@ help: the following other types implement trait `MountChain`
 note: required by a bound in `EmbeddedApp::<ruststream_runtime_embassy::Parts<State, Brokers, ruststream_runtime_embassy::Hooks<AfterStartup, OnShutdown, AfterShutdown>>>::with_broker`
  --> src/app.rs
   |
-  |     pub fn with_broker<B, Mount, Chain>(
+  |     pub fn with_broker<Enrolled, Mount, Chain>(
   |            ----------- required by a bound in this associated function
 ...
   |         Chain: MountChain,

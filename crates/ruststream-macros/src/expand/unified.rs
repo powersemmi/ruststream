@@ -495,8 +495,8 @@ fn binding_vocabulary(runtime: Runtime) -> (TokenStream2, TokenStream2, TokenStr
         ),
         Runtime::Embassy => (
             quote!(::ruststream::runtime::LocalBindSlots),
-            quote!(::ruststream::LocalConnectedBroker),
-            quote!(::ruststream::LocalPublishPolicy),
+            quote!(::ruststream::ConnectedBroker),
+            quote!(::ruststream::PublishPolicy),
             Ident::new("bind_local", span),
         ),
     }
@@ -525,7 +525,7 @@ fn bound_slot_entries(
         ),
         Runtime::Embassy => (
             quote!(::ruststream::runtime::LocalSlot),
-            quote!(::ruststream::LocalPublishPolicy),
+            quote!(::ruststream::PublishPolicy),
         ),
     };
     outs.iter()

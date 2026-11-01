@@ -44,6 +44,7 @@ use tokio::signal::unix;
 #[cfg(unix)]
 use tokio::signal::unix::SignalKind;
 use tokio::sync::Notify;
+use tokio::task::{LocalSet, spawn_local};
 use tokio::time;
 use tokio::time::timeout;
 
@@ -124,31 +125,36 @@ async fn explodes(order: &Order) -> HandlerOutcome {
 /// tearing itself down can end the run - and the reason must survive into the returned error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_until_returns_when_the_service_tears_itself_down() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("cov-failfast", "0.1.0"))
-        .shutdown_timeout(Duration::from_secs(5))
-        .after_startup(async move |_state| {
-            FAIL_FAST_READY.notify_one();
-            Ok::<(), io::Error>(())
+    // The run is not `Send`, so it is driven on a local set of the test.
+    LocalSet::new()
+        .run_until(async move {
+            let broker = MemoryBroker::new();
+            let publisher = broker.publisher();
+            let app = RustStream::new(AppInfo::new("cov-failfast", "0.1.0"))
+                .shutdown_timeout(Duration::from_secs(5))
+                .after_startup(async move |_state| {
+                    FAIL_FAST_READY.notify_one();
+                    Ok::<(), io::Error>(())
+                })
+                .with_broker(broker, |b| b.include(explodes));
+
+            let run = spawn_local(app.run_until(pending()));
+            FAIL_FAST_READY.notified().await;
+            publisher
+                .message(&Order { id: 1 })
+                .to("cov.failfast")
+                .publish()
+                .await
+                .expect("publish failed");
+
+            let outcome = timeout(Duration::from_secs(10), run)
+                .await
+                .expect("run_until never returned on the fail-fast teardown")
+                .expect("join failed");
+            let err = outcome.expect_err("the fail-fast reason must surface");
+            assert!(matches!(err, RustStreamError::Dispatch(_)), "got: {err:?}");
         })
-        .with_broker(broker, |b| b.include(explodes));
-
-    let run = tokio::spawn(app.run_until(pending()));
-    FAIL_FAST_READY.notified().await;
-    publisher
-        .message(&Order { id: 1 })
-        .to("cov.failfast")
-        .publish()
-        .await
-        .expect("publish failed");
-
-    let outcome = timeout(Duration::from_secs(10), run)
-        .await
-        .expect("run_until never returned on the fail-fast teardown")
-        .expect("join failed");
-    let err = outcome.expect_err("the fail-fast reason must surface");
-    assert!(matches!(err, RustStreamError::Dispatch(_)), "got: {err:?}");
+        .await;
 }
 
 static SIGNAL_READY: Notify = Notify::const_new();
@@ -174,36 +180,41 @@ fn raise_sigterm() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_shuts_down_gracefully_on_a_termination_signal() {
-    // Registering a listener up front replaces the process-wide default disposition, so a signal
-    // that lands before `run` has installed its own handler cannot kill the test binary.
-    let _guard = unix::signal(SignalKind::terminate()).expect("SIGTERM registration");
+    // The run is not `Send`, so it is driven on a local set of the test.
+    LocalSet::new()
+        .run_until(async move {
+            // Registering a listener up front replaces the process-wide default disposition, so a signal
+            // that lands before `run` has installed its own handler cannot kill the test binary.
+            let _guard = unix::signal(SignalKind::terminate()).expect("SIGTERM registration");
 
-    let app = RustStream::new(AppInfo::new("cov-signal", "0.1.0"))
-        .shutdown_timeout(Duration::from_secs(5))
-        .after_startup(async move |_state| {
-            SIGNAL_READY.notify_one();
-            Ok::<(), io::Error>(())
+            let app = RustStream::new(AppInfo::new("cov-signal", "0.1.0"))
+                .shutdown_timeout(Duration::from_secs(5))
+                .after_startup(async move |_state| {
+                    SIGNAL_READY.notify_one();
+                    Ok::<(), io::Error>(())
+                })
+                .with_broker(MemoryBroker::new(), |b| b.include(signalled));
+
+            let mut run = spawn_local(app.run());
+            SIGNAL_READY.notified().await;
+
+            // The startup hook resolves just before the signal handlers are installed, and a signal
+            // delivered in that window is missed by a stream registered afterwards; there is nothing to
+            // observe the registration by, so the signal is re-sent until the run returns.
+            let outcome = timeout(Duration::from_secs(30), async {
+                loop {
+                    raise_sigterm();
+                    if let Ok(joined) = timeout(Duration::from_millis(50), &mut run).await {
+                        break joined;
+                    }
+                }
+            })
+            .await
+            .expect("run ignored the termination signal")
+            .expect("join failed");
+            outcome.expect("the signalled shutdown must be graceful");
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(signalled));
-
-    let mut run = tokio::spawn(app.run());
-    SIGNAL_READY.notified().await;
-
-    // The startup hook resolves just before the signal handlers are installed, and a signal
-    // delivered in that window is missed by a stream registered afterwards; there is nothing to
-    // observe the registration by, so the signal is re-sent until the run returns.
-    let outcome = timeout(Duration::from_secs(30), async {
-        loop {
-            raise_sigterm();
-            if let Ok(joined) = timeout(Duration::from_millis(50), &mut run).await {
-                break joined;
-            }
-        }
-    })
-    .await
-    .expect("run ignored the termination signal")
-    .expect("join failed");
-    outcome.expect("the signalled shutdown must be graceful");
+        .await;
 }
 
 // Startup and teardown failures.
@@ -235,7 +246,7 @@ impl RedeliveryAddressed<ConnectedMemoryBroker> for RefusedSubscription {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
         ready(Ok(RedeliveryAddress::new("cov.refused")))
     }
 }

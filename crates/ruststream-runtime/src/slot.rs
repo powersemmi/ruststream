@@ -26,9 +26,8 @@ use crate::publish::{DestinationUse, Names, Reads};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{PipelinePublish, record_slot_publish};
 use crate::{
-    CallerName, ConnectedBroker, FixedName, HeaderMap, LocalConnectedBroker, NameTemplate,
-    OutgoingDestination, OutgoingFor, OwnedTransactions, Publisher, RequestReply,
-    TransactionalPublisher,
+    CallerName, ConnectedBroker, FixedName, HeaderMap, NameTemplate, OutgoingDestination,
+    OutgoingFor, OwnedTransactions, Publisher, RequestReply, TransactionalPublisher,
 };
 
 mod position;
@@ -926,10 +925,10 @@ pub trait BindSlots<C: ConnectedBroker, Sources>: Sized {
 ///
 /// Implemented next to [`HasSlots`] by a definition whose body is a
 /// [`LocalHandle`](crate::LocalHandle); each slot is a [`LocalSlot`](crate::LocalSlot) over the
-/// source's [`LocalPublishPolicy::Live`](crate::LocalPublishPolicy::Live). Machinery; never named
+/// source's [`PublishPolicy::Live`](crate::PublishPolicy::Live). Machinery; never named
 /// directly.
 #[doc(hidden)]
-pub trait LocalBindSlots<C: LocalConnectedBroker, Sources>: Sized {
+pub trait LocalBindSlots<C: ConnectedBroker, Sources>: Sized {
     /// The publisher-applied definition type.
     type Bound;
 

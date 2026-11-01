@@ -12,7 +12,7 @@ use crate::context::Context;
 use crate::handle::Deserialized;
 use crate::host::{HostDetach, PrepareKept, SendHost};
 use crate::redelivery::RetryCopies;
-use crate::{BuildBatchContext, LocalIncomingMessage};
+use crate::{BuildBatchContext, LocalSettle};
 
 use super::{BatchHandler, DeserializedBatch, LocalSliceHandler, TakenBatch};
 use crate::handler::LocalCall;
@@ -84,7 +84,7 @@ impl<Batch, Host, M, F, Inner, C, S> LocalBatchHandler<Batch, Host, C, S>
 where
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
     Batch: IntoIterator<Item = M>,
-    M: LocalIncomingMessage,
+    M: LocalSettle,
     F: Deserialized,
     Inner: for<'p> LocalSliceHandler<F::Output<'p>, C, S>,
     C: BuildBatchContext<M> + Send + Sync + 'static,

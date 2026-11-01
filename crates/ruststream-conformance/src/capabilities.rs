@@ -30,9 +30,7 @@ use futures::{Stream, StreamExt};
 use tokio::time::timeout;
 
 use super::harness::expect_next;
-use ruststream_core::{
-    AckError, IncomingMessage, OutgoingMessage, Publisher, Seekable, Seeker, Subscriber,
-};
+use ruststream_core::{AckError, OutgoingMessage, Publisher, Seekable, Seeker, Settle, Subscriber};
 
 #[cfg(test)]
 mod tests;
@@ -79,7 +77,7 @@ pub use transactions::{owned_transactions, transactions};
 async fn collect_payloads<S, M, E>(stream: &mut S, count: usize, label: &str) -> Vec<Vec<u8>>
 where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let mut payloads = Vec::with_capacity(count);
@@ -111,7 +109,7 @@ async fn within<Work: Future>(work: Work, what: &str) -> Work::Output {
 }
 
 /// Acks `msg`, accepting a transport that has no acknowledgement.
-async fn ack_or_unsupported<M: IncomingMessage>(msg: M, label: &str) {
+async fn ack_or_unsupported<M: Settle>(msg: M, label: &str) {
     match within(msg.ack(), &format!("{label}: an ack")).await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("{label}: ack must succeed or be unsupported, got: {other:?}"),
@@ -120,7 +118,7 @@ async fn ack_or_unsupported<M: IncomingMessage>(msg: M, label: &str) {
 
 /// Nacks `msg` with requeue and reports whether the transport performs the requeue; a transport
 /// that has none answers [`AckError::Unsupported`].
-async fn nack_requeue<M: IncomingMessage>(msg: M, label: &str) -> bool {
+async fn nack_requeue<M: Settle>(msg: M, label: &str) -> bool {
     match within(msg.nack(true), &format!("{label}: a nack with requeue")).await {
         Ok(()) => true,
         Err(AckError::Unsupported) => false,
@@ -129,7 +127,7 @@ async fn nack_requeue<M: IncomingMessage>(msg: M, label: &str) -> bool {
 }
 
 /// The payloads of `messages`, in order.
-fn payloads<M: IncomingMessage>(messages: &[M]) -> Vec<Vec<u8>> {
+fn payloads<M: Settle>(messages: &[M]) -> Vec<Vec<u8>> {
     messages.iter().map(|msg| msg.payload().to_vec()).collect()
 }
 
@@ -138,7 +136,7 @@ fn payloads<M: IncomingMessage>(messages: &[M]) -> Vec<Vec<u8>> {
 async fn expect_within<S, M, E>(stream: &mut S, within: Duration, label: &str, expected: &str) -> M
 where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     timeout(within, stream.next())
@@ -158,7 +156,7 @@ async fn collect_payloads_within<S, M, E>(
 ) -> Vec<Vec<u8>>
 where
     S: Stream<Item = Result<M, E>> + Unpin,
-    M: IncomingMessage,
+    M: Settle,
     E: fmt::Debug,
 {
     let mut payloads = Vec::with_capacity(count);
