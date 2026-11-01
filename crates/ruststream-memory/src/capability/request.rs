@@ -2,6 +2,8 @@
 
 use std::{
     fmt,
+    io::Write,
+    str,
     future::ready,
     marker::PhantomData,
     sync::{Arc, atomic::Ordering},
@@ -16,6 +18,18 @@ use crate::{Discarding, MemoryMessage, MemoryState};
 use ruststream_core::{
     BytesMut, OutgoingMessage, PublishOutcome, Publisher, RequestReply, Str, Take,
 };
+
+/// The name of the inbox of request `id`, built in place: written on the stack and copied once
+/// into the `Arc` the registry and the `reply-to` header share.
+fn inbox_name(id: u64) -> Arc<str> {
+    // "_inbox." and the widest u64 take 27 bytes.
+    const ROOM: usize = 32;
+    let mut buf = [0_u8; ROOM];
+    let mut rest = &mut buf[..];
+    write!(rest, "_inbox.{id}").expect("an inbox name fits its buffer");
+    let len = ROOM - rest.len();
+    Arc::from(str::from_utf8(&buf[..len]).expect("an inbox name is ASCII"))
+}
 
 /// An inbox name as the bytes of a `reply-to` value, over the `Arc` the registry keeps.
 ///
@@ -159,7 +173,7 @@ impl RequestReply for MemoryRequester {
         wait: Duration,
     ) -> Result<Self::Reply, Self::Error> {
         let id = self.state.inbox_seq.fetch_add(1, Ordering::Relaxed);
-        let inbox: Arc<str> = Arc::from(format!("_inbox.{id}"));
+        let inbox = inbox_name(id);
         let (tx, mut rx) = mpsc::unbounded_channel();
         self.state
             .register_shared(Arc::clone(&inbox), tx.clone())
