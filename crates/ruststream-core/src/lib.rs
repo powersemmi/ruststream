@@ -118,7 +118,7 @@ pub use publisher::{
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use publisher::{KeptPayload, PayloadEncode};
+pub use publisher::{KeptPayload, PayloadEncode, SinkOutcome, SinkRefusal};
 #[cfg(feature = "alloc")]
 pub use schema::{
     CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,

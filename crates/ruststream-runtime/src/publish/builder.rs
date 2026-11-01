@@ -752,7 +752,7 @@ impl<E> Refused<E> {
                         KeptPayload::Owned(bytes) => bytes,
                         KeptPayload::Lent { addr, len } => lent(addr, len),
                     };
-                    FailedMessage::new(&unsent.destination, payload, unsent.headers)
+                    FailedMessage::new(&unsent.destination, Some(payload), unsent.headers)
                 }),
             },
         }
@@ -779,13 +779,10 @@ async fn deliver<'v, Sink: LocalPublishSink, Hdrs: PublishHeaders>(
         let (source, unsent) = failed.into_parts();
         Refused::Sink {
             source,
-            unsent: unsent.map(|msg| {
-                let (name, payload, headers) = msg.into_parts();
-                Unsent {
-                    destination: String::from(name),
-                    payload: <Sink::Payload as PayloadForm>::kept(payload),
-                    headers,
-                }
+            unsent: unsent.map(|(destination, payload, headers)| Unsent {
+                destination,
+                payload,
+                headers,
             }),
         }
     })

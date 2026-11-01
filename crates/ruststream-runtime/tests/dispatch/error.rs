@@ -167,7 +167,7 @@ async fn on_job(job: &Job, State(alerts): State<Arc<Mutex<Vec<Alert>>>>) -> Hand
             let alert = Alert {
                 destination: lost.destination().to_owned(),
                 error: err.to_string(),
-                bytes: lost.payload().len(),
+                bytes: lost.payload().map_or(0, |payload| payload.len()),
             };
             alerts.lock().expect("alerts").push(alert);
         }
@@ -519,7 +519,7 @@ async fn a_single_outcome_error_owns_a_capture_that_is_not_clone() {
                 lost_log.alerts.lock().expect("alerts").push(Alert {
                     destination: lost.destination().to_owned(),
                     error: format!("{id} {err}"),
-                    bytes: lost.payload().len(),
+                    bytes: lost.payload().map_or(0, |payload| payload.len()),
                 });
             }
         })
@@ -565,7 +565,7 @@ async fn a_single_delivery_hands_one_failed_with_its_bytes_and_headers() {
                 lost.alerts.lock().expect("alerts").push(Alert {
                     destination: failed.message().destination().to_owned(),
                     error: format!("{id} {} retries {retries}", failed.error()),
-                    bytes: failed.message().payload().len(),
+                    bytes: failed.message().payload().map_or(0, |payload| payload.len()),
                 });
             }
         })

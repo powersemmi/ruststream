@@ -14,7 +14,8 @@ use crate::codec::Codec;
 use crate::inject::LocalFromStartup;
 use crate::metadata::OutgoingMessageMetadata;
 use crate::publish::{
-    HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, PublishBuilder, message_of,
+    HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, PublishBuilder, SinkOutcome,
+    message_of,
 };
 use crate::router::LocalPipeline;
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough};
@@ -126,7 +127,7 @@ where
         &mut self,
         msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> {
+    ) -> impl Future<Output = SinkOutcome<Self::Error>> {
         #[cfg(feature = "testing")]
         let slot: &LocalSlot<M, W, E, Pipe, Body> = self;
         #[cfg(feature = "testing")]

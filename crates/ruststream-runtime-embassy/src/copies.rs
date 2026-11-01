@@ -338,7 +338,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
             target,
             self.input,
             NoFreeRecordError::new(CAP).into(),
-            || FailedMessage::new(target, payload.unwrap_or_default(), headers),
+            || FailedMessage::new(target, payload, headers),
         )
     }
 
@@ -805,7 +805,7 @@ mod tests {
                             failed.error().to_string(),
                             "no free record in the store of retry copies (capacity 1)"
                         );
-                        assert_eq!(failed.message().payload().as_ref(), b"a");
+                        assert_eq!(failed.message().payload().map(AsRef::as_ref), Some(&b"a"[..]));
                         assert_eq!(failed.message().destination(), "jobs");
                     }
                 }),

@@ -15,14 +15,15 @@ use crate::codec::Codec;
 use crate::inject::FromStartup;
 use crate::publish::{
     Admits, HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishIdentity,
-    TransactionScope, TypedTransaction, message_of,
+    SinkOutcome, TransactionScope, TypedTransaction, message_of,
 };
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Anchor, Origin, paired, publishing_to};
 use crate::{
     Connected, HeaderMap, OutgoingDestination, OutgoingFor, OwnedTransactions, PairError,
-    PublishOutcome, PublishPolicy, Publisher, RequestReply, TransactionalPublisher,
+    PublishMessageError, PublishOutcome, PublishPolicy, Publisher, RequestReply,
+    TransactionalPublisher,
 };
 
 /// One arena entry: the wired live value of the marker `M`, plus the publish path the include
@@ -353,11 +354,26 @@ impl<M: OutSlot, W: Publisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Bod
     // publisher's, which is what puts that broker's builder steps on this entry's `message(..)`.
     type Options = W::Options;
 
+    // The borrowed outcome cannot outlive the call, and the message a transform rewrote into a
+    // buffer of the call is not the caller's to read back. The typed publish of the slot goes
+    // through [`SlotSink`], which reports the whole message.
     async fn publish<'msg>(
         &self,
         msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
+        self.publish_kept(msg, options)
+            .await
+            .map_err(|refusal| PublishMessageError::new(refusal.into_error()))
+    }
+
+    // The owned answer: what a typed publish through the slot reports, the message a transform
+    // rewrote included.
+    async fn publish_kept<'msg>(
+        &self,
+        msg: OutgoingFor<'msg, Self::Payload>,
+        options: Option<&Self::Options>,
+    ) -> SinkOutcome<Self::Error> {
         let publish = self.pipeline.send(&self.wired, msg, options);
         #[cfg(feature = "testing")]
         let publish = self.anchor.scoped(publishing_to(self.origin, publish));

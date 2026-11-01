@@ -188,8 +188,11 @@ where
         #[cfg(feature = "testing")]
         let publish = publishing_to(self.origin, publish);
         // What comes back is the message that was sent, transforms applied: its headers, and its
-        // bytes where the leaf kept them; a buffer of this call that a transform wrote is gone.
-        publish.await.map_err(Refusal::returned::<Live::Payload>)
+        // bytes, a buffer of this call that a transform wrote included.
+        let refused = publish.await;
+        refused.map_err(|refusal| {
+            Refusal::from_sink(refusal.reclaiming::<Live::Payload>(&mut kept))
+        })
     }
 }
 

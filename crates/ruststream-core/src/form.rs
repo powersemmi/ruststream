@@ -106,11 +106,22 @@ impl PayloadForm for Lend {
         let (kept_name, kept_buffer) = spent;
         let bytes = match payload {
             Payload::Lent(bytes) => bytes,
+            Payload::Consumed => &[],
             // A stage above wrote a buffer of its own; the transport only reads it, so it stays
             // with the caller until the publish is over.
             Payload::Owned(buf) => &**kept_buffer.insert(buf),
         };
         OutgoingMessage::assembled(kept(name, kept_name), bytes, headers)
+    }
+
+    #[inline]
+    fn reclaimed(spent: &mut Self::Spent, kept: &mut KeptPayload) {
+        if let (KeptPayload::Lent { addr, len }, Some(buffer)) = (&*kept, &mut spent.1)
+            && buffer.as_ptr() as usize == *addr
+            && buffer.len() == *len
+        {
+            *kept = KeptPayload::Owned(buffer.split().freeze());
+        }
     }
 }
 
@@ -207,9 +218,13 @@ impl PayloadForm for Take {
         let payload = match payload {
             Payload::Lent(bytes) => BytesMut::from(bytes),
             Payload::Owned(buf) => buf,
+            Payload::Consumed => BytesMut::new(),
         };
         OutgoingMessage::assembled(kept(name, spent), payload, headers)
     }
+
+    #[inline]
+    fn reclaimed(_spent: &mut Self::Spent, _kept: &mut KeptPayload) {}
 }
 
 #[cfg(test)]

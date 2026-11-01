@@ -28,6 +28,7 @@ use tracing::warn;
 
 use crate::handler::{Continuation, ContinuationFuture, MaybeSend};
 use crate::lifecycle::BoxError;
+use crate::publish::SinkRefusal;
 use crate::{
     CallerName, HeaderMap, MessageHeaders, MessageWire, NoHeaders, Outgoing, OutgoingDestination,
     OutgoingFor, PayloadForm, PublishMessageError, Serialized, SerializedWire, WireBytes,
@@ -60,6 +61,9 @@ impl NoFreeRecordError {
 /// The message a runtime publish failed to send: the destination it was bound for, its bytes and
 /// its headers.
 ///
+/// The bytes are `None` only where the publisher took the payload buffer and did not give it back;
+/// the destination and the headers the runtime held are then all there is.
+///
 /// A handler's `.error` continuation receives it inside a [`Failed`], beside the error. The runtime builds
 /// it only for an outcome that registered `.error`, so a failure nobody asked about copies
 /// nothing.
@@ -81,7 +85,8 @@ impl NoFreeRecordError {
 /// }
 ///
 /// fn record(order: u64, lost: &FailedMessage) {
-///     tracing::error!(order, destination = lost.destination(), bytes = lost.payload().len(), "retry lost");
+///     let bytes = lost.payload().map_or(0, |payload| payload.len());
+///     tracing::error!(order, destination = lost.destination(), bytes, "retry lost");
 /// }
 ///
 /// #[subscriber("orders")]
@@ -100,7 +105,7 @@ impl NoFreeRecordError {
 #[derive(Debug, Clone)]
 pub struct FailedMessage {
     destination: String,
-    payload: Bytes,
+    payload: Option<Bytes>,
     headers: HeaderMap,
 }
 
@@ -108,7 +113,7 @@ impl FailedMessage {
     /// A message bound for `destination`.
     #[doc(hidden)]
     #[must_use]
-    pub fn new(destination: &str, payload: Bytes, headers: HeaderMap) -> Self {
+    pub fn new(destination: &str, payload: Option<Bytes>, headers: HeaderMap) -> Self {
         Self {
             destination: destination.to_owned(),
             payload,
@@ -122,10 +127,11 @@ impl FailedMessage {
         &self.destination
     }
 
-    /// The message's bytes, as they were to leave.
+    /// The message's bytes, as they were to leave, or `None` when the publisher consumed the
+    /// buffer and did not give it back.
     #[must_use]
-    pub const fn payload(&self) -> &Bytes {
-        &self.payload
+    pub const fn payload(&self) -> Option<&Bytes> {
+        self.payload.as_ref()
     }
 
     /// The message's headers, the retry count included.
@@ -136,7 +142,7 @@ impl FailedMessage {
 
     /// Splits the message into its destination, bytes and headers.
     #[must_use]
-    pub fn into_parts(self) -> (String, Bytes, HeaderMap) {
+    pub fn into_parts(self) -> (String, Option<Bytes>, HeaderMap) {
         (self.destination, self.payload, self.headers)
     }
 }
@@ -147,7 +153,7 @@ impl Serialized for FailedMessage {
     type Error = Infallible;
 
     fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
-        Ok(WireBytes::Own(&self.payload))
+        Ok(WireBytes::Own(self.payload.as_deref().unwrap_or_default()))
     }
 }
 
@@ -217,6 +223,16 @@ impl Refusal {
         }
     }
 
+    /// The refusal of a sink, whose message is already owned.
+    #[must_use]
+    pub(crate) fn from_sink<Error: Into<BoxError>>(refusal: SinkRefusal<Error>) -> Self {
+        let (error, unsent) = refusal.into_parts();
+        Self {
+            error: error.into(),
+            unsent: unsent.map(|(_, payload, headers)| Unsent { payload, headers }),
+        }
+    }
+
     /// Puts the message the publisher returned back into `out`, which then reads as the message
     /// that was sent, and gives the cause.
     ///
@@ -229,8 +245,7 @@ impl Refusal {
             *out.headers_mut() = headers;
         } else {
             // The client consumed the buffer: nothing of the message is left to read.
-            drop(out.take_owned_payload());
-            drop(mem::take(out.headers_mut()));
+            out.consume();
         }
         self.error
     }
@@ -241,6 +256,9 @@ impl Refusal {
     /// A buffer the stages wrote moves as it is; bytes `out` only lends stay where they are, for
     /// the owner of the lender to take in [`into_message`](Self::into_message).
     pub fn of(error: BoxError, out: &mut Outgoing<'_>) -> Self {
+        if out.is_consumed() {
+            return Self::new(error);
+        }
         let payload = out.take_owned_payload().map_or_else(
             || KeptPayload::Lent {
                 addr: out.payload().as_ptr() as usize,
@@ -254,6 +272,23 @@ impl Refusal {
                 payload,
                 headers: mem::take(out.headers_mut()),
             }),
+        }
+    }
+
+    /// The refusal as a sink reports it: the cause wrapped by `wrap`, and the message that was
+    /// bound for `destination`.
+    #[must_use]
+    pub(crate) fn into_sink<Error>(
+        self,
+        destination: &str,
+        wrap: impl FnOnce(BoxError) -> Error,
+    ) -> SinkRefusal<Error> {
+        let error = wrap(self.error);
+        match self.unsent {
+            Some(Unsent { payload, headers }) => {
+                SinkRefusal::with_message(error, destination, payload, headers)
+            }
+            None => SinkRefusal::new(error),
         }
     }
 
@@ -273,7 +308,7 @@ impl Refusal {
     ///
     /// `lent` takes the bytes a lending publisher was shown, given where they were: the caller
     /// that owns them moves them out instead of copying. A refusal with no message (the client
-    /// consumed the buffer) yields an empty one.
+    /// consumed the buffer) yields one with no bytes.
     #[must_use]
     pub fn into_message(
         self,
@@ -286,9 +321,9 @@ impl Refusal {
                     KeptPayload::Owned(bytes) => bytes,
                     KeptPayload::Lent { addr, len } => lent(addr, len),
                 };
-                FailedMessage::new(destination, payload, headers)
+                FailedMessage::new(destination, Some(payload), headers)
             }
-            None => FailedMessage::new(destination, Bytes::new(), HeaderMap::new()),
+            None => FailedMessage::new(destination, None, HeaderMap::new()),
         };
         (self.error, message)
     }
@@ -336,7 +371,7 @@ impl From<BoxError> for Refusal {
 ///                 order = id,
 ///                 error = %failed.error(),
 ///                 destination = failed.message().destination(),
-///                 bytes = failed.message().payload().len(),
+///                 bytes = failed.message().payload().map_or(0, |payload| payload.len()),
 ///                 "the retry was lost",
 ///             );
 ///         }
@@ -831,7 +866,7 @@ mod tests {
     fn lost() -> (BoxError, FailedMessage) {
         (
             Box::new(io::Error::other("down")),
-            FailedMessage::new("dest", Bytes::new(), HeaderMap::new()),
+            FailedMessage::new("dest", Some(Bytes::new()), HeaderMap::new()),
         )
     }
 
@@ -856,13 +891,17 @@ mod tests {
 
     #[test]
     fn a_failed_message_splits_into_its_destination_bytes_and_headers() {
-        let message = FailedMessage::new("dest", Bytes::from_static(b"body"), HeaderMap::new());
+        let message = FailedMessage::new(
+            "dest",
+            Some(Bytes::from_static(b"body")),
+            HeaderMap::new(),
+        );
 
         let (destination, payload, headers) = message.into_parts();
 
         assert_eq!(
-            (destination.as_str(), payload.as_ref(), headers.len()),
-            ("dest", &b"body"[..], 0)
+            (destination.as_str(), payload.as_deref(), headers.len()),
+            ("dest", Some(&b"body"[..]), 0)
         );
     }
 
@@ -899,8 +938,8 @@ mod tests {
         });
         let cause = Layered(io::Error::other("root"));
         let messages = vec![
-            FailedMessage::new("a", Bytes::new(), HeaderMap::new()),
-            FailedMessage::new("b", Bytes::new(), HeaderMap::new()),
+            FailedMessage::new("a", Some(Bytes::new()), HeaderMap::new()),
+            FailedMessage::new("b", Some(Bytes::new()), HeaderMap::new()),
         ];
 
         hook.react_all(Box::new(cause), messages)

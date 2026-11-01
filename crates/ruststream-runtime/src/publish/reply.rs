@@ -93,7 +93,7 @@ impl BatchRefusal {
                     cause = Some(error);
                     return message;
                 }
-                FailedMessage::new(name, encode(reply), HeaderMap::new())
+                FailedMessage::new(name, Some(encode(reply)), HeaderMap::new())
             })
             .collect();
         (

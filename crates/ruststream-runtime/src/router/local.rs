@@ -14,7 +14,10 @@ use crate::input::{Materialize, Provided};
 use crate::lifecycle::BoxError;
 use crate::middleware::Identity;
 use crate::middleware::LocalBlanketLayer;
-use crate::publish::{LocalOutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough};
+use crate::publish::{
+    LocalOutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough, SinkOutcome,
+    SinkRefusal,
+};
 use crate::publish_failure::Refusal;
 use crate::settings::{BatchSized, Declared, DefMountCodec, MountsWith, Sequential};
 use crate::subscriber_def::SubscriberDef;
@@ -286,12 +289,13 @@ impl<W> LocalOutPipeline<W> for LocalPipeline<PublishIdentity> {
         leaf: &P,
         msg: OutgoingFor<'msg, W::Payload>,
         options: Option<&P::Options>,
-    ) -> impl Future<Output = PublishOutcome<'msg, P::Error, W::Payload>>
+    ) -> impl Future<Output = SinkOutcome<P::Error>>
     where
         W: LocalPublisher,
         P: LocalPublisher<Options = W::Options, Payload = W::Payload>,
     {
-        leaf.publish(msg, options)
+        let sent = leaf.publish(msg, options);
+        async move { sent.await.map_err(SinkRefusal::returned::<W::Payload>) }
     }
 }
 

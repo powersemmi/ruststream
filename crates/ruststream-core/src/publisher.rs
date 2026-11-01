@@ -1,6 +1,7 @@
 //! The [`Publisher`] trait and its declaration-side counterpart, [`PublishPolicy`].
 
 use alloc::boxed::Box;
+use alloc::string::String;
 use core::error::Error as StdError;
 use core::fmt;
 
@@ -172,6 +173,15 @@ pub trait PayloadForm: sealed::Sealed {
         out: Outgoing<'a>,
         spent: &'a mut Self::Spent,
     ) -> OutgoingMessage<'a, Self::Form<'a>>;
+
+    /// Settles what a refused publish kept of the payload, once the stage that spent the message
+    /// takes back what it kept alive for the send.
+    ///
+    /// Bytes a lending transport was shown that sit in the buffer the stage wrote are moved out of
+    /// it whole, with no copy; bytes anywhere else stay where they were, for the caller that
+    /// lent them.
+    #[doc(hidden)]
+    fn reclaimed(spent: &mut Self::Spent, kept: &mut KeptPayload);
 }
 
 /// The payload of a refused publish, as [`PayloadForm::kept`] leaves it.
@@ -495,6 +505,124 @@ impl<Error: StdError + 'static, Message> StdError for PublishMessageError<Error,
     }
 }
 
+/// How a sink reports a message it did not send: the cause, and the message as it was to leave.
+///
+/// The message is owned, so it outlives the stages of the publish path that rewrote it: a payload
+/// a transform wrote into a buffer of the call moves out of that buffer, and a payload nothing
+/// rewrote stays with the caller that lent it. It is `None` only where the client consumed a
+/// [`Take`] buffer and did not return it. Machinery; a broker's publisher reports a
+/// [`PublishMessageError`] and the sinks of the runtime turn it into this.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct SinkRefusal<Error> {
+    error: Error,
+    unsent: Option<Box<UnsentMessage>>,
+}
+
+/// The message a refused publish handed back.
+#[derive(Debug)]
+struct UnsentMessage {
+    destination: String,
+    payload: KeptPayload,
+    headers: HeaderMap,
+}
+
+/// What a sink returns: nothing on success, and on failure the cause with the unsent message.
+#[doc(hidden)]
+pub type SinkOutcome<Error> = Result<(), SinkRefusal<Error>>;
+
+impl<Error> From<Error> for SinkRefusal<Error> {
+    fn from(error: Error) -> Self {
+        Self::new(error)
+    }
+}
+
+impl<Error> SinkRefusal<Error> {
+    /// A refusal that has no message to hand back.
+    #[must_use]
+    pub const fn new(error: Error) -> Self {
+        Self {
+            error,
+            unsent: None,
+        }
+    }
+
+    /// A refusal with the message that was to leave for `destination`.
+    #[must_use]
+    pub fn with_message(
+        error: Error,
+        destination: &str,
+        payload: KeptPayload,
+        headers: HeaderMap,
+    ) -> Self {
+        Self {
+            error,
+            unsent: Some(Box::new(UnsentMessage {
+                destination: String::from(destination),
+                payload,
+                headers,
+            })),
+        }
+    }
+
+    /// The refusal of a publisher in the form `Form`, with the message it returned.
+    #[must_use]
+    pub fn returned<Form: PayloadForm>(
+        failed: PublishMessageError<Error, OutgoingFor<'_, Form>>,
+    ) -> Self {
+        let (error, message) = failed.into_parts();
+        match message {
+            Some(message) => {
+                let (destination, payload, headers) = message.into_parts();
+                Self::with_message(error, destination, Form::kept(payload), headers)
+            }
+            None => Self::new(error),
+        }
+    }
+
+    /// The same refusal over another cause, the message kept.
+    #[must_use]
+    pub fn map_error<Other>(self, map: impl FnOnce(Error) -> Other) -> SinkRefusal<Other> {
+        SinkRefusal {
+            error: map(self.error),
+            unsent: self.unsent,
+        }
+    }
+
+    /// The cause.
+    #[must_use]
+    pub const fn error(&self) -> &Error {
+        &self.error
+    }
+
+    /// The cause, without the message.
+    #[must_use]
+    pub fn into_error(self) -> Error {
+        self.error
+    }
+
+    /// The refusal once the stage that spent the message takes back what it kept for the send:
+    /// the buffer a stage wrote moves into the message, and nothing is copied.
+    #[must_use]
+    pub fn reclaiming<Form: PayloadForm>(mut self, spent: &mut Form::Spent) -> Self {
+        if let Some(unsent) = &mut self.unsent {
+            Form::reclaimed(spent, &mut unsent.payload);
+        }
+        self
+    }
+
+    /// The cause and the message, taken apart: its destination, its payload as the sink kept it,
+    /// and its headers. `None` where the client consumed the buffer.
+    #[must_use]
+    pub fn into_parts(self) -> (Error, Option<(String, KeptPayload, HeaderMap)>) {
+        let unsent = self
+            .unsent
+            .map(|unsent| (unsent.destination, unsent.payload, unsent.headers));
+        (self.error, unsent)
+    }
+}
+
+
 mod sealed {
     /// Seals [`PayloadForm`](super::PayloadForm): a transport reads the payload or keeps it,
     /// and a third answer would be one the runtime has no buffer strategy for.
@@ -769,6 +897,21 @@ crate::__contract_twin! {
         fn publish(&self, msg: OutgoingFor<'msg, Self::Payload>, options: Option<&Self::Options>)
             <'msg>
             -> [impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> @send { + Send }];
+        /// [`publish`](Self::publish) with the refused message returned owned.
+        ///
+        /// Machinery of the runtime's own publish path: a broker never calls or overrides it.
+        ///
+        /// # Errors
+        ///
+        /// Returns the failure of [`publish`](Self::publish) with the message it did not send.
+        fn publish_kept(&self, msg: OutgoingFor<'msg, Self::Payload>, options: Option<&Self::Options>)
+            <'msg>
+            -> [impl Future<Output = SinkOutcome<Self::Error>> @send { + Send }]
+        {
+            let sent = self.publish(msg, options);
+            async move { sent.await.map_err(SinkRefusal::returned::<Self::Payload>) }
+        }
+
 
         /// The headers this publisher contributes to every message it sends, underneath whatever
         /// the message itself names.

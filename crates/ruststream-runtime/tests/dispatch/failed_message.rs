@@ -15,7 +15,7 @@ use ruststream::memory::LogMode;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::RETRY_COUNT_HEADER;
 use ruststream::testing::TestApp;
-use ruststream::{Lend, OutgoingMessage, PairError};
+use ruststream::{BytesMut, Lend, OutgoingMessage, PairError, Take};
 use ruststream_core::{PublishMessageError, PublishOutcome};
 use ruststream_runtime::{Failed, Outgoing};
 use serde::{Deserialize, Serialize};
@@ -71,6 +71,7 @@ struct Seen {
 struct Log {
     headers: Vec<(String, String)>,
     payloads: Vec<Vec<u8>>,
+    consumed: Vec<bool>,
 }
 
 fn record(log: &Mutex<Log>, failed: &Failed) {
@@ -81,7 +82,9 @@ fn record(log: &Mutex<Log>, failed: &Failed) {
             log.headers
                 .push((key.to_owned(), String::from_utf8_lossy(value).into_owned()));
         }
-        log.payloads.push(message.payload().to_vec());
+        log.consumed.push(message.payload().is_none());
+        log.payloads
+            .push(message.payload().map(|bytes| bytes.to_vec()).unwrap_or_default());
     }
 }
 
@@ -187,4 +190,60 @@ async fn a_refused_reply_reaches_error_with_what_the_transforms_wrote() {
         seen.log.lock().expect("log").payloads,
         [br#"{"id":5}"#.to_vec()],
     );
+}
+
+/// A publisher that takes the buffer and gives nothing back when it fails.
+#[derive(Debug, Clone, Copy)]
+struct ConsumingDown;
+
+impl Publisher for ConsumingDown {
+    type Payload = Take;
+    type Error = io::Error;
+    type Options = ();
+
+    fn publish<'msg>(
+        &self,
+        _msg: OutgoingMessage<'msg, BytesMut>,
+        _options: Option<&()>,
+    ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Take>> {
+        ready(Err(PublishMessageError::new(io::Error::other("broker down"))))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ConsumingDownPublish;
+
+impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for ConsumingDownPublish {
+    type Live = ConsumingDown;
+
+    fn pair(
+        self,
+        _connected: &ConnectedMemoryBroker<Log>,
+    ) -> impl Future<Output = Result<ConsumingDown, PairError>> {
+        ready(Ok(ConsumingDown))
+    }
+}
+
+/// A reply whose buffer the publisher consumed reaches `.error` with no bytes, not an empty
+/// payload that reads as a real one.
+#[tokio::test(start_paused = true)]
+async fn a_consumed_buffer_reaches_error_as_no_payload() {
+    let seen = Seen::default();
+    let startup = seen.clone();
+    let app = RustStream::new(AppInfo::new("failed", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(startup))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(ask).out_reply(ConsumingDownPublish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&Job { id: 6 })
+        .to("ask-stamped")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    assert_eq!(seen.log.lock().expect("log").consumed, [true]);
 }
