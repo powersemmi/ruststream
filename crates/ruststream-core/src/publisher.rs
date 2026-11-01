@@ -34,6 +34,7 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 /// use std::io;
 ///
 /// use ruststream::{Lend, OutgoingMessage, Publisher};
+/// # #[derive(Clone)]
 /// # struct Socket;
 /// # impl Socket {
 /// #     async fn send_frame(&self, _name: &str, _payload: &[u8]) -> io::Result<()> {
@@ -187,6 +188,7 @@ pub trait PayloadEncode {
 /// use std::io;
 ///
 /// use ruststream::{Lend, OutgoingMessage, Publisher};
+/// # #[derive(Clone)]
 /// # struct Connection;
 /// # impl Connection {
 /// #     async fn write(&self, _subject: &str, _payload: &[u8]) -> io::Result<()> {
@@ -230,6 +232,7 @@ pub struct Lend;
 /// use std::io;
 ///
 /// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take};
+/// # #[derive(Clone)]
 /// # struct Producer;
 /// # impl Producer {
 /// #     async fn send(&self, _topic: &str, _payload: Bytes) -> io::Result<()> {

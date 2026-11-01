@@ -120,6 +120,7 @@ impl RawMessage {
 /// use std::io;
 ///
 /// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take};
+/// # #[derive(Clone)]
 /// # struct Client;
 /// # impl Client {
 /// #     async fn send(
@@ -329,6 +330,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// use std::io;
     ///
     /// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take};
+    /// # #[derive(Clone)]
     /// # struct Client;
     /// # impl Client {
     /// #     async fn send(&self, _topic: &str, _payload: Bytes) -> io::Result<()> {
@@ -387,6 +389,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// use std::io;
     ///
     /// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take};
+    /// # #[derive(Clone)]
     /// # struct Client;
     /// # impl Client {
     /// #     async fn send(
