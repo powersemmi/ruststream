@@ -394,7 +394,7 @@ brokers *names:
                 "($(cat "$owner" 2>/dev/null || echo "holder unknown"))" >&2
             exit 1
         fi
-        printf 'core %s, pid %s, since %s\n' "$core" "$BASHPID" "$(date -Is)" > "$owner"
+        printf 'core %s, pid %s, since %s\n' "$core" "${BASHPID:-$$}" "$(date -Is)" > "$owner"
         trap 'rm -f "$owner"' EXIT
         # A backup left by a killed run may be the only good copy of the lock file.
         if [ -e "$backup" ]; then
