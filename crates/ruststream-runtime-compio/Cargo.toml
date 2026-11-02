@@ -39,6 +39,8 @@ tracing = { workspace = true, features = ["std"] }
 [dev-dependencies]
 # The compile-fail snapshots.
 trybuild = "1"
+# Runs the termination-signal test in a child process: the signal reaches the whole process.
+rusty-fork = "0.3.1"
 # The brokers the builder and the run tests mount handlers on: the tokio one to describe an app, the
 # local one, which needs no reactor, to run one.
 ruststream-memory = { workspace = true, features = ["std", "embassy", "alloc"] }

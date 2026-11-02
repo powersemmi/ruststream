@@ -2143,6 +2143,7 @@ dependencies = [
  "ruststream-core",
  "ruststream-memory",
  "ruststream-runtime",
+ "rusty-fork",
  "serde",
  "thiserror",
  "tracing",
