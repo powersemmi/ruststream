@@ -41,8 +41,10 @@ mod form {
         value.to_string()
     }
 
-    pub(in crate::typed_headers) fn scalar_display(
-        value: &dyn Display,
+    // Generic, not `&dyn Display`: the integer `to_string` writes its digits into a string of
+    // the exact size, which `Bytes` then takes without a second allocation.
+    pub(in crate::typed_headers) fn scalar_display<Value: Display>(
+        value: &Value,
     ) -> Result<Scalar, SerializeHeadersError> {
         Ok(Bytes::from(value.to_string()))
     }
@@ -115,8 +117,8 @@ mod form {
         Inline::display(value)
     }
 
-    pub(in crate::typed_headers) fn scalar_display(
-        value: &dyn Display,
+    pub(in crate::typed_headers) fn scalar_display<Value: Display>(
+        value: &Value,
     ) -> Result<Scalar, SerializeHeadersError> {
         let mut run = Scalar::new();
         write!(run, "{value}").map_err(|_| SerializeHeadersError::Full)?;
