@@ -160,6 +160,9 @@ pub use ruststream_runtime_tokio::{
 #[cfg(feature = "tokio")]
 pub mod cli;
 
+#[cfg(feature = "compio")]
+pub mod compio;
+
 // The embedded runner's cross-broker tokens, beside the multi-thread runner's `Bindable` and
 // `Bound`: a publish policy bound to another broker of the same app.
 #[cfg(all(feature = "embassy", ruststream_alloc))]

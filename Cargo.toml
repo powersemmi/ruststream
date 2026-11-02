@@ -1115,6 +1115,8 @@ embassy = [
     "ruststream-memory?/embassy",
     "ruststream-testing?/embassy",
 ]
+# The compio runner: one runtime per core, on io_uring where the kernel has it.
+compio = ["alloc", "dep:ruststream-runtime-compio", "ruststream-memory?/embassy"]
 # The loggers an app selects with `.logger(..)`; each feature compiles its logger into the crates
 # that report, and nothing is reported until the app selects one. The tokio runner turns `tracing`
 # on; a heap-backed embassy app turns it on itself.
@@ -1203,6 +1205,7 @@ ruststream-core.workspace = true
 ruststream-runtime.workspace = true
 ruststream-runtime-tokio = { workspace = true, optional = true }
 ruststream-runtime-embassy = { workspace = true, optional = true }
+ruststream-runtime-compio = { workspace = true, optional = true }
 ruststream-memory = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }
