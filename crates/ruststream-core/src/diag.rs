@@ -330,3 +330,87 @@ macro_rules! __diag_to_defmt {
 macro_rules! __diag_to_defmt {
     ($level:ident, $target:expr, $message:expr, $fields:expr) => {};
 }
+
+#[cfg(test)]
+mod tests {
+    use std::format;
+
+    use super::{Show, debugged, shown};
+
+    #[test]
+    fn an_event_without_fields_adds_nothing_to_its_message() {
+        assert_eq!(format!("{}", Show(&())), "");
+    }
+
+    #[test]
+    fn a_field_shown_with_display_follows_the_message_as_a_name_value_pair() {
+        assert_eq!(
+            format!("{}", Show(&(shown("subscription", "orders"),))),
+            " subscription=orders"
+        );
+    }
+
+    #[test]
+    fn a_field_shown_with_debug_keeps_its_debug_form() {
+        assert_eq!(
+            format!("{}", Show(&(debugged("error", &Some("lost")),))),
+            " error=Some(\"lost\")"
+        );
+    }
+
+    #[test]
+    fn fields_follow_each_other_in_the_order_they_were_written_up_to_eight() {
+        let fields = (
+            shown("a", &1),
+            shown("b", &2),
+            shown("c", &3),
+            shown("d", &4),
+            shown("e", &5),
+            shown("f", &6),
+            shown("g", &7),
+            shown("h", &8),
+        );
+        assert_eq!(
+            format!("{}", Show(&fields)),
+            " a=1 b=2 c=3 d=4 e=5 f=6 g=7 h=8"
+        );
+        let two = (shown("a", &1), shown("b", &2));
+        assert_eq!(format!("{}", Show(&two)), " a=1 b=2");
+        let three = (shown("a", &1), shown("b", &2), shown("c", &3));
+        assert_eq!(format!("{}", Show(&three)), " a=1 b=2 c=3");
+        let four = (
+            shown("a", &1),
+            shown("b", &2),
+            shown("c", &3),
+            shown("d", &4),
+        );
+        assert_eq!(format!("{}", Show(&four)), " a=1 b=2 c=3 d=4");
+        let five = (
+            shown("a", &1),
+            shown("b", &2),
+            shown("c", &3),
+            shown("d", &4),
+            shown("e", &5),
+        );
+        assert_eq!(format!("{}", Show(&five)), " a=1 b=2 c=3 d=4 e=5");
+        let six = (
+            shown("a", &1),
+            shown("b", &2),
+            shown("c", &3),
+            shown("d", &4),
+            shown("e", &5),
+            shown("f", &6),
+        );
+        assert_eq!(format!("{}", Show(&six)), " a=1 b=2 c=3 d=4 e=5 f=6");
+        let seven = (
+            shown("a", &1),
+            shown("b", &2),
+            shown("c", &3),
+            shown("d", &4),
+            shown("e", &5),
+            shown("f", &6),
+            shown("g", &7),
+        );
+        assert_eq!(format!("{}", Show(&seven)), " a=1 b=2 c=3 d=4 e=5 f=6 g=7");
+    }
+}
