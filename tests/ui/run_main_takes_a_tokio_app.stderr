@@ -16,7 +16,7 @@ help: the trait `ruststream::prelude::App` is implemented for `ruststream::RustS
    | / impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
    | |     for RustStream<Layers, State, Pipeline, Phase>
    | |__________________________________________________^
-note: required by a bound in `run_main`
+note: required by a bound in `ruststream::runtime::cli::run_main`
   --> crates/ruststream-cli/src/entry.rs
    |
    | pub fn run_main<A, F>(build: F) -> ExitCode
