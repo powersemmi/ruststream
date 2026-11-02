@@ -3,7 +3,7 @@
 
 use std::fmt::{self, Debug, Formatter, Write};
 use std::iter;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use compio::runtime::{JoinError, JoinHandle};
@@ -13,7 +13,7 @@ use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt, pin_mut, select};
 use ruststream_runtime::{Halt, Placement, ShutdownWait, Workers};
 use thiserror::Error;
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::Stop;
 
@@ -153,6 +153,8 @@ pub struct Fabric {
 struct Lanes {
     alive: AtomicUsize,
     gone: Event,
+    /// Set once the teardown has closed the mailboxes no core had started serving.
+    unserved_closed: AtomicBool,
 }
 
 /// A lane's place in the count of live lanes, held by the lane for as long as it exists: it is
@@ -204,8 +206,11 @@ impl Fabric {
     /// Resolves once no lane exists on any core: every handler a lane ran is finished or dropped.
     ///
     /// A lane cancelled at the shutdown cap is gone only when its own core has dropped it, which
-    /// this waits for.
+    /// this waits for. The mailbox of a core that has not started serving is closed first, with
+    /// the lanes mailed to it: called at teardown, after the loops that feed the lanes are over,
+    /// a core that never started would otherwise hold the wait for good.
     pub async fn lanes_gone(&self) {
+        self.close_unserved();
         loop {
             if self.lanes.alive.load(Ordering::Acquire) == 0 {
                 return;
@@ -215,6 +220,14 @@ impl Fabric {
                 return;
             }
             listener.await;
+        }
+    }
+
+    /// Closes the mailboxes no core has taken, which drops the lanes mailed to them.
+    fn close_unserved(&self) {
+        if let Ok(mut inboxes) = self.inboxes.lock() {
+            self.lanes.unserved_closed.store(true, Ordering::Release);
+            inboxes.iter_mut().for_each(|inbox| drop(inbox.take()));
         }
     }
 
@@ -257,6 +270,11 @@ impl Fabric {
             .ok()
             .and_then(|mut all| all[core].take());
         let Some(mut inbox) = taken else {
+            if self.lanes.unserved_closed.load(Ordering::Acquire) {
+                // The teardown got here first, and this core's lanes went with the mailbox.
+                debug!(target: "ruststream::dispatch", core, "the mailbox was closed before the core served it");
+                return;
+            }
             error!(target: "ruststream::dispatch", core, "the mailbox of the core is already served");
             return;
         };
