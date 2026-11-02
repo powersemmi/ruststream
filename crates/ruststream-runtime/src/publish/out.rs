@@ -319,9 +319,9 @@ impl<W, Head: PublishLayer + Clone, Tail: PublishPipeline + Clone> OutPipeline<W
         let mut out = <W::Payload as PayloadForm>::rebuilt(name.into(), payload, headers);
         // The middleware rewrites the message in place, so a refusal reports the message as the
         // stages left it, which is the one that was sent.
-        self.run(&mut out, leaf, options)
-            .await
-            .map_err(|error| Refusal::of(error, &mut out).into_sink(PipelinePublishError))
+        self.run(&mut out, leaf, options).await.map_err(|error| {
+            Refusal::of(error, &mut out).into_sink(out.name(), PipelinePublishError)
+        })
     }
 }
 

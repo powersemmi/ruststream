@@ -116,7 +116,7 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .send_through(&mut out, &self.publisher, options.as_ref())
             .await;
         // A refusal leaves the message that was sent in `out`, transforms applied.
-        sent.map_err(|err| Refusal::of(err, &mut out))
+        sent.map_err(|err| Refusal::of(err, &mut out).sent_to(name, out.name()))
     }
 
     /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
@@ -150,7 +150,7 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .send_through(&mut out, &self.publisher, options.as_ref())
             .await;
         // A refusal leaves the message that was sent in `out`, transforms applied.
-        sent.map_err(|err| Refusal::of(err, &mut out))
+        sent.map_err(|err| Refusal::of(err, &mut out).sent_to(name, out.name()))
     }
 
     /// Like [`publish`](Self::publish), but applies the batch-only [`BatchPublishTransform`] stack
@@ -181,7 +181,7 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .send_through(&mut out, &self.publisher, options.as_ref())
             .await;
         // A refusal leaves the message that was sent in `out`, transforms applied.
-        sent.map_err(|err| Refusal::of(err, &mut out))
+        sent.map_err(|err| Refusal::of(err, &mut out).sent_to(name, out.name()))
     }
 }
 

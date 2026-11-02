@@ -201,9 +201,9 @@ pub struct Refusal {
 /// The message a refused publish handed back, as its owner reads it.
 #[derive(Debug)]
 struct Unsent {
-    // Where the message was sent, which a naming transform may have changed from the
-    // destination the mount site declared.
-    destination: String,
+    // Where the message was sent, recorded only when a naming transform changed it from the
+    // destination the caller declared: the common refusal allocates no name of its own.
+    destination: Option<String>,
     payload: KeptPayload,
     headers: HeaderMap,
 }
@@ -229,9 +229,10 @@ impl Refusal {
         Self {
             error: error.into(),
             unsent: message.map(|message| {
-                let (destination, payload, headers) = message.into_parts();
+                let (_, payload, headers) = message.into_parts();
+                // Handed straight to the publisher: the destination is the one the caller named.
                 Box::new(Unsent {
-                    destination: destination.to_owned(),
+                    destination: None,
                     payload: Form::kept(payload),
                     headers,
                 })
@@ -247,7 +248,7 @@ impl Refusal {
             error: error.into(),
             unsent: unsent.map(|(destination, payload, headers)| {
                 Box::new(Unsent {
-                    destination,
+                    destination: Some(destination),
                     payload,
                     headers,
                 })
@@ -294,27 +295,45 @@ impl Refusal {
         Self {
             error,
             unsent: Some(Box::new(Unsent {
-                destination: out.name().to_owned(),
+                destination: None,
                 payload,
                 headers: mem::take(out.headers_mut()),
             })),
         }
     }
 
+    /// Records that the message went to `sent` rather than the `declared` destination, as it
+    /// does when a naming transform redirected it. The name is copied only then.
+    #[must_use]
+    pub(crate) fn sent_to(mut self, declared: &str, sent: &str) -> Self {
+        if sent != declared
+            && let Some(unsent) = self.unsent.as_mut()
+        {
+            unsent.destination = Some(sent.to_owned());
+        }
+        self
+    }
+
     /// The refusal as a sink reports it: the cause wrapped by `wrap`, and the message where it
-    /// was sent.
+    /// was sent, `destination` unless the refusal recorded another.
     #[must_use]
     pub(crate) fn into_sink<Error>(
         self,
+        destination: &str,
         wrap: impl FnOnce(BoxError) -> Error,
     ) -> SinkRefusal<Error> {
         let error = wrap(self.error);
         match self.unsent.map(|unsent| *unsent) {
             Some(Unsent {
-                destination,
+                destination: sent,
                 payload,
                 headers,
-            }) => SinkRefusal::with_message(error, &destination, payload, headers),
+            }) => SinkRefusal::with_message(
+                error,
+                sent.as_deref().unwrap_or(destination),
+                payload,
+                headers,
+            ),
             None => SinkRefusal::new(error),
         }
     }
@@ -331,8 +350,8 @@ impl Refusal {
         self.error
     }
 
-    /// The cause and the message where it was sent; `destination` names it when the publisher
-    /// returned no message.
+    /// The cause and the message where it was sent: `destination`, unless the refusal recorded
+    /// another.
     ///
     /// `lent` takes the bytes a lending publisher was shown, given where they were: the caller
     /// that owns them moves them out instead of copying. A refusal with no message (the client
@@ -345,7 +364,7 @@ impl Refusal {
     ) -> (BoxError, FailedMessage) {
         let message = match self.unsent.map(|unsent| *unsent) {
             Some(Unsent {
-                destination,
+                destination: sent,
                 payload,
                 headers,
             }) => {
@@ -354,7 +373,7 @@ impl Refusal {
                     KeptPayload::Lent { addr, len } => lent(addr, len),
                 };
                 FailedMessage {
-                    destination,
+                    destination: sent.unwrap_or_else(|| destination.to_owned()),
                     payload: Some(payload),
                     headers,
                 }
