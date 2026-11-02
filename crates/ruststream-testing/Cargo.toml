@@ -310,6 +310,12 @@ name = "compio_handler"
 path = "tests/compio_handler.rs"
 required-features = ["compio", "json"]
 
+# A compio service whose subscription asks for dedicated threads, through the compio `TestApp`.
+[[test]]
+name = "compio_threads"
+path = "tests/compio_threads.rs"
+required-features = ["compio", "json"]
+
 # A compio service's reply is published, through the compio `TestApp`.
 [[test]]
 name = "compio_reply"

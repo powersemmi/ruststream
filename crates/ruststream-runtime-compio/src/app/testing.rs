@@ -10,6 +10,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use ruststream_runtime::testing::{Coordinator, TestHooks, TestableRegistration};
+use ruststream_runtime::{Placement, Workers};
 use thiserror::Error;
 use tracing::info;
 
@@ -170,6 +171,15 @@ impl<State> InProcessStart<State> {
     }
 }
 
+/// The policy under the harness: the same concurrency, as tasks of the runtime the test runs on.
+fn on_runtime(workers: Workers) -> Workers {
+    match (workers.placement(), workers.by_key()) {
+        (Placement::Threads, true) => Workers::keyed(workers.count()),
+        (Placement::Threads, false) => Workers::pool(workers.count()),
+        _ => workers,
+    }
+}
+
 impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
     RustStream<Layers, State, Pipeline, Phase>
 {
@@ -185,7 +195,9 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         self,
         start: InProcessStart<State>,
     ) -> Result<RunningApp, RustStreamError> {
-        let layout = self.layout(1)?;
+        // The harness runs every subscription on the test's own runtime, so a `threads(n)` mount
+        // is placed as `n` workers of it, as the dispatch will run it.
+        let layout = self.layout_of(1, on_runtime)?;
         let stop = Stop::new(self.subscription_end);
         self.start_on(layout, stop, Fabric::open(1), Wiring::InProcess(start))
             .await

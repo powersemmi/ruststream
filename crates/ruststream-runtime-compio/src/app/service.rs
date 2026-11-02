@@ -8,6 +8,7 @@ use std::{
 use crate::SendBroker;
 use crate::bindable::BrokerRegistration;
 use crate::{DescribeServer, ServerSpec};
+use ruststream_runtime::Workers;
 use ruststream_runtime::codec::Codec;
 
 use crate::HandlerMetadata;
@@ -680,13 +681,22 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// [`LayoutError`] when the `threads` mounts ask for more than `cores - 1` cores, naming each
     /// of them.
     pub fn layout(&self, cores: usize) -> Result<Layout, LayoutError> {
+        self.layout_of(cores, |workers| workers)
+    }
+
+    /// [`layout`](Self::layout) over the policies `policy` makes of the declared ones.
+    pub(super) fn layout_of(
+        &self,
+        cores: usize,
+        policy: impl Fn(Workers) -> Workers,
+    ) -> Result<Layout, LayoutError> {
         let mounts: Vec<Mount<'_>> = self
             .handlers
             .iter()
             .zip(&self.starters)
             .map(|(meta, mounted)| Mount {
                 name: &meta.name,
-                workers: mounted.workers,
+                workers: policy(mounted.workers),
             })
             .collect();
         Layout::plan(cores, &mounts)
