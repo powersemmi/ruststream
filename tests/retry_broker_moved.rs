@@ -155,7 +155,7 @@ impl Settle for MovedMessage {
             self.publisher
                 .publish(OutgoingMessage::new(dead, self.inner.payload()), None)
                 .await
-                .map_err(|err| AckError::Broker(Box::new(err)))?;
+                .map_err(|err| AckError::Broker(Box::new(err.into_error())))?;
             return self.inner.ack().await;
         }
         self.inner.nack(requeue).await

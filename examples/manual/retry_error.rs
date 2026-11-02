@@ -14,7 +14,7 @@ use std::io;
 
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, LogMode};
-use ruststream::{Lend, OutgoingMessage, PairError};
+use ruststream::{Lend, OutgoingMessage, PairError, PublishMessageError, PublishOutcome};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
@@ -59,12 +59,16 @@ impl Publisher for Down {
     type Error = io::Error;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        _msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), io::Error>> {
-        ready(Err(io::Error::other("broker down")))
+    ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
+        // The broker is down: the message did not go out, so it comes back with the error.
+        ready(Err(PublishMessageError::with_message(
+            io::Error::other("broker down"),
+            msg,
+        )))
     }
 }
 

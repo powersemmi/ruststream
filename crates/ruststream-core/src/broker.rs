@@ -113,28 +113,16 @@ use crate::bindable::Bindable;
 /// stack) implements them as they are, and the embedded runner runs it. The tokio runner
 /// asks for `Send + Sync` where it moves a broker or spawns a subscription loop.
 ///
-/// The per-message traits come in pairs, because a loop spawned on a multi-thread pool needs
-/// the futures of a delivery to be `Send`, and a trait cannot say so for one implementor and
-/// not for another. The Send trait of a pair carries `Send` on its futures. Its `Local`
-/// twin carries the same items without it, and every implementation of the Send trait is
-/// an implementation of its twin through a blanket impl:
+/// The per-message traits ([`Subscriber`](crate::Subscriber), [`Settle`](crate::Settle),
+/// [`Publisher`](crate::Publisher) and the capability traits) are one trait per concept for
+/// every runtime. Their futures and supertraits ask for `Send` (and `Sync`) when the runtime
+/// that moves work between threads is in the build, and for nothing otherwise: the same
+/// `Publisher` is implemented by a broker on the tokio runner and by one on the embedded runner.
+/// A build with both takes the stricter bound, so a type that holds `Rc` does not implement the
+/// traits next to the tokio runner, and the compiler says so.
 ///
-/// | Send trait | Local twin |
-/// |---|---|
-/// | [`Subscriber`](crate::Subscriber), [`Settle`](crate::Settle) | [`LocalSubscriber`](crate::LocalSubscriber), [`LocalSettle`](crate::LocalSettle) |
-/// | [`Publisher`](crate::Publisher) | [`LocalPublisher`](crate::LocalPublisher) |
-/// | [`BatchSubscriber`](crate::BatchSubscriber), [`Seekable`](crate::Seekable), [`Seeker`](crate::Seeker) | [`LocalBatchSubscriber`](crate::LocalBatchSubscriber), [`LocalSeekable`](crate::LocalSeekable), [`LocalSeeker`](crate::LocalSeeker) |
-/// | [`TransactionalPublisher`](crate::TransactionalPublisher), [`OwnedTransactions`](crate::OwnedTransactions), [`Transaction`](crate::Transaction), [`RequestReply`](crate::RequestReply) | [`LocalTransactionalPublisher`](crate::LocalTransactionalPublisher), [`LocalOwnedTransactions`](crate::LocalOwnedTransactions), [`LocalTransaction`](crate::LocalTransaction), [`LocalRequestReply`](crate::LocalRequestReply) |
-/// | [`TestableBroker`](https://docs.rs/ruststream/latest/ruststream/testing/trait.TestableBroker.html) | [`LocalTestableBroker`](https://docs.rs/ruststream/latest/ruststream/testing/trait.LocalTestableBroker.html) |
-///
-/// [`IncomingMessage`](crate::IncomingMessage), the accessors of a delivery, has no twin: it
-/// reads the payload and the headers and is the same for both families.
-///
-/// Error types keep `Send + Sync + 'static`, as do a publisher's `Payload` and `Options`:
-/// a broker maps its client's error into an error type of its own.
-///
-/// A crate imports one family: with both in scope, a method call on a broker's own type
-/// matches two traits and does not compile (E0034). The prelude carries the Send family.
+/// Error types keep `Send + Sync + 'static`: a broker maps its client's error into an error type
+/// of its own.
 ///
 /// # Lazy startup contract
 ///

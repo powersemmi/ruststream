@@ -6,20 +6,25 @@
 //! [`Router::new`] starts keeps the mounts of the multi-thread runner, which ask for `Send` and
 //! name a source of the wrong broker in their errors.
 
+use core::error::Error as StdError;
 use core::marker::PhantomData;
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use crate::batch::BatchDef;
 use crate::handle::{AsBodyFn, AsDeclared, BodyTag};
 use crate::input::{Materialize, Provided};
 use crate::lifecycle::BoxError;
+use crate::middleware::BlanketLayer;
 use crate::middleware::Identity;
-use crate::middleware::LocalBlanketLayer;
-use crate::publish::{LocalOutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough};
+use crate::publish::{
+    OutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough, SinkOutcome,
+};
+use crate::publish_failure::Refusal;
 use crate::settings::{BatchSized, Declared, DefMountCodec, MountsWith, Sequential};
 use crate::subscriber_def::SubscriberDef;
 use crate::{
-    Broker, Connected, LocalBatchSubscriber, LocalPublisher, LocalSourceMessage, OutgoingFor,
-    PayloadForm, SourceSubscriber, SubscriptionSource,
+    BatchSubscriber, Broker, Connected, LocalSourceMessage, OutgoingFor, PayloadForm, Publisher,
+    SourceSubscriber, SubscriptionSource,
 };
 
 use super::builder::Router;
@@ -60,7 +65,7 @@ impl<B: Broker + 'static> Router<B, (), (), Identity, LocalPipeline> {
     /// ```
     /// use std::convert::Infallible;
     ///
-    /// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, local_subscriber};
+    /// use ruststream::runtime::{Context, HandlerOutcome, Handle, Router, subscriber};
     /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
     /// use ruststream_runtime::{Deserialized, Input, SoloDeserialized};
     ///
@@ -82,7 +87,7 @@ impl<B: Broker + 'static> Router<B, (), (), Identity, LocalPipeline> {
     ///
     /// struct Log;
     ///
-    /// impl LocalHandle<Reading<'_>> for Log {
+    /// impl Handle<Reading<'_>> for Log {
     ///     async fn handle(
     ///         &self,
     ///         reading: &Reading<'_>,
@@ -95,7 +100,7 @@ impl<B: Broker + 'static> Router<B, (), (), Identity, LocalPipeline> {
     /// }
     ///
     /// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
-    ///     .include(local_subscriber(LocalMemorySource::new("readings"), Log).build());
+    ///     .include(subscriber(LocalMemorySource::new("readings"), Log).build());
     /// # let _ = routes;
     /// ```
     #[must_use]
@@ -132,9 +137,9 @@ impl<Settings: Sequential, Pipe> PoolFits<LocalPipeline<Pipe>> for Settings {}
 /// directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
-    message = "this handler cannot run on the multi-thread runner: its future is not `Send`",
+    message = "this handler cannot run on the multi-thread runner: its future is not `MaybeSend`",
     note = "the multi-thread runner moves a handler between threads at each `.await`; keep only \
-            `Send` values across an `.await` in the handler (an `Arc` where it holds an `Rc`), \
+            `MaybeSend` values across an `.await` in the handler (an `Arc` where it holds an `Rc`), \
             or mount it on an `EmbeddedApp`, which polls it on one thread"
 )]
 pub trait BodyFits<Pipe, Mk> {
@@ -153,7 +158,7 @@ impl<F, M, I, O, X, Fut, Pipe> BodyFits<Pipe, AsBodyFn<M, I, O, X>> for F
 where
     Pipe: PublishPipeline,
     F: Fn(BodyTag<M>, I, O, X) -> Fut,
-    Fut: Future + Send,
+    Fut: Future + MaybeSend,
 {
     type Fits = ();
 }
@@ -187,7 +192,7 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe> RouterPipe
 /// # use std::convert::Infallible;
 /// # use std::future::ready;
 /// use ruststream::nonzero;
-/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandle, Router, Workers, local_subscriber};
+/// use ruststream::runtime::{Context, HandlerOutcome, Handle, Router, Workers, subscriber};
 /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
 /// use ruststream_runtime::{Deserialized, Input, SoloDeserialized};
 /// # struct Reading<'a>(&'a [u8]);
@@ -198,12 +203,12 @@ impl<B, Routes, RouteCodec, RouteLayers, Pipe> RouterPipe
 /// # }
 /// # impl Input for Reading<'_> { type Axis = SoloDeserialized<Reading<'static>>; }
 /// # struct Log;
-/// # impl LocalHandle<Reading<'_>> for Log {
+/// # impl Handle<Reading<'_>> for Log {
 /// #     fn handle(&self, r: &Reading<'_>, _: &(), _: &mut Context<'_>)
 /// #         -> impl Future<Output = Result<(), HandlerOutcome>> { let _ = r.0; ready(Ok(())) }
 /// # }
 /// let routes = Router::<LocalMemoryBroker<4>, _, _, _, _>::local()
-///     .include(local_subscriber(LocalMemorySource::new("readings"), Log).build())
+///     .include(subscriber(LocalMemorySource::new("readings"), Log).build())
 ///     .workers(Workers::pool(nonzero!(4)));
 /// ```
 ///
@@ -239,12 +244,12 @@ pub trait TakesWorkers {}
 impl<Pipe: PublishPipeline> TakesWorkers for Pipe {}
 
 /// A router-scope layer that fits the chain's runner: any layer on the multi-thread runner's
-/// chain, and a [`LocalBlanketLayer`] on a local chain. Machinery; never named directly.
+/// chain, and a [`BlanketLayer`] on a local chain. Machinery; never named directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "`{Self}` runs on the tokio runtime",
     label = "this layer does not wrap a local router's handlers",
-    note = "a layer on a router started with `Router::local()` implements `LocalBlanketLayer`"
+    note = "a layer on a router started with `Router::local()` implements `BlanketLayer`"
 )]
 pub trait LayerFits<Pipe> {}
 
@@ -252,41 +257,52 @@ pub trait LayerFits<Pipe> {}
 impl<Layer, Pipe: PublishPipeline> LayerFits<Pipe> for Layer {}
 
 #[diagnostic::do_not_recommend]
-impl<Layer: LocalBlanketLayer, Pipe> LayerFits<LocalPipeline<Pipe>> for Layer {}
+impl<Layer: BlanketLayer, Pipe> LayerFits<LocalPipeline<Pipe>> for Layer {}
 
 // A local chain's replies and slot publishes go straight to the broker: the publish layers of
 // the multi-thread runner's app do not reach it.
-impl<P: LocalPublisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
+impl<P: Publisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
     // The publisher's own future, which is `Send` exactly where the publisher's is.
     #[allow(clippy::future_not_send)]
     async fn send_through<'a>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
     ) -> Result<(), BoxError> {
         // The broker is the last reader of this message, as in `PublishIdentity`.
-        let msg = <P::Payload as PayloadForm>::leaving(out);
-        send.publish(msg, options).await.map_err(BoxError::from)
+        let msg = <P::Payload as PayloadForm>::leaving(&mut *out);
+        let outcome = send.publish(msg, options).await;
+        // A refusal puts the message back into `out`, so the caller reads what was sent.
+        outcome
+            .map_err(Refusal::returned::<P::Payload>)
+            .map_err(|refusal| refusal.restore::<P::Payload>(out))
     }
 }
 
 // The bottom of a local slot's publish path: the leaf call, lent the message as it arrives, with
 // nothing rebuilt or copied and the leaf's own error.
-impl<W> LocalOutPipeline<W> for LocalPipeline<PublishIdentity> {
-    // The leaf's own future, which is `Send` exactly where the leaf's is.
-    #[allow(clippy::future_not_send)]
+impl<W> OutPipeline<W> for LocalPipeline<PublishIdentity> {
+    type Error<E: StdError + Send + Sync + 'static> = E;
+
+    fn from_publish_error<E: StdError + Send + Sync + 'static>(err: E) -> E {
+        err
+    }
+
     fn send<P>(
         &self,
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> impl Future<Output = Result<(), P::Error>>
+    ) -> impl Future<Output = SinkOutcome<P::Error>> + MaybeSend
     where
-        W: LocalPublisher,
-        P: LocalPublisher<Options = W::Options, Payload = W::Payload>,
+        W: Publisher,
+        P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
-        leaf.publish(msg, options)
+        // The identity pipeline's own send: under the harness it records the publish with the
+        // destination it went to, and it does so when the future is polled, inside the slot's
+        // publishing scope.
+        <PublishIdentity as OutPipeline<W>>::send(&PublishIdentity, leaf, msg, options)
     }
 }
 
@@ -336,7 +352,7 @@ where
     Def: SubscriberDef<Input = Provided<F>>,
     Def::Source: SubscriptionSource<Connected<B>> + 'static,
     Def::Handler: 'static,
-    F: Send + Sync + 'static,
+    F: MaybeSendSync + 'static,
 {
     type Out = IncludedRouter<
         B,
@@ -367,9 +383,9 @@ where
     B: Broker + 'static,
     Def: BatchDef<Input = Provided<F>> + BatchSized,
     Def::Source: SubscriptionSource<Connected<B>> + 'static,
-    SourceSubscriber<B, Def::Source>: LocalBatchSubscriber,
+    SourceSubscriber<B, Def::Source>: BatchSubscriber,
     Def::Handler: 'static,
-    F: Send + Sync + 'static,
+    F: MaybeSendSync + 'static,
 {
     type Out = IncludedRawBatchRouter<
         B,

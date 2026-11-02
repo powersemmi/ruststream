@@ -10,11 +10,12 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::ops::Deref;
 use core::time::Duration;
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
 use crate::codec::Codec;
 use crate::inject::FromStartup;
 use crate::publish::{
-    Admits, HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishIdentity,
+    Admits, HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishIdentity, SinkOutcome,
     TransactionScope, TypedTransaction, message_of,
 };
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
@@ -22,7 +23,8 @@ use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 use crate::testing::coordinator::{Anchor, Origin, paired, publishing_to};
 use crate::{
     Connected, HeaderMap, OutgoingDestination, OutgoingFor, OwnedTransactions, PairError,
-    PublishPolicy, Publisher, RequestReply, TransactionalPublisher,
+    PublishMessageError, PublishOutcome, PublishPolicy, Publisher, RequestReply,
+    TransactionalPublisher,
 };
 
 /// One arena entry: the wired live value of the marker `M`, plus the publish path the include
@@ -101,6 +103,28 @@ impl<M, W, E, Pipe, Body> fmt::Debug for Slot<M, W, E, Pipe, Body> {
 // publish path and keep its test-capture attribution; calls reaching the live value through
 // this `Deref` leave through the unwrapped value and bypass both, like a settled owned
 // transaction's buffer.
+/// What a slot's codec position must be for the slot to publish: a codec where the build has one,
+/// and the bare position otherwise.
+///
+/// A build with no codec feature mounts a slot over [`UnnamedCodec`](crate::UnnamedCodec), which
+/// publishes the types that carry their own bytes; a value that needs encoding names the missing
+/// codec where it is published. The codec requirement sits on that operation and not on the slot.
+/// Machinery; never named in user code.
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+#[doc(hidden)]
+pub trait SlotEncoding: Codec {}
+
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+impl<Enc: Codec> SlotEncoding for Enc {}
+
+/// See the codec form: without a codec feature the position is only a value to carry.
+#[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
+#[doc(hidden)]
+pub trait SlotEncoding: Clone {}
+
+#[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
+impl<Enc: Clone> SlotEncoding for Enc {}
+
 impl<M, W, E, Pipe, Body> Deref for Slot<M, W, E, Pipe, Body> {
     type Target = W;
 
@@ -119,7 +143,7 @@ where
 {
 }
 
-impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Pipe: OutPipeline<W>, Body>
+impl<M: OutSlot, W: Publisher, E: SlotEncoding + MaybeSendSync, Pipe: OutPipeline<W>, Body>
     Slot<M, W, E, Pipe, Body>
 {
     /// Starts a typed publish through the slot, on the message type's own wire
@@ -201,7 +225,7 @@ impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Pipe: OutPipeline<W>, Bod
 
 // The transaction openers do not travel the slot's pipeline, but the entry they borrow crosses
 // the await with them, so it still has to be shareable.
-impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: Send + Sync, Body>
+impl<M: OutSlot, W: TransactionalPublisher, E: MaybeSendSync, Pipe: MaybeSendSync, Body>
     Slot<M, W, E, Pipe, Body>
 {
     /// Opens the entry's broker transaction and returns the [`TransactionScope`] that owns it:
@@ -267,7 +291,7 @@ impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: Send + Sync, B
     }
 }
 
-impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: Send + Sync, Body>
+impl<M: OutSlot, W: OwnedTransactions, E: MaybeSendSync, Pipe: MaybeSendSync, Body>
     Slot<M, W, E, Pipe, Body>
 {
     /// Opens an independent, caller-owned broker transaction and returns the
@@ -342,7 +366,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: Send + Sync, Body>
 // stamped message. The transaction calls and the request round trip reach the leaf directly -
 // the pipeline ends in a send, and neither of those is one - and report their errors in the
 // entry's own error type.
-impl<M: OutSlot, W: Publisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> Publisher
+impl<M: OutSlot, W: Publisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body> Publisher
     for Slot<M, W, E, Pipe, Body>
 {
     // The slot is attribution, not policy: the payload travels in the wired publisher's own
@@ -353,11 +377,26 @@ impl<M: OutSlot, W: Publisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Bod
     // publisher's, which is what puts that broker's builder steps on this entry's `message(..)`.
     type Options = W::Options;
 
-    async fn publish(
+    // The borrowed outcome cannot outlive the call, and the message a transform rewrote into a
+    // buffer of the call is not the caller's to read back. The typed publish of the slot goes
+    // through [`SlotSink`], which reports the whole message.
+    async fn publish<'msg>(
+        &self,
+        msg: OutgoingFor<'msg, Self::Payload>,
+        options: Option<&Self::Options>,
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
+        self.publish_kept(msg, options)
+            .await
+            .map_err(|refusal| PublishMessageError::new(refusal.into_error()))
+    }
+
+    // The owned answer: what a typed publish through the slot reports, the message a transform
+    // rewrote included.
+    async fn publish_kept(
         &self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> SinkOutcome<Self::Error> {
         let publish = self.pipeline.send(&self.wired, msg, options);
         #[cfg(feature = "testing")]
         let publish = self.anchor.scoped(publishing_to(self.origin, publish));
@@ -369,7 +408,7 @@ impl<M: OutSlot, W: Publisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Bod
     }
 }
 
-impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
 {
     async fn begin_transaction(&self) -> Result<(), Self::Error> {
@@ -388,7 +427,7 @@ impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPip
     }
 }
 
-impl<M: OutSlot, W: OwnedTransactions, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+impl<M: OutSlot, W: OwnedTransactions, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
     OwnedTransactions for Slot<M, W, E, Pipe, Body>
 {
     type Transaction = W::Transaction;
@@ -401,7 +440,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Clone + Send + Sync, Pipe: OutPipeline
     }
 }
 
-impl<M: OutSlot, W: RequestReply, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
+impl<M: OutSlot, W: RequestReply, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body> RequestReply
     for Slot<M, W, E, Pipe, Body>
 {
     type Reply = W::Reply;
@@ -447,10 +486,10 @@ impl<B, Sub, Policy, E, Pipe, M, Body> FromStartup<B, Sub, (Policy, E, Pipe)>
     for Slot<M, <Policy as PublishPolicy<Connected<B>>>::Live, E, Pipe, Body>
 where
     B: crate::Broker,
-    Sub: Sync,
-    Policy: PublishPolicy<Connected<B>> + Send,
-    E: Send,
-    Pipe: Send,
+    Sub: MaybeSync,
+    Policy: PublishPolicy<Connected<B>> + MaybeSend,
+    E: MaybeSend,
+    Pipe: MaybeSend,
     M: OutSlot,
 {
     async fn resolve(
@@ -553,10 +592,10 @@ where
 // `Send + Sync` on the trait and on the wired value, rather than on every body's `where`: the
 // arena is built once at startup and shared by reference across the subscription's worker tasks,
 // so an entry that is not shareable never reaches a body in the first place.
-pub trait OutEntry<M, Body = ()>: Send + Sync {
+pub trait OutEntry<M, Body = ()>: MaybeSendSync {
     /// The wired live value: the bound policy's [`Live`](crate::PublishPolicy::Live) form, which
     /// a body bounds with the broker capability it needs.
-    type Wire: Send + Sync;
+    type Wire: MaybeSendSync;
 
     /// The codec the entry's typed publishes encode with: the include site's own, or the one a
     /// `.codec(..)` named for this slot.
@@ -575,7 +614,7 @@ pub trait OutEntry<M, Body = ()>: Send + Sync {
 
 impl<M, W, E, Pipe, Body> OutEntry<M, Body> for Slot<M, W, E, Pipe, Body>
 where
-    W: Send + Sync,
+    W: MaybeSendSync,
     E: Codec,
     Pipe: OutPipeline<W>,
 {

@@ -581,7 +581,8 @@ async fn request_rounds(tb: &TestApp<()>, rounds: u32) {
 }
 
 /// The allocations this thread makes over 32 request/reply rounds of `app`, after a warm-up that
-/// pays every first time: the SDK's tracker per attribute set, the harness's buffers.
+/// pays every first time: the SDK's tracker per attribute set, the harness's buffers, and the
+/// thread's encode buffer grown to the widest payload the counted rounds publish.
 ///
 /// Every task runs on this thread's own runtime, so the count holds the whole dispatch and the
 /// tests the harness runs beside this one do not enter it.
@@ -593,7 +594,7 @@ fn steady_allocations<A: App<State = ()>>(app: A) -> u64 {
     let tb = runtime
         .block_on(TestApp::start(app))
         .expect("harness start failed");
-    runtime.block_on(request_rounds(&tb, 8));
+    runtime.block_on(request_rounds(&tb, 32));
     let counted = measure(|| runtime.block_on(request_rounds(&tb, 32)));
     runtime
         .block_on(tb.shutdown())
@@ -701,7 +702,7 @@ fn allocations_past_many_destinations<A: App<State = ()>>(app: A) -> (u64, u64) 
         for _ in 0..8 {
             tenant_request(&tb, "tenant.late").await;
         }
-        order_rounds(&tb, 8).await;
+        order_rounds(&tb, 32).await;
     });
     let answers = measure(|| {
         runtime.block_on(async {

@@ -19,7 +19,7 @@ note: required because it's used within this closure
    |
 17 |     HandlerOutcome::ack().error(async move |failures: Failures| {
    |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   = note: required for `{async closure@$DIR/tests/ui/error_not_send_on_tokio.rs:17:33: 17:64}` to implement `ruststream_runtime::handler::MaybeSend`
+   = note: required for `{async closure@$DIR/tests/ui/error_not_send_on_tokio.rs:17:33: 17:64}` to implement `ruststream_core::send::MaybeSend`
 note: required by a bound in `HandlerOutcome::error`
   --> crates/ruststream-runtime/src/handler.rs
    |

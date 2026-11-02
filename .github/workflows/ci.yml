@@ -147,7 +147,7 @@ jobs:
 
       - name: Install cargo-hack
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
-        uses: taiki-e/install-action@v2.87.32
+        uses: taiki-e/install-action@v2.88.1
         with:
           tool: cargo-hack
 
@@ -157,7 +157,7 @@ jobs:
 
       - name: Install cargo-generate
         if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
-        uses: taiki-e/install-action@v2.87.32
+        uses: taiki-e/install-action@v2.88.1
         with:
           tool: cargo-generate
 
@@ -413,7 +413,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2.87.32
+        uses: taiki-e/install-action@v2.88.1
         with:
           tool: cargo-llvm-cov
 
@@ -481,6 +481,8 @@ jobs:
           cargo llvm-cov --locked --no-report -p ruststream-memory --no-default-features --features embassy \
             --no-fail-fast --tests
           cargo llvm-cov --locked --no-report -p ruststream-testing --features embassy,json --no-fail-fast --tests
+          cargo llvm-cov --locked --no-report --no-default-features \
+            --features memory,testing,json,embassy --no-fail-fast --test local_family
 
       # The summary is written before the gate's exit code propagates, so it shows up even on a
       # failure. Each report reads the packages the run covered, the whole workspace.

@@ -21,7 +21,7 @@ A bare publisher starts a publish with the same [builder](../publish-builder.md)
 
 A publisher declares three types.
 `Payload` says how its client takes the bytes: `Lend` when it only reads them, so the runtime lends one reused buffer, and `Take` when it keeps them.
-`Options` are its [per-message settings](../publish-options.md), and `Error` is what a failed publish returns.
+`Options` are its [per-message settings](../publish-options.md), and `Error` is what a failed publish returns, together with the message the broker did not send: a `Lend` publisher always hands it back, and a `Take` publisher does when its client returns the buffer.
 Its `base_headers` go on every message it sends, under the headers of the call site.
 The narrower capabilities extend it: [`TransactionalPublisher`](./transactional-publisher.md), [`OwnedTransactions`](./owned-transactions.md) and [`RequestReply`](./request-reply.md).
 

@@ -16,7 +16,7 @@ use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts};
-use ruststream::{Broker, Deserialized, LocalPublisher, OutgoingMessage, subscriber};
+use ruststream::{Broker, Deserialized, OutgoingMessage, Publisher, subscriber};
 use static_cell::StaticCell;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 

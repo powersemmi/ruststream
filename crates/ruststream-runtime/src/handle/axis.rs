@@ -28,6 +28,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use core::marker::PhantomData;
 use core::{error, fmt};
+use ruststream_core::MaybeSendSync;
 
 use serde::de::DeserializeOwned;
 
@@ -151,7 +152,7 @@ impl<H, P> Message<H, P> {
 pub trait Deserialized: Sized {
     /// This type at the payload's lifetime (`Frame<'a>` for a borrowing `Frame`, `Self` for an
     /// owning one).
-    type Output<'a>: Send + Sync;
+    type Output<'a>: MaybeSendSync;
 
     /// The construction failure; `Infallible` for a plain view over the bytes.
     type Error: fmt::Display;
@@ -204,7 +205,7 @@ pub trait Input {
 
 /// The lifetime-free projection of one [`Input`] spelling. Machinery; never named in user code.
 #[doc(hidden)]
-pub trait Axis: Send + Sync + 'static {
+pub trait Axis: MaybeSendSync + 'static {
     /// The verdict family ([`OneByOne`] / [`Batched`]).
     type Family: VerdictFamily;
 
@@ -267,10 +268,13 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 /// # mod db_queue {
 /// #     // The broker crate's side: its broker, its descriptor, its deliveries and pages of rows.
 /// #     use std::num::NonZeroUsize;
+/// #     use std::pin::Pin;
+/// #     use std::task::{Context, Poll};
 /// #     use futures::Stream;
 /// #     use ruststream::memory::{ConnectedMemoryBroker, MemoryError};
 /// #     use ruststream::runtime::{Input, SoloCarried};
-/// #     use ruststream::{AckError, AddressedCopies, BatchSubscriber, Carries, CarriesBatch};
+/// #     use ruststream::{AckError, AddressedCopies, BatchSlot, BatchStream, BatchSubscriber};
+/// #     use ruststream::{Carries, CarriesBatch};
 /// #     use ruststream::{HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed, Settle};
 /// #     use ruststream::{Subscriber, SubscriptionSource};
 /// #     use super::SendEmail;
@@ -309,8 +313,16 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 /// #     impl BatchSubscriber for Claims {
 /// #         type Batch = Page;
 /// #         fn batches(&mut self, _: NonZeroUsize)
-/// #             -> impl Stream<Item = Result<Page, MemoryError>> + Send + '_ {
-/// #             futures::stream::empty()
+/// #             -> impl BatchStream<Page, Error = MemoryError> + Send + '_ {
+/// #             NoPages
+/// #         }
+/// #     }
+/// #     struct NoPages;
+/// #     impl BatchStream<Page> for NoPages {
+/// #         type Error = MemoryError;
+/// #         fn poll_fill(self: Pin<&mut Self>, _: &mut Context<'_>, _: &mut Page)
+/// #             -> Poll<Option<Result<(), MemoryError>>> {
+/// #             Poll::Ready(None)
 /// #         }
 /// #     }
 /// #     impl Carries<SendEmail> for Claimed {
@@ -320,10 +332,15 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 /// #         type Item = SendEmail;
 /// #         fn carried(&self) -> &[SendEmail] { &self.rows }
 /// #     }
-/// #     impl IntoIterator for Page {
-/// #         type Item = Claimed;
-/// #         type IntoIter = std::vec::IntoIter<Claimed>;
-/// #         fn into_iter(self) -> Self::IntoIter { self.claims.into_iter() }
+/// #     impl BatchSlot for Page {
+/// #         type Message = Claimed;
+/// #         fn with_capacity(size: NonZeroUsize) -> Self {
+/// #             Page { rows: Vec::with_capacity(size.get()), claims: Vec::with_capacity(size.get()) }
+/// #         }
+/// #         fn drain(&mut self) -> impl Iterator<Item = Claimed> + '_ {
+/// #             self.rows.clear();
+/// #             self.claims.drain(..)
+/// #         }
 /// #     }
 /// #     impl IncomingMessage for Claimed {
 /// #         fn payload(&self) -> &[u8] { &self.bytes }
@@ -402,14 +419,14 @@ pub struct BatchPair<H, P>(PhantomData<(H, P)>);
 #[derive(Debug)]
 pub struct BatchCarried<T>(PhantomData<T>);
 
-impl<T: DeserializeOwned + Send + Sync + 'static> Input for T {
+impl<T: DeserializeOwned + MaybeSendSync + 'static> Input for T {
     type Axis = Solo<T>;
 }
 
 impl<H, P> Input for Message<H, P>
 where
-    H: DeserializeOwned + Send + Sync + 'static,
-    P: DeserializeOwned + Send + Sync + 'static,
+    H: DeserializeOwned + MaybeSendSync + 'static,
+    P: DeserializeOwned + MaybeSendSync + 'static,
 {
     type Axis = SoloPair<H, P>;
 }
@@ -426,23 +443,23 @@ pub trait BatchedFrom {
     type Batch: Axis;
 }
 
-impl<T: Send + Sync + 'static> BatchedFrom for Solo<T> {
+impl<T: MaybeSendSync + 'static> BatchedFrom for Solo<T> {
     type Batch = Batch<T>;
 }
 
-impl<F: Send + Sync + 'static> BatchedFrom for SoloDeserialized<F> {
+impl<F: MaybeSendSync + 'static> BatchedFrom for SoloDeserialized<F> {
     type Batch = BatchDeserialized<F>;
 }
 
-impl<S: Send + Sync + 'static> BatchedFrom for SoloSet<S> {
+impl<S: MaybeSendSync + 'static> BatchedFrom for SoloSet<S> {
     type Batch = BatchSet<S>;
 }
 
-impl<H: Send + Sync + 'static, P: Send + Sync + 'static> BatchedFrom for SoloPair<H, P> {
+impl<H: MaybeSendSync + 'static, P: MaybeSendSync + 'static> BatchedFrom for SoloPair<H, P> {
     type Batch = BatchPair<H, P>;
 }
 
-impl<T: Clone + Send + Sync + 'static> BatchedFrom for SoloCarried<T> {
+impl<T: Clone + MaybeSendSync + 'static> BatchedFrom for SoloCarried<T> {
     type Batch = BatchCarried<T>;
 }
 
@@ -455,14 +472,14 @@ where
     type Axis = <E::Axis as BatchedFrom>::Batch;
 }
 
-impl<T: Send + Sync + 'static> Axis for Solo<T> {
+impl<T: MaybeSendSync + 'static> Axis for Solo<T> {
     type Family = OneByOne;
     type Kind = Decoded<T>;
     type EagerForm = Subscribing;
     type SlotForm = Out;
 }
 
-impl<F: Send + Sync + 'static> Axis for SoloDeserialized<F> {
+impl<F: MaybeSendSync + 'static> Axis for SoloDeserialized<F> {
     type Family = OneByOne;
     type Kind = Provided<F>;
     type EagerForm = RawSubscribing;
@@ -471,63 +488,63 @@ impl<F: Send + Sync + 'static> Axis for SoloDeserialized<F> {
 
 // A set is a typed input: it decodes with the codec of the mount into an owned value, so it
 // rides the decoded kind and mounts in the forms a decoded input does.
-impl<S: Send + Sync + 'static> Axis for SoloSet<S> {
+impl<S: MaybeSendSync + 'static> Axis for SoloSet<S> {
     type Family = OneByOne;
     type Kind = Decoded<S>;
     type EagerForm = Subscribing;
     type SlotForm = Out;
 }
 
-impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for SoloPair<H, P> {
+impl<H: MaybeSendSync + 'static, P: MaybeSendSync + 'static> Axis for SoloPair<H, P> {
     type Family = OneByOne;
     type Kind = DecodedPair<H, P>;
     type EagerForm = Subscribing;
     type SlotForm = Out;
 }
 
-impl<T: Clone + Send + Sync + 'static> Axis for SoloCarried<T> {
+impl<T: Clone + MaybeSendSync + 'static> Axis for SoloCarried<T> {
     type Family = OneByOne;
     type Kind = Carried<T>;
     type EagerForm = Subscribing;
     type SlotForm = Out;
 }
 
-impl<T: Send + Sync + 'static> Axis for Batch<T> {
+impl<T: MaybeSendSync + 'static> Axis for Batch<T> {
     type Family = Batched;
     type Kind = Decoded<T>;
     type EagerForm = forms::Batch;
     type SlotForm = BatchOut;
 }
 
-impl<F: Send + Sync + 'static> Axis for BatchDeserialized<F> {
+impl<F: MaybeSendSync + 'static> Axis for BatchDeserialized<F> {
     type Family = Batched;
     type Kind = Provided<F>;
     type EagerForm = RawBatch;
     type SlotForm = BatchOut;
 }
 
-impl<S: Send + Sync + 'static> Axis for BatchSet<S> {
+impl<S: MaybeSendSync + 'static> Axis for BatchSet<S> {
     type Family = Batched;
     type Kind = Decoded<S>;
     type EagerForm = forms::Batch;
     type SlotForm = BatchOut;
 }
 
-impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for BatchPair<H, P> {
+impl<H: MaybeSendSync + 'static, P: MaybeSendSync + 'static> Axis for BatchPair<H, P> {
     type Family = Batched;
     type Kind = DecodedPair<H, P>;
     type EagerForm = forms::Batch;
     type SlotForm = BatchOut;
 }
 
-impl<T: Clone + Send + Sync + 'static> Axis for BatchCarried<T> {
+impl<T: Clone + MaybeSendSync + 'static> Axis for BatchCarried<T> {
     type Family = Batched;
     type Kind = Carried<T>;
     type EagerForm = CarriedBatch;
     type SlotForm = BatchOut;
 }
 
-impl<T: Send + Sync + 'static, Doc: DocState<T>> AxisDocs<Solo<T>> for Doc {
+impl<T: MaybeSendSync + 'static, Doc: DocState<T>> AxisDocs<Solo<T>> for Doc {
     fn payload_schema() -> Option<String> {
         Doc::schema()
     }
@@ -535,7 +552,7 @@ impl<T: Send + Sync + 'static, Doc: DocState<T>> AxisDocs<Solo<T>> for Doc {
 
 // A message set has no payload schema of its own: each of its models carries one, and the
 // document lists them one by one. No documentation state demands anything of the set.
-impl<S: Send + Sync + 'static, Doc> AxisDocs<SoloSet<S>> for Doc {
+impl<S: MaybeSendSync + 'static, Doc> AxisDocs<SoloSet<S>> for Doc {
     fn payload_schema() -> Option<String> {
         None
     }
@@ -545,7 +562,7 @@ impl<S: Send + Sync + 'static, Doc> AxisDocs<SoloSet<S>> for Doc {
 // documentation state.
 impl<F, Doc> AxisDocs<SoloDeserialized<F>> for Doc
 where
-    F: Send + Sync + 'static,
+    F: MaybeSendSync + 'static,
 {
     fn payload_schema() -> Option<String> {
         None
@@ -553,7 +570,7 @@ where
 }
 
 // A carried value is the service's own type, so it documents itself exactly like a decoded one.
-impl<T: Clone + Send + Sync + 'static, Doc: DocState<T>> AxisDocs<SoloCarried<T>> for Doc {
+impl<T: Clone + MaybeSendSync + 'static, Doc: DocState<T>> AxisDocs<SoloCarried<T>> for Doc {
     fn payload_schema() -> Option<String> {
         Doc::schema()
     }
@@ -561,8 +578,8 @@ impl<T: Clone + Send + Sync + 'static, Doc: DocState<T>> AxisDocs<SoloCarried<T>
 
 impl<H, P, Doc> AxisDocs<SoloPair<H, P>> for Doc
 where
-    H: Send + Sync + 'static,
-    P: Send + Sync + 'static,
+    H: MaybeSendSync + 'static,
+    P: MaybeSendSync + 'static,
     Doc: DocState<P> + DocState<H>,
 {
     fn payload_schema() -> Option<String> {
@@ -574,13 +591,13 @@ where
     }
 }
 
-impl<T: Send + Sync + 'static, Doc: DocState<T>> AxisDocs<Batch<T>> for Doc {
+impl<T: MaybeSendSync + 'static, Doc: DocState<T>> AxisDocs<Batch<T>> for Doc {
     fn payload_schema() -> Option<String> {
         Doc::schema()
     }
 }
 
-impl<S: Send + Sync + 'static, Doc> AxisDocs<BatchSet<S>> for Doc {
+impl<S: MaybeSendSync + 'static, Doc> AxisDocs<BatchSet<S>> for Doc {
     fn payload_schema() -> Option<String> {
         None
     }
@@ -588,14 +605,14 @@ impl<S: Send + Sync + 'static, Doc> AxisDocs<BatchSet<S>> for Doc {
 
 impl<F, Doc> AxisDocs<BatchDeserialized<F>> for Doc
 where
-    F: Send + Sync + 'static,
+    F: MaybeSendSync + 'static,
 {
     fn payload_schema() -> Option<String> {
         None
     }
 }
 
-impl<T: Clone + Send + Sync + 'static, Doc: DocState<T>> AxisDocs<BatchCarried<T>> for Doc {
+impl<T: Clone + MaybeSendSync + 'static, Doc: DocState<T>> AxisDocs<BatchCarried<T>> for Doc {
     fn payload_schema() -> Option<String> {
         Doc::schema()
     }
@@ -603,8 +620,8 @@ impl<T: Clone + Send + Sync + 'static, Doc: DocState<T>> AxisDocs<BatchCarried<T
 
 impl<H, P, Doc> AxisDocs<BatchPair<H, P>> for Doc
 where
-    H: Send + Sync + 'static,
-    P: Send + Sync + 'static,
+    H: MaybeSendSync + 'static,
+    P: MaybeSendSync + 'static,
     Doc: DocState<P> + DocState<H>,
 {
     fn payload_schema() -> Option<String> {
@@ -622,18 +639,18 @@ where
 #[doc(hidden)]
 pub trait SoloAxis: Axis<Family = OneByOne> {}
 
-impl<T: Send + Sync + 'static> SoloAxis for Solo<T> {}
-impl<F: Send + Sync + 'static> SoloAxis for SoloDeserialized<F> {}
-impl<S: Send + Sync + 'static> SoloAxis for SoloSet<S> {}
-impl<H: Send + Sync + 'static, P: Send + Sync + 'static> SoloAxis for SoloPair<H, P> {}
-impl<T: Clone + Send + Sync + 'static> SoloAxis for SoloCarried<T> {}
+impl<T: MaybeSendSync + 'static> SoloAxis for Solo<T> {}
+impl<F: MaybeSendSync + 'static> SoloAxis for SoloDeserialized<F> {}
+impl<S: MaybeSendSync + 'static> SoloAxis for SoloSet<S> {}
+impl<H: MaybeSendSync + 'static, P: MaybeSendSync + 'static> SoloAxis for SoloPair<H, P> {}
+impl<T: Clone + MaybeSendSync + 'static> SoloAxis for SoloCarried<T> {}
 
 /// A batch axis: the slice spellings. The bound behind `.batch(..)`.
 #[doc(hidden)]
 pub trait BatchedAxis: Axis<Family = Batched> {}
 
-impl<T: Send + Sync + 'static> BatchedAxis for Batch<T> {}
-impl<F: Send + Sync + 'static> BatchedAxis for BatchDeserialized<F> {}
-impl<S: Send + Sync + 'static> BatchedAxis for BatchSet<S> {}
-impl<H: Send + Sync + 'static, P: Send + Sync + 'static> BatchedAxis for BatchPair<H, P> {}
-impl<T: Clone + Send + Sync + 'static> BatchedAxis for BatchCarried<T> {}
+impl<T: MaybeSendSync + 'static> BatchedAxis for Batch<T> {}
+impl<F: MaybeSendSync + 'static> BatchedAxis for BatchDeserialized<F> {}
+impl<S: MaybeSendSync + 'static> BatchedAxis for BatchSet<S> {}
+impl<H: MaybeSendSync + 'static, P: MaybeSendSync + 'static> BatchedAxis for BatchPair<H, P> {}
+impl<T: Clone + MaybeSendSync + 'static> BatchedAxis for BatchCarried<T> {}

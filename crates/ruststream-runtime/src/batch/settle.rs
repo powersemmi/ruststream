@@ -4,6 +4,7 @@
 use alloc::vec::Vec;
 #[cfg(feature = "testing")]
 use bytes::Bytes;
+use ruststream_core::MaybeSendSync;
 use tracing::error;
 
 use super::{BatchResult, UniformFan, uniform_batch};
@@ -20,7 +21,7 @@ use crate::testing::coordinator::Delivered;
 use crate::testing::coordinator::PendingRecord;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::RecordedValue;
-use crate::{BuildBatchContext, LocalSettle};
+use crate::{BuildBatchContext, Settle};
 
 /// Settles one element by its own outcome, as a single delivery is settled: an `.error` registered
 /// on the outcome rides the settlement (with the `.and_after` beside it, which then follows the
@@ -59,15 +60,15 @@ macro_rules! settle_element {
 // `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
 #[allow(clippy::future_not_send)]
 pub(super) async fn settle_split_batch<M, C, Host>(
-    batch: Vec<M>,
+    batch: &mut Vec<M>,
     rejected: Vec<(usize, HandlerResult)>,
     result: BatchResult,
     subscription: &str,
     delivery: &Delivery<C>,
     host: &Host,
 ) where
-    M: LocalSettle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    M: Settle,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if rejected.is_empty() {
@@ -83,10 +84,10 @@ pub(super) async fn settle_split_batch<M, C, Host>(
     // The body saw the accepted elements, so they are the call the harness records. A batch that
     // refused every element never reached the body, and records nothing.
     #[cfg(feature = "testing")]
-    let mut log = (accepted_len > 0).then(|| BatchLog::of_accepted(&batch, &rejected));
+    let mut log = (accepted_len > 0).then(|| BatchLog::of_accepted(batch, &rejected));
     let mut accepted_results = per_element.into_iter();
     let mut rejected = rejected.into_iter().peekable();
-    for (index, msg) in batch.into_iter().enumerate() {
+    for (index, msg) in batch.drain(..).enumerate() {
         if rejected.peek().is_some_and(|(at, _)| *at == index) {
             let (_, outcome) = rejected.next().expect("peeked");
             settle_outcome(
@@ -128,8 +129,8 @@ async fn settle_erroring<M, C, Host>(
     delivery: &Delivery<C>,
     host: &Host,
 ) where
-    M: LocalSettle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    M: Settle,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     let reaction = Some(Reaction::new(error, after));
@@ -150,14 +151,14 @@ async fn settle_erroring<M, C, Host>(
 // `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
 #[allow(clippy::future_not_send)]
 pub(crate) async fn settle_batch<M, C, Host>(
-    accepted: Vec<M>,
+    accepted: &mut Vec<M>,
     result: BatchResult,
     subscription: &str,
     delivery: &Delivery<C>,
     host: &Host,
 ) where
-    M: LocalSettle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    M: Settle,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     settle_lent_batch(
@@ -220,21 +221,21 @@ pub(crate) const fn lent_nothing() -> LentValues {
 // `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
 #[allow(clippy::future_not_send)]
 pub(crate) async fn settle_lent_batch<M, C, Host>(
-    accepted: Vec<M>,
+    accepted: &mut Vec<M>,
     result: BatchResult,
     subscription: &str,
     delivery: &Delivery<C>,
     host: &Host,
     lent: LentValues,
 ) where
-    M: LocalSettle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    M: Settle,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     // Every batch form funnels its batch through here, which is the one place that knows both
     // the deliveries and the settlements they got; the harness reads the batch off it.
     #[cfg(feature = "testing")]
-    let mut batch = BatchLog::of(&accepted, lent);
+    let mut batch = BatchLog::of(accepted.iter(), lent);
     #[cfg(not(feature = "testing"))]
     let LentValues = lent;
     match result {
@@ -252,14 +253,14 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
                 }
                 let mut fan = UniformFan::new(own, accepted.len());
                 let last = accepted.len().saturating_sub(1);
-                for (index, msg) in accepted.into_iter().enumerate() {
+                for (index, msg) in accepted.drain(..).enumerate() {
                     #[cfg(feature = "testing")]
                     batch.settled(status);
                     let own = fan.element(index == last);
                     settle_element!(msg, own, subscription, delivery, host);
                 }
             } else {
-                for msg in accepted {
+                for msg in accepted.drain(..) {
                     #[cfg(feature = "testing")]
                     batch.settled(status);
                     settle_outcome(
@@ -282,7 +283,7 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
         }
         BatchResult::PerElement(results) => {
             let mut results = checked_outcomes(results, accepted.len(), subscription).into_iter();
-            for msg in accepted {
+            for msg in accepted.drain(..) {
                 // An unmatched message gets retried: an extra redelivery beats losing it.
                 let result = results.next().unwrap_or_else(HandlerOutcome::retry);
                 #[cfg(feature = "testing")]
@@ -310,10 +311,7 @@ struct BatchLog {
 
 #[cfg(feature = "testing")]
 impl BatchLog {
-    fn of<'m, M: LocalSettle + 'm>(
-        accepted: impl IntoIterator<Item = &'m M>,
-        lent: LentValues,
-    ) -> Self {
+    fn of<'m, M: Settle + 'm>(accepted: impl IntoIterator<Item = &'m M>, lent: LentValues) -> Self {
         let mut lent = lent.into_iter();
         Self {
             deliveries: accepted
@@ -330,7 +328,7 @@ impl BatchLog {
     }
 
     /// The log of a split batch: the deliveries the body saw, which are the ones not `rejected`.
-    fn of_accepted<M: LocalSettle>(batch: &[M], rejected: &[(usize, HandlerResult)]) -> Self {
+    fn of_accepted<M: Settle>(batch: &[M], rejected: &[(usize, HandlerResult)]) -> Self {
         Self::of(
             batch
                 .iter()

@@ -172,16 +172,16 @@ pub use bytes::Bytes;
 pub use bytes_utils::Str;
 
 pub use ruststream_core::HeaderMap;
-pub use ruststream_core::Subscriber;
+pub use ruststream_core::SendBroker;
 pub use ruststream_core::{AckError, DeclareRetryError};
 pub use ruststream_core::{
     AddressedCopies, BrokerMoves, CopyPath, FromName, Name, NamedCopies, RedeliveryAddress,
     RedeliveryAddressed, RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
 };
 pub use ruststream_core::{
-    ApiKeyLocation, BatchSubscriber, Carries, CarriesBatch, DescribeServer, HttpApiKeyLocation,
-    OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker,
-    ServerSpec, Subscribe, Transaction, TransactionalPublisher,
+    ApiKeyLocation, BatchSlot, BatchStream, BatchSubscriber, Carries, CarriesBatch, DescribeServer,
+    HttpApiKeyLocation, OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme,
+    Seekable, Seeker, ServerSpec, Subscribe, Transaction, TransactionalPublisher,
 };
 pub use ruststream_core::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
 pub use ruststream_core::{Broker, Connected, ConnectedBroker};
@@ -191,18 +191,12 @@ pub use ruststream_core::{
     NameTemplate, NoHeaders, OutgoingDestination, WithHeaders,
 };
 pub use ruststream_core::{
-    DefaultPublish, Lend, OutgoingFor, PairError, PayloadForm, PublishPolicy, Publisher, Take,
+    DefaultPublish, Lend, OutgoingFor, PairError, PayloadForm, PublishMessageError, PublishOutcome,
+    PublishPolicy, Publisher, Take,
 };
 pub use ruststream_core::{DeserializeHeadersError, SerializeHeadersError};
 pub use ruststream_core::{IncomingMessage, OutgoingMessage, RawMessage, Settle};
-pub use ruststream_core::{SendBroker, SendSource, SendSubscribe};
-// The `Local*` twins of the per-message traits, for brokers whose types are not `Send`. The prelude
-// carries the Send family alone: a crate importing both would find every method call on a broker's
-// type ambiguous.
-pub use ruststream_core::{
-    LocalBatchSubscriber, LocalOwnedTransactions, LocalPublisher, LocalRequestReply, LocalSeekable,
-    LocalSeeker, LocalSettle, LocalSubscriber, LocalTransaction, LocalTransactionalPublisher,
-};
+pub use ruststream_core::{ReadyHint, Subscriber};
 
 pub use ruststream_core::nonzero;
 #[cfg(feature = "tokio")]
@@ -358,7 +352,8 @@ pub mod __private {
     /// The decode errors `#[derive(InMessages)]` returns when a set picks no variant.
     pub mod in_messages {
         pub use crate::runtime::{
-            every_variant_failed, header_missing, header_unknown, no_variant_chosen,
+            every_variant_failed, frame_names_no_variant, header_missing, header_unknown,
+            no_variant_chosen,
         };
     }
 

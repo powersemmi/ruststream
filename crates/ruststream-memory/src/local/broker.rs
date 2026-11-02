@@ -1,6 +1,6 @@
 //! The local broker, its connected and closed forms, and its publisher.
 
-use alloc::rc::Rc;
+use super::share::{Share, Shared, Sharing};
 use core::fmt;
 use core::future::ready;
 
@@ -10,10 +10,11 @@ use bytes::Bytes;
 use ruststream_core::RawMessage;
 use ruststream_core::{
     AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
-    LocalPublisher, OutgoingMessage, PairError, PublishPolicy, ServerSpec, Subscribe, Take,
+    OutgoingMessage, PairError, PublishOutcome, PublishPolicy, Publisher, ServerSpec, Subscribe,
+    Take,
 };
 #[cfg(feature = "testing")]
-use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, LocalTestableBroker};
+use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, TestableBroker};
 use thiserror::Error;
 
 use super::LocalMemorySubscriber;
@@ -51,7 +52,8 @@ use super::bus::Bus;
 ///     let sensor = LocalMemoryPublish.pair(&connected).await.expect("the bus pairs");
 ///     sensor
 ///         .publish(OutgoingMessage::produced("sensors/temp", BytesMut::from(&[21u8][..])), None)
-///         .await?;
+///         .await
+///         .map_err(PublishMessageError::into_error)?;
 ///
 ///     let mut deliveries = core::pin::pin!(readings.stream());
 ///     let Some(Ok(reading)) = deliveries.next().await else {
@@ -67,17 +69,11 @@ use super::bus::Bus;
 /// assert_eq!(celsius, Ok(vec![21]));
 /// ```
 ///
-/// The bus belongs to the task that holds it: it is not `Send`, so it does not move to another
-/// thread.
-///
-/// ```compile_fail,E0277
-/// use ruststream_memory::local::LocalMemoryBroker;
-///
-/// let broker = LocalMemoryBroker::<8>::new();
-/// std::thread::spawn(move || drop(broker));
-/// ```
+/// Without the tokio runner the bus belongs to the task that holds it: it is shared by `Rc`, so
+/// it is not `Send`. Next to the tokio runner it is shared by `Arc` and its state sits behind a
+/// critical section, so it moves between threads.
 pub struct LocalMemoryBroker<const CAP: usize> {
-    bus: Rc<Bus<CAP>>,
+    bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> LocalMemoryBroker<CAP> {
@@ -120,7 +116,7 @@ impl<const CAP: usize> LocalMemoryBroker<CAP> {
             );
         }
         Self {
-            bus: Rc::new(Bus::new()),
+            bus: Sharing::new(Bus::new()),
         }
     }
 }
@@ -134,7 +130,7 @@ impl<const CAP: usize> Default for LocalMemoryBroker<CAP> {
 impl<const CAP: usize> Clone for LocalMemoryBroker<CAP> {
     fn clone(&self) -> Self {
         Self {
-            bus: Rc::clone(&self.bus),
+            bus: Clone::clone(&self.bus),
         }
     }
 }
@@ -179,7 +175,8 @@ impl<const CAP: usize> DescribeServer for LocalMemoryBroker<CAP> {
 ///     connected
 ///         .publisher()
 ///         .publish(OutgoingMessage::produced("actuator/cmd", BytesMut::from("open")), None)
-///         .await?;
+///         .await
+///         .map_err(PublishMessageError::into_error)?;
 ///     let mut deliveries = core::pin::pin!(commands.stream());
 ///     let Some(Ok(command)) = deliveries.next().await else {
 ///         unreachable!("the bus is open and its stream yields no error");
@@ -197,7 +194,7 @@ impl<const CAP: usize> DescribeServer for LocalMemoryBroker<CAP> {
 /// # Ok::<(), LocalMemoryError>(())
 /// ```
 pub struct ConnectedLocalMemoryBroker<const CAP: usize> {
-    pub(super) bus: Rc<Bus<CAP>>,
+    pub(super) bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
@@ -217,7 +214,7 @@ impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
     ///     celsius: u8,
     /// ) -> Result<(), LocalMemoryError> {
     ///     let reading = OutgoingMessage::produced("sensors/temp", BytesMut::from(&[celsius][..]));
-    ///     connected.publisher().publish(reading, None).await
+    ///     connected.publisher().publish(reading, None).await.map_err(PublishMessageError::into_error)
     /// }
     ///
     /// let published = embassy_futures::block_on(async {
@@ -229,7 +226,7 @@ impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
     #[must_use]
     pub fn publisher(&self) -> LocalMemoryPublisher<CAP> {
         LocalMemoryPublisher {
-            bus: Rc::clone(&self.bus),
+            bus: Clone::clone(&self.bus),
         }
     }
 
@@ -238,7 +235,7 @@ impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
         let subscription = self.bus.subscribe(name)?;
         Ok(LocalMemorySubscriber::new(
             subscription,
-            Rc::clone(&self.bus),
+            Clone::clone(&self.bus),
         ))
     }
 }
@@ -246,7 +243,7 @@ impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
 impl<const CAP: usize> Clone for ConnectedLocalMemoryBroker<CAP> {
     fn clone(&self) -> Self {
         Self {
-            bus: Rc::clone(&self.bus),
+            bus: Clone::clone(&self.bus),
         }
     }
 }
@@ -343,6 +340,7 @@ impl ClosedLocalMemoryBroker {
 ///     publisher
 ///         .publish(OutgoingMessage::produced("sensors/temp", BytesMut::from("21")), None)
 ///         .await
+///         .map_err(PublishMessageError::into_error)
 /// }
 ///
 /// assert_eq!(embassy_futures::block_on(sensor(LocalMemoryPublish)), Ok(()));
@@ -381,7 +379,7 @@ impl<const CAP: usize> DefaultPublish for ConnectedLocalMemoryBroker<CAP> {
 /// /// A full subscription refuses the publish, and the sensor keeps the reading for later.
 /// async fn report(publisher: &LocalMemoryPublisher<1>, celsius: u8) -> bool {
 ///     let reading = OutgoingMessage::produced("sensors/temp", BytesMut::from(&[celsius][..]));
-///     match publisher.publish(reading, None).await {
+///     match publisher.publish(reading, None).await.map_err(PublishMessageError::into_error) {
 ///         Ok(()) => true,
 ///         Err(LocalMemoryError::Full { .. }) => false,
 ///         Err(other) => panic!("the bus is open: {other}"),
@@ -397,13 +395,13 @@ impl<const CAP: usize> DefaultPublish for ConnectedLocalMemoryBroker<CAP> {
 /// assert_eq!(taken, [true, false]);
 /// ```
 pub struct LocalMemoryPublisher<const CAP: usize> {
-    bus: Rc<Bus<CAP>>,
+    bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> Clone for LocalMemoryPublisher<CAP> {
     fn clone(&self) -> Self {
         Self {
-            bus: Rc::clone(&self.bus),
+            bus: Clone::clone(&self.bus),
         }
     }
 }
@@ -416,7 +414,7 @@ impl<const CAP: usize> fmt::Debug for LocalMemoryPublisher<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalPublisher for LocalMemoryPublisher<CAP> {
+impl<const CAP: usize> Publisher for LocalMemoryPublisher<CAP> {
     // The bus keeps every message until its subscriptions have read it, so the publish takes the
     // buffer rather than borrowing it.
     type Payload = Take;
@@ -424,13 +422,17 @@ impl<const CAP: usize> LocalPublisher for LocalMemoryPublisher<CAP> {
     // The bus has no protocol field a message can differ in.
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Take>> {
         let (name, payload, headers) = msg.into_parts();
-        ready(self.bus.fanout(name, payload.freeze(), headers))
+        ready(
+            self.bus
+                .fanout(name, payload.freeze(), headers)
+                .map_err(|unsent| (*unsent).returned(name)),
+        )
     }
 }
 
@@ -449,6 +451,7 @@ impl<const CAP: usize> LocalPublisher for LocalMemoryPublisher<CAP> {
 ///     publisher
 ///         .publish(OutgoingMessage::produced("sensors/temp", BytesMut::from("21")), None)
 ///         .await
+///         .map_err(PublishMessageError::into_error)
 /// }
 ///
 /// assert_eq!(embassy_futures::block_on(late_publish()), Err(LocalMemoryError::ShutDown));
@@ -483,7 +486,7 @@ impl<const CAP: usize> InProcess for LocalMemoryBroker<CAP> {
 }
 
 #[cfg(feature = "testing")]
-impl<const CAP: usize> LocalTestableBroker for ConnectedLocalMemoryBroker<CAP> {
+impl<const CAP: usize> TestableBroker for ConnectedLocalMemoryBroker<CAP> {
     fn install_coordinator(&self, coordinator: Coordinator) {
         self.bus.harness().install(coordinator);
     }
@@ -496,7 +499,10 @@ impl<const CAP: usize> LocalTestableBroker for ConnectedLocalMemoryBroker<CAP> {
             .bus
             .fanout(name, Bytes::copy_from_slice(payload), headers)
         {
-            panic!("the harness injected into {name:?} and the bus refused it: {refused}");
+            panic!(
+                "the harness injected into {name:?} and the bus refused it: {}",
+                refused.error
+            );
         }
     }
 
@@ -516,7 +522,7 @@ mod tests {
 
     use embassy_futures::block_on;
     use futures::{FutureExt, StreamExt};
-    use ruststream_core::{LocalSettle, LocalSubscriber, OutgoingFor};
+    use ruststream_core::{OutgoingFor, PublishMessageError, Settle, Subscriber};
 
     use super::*;
     use crate::local::drive::{ended, waiting};
@@ -563,7 +569,7 @@ mod tests {
 
             let refused = publisher.publish(reading("temp", b"22"), None).await;
             assert_eq!(
-                refused,
+                refused.map_err(PublishMessageError::into_error),
                 Err(LocalMemoryError::Full {
                     name: "temp".into(),
                     capacity: 1,
@@ -590,7 +596,10 @@ mod tests {
             let in_hand = waiting(&mut stream).unwrap();
 
             assert!(matches!(
-                publisher.publish(reading("temp", b"22"), None).await,
+                publisher
+                    .publish(reading("temp", b"22"), None)
+                    .await
+                    .map_err(PublishMessageError::into_error),
                 Err(LocalMemoryError::Full { .. })
             ));
             in_hand.nack(true).await.unwrap();
@@ -681,7 +690,10 @@ mod tests {
             assert_eq!(closed.subscriptions_closed(), 0);
 
             assert_eq!(
-                publisher.publish(reading("temp", b"21"), None).await,
+                publisher
+                    .publish(reading("temp", b"21"), None)
+                    .await
+                    .map_err(PublishMessageError::into_error),
                 Err(LocalMemoryError::ShutDown)
             );
             assert_eq!(

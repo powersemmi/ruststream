@@ -4,6 +4,7 @@
 use alloc::string::ToString;
 use alloc::sync::Arc;
 use core::time::Duration;
+use ruststream_core::MaybeSendSync;
 
 use bytes::Bytes;
 use futures::FutureExt;
@@ -16,15 +17,13 @@ use super::{Delivery, RETRY_COUNT_HEADER, Slot};
 use crate::IncomingMessage;
 use crate::handler::{Continuation, HandlerResult};
 use crate::host::{HostDetach, PrepareKept};
-use crate::lifecycle::BoxError;
 use crate::publish::PublishContext;
-#[cfg(feature = "tokio")]
 use crate::publish_failure::publish_done;
-use crate::publish_failure::{FailedMessage, Reaction, publish_lost};
+use crate::publish_failure::{Reaction, Refusal, publish_lost};
 use crate::redelivery::{RetryCopies, RetryRoute};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Coordinator, in_harness_scope};
-use crate::{AckError, HeaderMap, LocalSettle, OutgoingMessage, RetryDeclaration, Str};
+use crate::{AckError, HeaderMap, OutgoingMessage, RetryDeclaration, Settle, Str};
 
 mod keep;
 
@@ -53,8 +52,8 @@ pub(crate) async fn settle_outcome<M, C, Host>(
     host: &Host,
     build_cx: fn(&M) -> C,
 ) where
-    M: LocalSettle,
-    C: Send + Sync + 'static,
+    M: Settle,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     let ack_result = match outcome {
@@ -95,8 +94,8 @@ pub(crate) async fn settle_reacting<M, C, Host>(
     host: &Host,
     build_cx: fn(&M) -> C,
 ) where
-    M: LocalSettle,
-    C: Send + Sync + 'static,
+    M: Settle,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if reaction.is_some() && copy_path(host).is_none() {
@@ -159,13 +158,13 @@ enum Redelivery<'a> {
 /// both. A transport that counts its deliveries answers for all of them, the ones a delay or a
 /// requeue brought round included. The header starts absent and is incremented on every copy
 /// published for the delivery, so the first delivery counts as one either way.
-fn attempt_of<M: LocalSettle>(msg: &M) -> u64 {
+fn attempt_of<M: Settle>(msg: &M) -> u64 {
     msg.redelivery_count()
         .unwrap_or_else(|| current_retry_count(msg.headers()) + 1)
 }
 
 /// Reads the registration's declaration against this delivery.
-fn redelivery_of<'d, M: LocalSettle>(msg: &M, declaration: &'d RetryDeclaration) -> Redelivery<'d> {
+fn redelivery_of<'d, M: Settle>(msg: &M, declaration: &'d RetryDeclaration) -> Redelivery<'d> {
     match (declaration.max_attempts(), declaration.dead_letter()) {
         (Some(cap), destination) if attempt_of(msg) >= u64::from(cap.get()) => {
             destination.map_or(Redelivery::Reject, |destination| Redelivery::DeadLetter {
@@ -210,8 +209,8 @@ async fn settle_retry<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
-    C: Send + Sync + 'static,
+    M: Settle,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if delivery.declaration.declares_nothing() {
@@ -314,8 +313,8 @@ async fn send_copy<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
-    C: Send + Sync + 'static,
+    M: Settle,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     match path {
@@ -403,8 +402,8 @@ async fn settle_nack_after<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
-    C: Send + Sync + 'static,
+    M: Settle,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if slot.get().supports_nack_after() {
@@ -497,7 +496,7 @@ where
 /// # Errors
 ///
 /// Returns the [`AckError`] from the requeue.
-async fn requeue_now<M: LocalSettle, Host: HostDetach>(
+async fn requeue_now<M: Settle, Host: HostDetach>(
     slot: &mut Slot<M>,
     name: &str,
     declaration: &RetryDeclaration,
@@ -551,8 +550,8 @@ async fn dead_letter<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
-    C: Send + Sync + 'static,
+    M: Settle,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if at_cap {
@@ -577,7 +576,7 @@ where
 /// # Errors
 ///
 /// Returns the [`AckError`] from the rejection.
-async fn reject_spent<M: LocalSettle>(slot: &mut Slot<M>, name: &str) -> Result<(), AckError> {
+async fn reject_spent<M: Settle>(slot: &mut Slot<M>, name: &str) -> Result<(), AckError> {
     warn_at_cap(name, attempt_of(slot.get()), None);
     slot.take().nack(false).await
 }
@@ -644,8 +643,8 @@ async fn publish_copy<M, C, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
-    C: Send + Sync + 'static,
+    M: Settle,
+    C: MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     let route = Arc::clone(retry);
@@ -699,12 +698,6 @@ where
     }
     // The original is gone, so the runtime publishes the copy: what its result is handed to
     // travels with the copy from here.
-    #[cfg(feature = "tokio")]
-    let reaction = reaction.take().map(|mut reaction| {
-        reaction.hold_headers(headers.clone());
-        reaction
-    });
-    #[cfg(not(feature = "tokio"))]
     let reaction = reaction.take();
 
     // The copy's future is built when it is due, not when it is scheduled: the task that waits
@@ -716,32 +709,20 @@ where
     // handed on to it: the copy is one of the delivery's publishes.
     #[cfg(feature = "testing")]
     let scope = harness_scope(delivery);
-    // The registration's retry publisher exists only on a runner that spawns onto a thread pool,
-    // whose build has the `tokio` feature and so a `Send` continuation.
-    #[cfg(not(feature = "tokio"))]
-    drop(reaction);
     let republish = move |run_here: bool| {
         let republish = async move {
             let cx = PublishContext::new(&subscription, &delivered, &context);
             let copy =
                 OutgoingMessage::new(target.as_ref(), payload.as_ref()).with_headers(headers);
             let sent = route.publisher.publish_copy(copy, &cx).await;
-            #[cfg(feature = "tokio")]
             let done = copy_sent(sent, reaction, &subscription, &target, route.input, payload);
-            #[cfg(not(feature = "tokio"))]
-            let done = copy_sent(sent, &subscription, &target, route.input, payload);
             // A delayed copy runs the continuation in its own task; an immediate one hands it back.
-            // Without the `tokio` feature no continuation is made here, and a `!Send` one could
-            // not be awaited in a task that must be `Send`.
-            #[cfg(feature = "tokio")]
             if run_here {
                 if let Some(reaction) = done {
                     reaction.await;
                 }
                 return None;
             }
-            #[cfg(not(feature = "tokio"))]
-            let _ = run_here;
             done
         };
         #[cfg(feature = "testing")]
@@ -764,7 +745,7 @@ where
     // Under the harness the copy is scheduled through the coordinator, the way a broker schedules
     // its native delayed redelivery: `TestApp::advance` then fires it and counts it before it
     // drives the reaction, so a test sees the copy rather than a race.
-    #[cfg(feature = "testing")]
+    #[cfg(all(feature = "testing", feature = "tokio"))]
     if let Some(coordinator) = delivery.hooks.coordinator() {
         coordinator.schedule_redelivery_future(delay, republish(true).map(drop));
         return Ok(());
@@ -777,9 +758,8 @@ where
 
 /// What a copy's publish makes of its result: the `.then` that follows a success, and for a
 /// failure the `.error` continuation, or a log line and the loss of the message without one.
-#[cfg(feature = "tokio")]
 fn copy_sent(
-    sent: Result<(), BoxError>,
+    sent: Result<(), Refusal>,
     reaction: Option<Reaction>,
     subscription: &str,
     target: &str,
@@ -788,30 +768,13 @@ fn copy_sent(
 ) -> Option<Continuation> {
     match sent {
         Ok(()) => publish_done(reaction),
-        Err(err) => {
-            let mut reaction = reaction;
-            let held = reaction.as_mut().map(Reaction::take_headers);
-            publish_lost(reaction, subscription, target, input, err, || {
-                FailedMessage::new(target, payload, held.unwrap_or_default())
-            })
+        Err(refusal) => {
+            // The copy's bytes are the ones this path holds, so a lending publisher's view of them
+            // is answered with them, moved; the headers come back with the message.
+            let (err, failed) = refusal.into_message(target, |_, _| payload);
+            publish_lost(reaction, subscription, target, input, err, || failed)
         }
     }
-}
-
-/// The failure of a copy's publish is logged and the message is lost: without the `tokio`
-/// feature no `.error` continuation is made here.
-#[cfg(not(feature = "tokio"))]
-fn copy_sent(
-    sent: Result<(), BoxError>,
-    subscription: &str,
-    target: &str,
-    input: &str,
-    payload: Bytes,
-) -> Option<Continuation> {
-    let err = sent.err()?;
-    publish_lost(None, subscription, target, input, err, || {
-        FailedMessage::new(target, payload, HeaderMap::new())
-    })
 }
 
 #[cfg(test)]
@@ -821,6 +784,7 @@ mod tests {
     use alloc::borrow::ToOwned;
     use core::future::ready;
     use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+    use ruststream_core::PublishOutcome;
     use std::io;
 
     use futures::{StreamExt, poll};
@@ -830,8 +794,8 @@ mod tests {
     use tokio_util::task::TaskTracker;
 
     use super::super::fixtures::{PlainMessage, RejectingPublisher, Settlement};
-    // Named one by one rather than globbed: the module bounds the local twins of the contract,
-    // and these tests drive the deliveries through the `Send` traits a broker implements.
+    // Named one by one rather than globbed: the module is written over the contract traits,
+    // and these tests drive the deliveries through the traits a broker implements.
     use super::{
         AckError, Arc, Bytes, Delivery, Duration, HandlerResult, HeaderMap, OutgoingMessage,
         RETRY_COUNT_HEADER, RetryDeclaration, Slot, settle_nack_after, settle_outcome,
@@ -857,11 +821,11 @@ mod tests {
         type Error = io::Error;
         type Options = ();
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            msg: OutgoingMessage<'_, &[u8]>,
+            msg: OutgoingMessage<'msg, &'msg [u8]>,
             _options: Option<&Self::Options>,
-        ) -> impl Future<Output = Result<(), Self::Error>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
             let _ = self.0.send(msg.into_payload().as_ptr() as usize);
             ready(Ok(()))
         }

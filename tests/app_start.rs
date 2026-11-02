@@ -221,7 +221,13 @@ async fn failed_after_startup_drains_continuations_then_unwinds_the_brokers() {
                 .publish()
                 .await
                 .expect_err("the unwound broker must reject the publish");
-            assert!(matches!(err, PublishError::Publish(MemoryError::ShutDown)));
+            assert!(matches!(
+                err,
+                PublishError::Publish {
+                    source: MemoryError::ShutDown,
+                    ..
+                }
+            ));
         })
         .await;
 }
@@ -278,7 +284,13 @@ async fn failed_connect_unwinds_already_connected_brokers() {
         .publish()
         .await
         .expect_err("the unwound broker must reject the publish");
-    assert!(matches!(err, PublishError::Publish(MemoryError::ShutDown)));
+    assert!(matches!(
+        err,
+        PublishError::Publish {
+            source: MemoryError::ShutDown,
+            ..
+        }
+    ));
 }
 
 /// The state producer runs before any broker connects, so a failing one is the error `start`

@@ -58,7 +58,7 @@ use super::harness::{InProcessBroker, on_foreign_runtime};
 use super::helpers::unique_subject;
 use ruststream_core::{
     AckError, Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher, SendBroker,
-    SendSource, Settle, Subscriber, SubscriptionSource,
+    Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::testing::InProcess;
 
@@ -211,7 +211,7 @@ pub async fn suite<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Clone + Send,
+    Src: SubscriptionSource<Connected<B>> + Clone + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,
@@ -271,7 +271,7 @@ pub async fn matches_in_process<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: InProcess + SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Clone + Send,
+    Src: SubscriptionSource<Connected<B>> + Clone + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,
@@ -335,7 +335,7 @@ impl<B, MkBroker, Src, MkSrc, Pub, MkPub> Probes<'_, MkBroker, MkSrc, MkPub>
 where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Clone + Send,
+    Src: SubscriptionSource<Connected<B>> + Clone + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,

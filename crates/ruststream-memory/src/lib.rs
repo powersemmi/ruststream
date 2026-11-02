@@ -61,9 +61,8 @@ use std::{
 };
 
 #[cfg(feature = "std")]
-use bytes::Bytes;
 #[cfg(feature = "std")]
-use ruststream_core::{BytesMut, HeaderMap, OutgoingMessage};
+use ruststream_core::{BytesMut, HeaderMap, OutgoingMessage, PublishMessageError};
 #[cfg(feature = "testing")]
 #[cfg(feature = "std")]
 use ruststream_runtime::testing::Coordinator;
@@ -72,6 +71,43 @@ use tokio::sync::{Notify, mpsc};
 
 #[cfg(feature = "std")]
 type Sender = mpsc::UnboundedSender<MemoryDelivery>;
+
+/// The message a refused publish did not send, with the error that refused it.
+#[cfg(feature = "std")]
+struct Unsent {
+    error: MemoryError,
+    payload: BytesMut,
+    headers: HeaderMap,
+}
+
+#[cfg(feature = "std")]
+impl Unsent {
+    /// The refusal as a publisher reports it, with the message handed back in the buffer it came
+    /// in.
+    fn returned(
+        self,
+        name: &str,
+    ) -> PublishMessageError<MemoryError, OutgoingMessage<'_, BytesMut>> {
+        self.returned_as(name, |error| error)
+    }
+
+    /// [`returned`](Self::returned) for a publisher that reports the bus's error as its own.
+    fn returned_as<Error>(
+        self,
+        name: &str,
+        map: impl FnOnce(MemoryError) -> Error,
+    ) -> PublishMessageError<Error, OutgoingMessage<'_, BytesMut>> {
+        let Self {
+            error,
+            payload,
+            headers,
+        } = self;
+        PublishMessageError::with_message(
+            map(error),
+            OutgoingMessage::with_payload(name, payload).with_headers(headers),
+        )
+    }
+}
 
 /// A message a transaction holds until it settles.
 ///
@@ -84,7 +120,7 @@ type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 #[cfg(feature = "std")]
 struct MemoryOutbound {
     name: String,
-    payload: Bytes,
+    payload: BytesMut,
     headers: HeaderMap,
 }
 
@@ -92,11 +128,11 @@ struct MemoryOutbound {
 impl From<OutgoingMessage<'_, BytesMut>> for MemoryOutbound {
     fn from(msg: OutgoingMessage<'_, BytesMut>) -> Self {
         // The publish hands over both the buffer it produced and the map it filled, so the bus
-        // keeps them as they stand; the freeze is the one block shared ownership costs.
+        // keeps them as they stand.
         let (name, payload, headers) = msg.into_parts();
         Self {
             name: name.to_owned(),
-            payload: payload.freeze(),
+            payload,
             headers,
         }
     }
@@ -113,7 +149,7 @@ impl From<OutgoingMessage<'_, BytesMut>> for MemoryOutbound {
 #[cfg(feature = "std")]
 struct DeliveryInner {
     name: Arc<str>,
-    payload: Bytes,
+    payload: BytesMut,
     headers: HeaderMap,
 }
 
@@ -272,9 +308,19 @@ impl MemoryState {
     /// that is an error (the `Subscribe` path) or a silent no-registration (the infallible
     /// inherent constructor).
     fn register(&self, name: &str, tx: Sender) -> Result<(), MemoryError> {
+        self.register_shared(Arc::from(name), tx)
+    }
+
+    /// [`register`](Self::register) for a name the caller already holds counted, which becomes the
+    /// registry key without a copy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::ShutDown`] against a shut-down bus.
+    fn register_shared(&self, name: Arc<str>, tx: Sender) -> Result<(), MemoryError> {
         match &mut *self.lock_bus() {
             Bus::Live(registry) => {
-                registry.names.entry(Arc::from(name)).or_default().push(tx);
+                registry.names.entry(name).or_default().push(tx);
                 Ok(())
             }
             Bus::ShutDown(_) => Err(MemoryError::ShutDown),
@@ -382,12 +428,35 @@ impl MemoryState {
     /// nothing is recorded in the published log.
     // significant_drop_tightening misfires here: both guards drop at the end of the minimal
     // block right after their last use.
+    fn fanout(&self, name: &str, payload: BytesMut, headers: HeaderMap) -> Result<(), MemoryError> {
+        self.fanout_unsent(name, payload, headers)
+            .map_err(|unsent| unsent.error)
+    }
+
+    /// [`fanout`](Self::fanout) for a publish that hands a refusal's message back: the refusal
+    /// carries the payload and the headers, boxed so a publish that works returns a pointer-sized
+    /// `Result` and pays nothing for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::ShutDown`] against a shut-down bus, with the message unsent.
+    // significant_drop_tightening misfires here: both guards drop at the end of the minimal
+    // block right after their last use.
     #[allow(clippy::significant_drop_tightening)]
-    fn fanout(&self, name: &str, payload: Bytes, headers: HeaderMap) -> Result<(), MemoryError> {
+    fn fanout_unsent(
+        &self,
+        name: &str,
+        payload: BytesMut,
+        headers: HeaderMap,
+    ) -> Result<(), Box<Unsent>> {
         {
             let bus = self.lock_bus();
             let Bus::Live(registry) = &*bus else {
-                return Err(MemoryError::ShutDown);
+                return Err(Box::new(Unsent {
+                    error: MemoryError::ShutDown,
+                    payload,
+                    headers,
+                }));
             };
             // A discarding broker takes neither the log lock nor a position: nothing can ask
             // for a replay, so the publish is the fanout alone.
@@ -464,7 +533,7 @@ impl MemoryState {
         registry: &Registry,
         log: Option<&mut LogState>,
         name: &str,
-        payload: Bytes,
+        payload: BytesMut,
         headers: HeaderMap,
     ) {
         let registered = registry.names.get_key_value(name);

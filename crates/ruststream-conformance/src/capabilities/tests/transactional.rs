@@ -15,9 +15,10 @@ use crate::capabilities::{owned_transactions, transactions};
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher, MemorySource,
 };
+use ruststream_core::PublishOutcome;
 use ruststream_core::{
-    BytesMut, HeaderMap, OutgoingMessage, OwnedTransactions, Publisher, Take, Transaction,
-    TransactionalPublisher,
+    BytesMut, HeaderMap, OutgoingMessage, OwnedTransactions, PublishMessageError, Publisher, Take,
+    Transaction, TransactionalPublisher,
 };
 
 /// A transaction fault of [`FaultyTxPublisher`] and [`FaultyTransaction`].
@@ -70,7 +71,8 @@ async fn publish_buffer(
                 OutgoingMessage::with_payload(&name, payload).with_headers(headers),
                 None,
             )
-            .await?;
+            .await
+            .map_err(PublishMessageError::into_error)?;
     }
     Ok(())
 }
@@ -98,13 +100,17 @@ async fn flush(
 }
 
 /// A direct publish the way `fault` says.
-async fn publish_directly(
+async fn publish_directly<'msg>(
     publisher: &MemoryPublisher,
-    msg: OutgoingMessage<'_, BytesMut>,
+    msg: OutgoingMessage<'msg, BytesMut>,
     fault: TxFault,
-) -> Result<(), MemoryError> {
+) -> PublishOutcome<'msg, MemoryError, Take> {
     match (publisher.publish(msg, None).await, fault) {
-        (Err(MemoryError::ShutDown), TxFault::PublishSucceedsAfterShutdown) => Ok(()),
+        (Err(failed), TxFault::PublishSucceedsAfterShutdown)
+            if matches!(failed.error(), MemoryError::ShutDown) =>
+        {
+            Ok(())
+        }
         (outcome, _) => outcome,
     }
 }
@@ -137,11 +143,11 @@ impl Publisher for FaultyTxPublisher {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&()>,
-    ) -> Result<(), MemoryError> {
+    ) -> PublishOutcome<'msg, MemoryError, Take> {
         let msg = {
             let mut open = self.open();
             match open.as_mut() {
@@ -207,13 +213,13 @@ impl Publisher for FaultyOwnedPublisher {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&()>,
-    ) -> Result<(), MemoryError> {
+    ) -> PublishOutcome<'msg, MemoryError, Take> {
         let outcome = publish_directly(&self.inner, msg, self.fault).await;
-        if matches!(outcome, Err(MemoryError::ShutDown)) {
+        if matches!(&outcome, Err(failed) if matches!(failed.error(), MemoryError::ShutDown)) {
             self.seen_shutdown.store(true, Ordering::SeqCst);
         }
         outcome
@@ -249,11 +255,11 @@ impl Transaction for FaultyTransaction {
     type Error = MemoryError;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &mut self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), MemoryError>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, MemoryError, Take>> {
         self.buffer.push(Buffered::from(msg));
         ready(Ok(()))
     }

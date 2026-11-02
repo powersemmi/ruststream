@@ -57,8 +57,8 @@ use tokio::time::{Instant as TokioInstant, timeout, timeout_at};
 use super::harness::{expect_next, on_foreign_runtime, unknown_backlog};
 use super::helpers::unique_subject;
 use ruststream_core::{
-    AckError, Broker, Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher,
-    SendBroker, SendSource, Settle, Subscriber,
+    AckError, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage,
+    Publisher, SendBroker, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::testing::Backlog;
 
@@ -87,6 +87,7 @@ const FIRST: &[u8] = b"lifecycle";
 const FROM_BROKER_RUNTIME: &[u8] = b"lifecycle.again.broker-runtime";
 const FROM_NEW_RUNTIME: &[u8] = b"lifecycle.again.new-runtime";
 const HELD: &[u8] = b"lifecycle.held";
+const UNSENT: &[u8] = b"lifecycle.unsent";
 const ACKED: &[u8] = b"flush.acked";
 const HELD_ACK: &[u8] = b"flush.held";
 const FLUSHED: &[u8] = b"flush.published";
@@ -102,7 +103,7 @@ pub(crate) async fn ladder<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B + Send + Sync + 'static,
-    Src: SendSource<Connected<B>> + Clone + Send + 'static,
+    Src: SubscriptionSource<Connected<B>> + Clone + Send + 'static,
     Src::Subscriber: Send + 'static,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,
@@ -406,7 +407,7 @@ async fn held_across_shutdown<S, M, E, B, MkBroker, Src, MkSrc>(
     E: fmt::Debug,
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>>,
+    Src: SubscriptionSource<Connected<B>>,
     MkSrc: Fn(&str) -> Src,
 {
     let answer = within(
@@ -519,7 +520,7 @@ pub async fn shutdown_flushes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>>,
+    Src: SubscriptionSource<Connected<B>>,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
@@ -660,7 +661,7 @@ pub async fn shared_handle_closes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     B: SendBroker,
     Connected<B>: Clone,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>>,
+    Src: SubscriptionSource<Connected<B>>,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
@@ -714,7 +715,7 @@ pub async fn shared_handle_closes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 async fn connect_and_subscribe<B, Src>(broker: B, source: Src) -> (Connected<B>, Src::Subscriber)
 where
     B: SendBroker,
-    Src: SendSource<Connected<B>>,
+    Src: SubscriptionSource<Connected<B>>,
 {
     let connected = connect_within(broker, "shutdown_flushes").await;
     let subject = source.name().to_owned();
@@ -756,6 +757,105 @@ pub(crate) async fn shutdown_within<C: ConnectedBroker>(connected: C, scenario: 
         });
     if let Err(err) = answer {
         panic!("{scenario}: the broker must shut down cleanly, got: {err:?}");
+    }
+}
+
+/// What a broker's client does with the message of a publish it refuses.
+///
+/// The answer is the broker's: a client that hands the buffer back in its error lets the crate
+/// return the unsent message, and one that consumes it cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unsent {
+    /// The refusal carries the message that was not sent, destination, payload and headers as
+    /// they were published.
+    Returned,
+    /// The client consumed the message: the refusal may carry it, and carries nothing wrong when
+    /// it does.
+    Consumed,
+}
+
+/// Checks that a publish the broker refuses hands the unsent message back.
+///
+/// The check connects, shuts the connection down and publishes through a publisher paired
+/// before: that publish is refused, and its failure must name the message that was published.
+/// With [`Unsent::Returned`] the message must be there, equal to what was published; with
+/// [`Unsent::Consumed`] it may be absent, but one that is present is held to the same equality.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn run() {
+/// use ruststream::conformance::lifecycle::{self, Unsent};
+/// use ruststream::memory::MemoryBroker;
+///
+/// lifecycle::refused_publish_returns_message(
+///     MemoryBroker::new,
+///     |connected| connected.publisher(),
+///     Unsent::Returned,
+/// )
+/// .await;
+/// # }
+/// ```
+///
+/// # Panics
+///
+/// Panics with a descriptive message when the publish succeeds or hangs after the shutdown, when
+/// [`Unsent::Returned`] is declared and the failure carries no message, or when the message it
+/// carries differs from the one published.
+pub async fn refused_publish_returns_message<B, MkBroker, Pub, MkPub>(
+    make_broker: MkBroker,
+    make_publisher: MkPub,
+    unsent: Unsent,
+) where
+    B: SendBroker,
+    MkBroker: Fn() -> B,
+    Pub: Publisher,
+    MkPub: Fn(&Connected<B>) -> Pub,
+{
+    const SCENARIO: &str = "refused_publish_returns_message";
+    let subject = unique_subject("conformance.unsent");
+    let connected = connect_within(make_broker(), SCENARIO).await;
+    let publisher = make_publisher(&connected);
+    shutdown_within(connected, SCENARIO).await;
+
+    let mut headers = HeaderMap::new();
+    headers.insert("conformance", "unsent");
+    let outgoing = OutgoingMessage::new(&subject, UNSENT).with_headers(headers.clone());
+    let answer = timeout(STEP_TIMEOUT, publisher.publish(outgoing, None))
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "{SCENARIO}: the publish hung for {STEP_TIMEOUT:?} after the shutdown; a handle \
+                 aliasing the closed connection must error"
+            )
+        });
+    let Err(failed) = answer else {
+        panic!("{SCENARIO}: a publish after the shutdown succeeded; it must be refused");
+    };
+    match failed.into_message() {
+        Some(message) => {
+            assert_eq!(
+                message.name(),
+                subject,
+                "{SCENARIO}: the returned message names another destination than the one published"
+            );
+            assert_eq!(
+                message.payload(),
+                UNSENT,
+                "{SCENARIO}: the returned message carries other bytes than the ones published"
+            );
+            assert_eq!(
+                message.headers(),
+                &headers,
+                "{SCENARIO}: the returned message carries other headers than the ones published"
+            );
+        }
+        None => assert!(
+            unsent == Unsent::Consumed,
+            "{SCENARIO}: the refusal returned no message, and the broker declared its client \
+             gives the message back; hand the unsent message over with \
+             `PublishMessageError::with_message`"
+        ),
     }
 }
 

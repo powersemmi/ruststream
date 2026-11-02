@@ -6,12 +6,13 @@
 //! body returned. The value at index `i` belongs to the `i`-th delivery; a delivery past the end
 //! of the slice carries no value and settles by the decode-failure policy.
 
-#[cfg(feature = "testing")]
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::any::type_name;
 use core::fmt;
 use core::marker::PhantomData;
+use core::mem;
+use core::num::NonZeroUsize;
+use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync};
 
 use tracing::{error, warn};
 
@@ -79,26 +80,31 @@ where
 type Lane<Src, Conn, T> = PhantomData<fn() -> (Src, Conn, T)>;
 
 /// The batch as the carried adapter takes it: whole, because its values are lent from it while
-/// the body runs.
+/// the body runs. A worker keeps one for good: the runtime's slot and this one trade places for
+/// each batch, and the deliveries are drained into the vector beside it only once the body is
+/// done.
 #[doc(hidden)]
-pub struct Lent<Src, Conn, Batch, T> {
+pub struct Lent<Src, Conn, Batch, M, T> {
     batch: Batch,
+    /// The deliveries drained out of the batch while they settle.
+    deliveries: Vec<M>,
     /// The copies of the lent values the harness records, made once while a harness watches.
     recorded: LentValues,
     _lane: Lane<Src, Conn, T>,
 }
 
-impl<Src, Conn, Batch, T> fmt::Debug for Lent<Src, Conn, Batch, T> {
+impl<Src, Conn, Batch, M, T> fmt::Debug for Lent<Src, Conn, Batch, M, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Lent").finish_non_exhaustive()
     }
 }
 
-impl<Src, Conn, Batch, T, C> TakenBatch<C> for Lent<Src, Conn, Batch, T>
+impl<Src, Conn, Batch, M, T, C> TakenBatch<C> for Lent<Src, Conn, Batch, M, T>
 where
     Src: SourceCarriesBatch<T, Conn, Batch = Batch>,
-    Batch: Send,
-    T: Clone + Send + Sync + 'static,
+    Batch: BatchSlot<Message = M>,
+    M: MaybeSend,
+    T: Clone + MaybeSendSync + 'static,
     C: BuildBatchContext<Batch>,
 {
     fn context(&self) -> Option<C> {
@@ -111,16 +117,22 @@ where
     fn unsettled(&mut self) -> Vec<Delivered> {
         self.recorded = Src::lend(&self.batch)
             .iter()
-            .map(|value| -> RecordedValue { Arc::new(value.clone()) })
+            .map(|value| -> RecordedValue { RecordedValue::of(value) })
             .collect();
         self.recorded
             .iter()
             .map(|value| Delivered {
                 raw: bytes::Bytes::new(),
-                value: Some(Arc::clone(value)),
+                value: Some(value.clone()),
                 settle: None,
             })
             .collect()
+    }
+
+    fn discard(&mut self) {
+        self.batch.drain().for_each(drop);
+        self.deliveries.clear();
+        self.recorded = lent_nothing();
     }
 }
 
@@ -165,37 +177,40 @@ impl<Src, Conn, Batch, M, T, Inner, C, S> BatchHandler<Batch, C, S>
     for CarriedBatch<Src, Conn, T, Inner>
 where
     Src: SourceCarriesBatch<T, Conn, Batch = Batch>,
-    Batch: IntoIterator<Item = M> + Send,
+    Batch: BatchSlot<Message = M>,
     M: Settle,
-    T: Clone + Send + Sync + 'static,
+    T: Clone + MaybeSendSync + 'static,
     Inner: SliceHandler<T, C, S>,
-    C: BuildBatchContext<Batch> + BuildBatchContext<M> + Send + Sync + 'static,
-    S: Send + Sync,
+    C: BuildBatchContext<Batch> + BuildBatchContext<M> + MaybeSendSync + 'static,
+    S: MaybeSendSync,
 {
     type Scratch = ();
-    type Taken = Lent<Src, Conn, Batch, T>;
+    type Taken = Lent<Src, Conn, Batch, M, T>;
 
-    fn take(batch: Batch) -> Self::Taken {
+    fn taken(size: NonZeroUsize) -> Self::Taken {
         Lent {
-            batch,
+            batch: Batch::with_capacity(size),
+            deliveries: Vec::with_capacity(size.get()),
             recorded: lent_nothing(),
             _lane: PhantomData,
         }
     }
 
+    // The slot comes back as the batch the last call drained, ready to be filled again.
+    fn load(taken: &mut Self::Taken, slot: &mut Batch) {
+        mem::swap(&mut taken.batch, slot);
+    }
+
     async fn handle_batch<Host: SendHost<C>>(
         &self,
-        taken: Self::Taken,
+        taken: &mut Self::Taken,
         _scratch: &mut (),
         ctx: &mut Context<'_, C, S>,
         host: &Host,
     ) {
         let subscription = ctx.subscription();
         let delivery = ctx.delivery();
-        let Lent {
-            batch, recorded, ..
-        } = taken;
-        let values = Src::lend(&batch);
+        let values = Src::lend(&taken.batch);
         let lent = values.len();
         // A batch that lends nothing never reaches the body, as a batch that decodes to nothing
         // never does on the other lanes.
@@ -206,7 +221,9 @@ where
             record_batch_size(delivery.destination(subscription), lent);
             Some(self.inner.handle_slice(values, ctx).await)
         };
-        let mut deliveries: Vec<M> = batch.into_iter().collect();
+        let recorded = mem::replace(&mut taken.recorded, lent_nothing());
+        taken.deliveries.extend(taken.batch.drain());
+        let deliveries = &mut taken.deliveries;
         if deliveries.len() < lent {
             error!(
                 target: "ruststream::dispatch",

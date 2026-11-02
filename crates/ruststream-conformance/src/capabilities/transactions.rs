@@ -10,7 +10,7 @@ use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
     Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, OwnedTransactions, SendBroker,
-    SendSource, Settle, Subscriber, Transaction, TransactionalPublisher,
+    Settle, Subscriber, SubscriptionSource, Transaction, TransactionalPublisher,
 };
 
 /// Verifies the [`TransactionalPublisher`] contract.
@@ -54,7 +54,7 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: TransactionalPublisher + 'static,
@@ -326,7 +326,7 @@ pub async fn owned_transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: OwnedTransactions + 'static,

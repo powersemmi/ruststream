@@ -27,16 +27,18 @@ use thiserror::Error;
 
 use super::{
     DestinationUse, ForSlot, Names, PublishIdentity, PublishLayer, PublishPipeline, PublishStack,
-    PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads, SlotContext,
+    PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads, SinkOutcome,
+    SinkRefusal, SlotContext,
 };
 #[cfg(feature = "asyncapi")]
 use crate::bindings::Bindings;
 use crate::lifecycle::BoxError;
+use crate::publish_failure::Refusal;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::PipelinePublish;
 use crate::{
-    ConnectedBroker, HeaderMap, LocalPublisher, OutgoingFor, PairError, PayloadForm, PublishPolicy,
-    Publisher,
+    ConnectedBroker, HeaderMap, MaybeSend, MaybeSendSync, OutgoingFor, PairError, PayloadForm,
+    PublishOutcome, PublishPolicy, Publisher,
 };
 
 /// One slot's [`PublishTransform`] stack, paired with the slot it was named on (so the transforms
@@ -107,7 +109,7 @@ impl<Live> SlotStackUse<Live> for PublishTransformIdentity {
 
 // Read off the local family's contract, which every `Publisher` meets through the blanket impl,
 // so a slot of a publisher that is not `Send` takes the same transforms.
-impl<Live: LocalPublisher, Inner, Outer> SlotStackUse<Live> for PublishTransformStack<Inner, Outer>
+impl<Live: Publisher, Inner, Outer> SlotStackUse<Live> for PublishTransformStack<Inner, Outer>
 where
     Self: PublishTransform<ForSlot, Live::Options>,
 {
@@ -153,7 +155,7 @@ impl<Policy> NarrowToUse<Policy> for Names {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SendOnlyPolicy<Policy>(Policy);
 
-impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
+impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + MaybeSend> PublishPolicy<CB>
     for SendOnlyPolicy<Policy>
 {
     type Live = NamedDestinationSend<Policy::Live>;
@@ -200,11 +202,11 @@ impl<P: Publisher> Publisher for NamedDestinationSend<P> {
     type Error = P::Error;
     type Options = P::Options;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         self.0.publish(msg, options).await
     }
 
@@ -236,7 +238,7 @@ impl<P: Publisher> Publisher for NamedDestinationSend<P> {
             writes the wired publisher's own `Publisher::Options`, so a stack written for another \
             broker's options is not this slot's path"
 )]
-pub trait OutPipeline<W>: Send + Sync + Clone {
+pub trait OutPipeline<W>: MaybeSendSync + Clone {
     /// The error a publish through this path reports, over the leaf publisher's own error
     /// `E`: the leaf's error itself when nothing runs, a [`PipelinePublishError`] once the app's
     /// middleware does.
@@ -253,7 +255,7 @@ pub trait OutPipeline<W>: Send + Sync + Clone {
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error<P::Error>>> + Send
+    ) -> impl Future<Output = SinkOutcome<Self::Error<P::Error>>> + MaybeSend
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>;
@@ -273,14 +275,17 @@ impl<W> OutPipeline<W> for PublishIdentity {
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> Result<(), P::Error>
+    ) -> SinkOutcome<P::Error>
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
         #[cfg(feature = "testing")]
         let recorded = PipelinePublish::capture(&msg, options);
-        let sent = leaf.publish(msg, options).await;
+        let sent = leaf
+            .publish(msg, options)
+            .await
+            .map_err(SinkRefusal::returned::<W::Payload>);
         #[cfg(feature = "testing")]
         if sent.is_ok() {
             recorded.sent().await;
@@ -303,7 +308,7 @@ impl<W, Head: PublishLayer + Clone, Tail: PublishPipeline + Clone> OutPipeline<W
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> Result<(), PipelinePublishError>
+    ) -> SinkOutcome<PipelinePublishError>
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
@@ -312,9 +317,11 @@ impl<W, Head: PublishLayer + Clone, Tail: PublishPipeline + Clone> OutPipeline<W
         // here; only a slot that actually has middleware pays for that.
         let (name, payload, headers) = msg.into_parts();
         let mut out = <W::Payload as PayloadForm>::rebuilt(name.into(), payload, headers);
-        self.run(&mut out, leaf, options)
-            .await
-            .map_err(PipelinePublishError)
+        // The middleware rewrites the message in place, so a refusal reports the message as the
+        // stages left it, which is the one that was sent.
+        self.run(&mut out, leaf, options).await.map_err(|error| {
+            Refusal::of(error, &mut out).into_sink(out.name(), PipelinePublishError)
+        })
     }
 }
 
@@ -338,7 +345,7 @@ where
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> Result<(), Self::Error<P::Error>>
+    ) -> SinkOutcome<Self::Error<P::Error>>
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
@@ -354,69 +361,10 @@ where
         // being copied on, and only what the transport needs alive travels with the send.
         let mut kept = <W::Payload as PayloadForm>::Spent::default();
         let sent = <W::Payload as PayloadForm>::handed_on(out, &mut kept);
-        self.pipeline.send(leaf, sent, resolved.as_ref()).await
-    }
-}
-
-/// The publish path of one [`Out`](crate::Out) slot on a local chain, as the entry sends through
-/// it: [`OutPipeline`] for the runner that polls every delivery on one thread, with nothing held
-/// to `Send`. Machinery; a body generic over its entry reads it through
-/// [`LocalOutEntry::Pipe`](crate::LocalOutEntry::Pipe) and never names it.
-///
-/// A local chain composes no app-wide middleware, so the path is the bare leaf call
-/// ([`LocalPipeline`](crate::LocalPipeline)) with the slot's [`SlotTransforms`] above it when its
-/// mount site named any, and a publish through it reports the leaf's own error.
-#[doc(hidden)]
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not the publish path of a local slot over `{W}`",
-    note = "a local slot publishes through its chain's `LocalPipeline`, with the `SlotTransforms` \
-            its `.transform(..)` steps composed above it. A transform there writes the wired \
-            publisher's own `Options`, so a stack written for another broker's options is not \
-            this slot's path"
-)]
-pub trait LocalOutPipeline<W>: Clone {
-    /// Sends one message through the path into `leaf`, the slot's publisher, with the broker's
-    /// per-message settings the call site adjusted.
-    fn send<P>(
-        &self,
-        leaf: &P,
-        msg: OutgoingFor<'_, W::Payload>,
-        options: Option<&P::Options>,
-    ) -> impl Future<Output = Result<(), P::Error>>
-    where
-        W: LocalPublisher,
-        P: LocalPublisher<Options = W::Options, Payload = W::Payload>;
-}
-
-// The local twin of the multi-thread impl above: the same order (the transforms over a copy of the
-// call's options, then the path underneath), and the same cost, paid only by a slot that mounts a
-// transform.
-impl<W, Stack, Pipeline> LocalOutPipeline<W> for SlotTransforms<Stack, Pipeline>
-where
-    W: LocalPublisher,
-    Stack: PublishTransform<ForSlot, W::Options>,
-    Pipeline: LocalOutPipeline<W>,
-{
-    // The leaf's own future, which is `Send` exactly where the leaf's is.
-    #[allow(clippy::future_not_send)]
-    async fn send<P>(
-        &self,
-        leaf: &P,
-        msg: OutgoingFor<'_, W::Payload>,
-        options: Option<&P::Options>,
-    ) -> Result<(), P::Error>
-    where
-        W: LocalPublisher,
-        P: LocalPublisher<Options = W::Options, Payload = W::Payload>,
-    {
-        let (name, payload, headers) = msg.into_parts();
-        let mut out = <W::Payload as PayloadForm>::rebuilt(name.into(), payload, headers);
-        let mut resolved = options.cloned();
-        self.stack
-            .apply(&mut out, &mut resolved, &SlotContext::new(self.slot));
-        let mut kept = <W::Payload as PayloadForm>::Spent::default();
-        let sent = <W::Payload as PayloadForm>::handed_on(out, &mut kept);
-        self.pipeline.send(leaf, sent, resolved.as_ref()).await
+        // What failed is the message the transforms wrote, and a buffer they wrote for this call
+        // moves into the refusal, so the message outlives the call that built it.
+        let refused = self.pipeline.send(leaf, sent, resolved.as_ref()).await;
+        refused.map_err(|refusal| refusal.reclaiming::<W::Payload>(&mut kept))
     }
 }
 

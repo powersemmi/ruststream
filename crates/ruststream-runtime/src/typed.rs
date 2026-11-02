@@ -7,19 +7,19 @@
 //! passed in here. Both use the same [`Layer`](super::Layer) / [`HandlerExt`](super::HandlerExt)
 //! machinery, just at different inputs.
 
-use crate::handler::MaybeSend;
 use alloc::format;
 use core::{fmt, marker::PhantomData};
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
+use crate::Settle;
 use crate::codec::{Codec, CodecError};
-use crate::{LocalSettle, Settle};
 use serde::de::DeserializeOwned;
 use tracing::warn;
 
 use super::batch::rejection;
 use super::context::{Context, MarkingContext};
 use super::failure::FailurePolicy;
-use super::handler::{CallHandler, Handler, HandlerOutcome, LocalCall, LocalHandler, SendCall};
+use super::handler::{Handler, HandlerOutcome};
 use super::input::{Decoded, Materialize, REPORTED};
 
 /// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
@@ -31,7 +31,7 @@ use super::input::{Decoded, Materialize, REPORTED};
 pub fn typed<M, T, C, H>(codec: C, inner: H) -> Typed<M, Decoded<T>, C, H>
 where
     M: Settle,
-    T: DeserializeOwned + Send + Sync + 'static,
+    T: DeserializeOwned + MaybeSendSync + 'static,
     C: Codec,
 {
     Typed::over(codec, inner)
@@ -84,36 +84,12 @@ impl<M, Input, DecodeCodec, Inner, Cx, St> Handler<M, Cx, St>
 where
     M: Settle,
     Input: Materialize<DecodeCodec, M>,
-    DecodeCodec: Send + Sync,
-    Cx: Send,
-    St: Send + Sync,
+    DecodeCodec: MaybeSendSync,
+    Cx: MaybeSend,
+    St: MaybeSendSync,
     Inner: Handler<Input::Target, Cx, St>,
 {
-    fn handle(
-        &self,
-        msg: &M,
-        ctx: &mut Context<'_, Cx, St>,
-    ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
-        self.handle_local::<SendCall, Cx, St>(msg, ctx)
-    }
-}
-
-impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
-    /// Decodes `msg` and runs the inner handler on what it materialized into: the adapter's
-    /// body, for a delivery of either family. The [`Handler`] impl is this future; a runner
-    /// whose deliveries are not `Sync` reaches it through [`LocalTyped`].
-    // `Send` exactly where the delivery is `Sync`: the `Handler` impl's signature proves it there.
-    #[allow(clippy::future_not_send)]
-    pub(crate) async fn handle_local<Via, Cx, St>(
-        &self,
-        msg: &M,
-        ctx: &mut Context<'_, Cx, St>,
-    ) -> HandlerOutcome
-    where
-        M: LocalSettle,
-        Input: Materialize<DecodeCodec, M>,
-        Via: CallHandler<Inner, Input::Target, Cx, St>,
-    {
+    async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> HandlerOutcome {
         if let Some(outcome) = refused::<Input, DecodeCodec, M, Cx, St>(msg, self.decode, ctx) {
             return outcome;
         }
@@ -124,34 +100,10 @@ impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
             Ok(held) => {
                 #[cfg(feature = "testing")]
                 Input::record(&held, ctx);
-                Via::handle(&self.inner, Input::view(&held, msg), ctx).await
+                Inner::handle(&self.inner, Input::view(&held, msg), ctx).await
             }
             Err(err) => unmaterialized::<Input, DecodeCodec, M, Cx, St>(&err, self.decode, ctx),
         }
-    }
-}
-
-/// A [`Typed`] adapter for a runner whose deliveries stay on one thread: the same body, reached
-/// through [`LocalHandler`], so the delivery need not be `Sync`.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct LocalTyped<Adapter>(pub(crate) Adapter);
-
-impl<M, Input, DecodeCodec, Inner, Cx, St> LocalHandler<M, Cx, St>
-    for LocalTyped<Typed<M, Input, DecodeCodec, Inner>>
-where
-    M: LocalSettle,
-    Input: Materialize<DecodeCodec, M>,
-    Inner: LocalHandler<Input::Target, Cx, St>,
-{
-    // The delivery stays on the thread that polls it, which is what this twin is for.
-    #[allow(clippy::future_not_send)]
-    fn handle(
-        &self,
-        msg: &M,
-        ctx: &mut Context<'_, Cx, St>,
-    ) -> impl Future<Output = HandlerOutcome> {
-        self.0.handle_local::<LocalCall, Cx, St>(msg, ctx)
     }
 }
 
@@ -171,7 +123,7 @@ pub(crate) fn refused<Input, Decoder, M, Cx, St>(
 ) -> Option<HandlerOutcome>
 where
     Input: Materialize<Decoder, M>,
-    M: LocalSettle,
+    M: Settle,
 {
     msg.decode_error()
         .map(|err| refuse::<Input, Decoder, M, Cx, St>(err, decode, ctx))

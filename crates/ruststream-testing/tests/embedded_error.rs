@@ -64,7 +64,7 @@ async fn on_job(job: &Job<'_>, ctx: &mut Context<'_, (), Lost>) -> HandlerOutcom
             lost.0.lock().expect("the handlers never panic").push((
                 error.to_string(),
                 message.destination().to_owned(),
-                message.payload().to_vec(),
+                message.payload().expect("the bytes").to_vec(),
             ));
         }
     })
@@ -434,7 +434,7 @@ async fn on_ask(ask: &Job<'_>, ctx: &mut Context<'_, (), Lost>) -> Answer {
                 lost.0.lock().expect("the handlers never panic").push((
                     error.to_string(),
                     message.destination().to_owned(),
-                    message.payload().to_vec(),
+                    message.payload().expect("the bytes").to_vec(),
                 ));
             }
         });

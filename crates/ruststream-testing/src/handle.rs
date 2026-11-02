@@ -7,14 +7,17 @@ use std::fmt;
 // The helpers that ENCODE stay gated on a codec feature, like the codec itself; the typed
 // builder entry points do not, because the value's own wire decides whether a codec is needed.
 use ruststream_core::OutgoingDestination;
-use ruststream_core::{Lend, OutgoingMessage, RawMessage};
+use ruststream_core::{Lend, OutgoingMessage, PublishMessageError, RawMessage};
+use ruststream_runtime::BoxError;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use ruststream_runtime::codec::{Codec, DefaultCodec};
 use ruststream_runtime::message_of;
-use ruststream_runtime::{
-    HeadersUnset, LocalPublishSink, MessageBody, PublishBuilder, UnnamedCodec,
-};
+use ruststream_runtime::{HeadersUnset, MessageBody, PublishBuilder, PublishSink, UnnamedCodec};
+use ruststream_runtime::{SinkOutcome, SinkRefusal};
 use ruststream_runtime_tokio::Shutdown;
+use send_wrapper::SendWrapper;
+use tokio::runtime::{Handle, RuntimeFlavor};
+use tokio::task::block_in_place;
 
 use ruststream_runtime::testing::Coordinator;
 use ruststream_runtime::testing::PublishTarget;
@@ -94,7 +97,26 @@ impl fmt::Debug for InjectSink<'_> {
     }
 }
 
-impl LocalPublishSink for InjectSink<'_> {
+/// Awaits a live publish whose future the contract does not ask to be `Send`.
+///
+/// On a multi-thread runtime the task may resume on another worker, which a future that is not
+/// `Send` cannot survive, so the publish runs to completion on the worker that starts it, with
+/// the runtime handing that worker's other tasks to a new one meanwhile. A single-thread runtime
+/// never moves the task, so the future is awaited in place and `SendWrapper` only vouches for
+/// that.
+async fn publish_live(
+    publish: LivePublish,
+    connected: &(dyn Any + Send + Sync),
+    msg: OutgoingMessage<'_>,
+) -> Result<(), BoxError> {
+    let runtime = Handle::current();
+    if runtime.runtime_flavor() == RuntimeFlavor::MultiThread {
+        return block_in_place(|| runtime.block_on(publish(connected, msg)));
+    }
+    SendWrapper::new(publish(connected, msg)).await
+}
+
+impl PublishSink for InjectSink<'_> {
     // An injection is handed to the in-process transport by reference, which stores what it
     // keeps: see `TestableBroker::inject`.
     type Payload = Lend;
@@ -102,11 +124,11 @@ impl LocalPublishSink for InjectSink<'_> {
     // An injection stands in for an external producer, which reaches no broker's options type.
     type Options = ();
 
-    async fn send(
+    async fn send<'msg>(
         &mut self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> SinkOutcome<Self::Error> {
         let Target::Broker {
             harness,
             scope_id,
@@ -114,10 +136,14 @@ impl LocalPublishSink for InjectSink<'_> {
             label,
         } = &self.0
         else {
-            return Err(TestError::Ambiguous);
+            return Err(SinkRefusal::returned::<Lend>(
+                PublishMessageError::with_message(TestError::Ambiguous, msg),
+            ));
         };
         if harness.shutdown.is_cancelled() {
-            return Err(TestError::ShutDown);
+            return Err(SinkRefusal::returned::<Lend>(
+                PublishMessageError::with_message(TestError::ShutDown, msg),
+            ));
         }
         // The test's own publish is part of the record: in process it is what tells a message
         // the test put on a destination from a runtime publish the broker has since evicted;
@@ -130,7 +156,7 @@ impl LocalPublishSink for InjectSink<'_> {
             Transport::InProcess(testable) => testable.inject(msg),
             Transport::Live { connected, publish } => {
                 let publish = publish.ok_or_else(|| TestError::NoTransport(label.clone()))?;
-                publish(*connected, msg)
+                publish_live(publish, *connected, msg)
                     .await
                     .map_err(|err| TestError::Publish {
                         broker: label.clone(),
@@ -147,6 +173,7 @@ impl LocalPublishSink for InjectSink<'_> {
             .mode
             .settle(harness.coordinator, harness.brokers)
             .await
+            .map_err(Into::into)
     }
 }
 
@@ -245,6 +272,7 @@ impl BrokerHandle<'_> {
         self.sink()
             .send(OutgoingMessage::new(name, &bytes), None)
             .await
+            .map_err(SinkRefusal::into_error)
     }
 
     /// Like [`publish`](Self::publish), but with headers on the delivery: `headers` is a typed
@@ -276,7 +304,10 @@ impl BrokerHandle<'_> {
         let msg = OutgoingMessage::new(name, &bytes)
             .with_typed_headers(headers)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        self.sink().send(msg, None).await
+        self.sink()
+            .send(msg, None)
+            .await
+            .map_err(SinkRefusal::into_error)
     }
 
     /// Asserts on what the handler subscribed to `name` received and how it settled.
@@ -328,7 +359,65 @@ impl BrokerHandle<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{InjectSink, Target};
+    use std::any::Any;
+    use std::iter;
+    use std::marker::PhantomData;
+    use std::pin::Pin;
+    use std::rc::Rc;
+    use std::task::{Context, Poll};
+    use std::thread;
+
+    use ruststream_core::OutgoingMessage;
+    use ruststream_runtime::{BoxError, LocalBoxFuture};
+
+    use super::{InjectSink, Target, publish_live};
+
+    /// A publish that is pending on its first poll and woken from another thread, holding what a
+    /// client holds that is not `Send`.
+    struct PendingOnce(bool, PhantomData<Rc<()>>);
+
+    impl Future for PendingOnce {
+        type Output = Result<(), BoxError>;
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            if self.0 {
+                return Poll::Ready(Ok(()));
+            }
+            self.0 = true;
+            let waker = cx.waker().clone();
+            thread::spawn(move || waker.wake());
+            Poll::Pending
+        }
+    }
+
+    fn pending_publish<'m>(
+        _connected: &'m (dyn Any + Send + Sync),
+        _msg: OutgoingMessage<'m>,
+    ) -> LocalBoxFuture<'m, Result<(), BoxError>> {
+        Box::pin(PendingOnce(false, PhantomData))
+    }
+
+    /// A live publish that is pending resumes on whichever worker the runtime picks, so a
+    /// future that is not `Send` must not be tied to the worker that first polled it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_pending_live_publish_resumes_on_another_worker() {
+        let connected: &'static (dyn Any + Send + Sync) = &();
+        let tasks: Vec<_> = iter::repeat_with(|| {
+            tokio::spawn(async move {
+                publish_live(
+                    pending_publish,
+                    connected,
+                    OutgoingMessage::new("n", &b"x"[..]),
+                )
+                .await
+            })
+        })
+        .take(64)
+        .collect();
+        for task in tasks {
+            task.await.unwrap().unwrap();
+        }
+    }
 
     /// The sink travels inside a publish builder, which never hands it back, so its `Debug` is
     /// reachable only from here. It names the type and elides the broker handle it borrows.

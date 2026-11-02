@@ -1,8 +1,11 @@
-//! The suites of the local family: the routing contract and the lifecycle ladder for a broker
-//! whose types are not `Send`.
+//! The suites of the local family: the routing contract and the lifecycle ladder, driven on the
+//! caller's task.
+//!
+//! They spawn nothing, so nothing of the broker crosses a thread. A broker crate reaches them
+//! through the facade's `conformance` feature, which turns the tokio runner on, so the contract
+//! types are `Send` there, as in every build beside tokio.
 
-// The suites drive brokers whose types are not `Send` on the caller's task, so their futures are
-// not `Send` by design.
+// The suites drive a broker on the caller's task and ask nothing of their own futures.
 #![allow(clippy::future_not_send)]
 
 use std::fmt;
@@ -11,11 +14,10 @@ use std::time::Duration;
 
 use futures::{FutureExt, Stream};
 use ruststream_core::{
-    AckError, Broker, ConnectedBroker, DefaultPublish, HeaderMap, IncomingMessage, LocalPublisher,
-    LocalSettle, LocalSubscriber, OutgoingMessage, PublishPolicy, RawMessage, Subscribe,
-    SubscriptionSource,
+    AckError, Broker, ConnectedBroker, DefaultPublish, HeaderMap, IncomingMessage, OutgoingMessage,
+    PublishPolicy, Publisher, RawMessage, Settle, Subscribe, Subscriber, SubscriptionSource,
 };
-use ruststream_runtime::testing::{Coordinator, InProcess, LocalTestableBroker};
+use ruststream_runtime::testing::{Coordinator, InProcess, TestableBroker};
 use tokio::time::timeout;
 
 use super::routing::{
@@ -25,6 +27,10 @@ use super::routing::{
 };
 use super::{expect_next, expect_no_more};
 use crate::helpers::unique_subject;
+use crate::lifecycle::Unsent;
+
+/// What the refused publish carries.
+const UNSENT: &[u8] = b"lifecycle.unsent";
 
 /// How long one step of the local lifecycle may take.
 const STEP_TIMEOUT: Duration = Duration::from_secs(2);
@@ -35,8 +41,8 @@ type LocalLive<C> = <<C as DefaultPublish>::Policy as PublishPolicy<C>>::Live;
 /// Runs the routing contract against a broker of the local family, panicking with a descriptive
 /// message on the first failure.
 ///
-/// It is [`run_suite`](super::run_suite) for a broker whose types are not `Send`: the same
-/// scenarios, driven on the caller's task, so nothing of the broker crosses a thread. `factory`
+/// It is [`run_suite`](super::run_suite) for a broker of the local family: the same scenarios,
+/// driven on the caller's task, so nothing of the broker crosses a thread. `factory`
 /// builds a fresh production broker per scenario, and each scenario connects it through its
 /// [`InProcess`] transition.
 ///
@@ -73,7 +79,7 @@ pub async fn run_local_suite<B, F>(factory: F)
 where
     B: InProcess,
     B::Connected: Subscribe + DefaultPublish,
-    LocalLive<B::Connected>: LocalPublisher,
+    LocalLive<B::Connected>: Publisher,
     F: Fn() -> B,
 {
     let connect = async |broker: B| {
@@ -97,7 +103,7 @@ where
 async fn publish_own<C>(connected: &C, msg: OutgoingMessage<'_>)
 where
     C: DefaultPublish,
-    LocalLive<C>: LocalPublisher,
+    LocalLive<C>: Publisher,
 {
     let what = format!("{:?}", msg.name());
     let publisher = C::Policy::default()
@@ -118,8 +124,8 @@ where
 
 async fn own_publishes_are_logged<C>(connected: C)
 where
-    C: LocalTestableBroker + Subscribe + DefaultPublish,
-    LocalLive<C>: LocalPublisher,
+    C: TestableBroker + Subscribe + DefaultPublish,
+    LocalLive<C>: Publisher,
 {
     let name = unique_subject("conformance.ownpublish");
     let subscriber = Subscribe::subscribe(&connected, &name)
@@ -163,8 +169,8 @@ fn quiescent(coordinator: &Coordinator) -> bool {
 
 async fn counts<C>(connected: C)
 where
-    C: LocalTestableBroker + Subscribe + DefaultPublish,
-    LocalLive<C>: LocalPublisher,
+    C: TestableBroker + Subscribe + DefaultPublish,
+    LocalLive<C>: Publisher,
 {
     let coordinator = Coordinator::new(usize::MAX);
     connected.install_coordinator(coordinator.clone());
@@ -223,8 +229,8 @@ async fn requeue_counts<C, M, E, S>(
     stream: &mut S,
     name: &str,
 ) where
-    C: LocalTestableBroker,
-    M: LocalSettle,
+    C: TestableBroker,
+    M: Settle,
     E: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
 {
@@ -249,7 +255,7 @@ async fn requeue_counts<C, M, E, S>(
 }
 
 /// Acknowledges `msg`, accepting a transport that cannot acknowledge.
-async fn settle_ack<M: LocalSettle>(msg: M) {
+async fn settle_ack<M: Settle>(msg: M) {
     match msg.ack().await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
@@ -258,8 +264,8 @@ async fn settle_ack<M: LocalSettle>(msg: M) {
 
 /// Verifies a broker of the local family honours the lifecycle ladder end to end.
 ///
-/// It is [`lifecycle`](super::lifecycle) for a broker whose types are not `Send`: every step
-/// runs on the caller's task, so the checks that move a handle to another thread's runtime do not
+/// It is [`lifecycle`](super::lifecycle) for a broker of the local family: every step runs on
+/// the caller's task, so the checks that move a handle to another thread's runtime do not
 /// apply. The steps:
 ///
 /// * **Connect** through [`Broker::connect`], then open a subscription through the broker's
@@ -275,7 +281,7 @@ async fn settle_ack<M: LocalSettle>(msg: M) {
 ///   on its own subscription.
 ///
 /// Run it on a current-thread Tokio runtime: it spawns nothing, and its timeouts read Tokio's
-/// clock. A broker that offers [`nack_after`](LocalSettle::nack_after) on its own timer
+/// clock. A broker that offers [`nack_after`](Settle::nack_after) on its own timer
 /// is checked on that timer by its own crate.
 ///
 /// # Examples
@@ -311,7 +317,7 @@ pub async fn local_lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     MkBroker: Fn() -> B,
     Src: SubscriptionSource<B::Connected>,
     MkSrc: Fn(&str) -> Src,
-    Pub: LocalPublisher,
+    Pub: Publisher,
     MkPub: Fn(&B::Connected) -> Pub,
 {
     let subject = unique_subject("conformance.local");
@@ -349,7 +355,7 @@ pub async fn local_lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 /// `nack(requeue = false)`.
 async fn requeue_round_trip<M, E, S>(stream: &mut S)
 where
-    M: LocalSettle,
+    M: Settle,
     E: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
 {
@@ -385,8 +391,8 @@ where
 /// errors or brings the delivery back.
 async fn after_shutdown<Pub, M, E, S>(subject: &str, publishers: [&Pub; 2], held: M, stream: &mut S)
 where
-    Pub: LocalPublisher,
-    M: LocalSettle,
+    Pub: Publisher,
+    M: Settle,
     E: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
 {
@@ -424,8 +430,99 @@ where
     }
 }
 
+/// Checks that a publish the broker refuses hands the unsent message back, for a broker of the
+/// local family.
+///
+/// It is [`refused_publish_returns_message`](crate::lifecycle::refused_publish_returns_message)
+/// for a broker of the local family: the broker connects and shuts down, and a publish
+/// through a publisher paired before the shutdown must fail with the message it was handed.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[cfg(any())]
+/// # mod demo {
+/// use ruststream::conformance::harness;
+/// use ruststream::conformance::lifecycle::Unsent;
+/// use ruststream::memory::local::{ConnectedLocalMemoryBroker, LocalMemoryBroker};
+///
+/// #[tokio::test(flavor = "current_thread")]
+/// async fn the_local_bus_returns_the_unsent_message() {
+///     harness::local_refused_publish_returns_message(
+///         LocalMemoryBroker::<16>::new,
+///         |connected: &ConnectedLocalMemoryBroker<16>| connected.publisher(),
+///         Unsent::Returned,
+///     )
+///     .await;
+/// }
+/// # }
+/// ```
+///
+/// # Panics
+///
+/// Panics with a descriptive message when the publish succeeds or hangs after the shutdown, when
+/// [`Unsent::Returned`] is declared and the failure carries no message, or when the message it
+/// carries differs from the one published.
+pub async fn local_refused_publish_returns_message<B, MkBroker, Pub, MkPub>(
+    make_broker: MkBroker,
+    make_publisher: MkPub,
+    unsent: Unsent,
+) where
+    B: Broker,
+    MkBroker: Fn() -> B,
+    Pub: Publisher,
+    MkPub: Fn(&B::Connected) -> Pub,
+{
+    const SCENARIO: &str = "local_refused_publish_returns_message";
+    let subject = unique_subject("conformance.local.unsent");
+    let connected = within("connect", make_broker().connect())
+        .await
+        .unwrap_or_else(|err| panic!("{SCENARIO}: connect failed: {err}"));
+    let publisher = make_publisher(&connected);
+    within("shutdown", connected.shutdown())
+        .await
+        .unwrap_or_else(|err| panic!("{SCENARIO}: shutdown failed: {err}"));
+
+    let mut headers = HeaderMap::new();
+    headers.insert("conformance", "unsent");
+    let outgoing = OutgoingMessage::new(&subject, UNSENT).with_headers(headers.clone());
+    let answer = within(
+        "the publish after the shutdown",
+        publisher.publish(outgoing, None),
+    )
+    .await;
+    let Err(failed) = answer else {
+        panic!("{SCENARIO}: a publish after the shutdown succeeded; it must be refused");
+    };
+    match failed.into_message() {
+        Some(message) => {
+            assert_eq!(
+                message.name(),
+                subject,
+                "{SCENARIO}: the returned message names another destination than the one published"
+            );
+            assert_eq!(
+                message.payload(),
+                UNSENT,
+                "{SCENARIO}: the returned message carries other bytes than the ones published"
+            );
+            assert_eq!(
+                message.headers(),
+                &headers,
+                "{SCENARIO}: the returned message carries other headers than the ones published"
+            );
+        }
+        None => assert!(
+            unsent == Unsent::Consumed,
+            "{SCENARIO}: the refusal returned no message, and the broker declared its client \
+             gives the message back; hand the unsent message over with \
+             `PublishMessageError::with_message`"
+        ),
+    }
+}
+
 /// Publishes `payload` to `subject`, panicking when the publish fails or hangs.
-async fn publish<Pub: LocalPublisher>(publisher: &Pub, subject: &str, payload: &[u8]) {
+async fn publish<Pub: Publisher>(publisher: &Pub, subject: &str, payload: &[u8]) {
     within(
         "publish",
         publisher.publish(OutgoingMessage::new(subject, payload), None),

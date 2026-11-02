@@ -1,6 +1,7 @@
 //! The live reply sink: a byte publisher paired with a codec and its transform stacks.
 
 use core::fmt;
+use ruststream_core::MaybeSync;
 
 #[cfg(feature = "std")]
 use futures::lock::Mutex;
@@ -12,7 +13,8 @@ use super::{
 };
 use crate::codec::{Codec, Encoding};
 use crate::lifecycle::BoxError;
-use crate::{HeaderMap, LocalPublisher, PayloadForm};
+use crate::publish_failure::Refusal;
+use crate::{HeaderMap, PayloadForm, Publisher};
 
 /// A byte [`Publisher`](crate::Publisher) paired with a [`Codec`] and a static [`PublishTransform`] stack: what a
 /// reply wiring becomes once the broker connects.
@@ -62,11 +64,11 @@ impl<P, C> TypedPublisher<P, C, PublishTransformIdentity, BatchTransformIdentity
     }
 }
 
-// Written over the local twin, so one body serves a publisher of either family: a runner that
+// Written over the contract trait, so one body serves either runner: a runner that
 // knows its leaf is a `Publisher` and its pipeline a `PublishPipeline` proves these futures
 // `Send` through the forwarding impls.
 #[allow(clippy::future_not_send)]
-impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
+impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// The message a reply starts from: `name` and the encoded `payload` over the publisher's
     /// own base ([`Publisher::base_headers`](crate::Publisher::base_headers)).
     ///
@@ -89,37 +91,45 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
 
     /// Encodes `value`, applies the static transforms (reading the originating delivery through
     /// `cx`), then publishes to `name` through `pipeline`.
-    pub(crate) async fn publish<'e, T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish<'e, T: Serialize + MaybeSync, Cx, PP>(
         &self,
         name: &'e str,
         value: &T,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <P::Payload as PayloadForm>::Encode<'e>,
-    ) -> Result<(), BoxError>
+    ) -> Result<(), Refusal>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
-        BL: Sync,
-        Cx: Sync,
+        BL: MaybeSync,
+        Cx: MaybeSync,
         PP: SendThrough<P>,
     {
         let payload =
             <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
-                .map_err(BoxError::from)?;
+                .map_err(|err| Refusal::new(BoxError::from(err)))?;
         let mut out = self.outgoing(name, payload);
         // A reply has no call site to adjust the broker's per-message settings, so the position
         // starts at the publish policy's own and only a transform fills it.
         let mut options = None;
         self.layers.apply(&mut out, &mut options, cx);
-        pipeline
+        let sent = pipeline
             .send_through(&mut out, &self.publisher, options.as_ref())
-            .await
+            .await;
+        // A refusal leaves the message that was sent in `out`, transforms applied.
+        sent.map_err(|err| Refusal::of(err, &mut out).sent_to(name, out.name()))
     }
 
     /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
     /// serializes into the outgoing headers before the transforms run, and the body encodes
     /// through the reply codec.
-    pub(crate) async fn publish_pair<'e, Hd: Serialize + Sync, T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish_pair<
+        'e,
+        Hd: Serialize + MaybeSync,
+        T: Serialize + MaybeSync,
+        Cx,
+        PP,
+    >(
         &self,
         name: &'e str,
         headers: &Hd,
@@ -127,54 +137,58 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <P::Payload as PayloadForm>::Encode<'e>,
-    ) -> Result<(), BoxError>
+    ) -> Result<(), Refusal>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
-        BL: Sync,
-        Cx: Sync,
+        BL: MaybeSync,
+        Cx: MaybeSync,
         PP: SendThrough<P>,
     {
         let payload =
             <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
-                .map_err(BoxError::from)?;
+                .map_err(|err| Refusal::new(BoxError::from(err)))?;
         let mut out = self.outgoing(name, payload);
         out.headers_mut()
             .insert_typed(headers)
-            .map_err(BoxError::from)?;
+            .map_err(|err| Refusal::new(BoxError::from(err)))?;
         let mut options = None;
         self.layers.apply(&mut out, &mut options, cx);
-        pipeline
+        let sent = pipeline
             .send_through(&mut out, &self.publisher, options.as_ref())
-            .await
+            .await;
+        // A refusal leaves the message that was sent in `out`, transforms applied.
+        sent.map_err(|err| Refusal::of(err, &mut out).sent_to(name, out.name()))
     }
 
     /// Like [`publish`](Self::publish), but applies the batch-only [`BatchPublishTransform`] stack
     /// instead of the per-message [`PublishTransform`] one. Used per reply on the batch path: the
     /// per-message transforms do not run for batched replies (a transform wanted on both paths is
     /// added to each, reusing it on the batch side with [`for_batch`]).
-    pub(crate) async fn publish_batched<'e, T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish_batched<'e, T: Serialize + MaybeSync, Cx, PP>(
         &self,
         name: &'e str,
         value: &T,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <P::Payload as PayloadForm>::Encode<'e>,
-    ) -> Result<(), BoxError>
+    ) -> Result<(), Refusal>
     where
-        PL: Sync,
+        PL: MaybeSync,
         BL: BatchPublishTransform<Cx, P::Options>,
-        Cx: Sync,
+        Cx: MaybeSync,
         PP: SendThrough<P>,
     {
         let payload =
             <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
-                .map_err(BoxError::from)?;
+                .map_err(|err| Refusal::new(BoxError::from(err)))?;
         let mut out = self.outgoing(name, payload);
         let mut options = None;
         self.batch_layers.apply(&mut out, &mut options, cx);
-        pipeline
+        let sent = pipeline
             .send_through(&mut out, &self.publisher, options.as_ref())
-            .await
+            .await;
+        // A refusal leaves the message that was sent in `out`, transforms applied.
+        sent.map_err(|err| Refusal::of(err, &mut out).sent_to(name, out.name()))
     }
 }
 

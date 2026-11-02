@@ -16,8 +16,18 @@ help: the following other types implement trait `BatchSubscriber`
    | impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySubscriber<Log>`
    |
+  ::: crates/ruststream-memory/src/local/subscriber.rs
+   |
+   | impl<const CAP: usize> BatchSubscriber for LocalMemorySubscriber<CAP> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `LocalMemorySubscriber<CAP>`
+   |
   ::: crates/ruststream-runtime-tokio/src/buffered.rs
    |
    | impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `BufferedSubscriber<S>`
+   |
+  ::: crates/ruststream-runtime-embassy/src/frames.rs
+   |
+   | impl BatchSubscriber for FrameSubscriber {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime_embassy::frames::FrameSubscriber`
    = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker, ruststream::runtime::ChainHead<()>>, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a [Order], &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl futures::Future<Output = Result<(), Vec<HandlerOutcome>>> {handle::<_>}>, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`

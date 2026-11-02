@@ -11,8 +11,6 @@
 //! the headers pays neither the broker's accessor nor a clone.
 
 use alloc::boxed::Box;
-#[cfg(feature = "testing")]
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::OnceCell;
 use core::fmt;
@@ -23,7 +21,7 @@ use bytes::BytesMut;
 
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::RecordedValue;
-use crate::{Field, FieldMut, HeaderMap, LocalSettle};
+use crate::{Field, FieldMut, HeaderMap, Settle};
 
 use super::dispatch::Delivery;
 use super::failure::FailurePolicy;
@@ -32,6 +30,13 @@ use crate::host::Halt;
 #[cfg(feature = "tokio")]
 use crate::main_runtime::MainRuntime;
 use crate::publish_failure::{ErrorHook, Failures, Reaction};
+use ruststream_core::IfSend;
+#[cfg(feature = "testing")]
+use ruststream_core::MaybeSendSync;
+
+/// What a context reads the headers through: `Sync` where the core's `send` feature is on, because the
+/// context then crosses threads; a bare reference without it.
+type SourceRef<'a> = IfSend<&'a (dyn HeaderSource + Sync), &'a dyn HeaderSource>;
 
 /// Where one delivery's header map comes from.
 ///
@@ -62,7 +67,7 @@ pub(crate) enum DeliveryHeaders<'a> {
     /// The map is already resolved: the handler read or modified it, or there is no delivery.
     Ready(&'a HeaderMap),
     /// Nothing has asked yet; the broker answers on the first read.
-    Source(&'a (dyn HeaderSource + Sync)),
+    Source(SourceRef<'a>),
 }
 
 impl<'a> DeliveryHeaders<'a> {
@@ -99,7 +104,7 @@ impl<M> fmt::Debug for FromDelivery<'_, M> {
     }
 }
 
-impl<M: LocalSettle> HeaderSource for FromDelivery<'_, M> {
+impl<M: Settle> HeaderSource for FromDelivery<'_, M> {
     fn headers(&self) -> &HeaderMap {
         self.0.headers()
     }
@@ -192,7 +197,7 @@ struct AfterHook {
 /// ```
 pub struct Context<'a, C = (), S = ()> {
     name: &'a str,
-    source: &'a (dyn HeaderSource + Sync),
+    source: SourceRef<'a>,
     /// The delivery's own map, resolved off [`Context::source`] the first time anything reads it.
     original: OnceCell<&'a HeaderMap>,
     modified: Option<HeaderMap>,
@@ -235,7 +240,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// [`BuildContext`](crate::BuildContext) from the broker message).
     pub(crate) fn new(
         name: &'a str,
-        source: &'a (dyn HeaderSource + Sync),
+        source: SourceRef<'a>,
         state: &'a S,
         cx: C,
         delivery: &'a Delivery<C>,
@@ -285,9 +290,9 @@ impl<'a, C, S> Context<'a, C, S> {
     /// carried value never was bytes, so the payload the record keeps cannot stand for it.
     /// Nothing is cloned outside a harness run.
     #[cfg(feature = "testing")]
-    pub(crate) fn record_carried<T: Clone + Send + Sync + 'static>(&mut self, value: &T) {
+    pub(crate) fn record_carried<T: Clone + MaybeSendSync + 'static>(&mut self, value: &T) {
         if self.delivery.hooks.coordinator().is_some() {
-            self.carried = Some(Arc::new(value.clone()));
+            self.carried = Some(RecordedValue::of(value));
         }
     }
 

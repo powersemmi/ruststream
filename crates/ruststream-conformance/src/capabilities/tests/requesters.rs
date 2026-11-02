@@ -13,6 +13,7 @@ use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemoryPublisher, MemoryRequester,
     MemorySource, MemorySubscriber, RequestError,
 };
+use ruststream_core::PublishOutcome;
 use ruststream_core::{
     BytesMut, OutgoingMessage, Publisher, RequestReply, Subscribe, Subscriber, Take,
 };
@@ -94,11 +95,11 @@ impl Publisher for FaultyRequester {
     type Error = RequestError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&()>,
-    ) -> Result<(), RequestError> {
+    ) -> PublishOutcome<'msg, RequestError, Take> {
         self.requester.publish(msg, options).await
     }
 }

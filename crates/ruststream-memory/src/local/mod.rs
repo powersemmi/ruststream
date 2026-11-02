@@ -31,7 +31,7 @@
 //!     let sensor = connected.publisher();
 //!     for celsius in [21u8, 22] {
 //!         let reading = OutgoingMessage::produced("sensors/temp", BytesMut::from(&[celsius][..]));
-//!         sensor.publish(reading, None).await?;
+//!         sensor.publish(reading, None).await.map_err(PublishMessageError::into_error)?;
 //!     }
 //!
 //!     let mut logged = Vec::new();
@@ -50,12 +50,13 @@
 //! assert_eq!(embassy_futures::block_on(firmware()), Ok(vec![21, 22]));
 //! ```
 
-// The bus is `Rc` and `RefCell` by design, so no future of the local family is `Send`, and the
+// Without `std` the bus is `Rc` and `RefCell` by design, so no future of the local family is `Send`, and the
 // nursery lint that asks for it does not apply here.
 #![allow(clippy::future_not_send)]
 
 mod broker;
 mod bus;
+mod share;
 mod subscriber;
 
 /// Reads the local bus's streams in tests without awaiting them.
@@ -120,8 +121,8 @@ pub mod prelude {
         LocalMemorySubscriber,
     };
     pub use ruststream_core::{
-        AckError, Broker, BytesMut, ConnectedBroker, HeaderMap, IncomingMessage,
-        LocalBatchSubscriber, LocalPublisher, LocalSettle, LocalSubscriber, OutgoingMessage,
-        PublishPolicy, Subscribe, SubscriptionSource,
+        AckError, BatchSubscriber, Broker, BytesMut, ConnectedBroker, HeaderMap, IncomingMessage,
+        OutgoingMessage, PublishMessageError, PublishPolicy, Publisher, Settle, Subscribe,
+        Subscriber, SubscriptionSource,
     };
 }

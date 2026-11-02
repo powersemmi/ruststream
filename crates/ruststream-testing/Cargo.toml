@@ -52,6 +52,10 @@ ruststream-runtime-tokio = { workspace = true, optional = true, features = ["tes
 ruststream-runtime-embassy = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
+# Lets the live injection await the publisher's pairing, whose future the contract does not
+# ask to be `Send`, on a single-thread runtime: the task never leaves its thread, and the wrapper
+# refuses a poll from any other. Test builds only; the cost is a thread-id comparison per poll.
+send_wrapper = { version = "0.6", features = ["futures"] }
 tracing = { workspace = true, features = ["std", "attributes"] }
 tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
@@ -77,6 +81,7 @@ ruststream = { path = "../..", default-features = false, features = ["macros", "
 # A device service's handlers and app, as the embedded tests write them.
 embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
 embassy-futures.workspace = true
+futures-core.workspace = true
 
 [lints]
 workspace = true
@@ -173,4 +178,11 @@ required-features = ["embassy", "json"]
 [[test]]
 name = "embedded_spill"
 path = "tests/embedded_spill.rs"
+required-features = ["embassy", "json"]
+
+# An idle subscription whose subscriber hands out a readiness probe is not polled on a neighbour's
+# wakes, through the embedded `TestApp`.
+[[test]]
+name = "embedded_readiness"
+path = "tests/embedded_readiness.rs"
 required-features = ["embassy", "json"]

@@ -2,7 +2,7 @@
 //!
 //! A `#[subscriber]` body that publishes is one function for both runners. It is generic over
 //! each of its entries and bounds it with [`SlotEntry`], whose capability is the local family's
-//! (`Wire: LocalPublisher`), which every `Publisher` satisfies. The multi-thread runner's mount
+//! (`Wire: Publisher`), which every `Publisher` satisfies. The multi-thread runner's mount
 //! then asks the body's future to be `Send` at the concrete entries it wired, where the compiler
 //! sees through every publish the body makes.
 
@@ -11,18 +11,14 @@ use core::ops::Deref;
 
 use crate::codec::Codec;
 use crate::publish::{Admits, TransactionScope, TypedTransaction};
-use crate::publish::{
-    HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, OutPipeline, PublishBuilder,
-};
+use crate::publish::{HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishSink};
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 use crate::{
-    HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, OwnedTransactions, Publisher,
-    TransactionalPublisher,
+    MaybeSendSync, OutgoingDestination, OwnedTransactions, Publisher, TransactionalPublisher,
 };
 
 use super::arena::Outs;
-use super::entry::Slot;
-use super::local_entry::{LocalSlot, SlotEncoding};
+use super::entry::{Slot, SlotEncoding};
 
 /// An arena entry of either runner, as a runtime-neutral body holds it: a window onto the live
 /// value the slot's policy paired.
@@ -35,64 +31,29 @@ impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for Slot<M, W, E, Pipe, Body> {
     type Wire = W;
 }
 
-impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body> {
-    type Wire = W;
-}
-
-/// A publisher whose futures are `Send` where the runtime crate's `tokio` feature is on, and any
-/// publisher otherwise. A body that clones its entry into a continuation asks it of the entry,
-/// so that a publish through `&entry` is proved `Send` for a body generic over its entry. `Options`
-/// is the wired publisher's per-message settings, which the entry publishes with, so a broker's
-/// builder steps stay on the entry's `message(..)`.
-#[cfg(feature = "tokio")]
-#[doc(hidden)]
-pub trait MaybeSendPublisher<Options>: Publisher<Options = Options> {}
-
-#[cfg(feature = "tokio")]
-impl<Entry: Publisher> MaybeSendPublisher<Entry::Options> for Entry {}
-
-/// See the `tokio` form: without the feature every entry qualifies.
-#[cfg(not(feature = "tokio"))]
-#[doc(hidden)]
-pub trait MaybeSendPublisher<Options> {}
-
-#[cfg(not(feature = "tokio"))]
-impl<Entry: ?Sized, Options> MaybeSendPublisher<Options> for Entry {}
-
 /// An entry whose publish sink is the entry itself, which is what lets a body generic over its
-/// entry prove its publish future `Send` where the `tokio` feature is on. Every entry qualifies
-/// without the feature, and the bound then states nothing about the sink.
-#[cfg(feature = "tokio")]
+/// entry prove its publish future `Send` where the `tokio` feature is on.
 #[doc(hidden)]
 pub trait MaybeSendSink<M, Body = ()>:
     'static + for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Self>
 {
 }
 
-#[cfg(feature = "tokio")]
 impl<Entry, M, Body> MaybeSendSink<M, Body> for Entry where
     Entry: 'static + for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Entry>
 {
 }
 
-/// See the `tokio` form: without the feature every entry qualifies.
-#[cfg(not(feature = "tokio"))]
-#[doc(hidden)]
-pub trait MaybeSendSink<M, Body = ()> {}
-
-#[cfg(not(feature = "tokio"))]
-impl<Entry: ?Sized, M, Body> MaybeSendSink<M, Body> for Entry {}
-
 /// An entry whose live value publishes: the slot itself publishes through its path, and
 /// [`message`](Self::message) starts a typed publish over the slot's codec and dictionary.
 pub trait SlotPublish<M, Body = ()>:
-    SlotEntry<M, Body, Wire: LocalPublisher>
-    + LocalPublisher<Options = <<Self as SlotEntry<M, Body>>::Wire as LocalPublisher>::Options>
+    SlotEntry<M, Body, Wire: Publisher>
+    + Publisher<Options = <<Self as SlotEntry<M, Body>>::Wire as Publisher>::Options>
 {
     /// The codec typed publishes through the slot encode with.
     type Enc: SlotEncoding;
     /// The sink a publish through the slot travels.
-    type Sink<'a>: LocalPublishSink<Options = <Self::Wire as LocalPublisher>::Options>
+    type Sink<'a>: PublishSink<Options = <Self::Wire as Publisher>::Options>
     where
         Self: 'a;
 
@@ -110,33 +71,8 @@ impl<M, W, E, Pipe, Body> SlotPublish<M, Body> for Slot<M, W, E, Pipe, Body>
 where
     M: OutSlot,
     W: Publisher,
-    E: Codec + Send + Sync,
+    E: SlotEncoding + MaybeSendSync,
     Pipe: OutPipeline<W>,
-{
-    type Enc = E;
-    type Sink<'a>
-        = &'a Self
-    where
-        Self: 'a;
-
-    fn message<'a, T, Index>(
-        &'a self,
-        value: &'a T,
-    ) -> PublishBuilder<&'a Self, MessageBody<'a, T>, &'a E, HeadersUnset, T::Form>
-    where
-        Body: ContainsMessage<T, Index>,
-        T: OutgoingDestination + PublishedThrough<M>,
-    {
-        Self::message(self, value)
-    }
-}
-
-impl<M, W, E, Pipe, Body> SlotPublish<M, Body> for LocalSlot<M, W, E, Pipe, Body>
-where
-    M: OutSlot,
-    W: LocalPublisher,
-    E: SlotEncoding,
-    Pipe: LocalOutPipeline<W>,
 {
     type Enc = E;
     type Sink<'a>
@@ -216,34 +152,6 @@ impl<E> Outs<E> {
     }
 }
 
-// The slot publishes through its own path, so a direct `publish` keeps the slot's attribution,
-// as the multi-thread runner's slot does.
-#[allow(clippy::future_not_send)]
-impl<M, W, E, Pipe, Body> LocalPublisher for LocalSlot<M, W, E, Pipe, Body>
-where
-    M: OutSlot,
-    W: LocalPublisher,
-    E: Clone,
-    Pipe: LocalOutPipeline<W>,
-{
-    type Payload = W::Payload;
-    type Error = W::Error;
-    type Options = W::Options;
-
-    async fn publish(
-        &self,
-        msg: OutgoingFor<'_, Self::Payload>,
-        options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
-        let mut sink = self;
-        LocalPublishSink::send(&mut sink, msg, options).await
-    }
-
-    fn base_headers(&self) -> Option<&HeaderMap> {
-        (**self).base_headers()
-    }
-}
-
 /// The transaction openers of a slot whose wire is transactional: the multi-thread runner's.
 #[doc(hidden)]
 pub trait SlotTransactions<M: 'static, Body = ()>:
@@ -284,7 +192,7 @@ impl<M, W, E, Pipe, Body> SlotTransactions<M, Body> for Slot<M, W, E, Pipe, Body
 where
     M: OutSlot + 'static,
     W: Publisher + 'static,
-    E: Codec + Send + Sync + 'static,
+    E: Codec + MaybeSendSync + 'static,
     Pipe: OutPipeline<W>,
 {
     fn begin(

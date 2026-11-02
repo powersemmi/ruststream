@@ -363,7 +363,7 @@ impl Settle for MovesMessage {
                     self.publisher
                         .publish(OutgoingMessage::new(dead, self.inner.payload()), None)
                         .await
-                        .map_err(|err| AckError::Broker(Box::new(err)))?;
+                        .map_err(|failed| AckError::Broker(Box::new(failed.into_error())))?;
                 }
                 if self.moving == Moving::MovesAndRedelivers {
                     // Later than the move, so the dead letter is read first, and well within the

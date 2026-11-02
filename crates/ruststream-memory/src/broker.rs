@@ -9,8 +9,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-#[cfg(feature = "testing")]
-use bytes::Bytes;
 use futures::future::lazy;
 #[cfg(doc)]
 use ruststream_core::IncomingMessage;
@@ -18,7 +16,8 @@ use ruststream_core::IncomingMessage;
 use ruststream_core::RawMessage;
 use ruststream_core::{
     AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
-    OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe, Take,
+    OutgoingMessage, PairError, PublishOutcome, PublishPolicy, Publisher, ServerSpec, Subscribe,
+    Take,
 };
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::Backlog;
@@ -585,7 +584,7 @@ impl<Log: LogMode> TestableBroker for ConnectedMemoryBroker<Log> {
         // Injecting into a shut-down bus is a harness bug (both run_suite and TestApp drive
         // the bus strictly before shutdown), so fail loudly instead of losing the message.
         self.state
-            .fanout(name, Bytes::copy_from_slice(payload), headers)
+            .fanout(name, BytesMut::from(payload), headers)
             .expect("inject on a shut-down broker: drive the harness before shutdown");
     }
 
@@ -780,11 +779,11 @@ impl Publisher for MemoryPublisher {
     // settle per message.
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Take>> {
         {
             let mut txn = self.txn.lock().expect("memory broker mutex poisoned");
             if let Some(buffered) = txn.as_mut() {
@@ -796,7 +795,11 @@ impl Publisher for MemoryPublisher {
             }
         }
         let (name, payload, headers) = msg.into_parts();
-        ready(self.state.fanout(name, payload.freeze(), headers))
+        ready(
+            self.state
+                .fanout_unsent(name, payload, headers)
+                .map_err(|unsent| (*unsent).returned(name)),
+        )
     }
 }
 

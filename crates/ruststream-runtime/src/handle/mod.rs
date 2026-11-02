@@ -61,7 +61,6 @@ mod verdict;
 #[cfg(all(test, feature = "json", feature = "asyncapi"))]
 mod matrix_tests;
 
-use crate::handler::MaybeSend;
 use crate::settings::{AllOpen, SubscriberBuilder};
 use alloc::string::String;
 #[doc(hidden)]
@@ -80,12 +79,11 @@ pub use fn_body::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
 pub use fn_body::{AsDeclared, IntoDeclared};
 #[doc(hidden)]
 pub use outs::{
-    AnyOutPos, MaybeSendPublisher, MaybeSendSink, SelectEntry, SlotAdmit, SlotEntry, SlotPublish,
-    SlotTransactions,
+    AnyOutPos, MaybeSendSink, SelectEntry, SlotAdmit, SlotEntry, SlotPublish, SlotTransactions,
 };
 #[doc(hidden)]
-pub use outs::{EntryMarkers, LocalEntryMarkers, LocalOutPos, OutPos, SelectSlot, SlotDictionary};
-pub use outs::{LocalOutEntry, LocalSlot, OutEntry, Outs, Slot};
+pub use outs::{EntryMarkers, OutPos, SelectSlot, SlotDictionary};
+pub use outs::{OutEntry, Outs, Slot};
 #[doc(hidden)]
 pub use reply::{
     DeclaresReply, RedirectableReply, ReplyDest, ReplyDestination, ReplyFormFor,
@@ -93,9 +91,10 @@ pub use reply::{
     reply_destination,
 };
 pub use reply::{ReplyShape, Serialized};
+use ruststream_core::{MaybeSend, MaybeSendSync};
 pub use value::{
     DeclaredDest, EncodedReply, HandleValue, IsDocumented, NamedDest, ReplyValue, ResolvedDest,
-    Sealed, SerializedReply, local_subscriber, subscriber,
+    Sealed, SerializedReply, subscriber,
 };
 #[doc(hidden)]
 pub use value::{
@@ -128,7 +127,7 @@ use super::context::Context;
 /// input family's canonical verdict ([`Verdict<In, R>`]): `Result<R, HandlerOutcome>` for one
 /// message at a time, `Result<R, Vec<HandlerOutcome>>` for a batch - so the body's `async fn`
 /// signature spells the verdict out literally.
-pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: Send + Sync {
+pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: MaybeSendSync {
     /// Handles one input (a message, or a batch of them).
     fn handle(
         &self,
@@ -136,54 +135,6 @@ pub trait Handle<In: ?Sized + Input, R = (), O = (), C = (), S = ()>: Send + Syn
         outs: &O,
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = Verdict<In, R>> + MaybeSend;
-}
-
-/// The body contract of a runner that polls every delivery on one thread: [`Handle`] without
-/// `Send` on the returned future.
-///
-/// A body may hold values that are not `Send` across an `.await` and publish through a broker
-/// whose handles are not.
-///
-/// The axes read as on [`Handle`]; [`local_subscriber`] binds the body to its source and the
-/// chain after it is the same. The definition itself is shared with the router, so the body type
-/// stays `Send + Sync`; only what it does per delivery is free of the bound.
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(feature = "json")]
-/// # mod demo {
-/// use std::rc::Rc;
-///
-/// use ruststream_runtime::{Context, HandlerOutcome, LocalHandle, local_subscriber};
-/// # #[derive(serde::Deserialize)]
-/// # struct Order { id: u64 }
-///
-/// struct Audit;
-///
-/// impl LocalHandle<Order> for Audit {
-///     async fn handle(&self, order: &Order, _outs: &(), _ctx: &mut Context<'_>) -> Result<(), HandlerOutcome> {
-///         // Held across the await below: the future is not `Send`, and it does not have to be.
-///         let seen = Rc::new(order.id);
-///         core::future::ready(()).await;
-///         println!("order {seen}");
-///         Ok(())
-///     }
-/// }
-///
-/// fn definition() {
-///     let _ = local_subscriber("orders", Audit).build();
-/// }
-/// # }
-/// ```
-pub trait LocalHandle<In: ?Sized + Input, R = (), O = (), C = (), S = ()> {
-    /// Handles one input (a message, or a batch of them). See [`Handle::handle`].
-    fn handle(
-        &self,
-        input: &In,
-        outs: &O,
-        ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Verdict<In, R>>;
 }
 
 /// What a value-definition constructor accepts as its subscription source.

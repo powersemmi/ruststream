@@ -33,6 +33,7 @@ mod bindable;
 mod clock;
 mod control;
 mod copies;
+mod flag;
 pub mod frames;
 mod hooks;
 mod host;

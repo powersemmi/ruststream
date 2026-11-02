@@ -138,16 +138,16 @@ describe('the cost of the code', () => {
   it('names the crate on its first row only', () => {
     const rows = codeRows(loaded, 'en');
     expect(rows[0]!.crate).toBe('RustStream');
-    expect(rows[0]!.instructions).toBe('1,673');
-    expect(rows[0]!.cold).toBe('15,079 / 26');
+    expect(rows[0]!.instructions).toBe('1,697.4');
+    expect(rows[0]!.cold).toBe('16,282 / 26');
     expect(rows[1]!.crate).toBe('');
   });
 
   it('names the machine and the core release once for the core', () => {
     const line = machineLine(loaded[0]!, labels);
     expect(line).toContain('AMD Ryzen 9 7900X 12-Core Processor');
-    expect(line).toContain('ruststream 0.7.0, measured 2026-10-06.');
-    expect(line.match(/ruststream 0\.7\.0/g)).toHaveLength(1);
+    expect(line).toContain('ruststream 0.8.0, measured 2026-11-01.');
+    expect(line.match(/ruststream 0\.8\.0/g)).toHaveLength(1);
   });
 });
 
@@ -160,7 +160,7 @@ describe('the catalog', () => {
   it('dates a published comparison in its provenance line', () => {
     const results = {...core, scenarios: [scenario({})], crate: 'ruststream-nats'};
     expect(provenanceLine({broker: BROKERS[0]!, results}, labels)).toContain(
-      'ruststream-nats 0.7.0 on ruststream 0.7.0',
+      'ruststream-nats 0.8.0 on ruststream 0.8.0',
     );
   });
 });
@@ -431,15 +431,15 @@ describe('the cost chart', () => {
   it('scales each crate on its own axis', () => {
     const [ours] = codePanels([{broker: CORE, results: core}], 'en', labels);
     const decode = ours!.rows[1]!;
-    expect(decode.instructions.value).toBe('17,402.8');
-    expect(decode.instructions.width).toBeCloseTo(87.01, 2);
+    expect(decode.instructions.value).toBe('17,304.2');
+    expect(decode.instructions.width).toBeCloseTo(86.52, 2);
     expect(ours!.instructions.at(-1)!.label).toBe('20K');
   });
 
   it('draws no bar for a message that allocates nothing', () => {
     const [ours] = codePanels([{broker: CORE, results: core}], 'en', labels);
     expect(ours!.rows[0]!.allocations).toEqual({value: '0', width: 0});
-    expect(ours!.rows[0]!.cold).toBe('15,079 / 26');
+    expect(ours!.rows[0]!.cold).toBe('16,282 / 26');
   });
 
   it('drops a crate with no code section', () => {

@@ -8,6 +8,7 @@ use std::io;
 use bytes::Bytes;
 
 use crate::{AckError, HeaderMap, IncomingMessage, Lend, OutgoingMessage, Publisher, Settle};
+use ruststream_core::{PublishMessageError, PublishOutcome};
 
 /// What a test delivery's transport does when asked to settle. The three cases differ in kind,
 /// not degree, so they are variants rather than a flag plus an error slot.
@@ -85,12 +86,15 @@ impl Publisher for RejectingPublisher {
     type Error = io::Error;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        _msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
         self.attempts.fetch_add(1, Ordering::SeqCst);
-        ready(Err(io::Error::other("connection closed")))
+        ready(Err(PublishMessageError::with_message(
+            io::Error::other("connection closed"),
+            msg,
+        )))
     }
 }

@@ -1,12 +1,15 @@
 use std::future;
 use std::future::ready;
 use std::mem;
+use std::pin::Pin;
 use std::sync::Mutex;
+use std::task::Context as TaskContext;
 use std::time::Duration;
 
 use bytes::Bytes;
-use futures::{StreamExt, stream};
+use futures::{Stream, StreamExt, stream};
 use tokio::sync::mpsc;
+use tokio::task::yield_now;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
@@ -70,13 +73,39 @@ fn position_of(payload: &Bytes) -> usize {
 fn batched<S>(
     stream: S,
     size: NonZeroUsize,
-) -> impl Stream<Item = Result<Vec<PlainMessage>, StreamFault>> + Send
+) -> impl BatchStream<Vec<PlainMessage>, Error = StreamFault> + Send
 where
     S: Stream<Item = Result<PlainMessage, StreamFault>> + Send,
 {
-    stream
-        .chunks(size.get())
-        .map(|chunk| chunk.into_iter().collect())
+    Poured(Box::pin(
+        stream
+            .chunks(size.get())
+            .map(|chunk| chunk.into_iter().collect::<Result<Vec<_>, _>>()),
+    ))
+}
+
+/// Fills a slot with the batches of a stream of whole batches.
+struct Poured<S>(Pin<Box<S>>);
+
+impl<S> BatchStream<Vec<PlainMessage>> for Poured<S>
+where
+    S: Stream<Item = Result<Vec<PlainMessage>, StreamFault>>,
+{
+    type Error = StreamFault;
+
+    fn poll_fill(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        slot: &mut Vec<PlainMessage>,
+    ) -> Poll<Option<Result<(), StreamFault>>> {
+        self.0.as_mut().poll_next(cx).map(|item| {
+            item.map(|batch| {
+                batch.map(|batch| {
+                    slot.extend(batch);
+                })
+            })
+        })
+    }
 }
 
 /// A subscriber with a long backlog, every delivery ready on the first poll: the loop never
@@ -98,7 +127,7 @@ impl BatchSubscriber for SaturatedSubscriber {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = <Self as Subscriber>::Error> + Send + '_ {
         batched(self.stream(), size)
     }
 }
@@ -122,7 +151,7 @@ impl BatchSubscriber for QuietSubscriber {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = <Self as Subscriber>::Error> + Send + '_ {
         batched(self.stream(), size)
     }
 }
@@ -232,20 +261,24 @@ impl BatchHandler<Vec<PlainMessage>, (), ()> for ReportingBatchHandler {
     type Scratch = ();
     type Taken = Vec<PlainMessage>;
 
-    fn take(batch: Vec<PlainMessage>) -> Vec<PlainMessage> {
-        batch
+    fn taken(size: NonZeroUsize) -> Vec<PlainMessage> {
+        Vec::with_capacity(size.get())
+    }
+
+    fn load(taken: &mut Vec<PlainMessage>, slot: &mut Vec<PlainMessage>) {
+        taken.append(slot);
     }
 
     fn handle_batch<Host: SendHost<()>>(
         &self,
-        batch: Vec<PlainMessage>,
+        batch: &mut Vec<PlainMessage>,
         _scratch: &mut Self::Scratch,
         _ctx: &mut Context<'_, (), ()>,
         _host: &Host,
     ) -> impl Future<Output = ()> + Send {
         let seen = self.seen.clone();
         async move {
-            for msg in batch {
+            for msg in batch.drain(..) {
                 seen.send(msg.payload.clone())
                     .expect("the test holds the receiver");
                 msg.ack().await.expect("the test delivery settles");
@@ -436,7 +469,7 @@ impl BatchSubscriber for EndedSubscriber {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = <Self as Subscriber>::Error> + Send + '_ {
         batched(self.stream(), size)
     }
 }
@@ -461,7 +494,7 @@ impl BatchSubscriber for EndsOnShutdown {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = <Self as Subscriber>::Error> + Send + '_ {
         batched(self.stream(), size)
     }
 }
@@ -701,6 +734,104 @@ async fn a_pool_whose_worker_died_stops_rather_than_shrinks() {
     timeout(Duration::from_secs(1), joined)
         .await
         .expect("the pool kept dispatching on one worker of two")
+        .expect("dispatch task should not panic");
+}
+
+impl BatchSubscriber for HangingSubscriber {
+    type Batch = Vec<PlainMessage>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl BatchStream<Self::Batch, Error = <Self as Subscriber>::Error> + Send + '_ {
+        batched(self.stream(), size)
+    }
+}
+
+/// Scratch space whose construction panics: the worker that builds it ends before its first batch.
+struct BrokenScratch;
+
+impl Default for BrokenScratch {
+    fn default() -> Self {
+        panic!("the worker's scratch space failed to build");
+    }
+}
+
+/// Hands its deliveries over only after the runtime has run the other tasks once, so the workers
+/// have started by the time the first batch is ready.
+struct LateSubscriber {
+    items: Vec<PlainMessage>,
+}
+
+impl Subscriber for LateSubscriber {
+    type Message = PlainMessage;
+    type Error = StreamFault;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        let items = mem::take(&mut self.items);
+        stream::once(async move {
+            yield_now().await;
+            stream::iter(items.into_iter().map(Ok)).chain(stream::pending())
+        })
+        .flatten()
+    }
+}
+
+impl BatchSubscriber for LateSubscriber {
+    type Batch = Vec<PlainMessage>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl BatchStream<Self::Batch, Error = <Self as Subscriber>::Error> + Send + '_ {
+        batched(self.stream(), size)
+    }
+}
+
+/// A batch handler whose workers die as they start.
+struct StillbornBatchHandler;
+
+impl BatchHandler<Vec<PlainMessage>, (), ()> for StillbornBatchHandler {
+    type Scratch = BrokenScratch;
+    type Taken = Vec<PlainMessage>;
+
+    fn taken(size: NonZeroUsize) -> Vec<PlainMessage> {
+        Vec::with_capacity(size.get())
+    }
+
+    fn load(taken: &mut Vec<PlainMessage>, slot: &mut Vec<PlainMessage>) {
+        taken.append(slot);
+    }
+
+    async fn handle_batch<Host: SendHost<()>>(
+        &self,
+        _batch: &mut Vec<PlainMessage>,
+        _scratch: &mut Self::Scratch,
+        _ctx: &mut Context<'_, (), ()>,
+        _host: &Host,
+    ) {
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_batch_pool_whose_workers_died_stops_rather_than_waits() {
+    let items = vec![numbered(0)];
+    let joined = spawn_batch_dispatch::<_, _, (), _, _>(
+        LateSubscriber { items },
+        Arc::new(StillbornBatchHandler),
+        Shutdown::new(),
+        Arc::from("orders"),
+        Arc::new(()),
+        Arc::new(Hosted::empty()),
+        dispatch_failure(),
+        BATCH_FORMS[1],
+        crate::nonzero!(1usize),
+    )
+    .expect("the dispatch starts");
+    // A batch handed to a worker that is gone would wait there for good.
+    timeout(Duration::from_secs(1), joined)
+        .await
+        .expect("the pool handed a batch to a worker that is gone")
         .expect("dispatch task should not panic");
 }
 

@@ -2,7 +2,8 @@
 //! delivery can be shared across threads, at once where it cannot.
 
 use crate::context::{FromDelivery, HeaderSource};
-use crate::{HeaderMap, LocalSettle};
+use crate::{HeaderMap, Settle};
+use ruststream_core::MaybeSync;
 
 /// How the body hands a delivery's headers to the handler's [`Context`](crate::Context): a
 /// runner picks it by the thread bounds its broker's deliveries meet.
@@ -14,7 +15,7 @@ use crate::{HeaderMap, LocalSettle};
 #[doc(hidden)]
 pub trait LendHeaders<M>: Copy {
     /// What the context reads the headers through.
-    type Source<'m>: HeaderSource + Sync
+    type Source<'m>: HeaderSource + MaybeSync
     where
         M: 'm;
 
@@ -28,7 +29,7 @@ pub trait LendHeaders<M>: Copy {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HeadersOnDemand;
 
-impl<M: LocalSettle + Sync> LendHeaders<M> for HeadersOnDemand {
+impl<M: Settle + MaybeSync> LendHeaders<M> for HeadersOnDemand {
     type Source<'m>
         = FromDelivery<'m, M>
     where
@@ -46,7 +47,7 @@ impl<M: LocalSettle + Sync> LendHeaders<M> for HeadersOnDemand {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HeadersAtOnce;
 
-impl<M: LocalSettle> LendHeaders<M> for HeadersAtOnce {
+impl<M: Settle> LendHeaders<M> for HeadersAtOnce {
     type Source<'m>
         = &'m HeaderMap
     where

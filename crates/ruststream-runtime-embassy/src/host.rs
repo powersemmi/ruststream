@@ -9,18 +9,20 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::cell::{Cell, RefCell};
+use core::cell::RefCell;
 use core::future::poll_fn;
-use core::pin::Pin;
 use core::task::{Poll, Waker};
 use core::time::Duration;
 
-use ruststream_runtime::{Clock, LocalDetach};
+use embassy_sync::blocking_mutex::Mutex;
+use ruststream_runtime::{Clock, Continuation, Detach, MaybeSend, MaybeSendSync};
 
 use crate::clock::EmbassyClock;
+use crate::flag::Flag;
+use crate::frames::FrameLock;
 
-/// One piece of detached work.
-type Work = Pin<Box<dyn Future<Output = ()>>>;
+/// One piece of detached work: `Send` where the runtime's `tokio` feature is on.
+type Work = Continuation;
 
 /// What a delivery hands over and the driver has not taken yet.
 struct Inbox {
@@ -31,18 +33,19 @@ struct Inbox {
 /// The continuations deliveries left behind, run by [`drive`](Self::drive) on the task that
 /// polls it.
 ///
-/// A delivery hands work over through [`LocalDetach`]; the driver takes it at its next poll and
+/// A delivery hands work over through [`Detach`]; the driver takes it at its next poll and
 /// polls it with the task's waker, as embassy's integrated timer queue requires of a timer. It
-/// keeps no delayed copy: [`reserve`](LocalDetach::reserve) answers `false`, so a `retry_after`
+/// keeps no delayed copy: [`reserve`](Detach::reserve) answers `false`, so a `retry_after`
 /// on a registration without a store of its own requeues the delivery. The work need not be
-/// `Send`: deliveries hand it over and the driver runs it on the app's one task, so the inbox is
-/// a plain cell and an idle driver reads one flag and compares its waker.
+/// `Send` without the `tokio` feature: deliveries hand it over and the driver runs it on the app's
+/// one task, so the inbox takes no lock there and an idle driver reads one flag and compares its
+/// waker. Next to a multi-thread runtime the inbox locks through a critical section.
 pub(crate) struct Detached<Timers: Clock = EmbassyClock> {
-    inbox: RefCell<Inbox>,
+    inbox: Mutex<FrameLock, RefCell<Inbox>>,
     /// Set when the inbox holds work the driver has not taken.
-    handed: Cell<bool>,
+    handed: Flag,
     /// Set once nothing more will be handed over: the driver ends when it has run what it holds.
-    closed: Cell<bool>,
+    closed: Flag,
     clock: Timers,
 }
 
@@ -50,19 +53,19 @@ impl<Timers: Clock<Sleep: 'static> + 'static> Detached<Timers> {
     /// A host on `clock`.
     pub(crate) const fn on_clock(clock: Timers) -> Self {
         Self {
-            inbox: RefCell::new(Inbox {
+            inbox: Mutex::new(RefCell::new(Inbox {
                 works: Vec::new(),
                 waker: None,
-            }),
-            handed: Cell::new(false),
-            closed: Cell::new(false),
+            })),
+            handed: Flag::new(),
+            closed: Flag::new(),
             clock,
         }
     }
 
     /// Stops taking work: the driver ends once what it holds has finished.
     pub(crate) fn close(&self) {
-        self.closed.set(true);
+        self.closed.raise();
         self.wake();
     }
 
@@ -77,19 +80,20 @@ impl<Timers: Clock<Sleep: 'static> + 'static> Detached<Timers> {
                 .is_some_and(|waker| waker.will_wake(cx.waker()))
             {
                 let waker = cx.waker().clone();
-                self.inbox.borrow_mut().waker = Some(waker.clone());
+                self.inbox
+                    .lock(|inbox| inbox.borrow_mut().waker = Some(waker.clone()));
                 known = Some(waker);
             }
             // Read before the inbox is taken, so work handed over after the take raises it again.
-            let closed = self.closed.get();
-            if self.handed.get() {
-                self.handed.set(false);
-                running.append(&mut self.inbox.borrow_mut().works);
+            let closed = self.closed.is_raised();
+            if self.handed.take() {
+                self.inbox
+                    .lock(|inbox| running.append(&mut inbox.borrow_mut().works));
             }
             if !running.is_empty() {
                 running.retain_mut(|work| work.as_mut().poll(cx).is_pending());
             }
-            if closed && running.is_empty() && !self.handed.get() {
+            if closed && running.is_empty() && !self.handed.is_raised() {
                 Poll::Ready(())
             } else {
                 Poll::Pending
@@ -98,31 +102,35 @@ impl<Timers: Clock<Sleep: 'static> + 'static> Detached<Timers> {
     }
 
     fn hand(&self, work: Work) {
-        self.inbox.borrow_mut().works.push(work);
-        self.handed.set(true);
+        self.inbox.lock(|inbox| inbox.borrow_mut().works.push(work));
+        self.handed.raise();
         self.wake();
     }
 
     fn wake(&self) {
-        if let Some(waker) = &self.inbox.borrow().waker {
-            waker.wake_by_ref();
-        }
+        self.inbox.lock(|inbox| {
+            if let Some(waker) = &inbox.borrow().waker {
+                waker.wake_by_ref();
+            }
+        });
     }
 }
 
-impl<Timers: Clock<Sleep: 'static> + 'static> LocalDetach for Detached<Timers> {
+impl<Timers: Clock<Sleep: MaybeSend + 'static> + MaybeSendSync + 'static> Detach
+    for Detached<Timers>
+{
     // A copy waits in the store its mount sized with `.retry_capacity`.
     const STORES_COPIES: bool = true;
 
     fn detach<Work>(&self, work: Work)
     where
-        Work: Future<Output = ()> + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static,
     {
         self.hand(Box::pin(work));
     }
 
     // The box the delivery made is the one the driver polls.
-    fn detach_boxed(&self, work: Pin<Box<dyn Future<Output = ()>>>) {
+    fn detach_boxed(&self, work: Continuation) {
         self.hand(work);
     }
 
@@ -130,7 +138,7 @@ impl<Timers: Clock<Sleep: 'static> + 'static> LocalDetach for Detached<Timers> {
     // delay, on the task's own timer.
     fn detach_after<Work>(&self, delay: Duration, work: Work)
     where
-        Work: Future<Output = ()> + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static,
     {
         let timer = self.clock.sleep(delay);
         self.hand(Box::pin(async move {
@@ -163,7 +171,7 @@ mod tests {
     use core::sync::atomic::{AtomicBool, Ordering};
     use core::task::{Context, Poll, Waker};
 
-    use ruststream_runtime::LocalDetach;
+    use ruststream_runtime::Detach;
 
     // The driver on embassy's clock polls embassy's timer, whose queue lives in the executor.
     use embassy_executor as _;
@@ -192,7 +200,7 @@ mod tests {
         let mut cx = Context::from_waker(Waker::noop());
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
         let held = Rc::clone(&ran);
-        LocalDetach::detach(&host, async move { held.set(held.get() + 1) });
+        Detach::detach(&host, async move { held.set(held.get() + 1) });
         host.close();
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Ready(()));
         assert_eq!(ran.get(), 1, "pieces of work that hold an `Rc` and ran");

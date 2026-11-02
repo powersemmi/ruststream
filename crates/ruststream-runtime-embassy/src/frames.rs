@@ -1,11 +1,11 @@
 //! A broker stand-in a device could run: frames in a `static` embassy-sync channel, nothing on the
 //! heap between the publisher and the settlement.
 //!
-//! The channel locks with `NoopRawMutex`, so it is not `Sync`, and the subscriber that holds its
-//! receiver is not `Send`. The delivery counts its settlement in the subscription's cells, so it
-//! is neither `Send` nor `Sync`. The subscriber and its delivery therefore implement only the
-//! `Local*` contract twins, and the body reaches them through those alone. [`FrameBroker`] is the
-//! same channel as a broker an app registers, with [`FrameSource`] its subscription.
+//! The channel locks with `NoopRawMutex` where the runtime is single-threaded, so it is not `Sync`,
+//! and the subscriber that holds its receiver is not `Send`; next to a multi-thread runtime it
+//! locks with `CriticalSectionRawMutex`, which a `Send` subscriber needs. The delivery counts its
+//! settlement in the subscription's cells under the same lock. [`FrameBroker`] is the same channel
+//! as a broker an app registers, with [`FrameSource`] its subscription.
 
 // The broker's futures hold its `!Send` forms on purpose: that is what the body is held to here.
 #![allow(clippy::future_not_send)]
@@ -19,13 +19,15 @@ use core::num::NonZeroUsize;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::{Channel, Receiver};
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, Broker, BrokerMoves, ConnectedBroker, DefaultPublish, HeaderMap, IncomingMessage,
-    Lend, LocalBatchSubscriber, LocalPublisher, LocalSettle, LocalSubscriber, OutgoingMessage,
-    PairError, PublishPolicy, SubscriptionSource,
+    AckError, BatchSlot, BatchStream, BatchSubscriber, Broker, BrokerMoves, ConnectedBroker,
+    DefaultPublish, HeaderMap, IfSend, IncomingMessage, Lend, OutgoingMessage, PairError,
+    PublishMessageError, PublishOutcome, PublishPolicy, Publisher, Settle, Subscriber,
+    SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -36,7 +38,14 @@ pub const PAYLOAD: usize = 64;
 pub const DEPTH: usize = 4;
 
 /// The channel the stand-in delivers through: a device keeps it in a `static`.
-pub type Frames = Channel<NoopRawMutex, Frame, DEPTH>;
+pub type Frames = Channel<FrameLock, Frame, DEPTH>;
+
+/// How the stand-in locks.
+///
+/// Where the runtime is single-threaded it does not lock at all, so it costs no atomic and an
+/// embedded build needs no critical-section implementation. Next to a multi-thread runtime it locks
+/// through a critical section, because the stand-in is shared between threads.
+pub type FrameLock = IfSend<CriticalSectionRawMutex, NoopRawMutex>;
 
 /// One message on the wire, held inline.
 #[derive(Clone, Debug)]
@@ -57,10 +66,16 @@ impl Frame {
 }
 
 /// How the deliveries of a subscription were settled.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Settlements {
-    acked: Cell<u32>,
-    nacked: Cell<u32>,
+    acked: Mutex<FrameLock, Cell<u32>>,
+    nacked: Mutex<FrameLock, Cell<u32>>,
+}
+
+impl Default for Settlements {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Settlements {
@@ -68,28 +83,28 @@ impl Settlements {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            acked: Cell::new(0),
-            nacked: Cell::new(0),
+            acked: Mutex::new(Cell::new(0)),
+            nacked: Mutex::new(Cell::new(0)),
         }
     }
 
     /// How many deliveries were acknowledged.
     #[must_use]
     pub fn acked(&self) -> u32 {
-        self.acked.get()
+        self.acked.lock(Cell::get)
     }
 
     /// How many deliveries were negatively acknowledged.
     #[must_use]
     pub fn nacked(&self) -> u32 {
-        self.nacked.get()
+        self.nacked.lock(Cell::get)
     }
 }
 
 /// A subscription over the channel.
 #[derive(Debug)]
 pub struct FrameSubscriber {
-    receiver: Receiver<'static, NoopRawMutex, Frame, DEPTH>,
+    receiver: Receiver<'static, FrameLock, Frame, DEPTH>,
     settled: &'static Settlements,
 }
 
@@ -113,7 +128,7 @@ impl FrameSubscriber {
     }
 }
 
-impl LocalSubscriber for FrameSubscriber {
+impl Subscriber for FrameSubscriber {
     type Message = FrameDelivery;
     type Error = Infallible;
 
@@ -141,17 +156,34 @@ impl Stream for Deliveries<'_> {
 
 // A batch is the frames waiting when the first one arrives, up to the size the registration
 // asked for, held inline: taking one allocates nothing.
-impl LocalBatchSubscriber for FrameSubscriber {
-    type Batch = heapless::Vec<FrameDelivery, DEPTH>;
+impl BatchSubscriber for FrameSubscriber {
+    type Batch = FrameBatch;
 
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, Infallible>> + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = Infallible> + '_ {
         Bursts {
             subscriber: self,
             size,
         }
+    }
+}
+
+/// The slot a [`FrameSubscriber`] collects a batch in: the frames, held inline, with the room of
+/// the whole channel whatever size the registration asked for.
+#[derive(Debug, Default)]
+pub struct FrameBatch(heapless::Vec<FrameDelivery, DEPTH>);
+
+impl BatchSlot for FrameBatch {
+    type Message = FrameDelivery;
+
+    fn with_capacity(_size: NonZeroUsize) -> Self {
+        Self::default()
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = FrameDelivery> + '_ {
+        self.0.drain(..)
     }
 }
 
@@ -162,23 +194,26 @@ struct Bursts<'a> {
     size: NonZeroUsize,
 }
 
-impl Stream for Bursts<'_> {
-    type Item = Result<heapless::Vec<FrameDelivery, DEPTH>, Infallible>;
+impl BatchStream<FrameBatch> for Bursts<'_> {
+    type Error = Infallible;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_fill(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        slot: &mut FrameBatch,
+    ) -> Poll<Option<Result<(), Infallible>>> {
         let subscriber = self.subscriber;
         let limit = self.size.get().min(DEPTH);
         subscriber.receiver.poll_receive(cx).map(|first| {
-            let mut batch = heapless::Vec::new();
             let mut next = Some(first);
             while let Some(frame) = next {
-                // The limit is at most the channel's depth, which is the batch's capacity.
-                let _ = batch.push(subscriber.delivery(frame));
-                next = (batch.len() < limit)
+                // The limit is at most the channel's depth, which is the slot's capacity.
+                let _ = slot.0.push(subscriber.delivery(frame));
+                next = (slot.0.len() < limit)
                     .then(|| subscriber.receiver.try_receive().ok())
                     .flatten();
             }
-            Some(Ok(batch))
+            Some(Ok(()))
         })
     }
 }
@@ -201,7 +236,7 @@ impl IncomingMessage for FrameDelivery {
     }
 }
 
-impl LocalSettle for FrameDelivery {
+impl Settle for FrameDelivery {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         count(&self.settled.acked);
         ready(Ok(()))
@@ -213,9 +248,9 @@ impl LocalSettle for FrameDelivery {
     }
 }
 
-/// Adds one: the executor's one thread settles a subscription's deliveries.
-fn count(counter: &Cell<u32>) {
-    counter.set(counter.get() + 1);
+/// Adds one.
+fn count(counter: &Mutex<FrameLock, Cell<u32>>) {
+    counter.lock(|cell| cell.set(cell.get() + 1));
 }
 
 /// The stand-in as a broker an app registers: the channel its one subscription receives from.
@@ -451,17 +486,17 @@ pub struct FramePublisher {
     replies: &'static Frames,
 }
 
-impl LocalPublisher for FramePublisher {
+impl Publisher for FramePublisher {
     // The frame copies the bytes inline, so the client keeps nothing of the buffer.
     type Payload = Lend;
     type Error = FramePublishError;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), FramePublishError>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, FramePublishError, Lend>> {
         let sent = Frame::new(msg.payload())
             .ok_or(FramePublishError::TooLong)
             .and_then(|frame| {
@@ -469,7 +504,8 @@ impl LocalPublisher for FramePublisher {
                     .try_send(frame)
                     .map_err(|_| FramePublishError::Full)
             });
-        ready(sent)
+        // The frame holds a copy, so the refused message goes back as it came.
+        ready(sent.map_err(|error| PublishMessageError::with_message(error, msg)))
     }
 }
 
@@ -479,7 +515,7 @@ mod tests {
     use alloc::string::ToString;
 
     use embassy_futures::block_on;
-    use ruststream_core::{Broker, LocalPublisher, OutgoingMessage, PublishPolicy};
+    use ruststream_core::{Broker, OutgoingMessage, PublishPolicy, Publisher};
 
     // The channels lock through embassy-sync, which the executor's critical section serves.
     use embassy_executor as _;
@@ -506,7 +542,13 @@ mod tests {
             let refused = replies
                 .publish(OutgoingMessage::new("replies", too_long.as_slice()), None)
                 .await;
-            assert_eq!(refused, Err(FramePublishError::TooLong));
+            let refused = refused.expect_err("a payload over the frame is refused");
+            assert_eq!(refused.error(), &FramePublishError::TooLong);
+            assert_eq!(
+                refused.message().map(OutgoingMessage::name),
+                Some("replies"),
+                "the refusal hands the unsent message back"
+            );
             assert_eq!(
                 FramePublishError::TooLong.to_string(),
                 "the payload is longer than 64 bytes"
@@ -520,7 +562,13 @@ mod tests {
             let full = replies
                 .publish(OutgoingMessage::new("replies", b"ok".as_slice()), None)
                 .await;
-            assert_eq!(full, Err(FramePublishError::Full));
+            let full = full.expect_err("a full channel refuses");
+            assert_eq!(full.error(), &FramePublishError::Full);
+            assert_eq!(
+                full.message().map(OutgoingMessage::payload),
+                Some(b"ok".as_slice()),
+                "the refusal hands the unsent message back"
+            );
             assert_eq!(
                 FramePublishError::Full.to_string(),
                 "the reply channel holds 4 frames"

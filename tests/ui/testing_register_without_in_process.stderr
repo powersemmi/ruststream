@@ -41,11 +41,16 @@ help: the trait `TestableBroker` is not implemented for `ConnectedNetworked`
 10 | struct ConnectedNetworked;
    | ^^^^^^^^^^^^^^^^^^^^^^^^^
    = note: a broker's in-process mode implements `TestableBroker` on the connected form its `InProcess` transition produces
-help: the trait `TestableBroker` is implemented for `ConnectedMemoryBroker<Log>`
+help: the following other types implement trait `TestableBroker`
   --> crates/ruststream-memory/src/broker.rs
    |
    | impl<Log: LogMode> TestableBroker for ConnectedMemoryBroker<Log> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ConnectedMemoryBroker<Log>`
+   |
+  ::: crates/ruststream-memory/src/local/broker.rs
+   |
+   | impl<const CAP: usize> TestableBroker for ConnectedLocalMemoryBroker<CAP> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ConnectedLocalMemoryBroker<CAP>`
 note: required by a bound in `TestableRegistration::of`
   --> crates/ruststream-runtime/src/testing/broker.rs
    |

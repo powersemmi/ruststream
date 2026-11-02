@@ -128,6 +128,10 @@ SCENARIOS = [
         "batch/service",
     ),
     Scenario(
+        "consume in batches of 64 through a pool of four workers",
+        "batch_pool/service",
+    ),
+    Scenario(
         "reply, encoded to a declared destination",
         "reply/service",
     ),
@@ -138,6 +142,10 @@ SCENARIOS = [
     Scenario(
         "publish through an Out slot with one transform",
         "out_slot/service",
+    ),
+    Scenario(
+        "publish through an Out slot to a transport that reads the payload",
+        "out_slot_lending/service",
     ),
     Scenario(
         "publish with a typed header contract",
@@ -154,6 +162,14 @@ SCENARIOS = [
     Scenario(
         "a continuation left behind by every delivery",
         "continuation/service",
+    ),
+    Scenario(
+        "the embedded runner, one subscription",
+        "embedded_idle/alone_on_the_app",
+    ),
+    Scenario(
+        "the embedded runner, one busy subscription beside fifteen idle ones",
+        "embedded_idle/beside_fifteen_idle",
     ),
     Scenario(
         "a delivery that asks to be redelivered, natively by the broker",

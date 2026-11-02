@@ -97,7 +97,7 @@ struct StampApp;
 impl PublishLayer for StampApp {
     fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishNext<'a, N, P>,
     ) -> impl Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send + 'a {
         out.headers_mut().insert("x-app", b"1".to_vec());

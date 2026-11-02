@@ -28,8 +28,8 @@ use ruststream::runtime::{
     Clock, EmbassyClock, EmbeddedApp, HandlerOutcome, MountSteps, Mounts, Out,
 };
 use ruststream::{
-    Broker, Deserialized, LocalPublisher, LocalSettle, LocalSubscriber, OutSlot, Outgoing,
-    OutgoingMessage, Publisher, Serialized, SubscriptionSource, subscriber,
+    Broker, Deserialized, OutSlot, Outgoing, OutgoingMessage, Publisher, Serialized, Settle,
+    Subscriber, SubscriptionSource, subscriber,
 };
 use serde::Serialize;
 use static_cell::StaticCell;
@@ -181,7 +181,7 @@ async fn publish(bus: &Bus, subject: &'static str, payload: &[u8]) {
 }
 
 /// The payloads `subscriber` holds now, each acked.
-async fn payloads<Sub: LocalSubscriber>(subscriber: &mut Sub) -> Vec<Vec<u8>> {
+async fn payloads<Sub: Subscriber>(subscriber: &mut Sub) -> Vec<Vec<u8>> {
     let mut stream = pin!(subscriber.stream());
     let mut held = Vec::new();
     while let Some(Some(Ok(message))) = stream.next().now_or_never() {

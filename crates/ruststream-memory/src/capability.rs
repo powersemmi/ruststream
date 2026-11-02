@@ -6,15 +6,18 @@
 //! `conformance::capabilities`), and these implementations are the executable reference for
 //! them.
 
+#[cfg(feature = "testing")]
+use ruststream_runtime::testing::Coordinator;
 use std::{
     num::NonZeroUsize,
-    task::{Poll, ready},
+    pin::Pin,
+    task::{Context, Poll, ready},
 };
 
-use futures::{Stream, stream};
-
 use super::{LogMode, MemoryMessage, MemorySubscriber};
-use ruststream_core::{BatchSubscriber, IncomingMessage, Partitioned, Subscriber};
+use ruststream_core::{
+    BatchStream, BatchSubscriber, IncomingMessage, MaybeSend, Partitioned, Subscriber,
+};
 
 /// The well-known header the [`Partitioned`] implementation reads the partition key from.
 pub const PARTITION_KEY_HEADER: &str = "partition-key";
@@ -32,56 +35,78 @@ pub use transaction::MemoryTransaction;
 
 /// Greedy batching: a batch is the first awaited delivery plus everything already buffered, up to
 /// the size the registration asked for. Partial batches ship immediately, so no deadline timer is
-/// needed - the in-memory transport has nothing to wait for. Each batch is allocated at the
-/// requested size up front, so a partial batch holds the room of a full one.
+/// needed - the in-memory transport has nothing to wait for. The batch is collected into the slot
+/// the runtime lends, which the runtime sized for the registration once, when the subscription
+/// started.
 impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
     type Batch = Vec<MemoryMessage<Log>>;
 
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
-        let limit = size.get();
+    ) -> impl BatchStream<Self::Batch, Error = <Self as Subscriber>::Error> + MaybeSend + '_ {
+        Greedy {
+            #[cfg(feature = "testing")]
+            coordinator: self.coordinator(),
+            limit: size.get(),
+            subscriber: self,
+        }
+    }
+}
+
+/// The batch stream of a [`MemorySubscriber`].
+struct Greedy<'sub, Log: LogMode> {
+    #[cfg(feature = "testing")]
+    coordinator: Option<Coordinator>,
+    limit: usize,
+    subscriber: &'sub mut MemorySubscriber<Log>,
+}
+
+impl<Log: LogMode> BatchStream<Vec<MemoryMessage<Log>>> for Greedy<'_, Log> {
+    type Error = <MemorySubscriber<Log> as Subscriber>::Error;
+
+    // The drain happens inside a single poll, so no batch state is buffered between polls and
+    // the stream stays cancel-safe, like `MemorySubscriber::stream`.
+    fn poll_fill(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        slot: &mut Vec<MemoryMessage<Log>>,
+    ) -> Poll<Option<Result<(), Self::Error>>> {
+        let this = self.get_mut();
+        let subscriber = &mut *this.subscriber;
         #[cfg(feature = "testing")]
-        let coordinator = self.coordinator();
-        // The drain happens inside a single poll, so no batch state is buffered between polls
-        // and the stream stays cancel-safe, like `MemorySubscriber::stream`.
-        stream::poll_fn(move |cx| {
-            self.begin_poll(cx);
-            let first = ready!(self.poll_fresh(
+        let coordinator = this.coordinator.as_ref();
+        subscriber.begin_poll(cx);
+        let first = ready!(subscriber.poll_fresh(
+            cx,
+            #[cfg(feature = "testing")]
+            coordinator,
+        ));
+        let Some(first) = first else {
+            return Poll::Ready(None);
+        };
+        slot.push(subscriber.message(
+            first,
+            #[cfg(feature = "testing")]
+            coordinator,
+        ));
+        while slot.len() < this.limit {
+            match subscriber.poll_fresh(
                 cx,
                 #[cfg(feature = "testing")]
-                coordinator.as_ref(),
-            ));
-            let Some(first) = first else {
-                return Poll::Ready(None);
-            };
-            // Sized for the batch the registration asked for: a batch grown one push at a time
-            // reallocates six times on its way to 64.
-            let mut batch = Vec::with_capacity(limit);
-            batch.push(self.message(
-                first,
-                #[cfg(feature = "testing")]
-                coordinator.as_ref(),
-            ));
-            while batch.len() < limit {
-                match self.poll_fresh(
-                    cx,
+                coordinator,
+            ) {
+                Poll::Ready(Some(delivery)) => slot.push(subscriber.message(
+                    delivery,
                     #[cfg(feature = "testing")]
-                    coordinator.as_ref(),
-                ) {
-                    Poll::Ready(Some(delivery)) => batch.push(self.message(
-                        delivery,
-                        #[cfg(feature = "testing")]
-                        coordinator.as_ref(),
-                    )),
-                    // Drained (pending) or closed: ship what we have; a closed channel ends
-                    // the stream on the next poll.
-                    Poll::Ready(None) | Poll::Pending => break,
-                }
+                    coordinator,
+                )),
+                // Drained (pending) or closed: ship what we have; a closed channel ends the
+                // stream on the next poll.
+                Poll::Ready(None) | Poll::Pending => break,
             }
-            Poll::Ready(Some(Ok(batch)))
-        })
+        }
+        Poll::Ready(Some(Ok(())))
     }
 }
 
@@ -96,8 +121,11 @@ impl<Log: LogMode> Partitioned for MemoryMessage<Log> {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
+    use std::future::poll_fn;
+
     use futures::StreamExt;
-    use ruststream_core::Settle;
+    use ruststream_core::{BatchSlot, Settle};
 
     use super::*;
     use crate::{MemoryBroker, Retaining, Retention};
@@ -107,6 +135,15 @@ mod tests {
     /// tests publish, so what they assert is the seek machinery, never an eviction.
     pub(super) fn replaying() -> MemoryBroker<Retaining> {
         MemoryBroker::retaining(Retention::Messages(nonzero!(64)))
+    }
+
+    /// The next batch the stream fills a fresh slot with, or `None` where the subscription ended.
+    pub(super) async fn filled<Log: LogMode>(
+        stream: &mut Pin<&mut impl BatchStream<Vec<MemoryMessage<Log>>, Error = Infallible>>,
+    ) -> Option<Vec<MemoryMessage<Log>>> {
+        let mut slot = Vec::new();
+        let step = poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot)).await;
+        step.map(|_| slot)
     }
 
     #[tokio::test]
@@ -122,7 +159,7 @@ mod tests {
         }
 
         let mut stream = std::pin::pin!(sub.batches(nonzero!(64)));
-        let batch = stream.next().await.unwrap().unwrap();
+        let batch = filled(&mut stream).await.unwrap();
         let payloads: Vec<u8> = batch.iter().map(|m| m.payload()[0]).collect();
         assert_eq!(payloads, [0, 1, 2, 3, 4]);
         for msg in batch {
@@ -130,23 +167,40 @@ mod tests {
         }
     }
 
-    /// A batch is allocated at the size the stream was opened at, so a short one holds the room of a
-    /// full one and a full one never grows on the way.
+    /// A batch is collected into the slot the runtime lent, which already has the room for the
+    /// registration's size: a short batch and a full one both leave its storage where it was.
     #[tokio::test]
-    async fn a_batch_is_allocated_at_the_requested_size() {
+    async fn a_batch_is_collected_into_the_lent_slot_without_growing_it() {
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("batch.sized");
         let publisher = broker.publisher();
-        publisher
-            .publish(OutgoingMessage::new("batch.sized", b"a"), None)
-            .await
-            .unwrap();
+        for _ in 0..9 {
+            publisher
+                .publish(OutgoingMessage::new("batch.sized", b"a"), None)
+                .await
+                .unwrap();
+        }
 
         let mut stream = std::pin::pin!(sub.batches(nonzero!(8)));
-        let batch = stream.next().await.unwrap().unwrap();
-        assert_eq!(batch.len(), 1);
-        assert!(batch.capacity() >= 8, "capacity {}", batch.capacity());
-        for msg in batch {
+        let mut slot = Vec::with_capacity(8);
+        let storage = slot.as_ptr();
+        poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(slot.len(), 8);
+        assert_eq!(slot.capacity(), 8);
+        assert_eq!(slot.as_ptr(), storage);
+        for msg in BatchSlot::drain(&mut slot) {
+            msg.ack().await.unwrap();
+        }
+        poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(slot.len(), 1);
+        assert_eq!(slot.as_ptr(), storage);
+        for msg in slot {
             msg.ack().await.unwrap();
         }
     }

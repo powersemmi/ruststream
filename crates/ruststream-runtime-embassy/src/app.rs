@@ -9,7 +9,7 @@ use alloc::sync::Arc;
 use core::error::Error as StdError;
 use core::pin::pin;
 
-use futures::future::{Either, join, select};
+use futures::future::{Either, join3, select};
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::InProcessRun;
 use ruststream_runtime::{
@@ -65,7 +65,7 @@ pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 /// use core::future::ready;
 ///
 /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
-/// use ruststream_runtime::{Context, Deserialized, Input, LocalHandle, SoloDeserialized, local_subscriber};
+/// use ruststream_runtime::{Context, Deserialized, Input, Handle, SoloDeserialized, subscriber};
 /// use ruststream_runtime_embassy::{Control, EmbeddedApp, Mounts};
 ///
 /// /// A reading, as the sensor sends it: the frame's bytes.
@@ -87,7 +87,7 @@ pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 /// /// Logs every reading.
 /// struct OnReading;
 ///
-/// impl LocalHandle<Reading<'_>> for OnReading {
+/// impl Handle<Reading<'_>> for OnReading {
 ///     fn handle(
 ///         &self,
 ///         reading: &Reading<'_>,
@@ -103,7 +103,7 @@ pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 ///
 /// fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
 ///     EmbeddedApp::new().with_broker(bus, |b| {
-///         b.include(local_subscriber(LocalMemorySource::new("sensors/temp"), OnReading).build())
+///         b.include(subscriber(LocalMemorySource::new("sensors/temp"), OnReading).build())
 ///     })
 /// }
 ///
@@ -578,7 +578,7 @@ where
         // Every loop has ended, so nothing detaches more work: the host finishes what it holds.
         host.close();
     };
-    let ((), startup) = join(join(serve, host.drive()).map_unit(), startup).await;
+    let ((), (), startup) = join3(serve, host.drive(), startup).await;
     hooks.on_shutdown.call_all(&state, "on_shutdown").await;
     connections.close_all().await;
     hooks
@@ -593,17 +593,6 @@ where
     }
     control.stopped();
     Ok(())
-}
-
-/// Discards the unit outputs of a joined pair.
-trait MapUnit {
-    fn map_unit(self) -> impl Future<Output = ()>;
-}
-
-impl<Pair: Future<Output = ((), ())>> MapUnit for Pair {
-    async fn map_unit(self) {
-        self.await;
-    }
 }
 
 /// Why an [`EmbeddedApp`] stopped other than on its control's request.

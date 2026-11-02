@@ -18,6 +18,7 @@ use core::convert::Infallible;
 use core::panic::AssertUnwindSafe;
 use core::pin::Pin;
 use core::task::{Context as TaskContext, Poll};
+use ruststream_core::{MaybeSendSync, ReadyHint};
 
 #[cfg(feature = "testing")]
 use bytes::Bytes;
@@ -29,18 +30,18 @@ use tracing::error;
 
 use crate::publish_failure::Reaction;
 use crate::redelivery::RetryCopies;
-use crate::{BuildContext, HeaderMap, LocalSettle, LocalSubscriber};
+use crate::{BuildContext, HeaderMap, Settle, Subscriber};
 
-use super::batch::{LocalBatchHandler, TakenBatch};
+use super::batch::{BatchHandler, TakenBatch};
 use super::context::Context;
 use super::failure::DispatchFailure;
 #[cfg(feature = "std")]
 use super::failure::{FailurePolicy, panic_reason};
+use super::handler::Handler;
 use super::handler::HandlerOutcome;
 #[cfg(doc)]
 use super::handler::HandlerResult;
-use super::handler::LocalHandler;
-use super::host::{Halt, HostDetach, PrepareKept, ShutdownWait};
+use super::host::{Halt, HostDetach, PrepareKept, SendHost, ShutdownWait};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
     Coordinator, Delivered, HarnessScope, Record, calls_in_harness_scope, in_harness_scope,
@@ -118,8 +119,7 @@ macro_rules! observed {
 /// says how each delivery lends its headers to the context (see [`LendHeaders`]).
 // The parts are independent and each runner passes its own; bundling them into a struct would
 // hide that.
-// Written over the local twins of the contract, so the future is `Send` exactly where the types
-// it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
+// Written over the contract traits, so the future is `Send` exactly where the types it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
@@ -134,11 +134,11 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     held: Held,
     headers: Headers,
 ) where
-    S: LocalSubscriber,
-    H: LocalHandler<S::Message, C, St>,
+    S: Subscriber,
+    H: Handler<S::Message, C, St>,
     Headers: LendHeaders<S::Message>,
     // See `dispatch`.
-    C: BuildContext<S::Message> + Send + Sync + 'static,
+    C: BuildContext<S::Message> + MaybeSendSync + 'static,
     Signal: ShutdownWait + Halt,
     Lending: Lent<C>,
 {
@@ -147,6 +147,8 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     let _held = held;
     let delivery = lent.delivery();
     let host = lent.host();
+    // Taken before the stream opens: the stream borrows the subscriber for the whole loop.
+    let probe = subscriber.ready_hint();
     let mut stream = core::pin::pin!(subscriber.stream());
     let mut cancelled = core::pin::pin!(shutdown.cancelled());
     // One encode buffer for the whole loop: a reply that leaves through a publisher which
@@ -158,7 +160,15 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     // through the turn and bound to a local on its way here would be copied twice more.
     let mut slot = Slot::empty();
     loop {
-        match turn_into(&shutdown, stream.as_mut(), cancelled.as_mut(), &mut slot).await {
+        match turn_into(
+            &shutdown,
+            &probe,
+            stream.as_mut(),
+            cancelled.as_mut(),
+            &mut slot,
+        )
+        .await
+        {
             Turn::Delivery(Ok(())) => {
                 // Pinned rather than awaited in place: a delivery's future carries the
                 // context, the handler's own state and the settle path, and awaiting the
@@ -210,40 +220,73 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
 /// `cancelled` has resolved the flag stays set - a token never un-cancels - so the check at the
 /// top answers every later turn and the resolved future is never polled again.
 ///
+/// A subscription whose probe declares readiness is polled again within a turn only once the probe
+/// says something may be ready (see [`idle`]); the first poll of every turn is real, so the
+/// stream and the token have registered with the task before any poll is skipped.
+///
 /// The other loops write the same wait out rather than share it: one instantiation shared with
 /// them is enough for the compiler to stop inlining it here.
-fn turn_into<'s, St, Message, Failure, Wait, Signal>(
-    shutdown: &Signal,
+fn turn_into<'s, St, Message, Failure, Wait, Signal, Probe>(
+    shutdown: &'s Signal,
+    probe: &'s Probe,
     stream: Pin<&'s mut St>,
     cancelled: Pin<&'s mut Wait>,
     slot: &'s mut Slot<Message>,
-) -> TurnInto<'s, St, Message, Wait>
+) -> TurnInto<'s, St, Message, Wait, Signal, Probe>
 where
     St: Stream<Item = Result<Message, Failure>>,
     Wait: Future<Output = ()>,
     Signal: ShutdownWait,
+    Probe: ReadyHint,
 {
     TurnInto {
         shutdown: shutdown.is_cancelled(),
+        signal: shutdown,
+        probe,
+        parked: false,
         stream,
         cancelled,
         slot,
     }
 }
 
+/// Whether an idle subscription may skip the poll of its stream and of its shutdown wait.
+///
+/// The poll is skipped only after a poll of the same wait that answered `Pending` (`parked`), so
+/// the stream and the shutdown token have registered with the task and a later wake still reaches
+/// it; only where the probe says nothing is ready; and never once shutdown is signalled, because a
+/// stop wakes the task and a skipped wait would not see it. A probe that declares none makes the
+/// answer the constant `false`.
+#[doc(hidden)]
+#[inline]
+pub fn idle<Probe, Signal>(parked: bool, probe: &Probe, shutdown: &Signal) -> bool
+where
+    Probe: ReadyHint,
+    Signal: ShutdownWait,
+{
+    Probe::GATED && parked && !probe.may_be_ready() && !shutdown.is_cancelled()
+}
+
 /// The future [`turn_into`] returns: written out rather than an `async fn` so its poll carries an
 /// inline hint, which a closure inside `poll_fn` cannot.
-struct TurnInto<'s, St, Message, Wait> {
+struct TurnInto<'s, St, Message, Wait, Signal, Probe> {
     shutdown: bool,
+    signal: &'s Signal,
+    probe: &'s Probe,
+    // Set once a poll of this turn found the stream and the shutdown wait both pending.
+    parked: bool,
     stream: Pin<&'s mut St>,
     cancelled: Pin<&'s mut Wait>,
     slot: &'s mut Slot<Message>,
 }
 
-impl<St, Message, Failure, Wait> Future for TurnInto<'_, St, Message, Wait>
+impl<St, Message, Failure, Wait, Signal, Probe> Future
+    for TurnInto<'_, St, Message, Wait, Signal, Probe>
 where
     St: Stream<Item = Result<Message, Failure>>,
     Wait: Future<Output = ()>,
+    Signal: ShutdownWait,
+    Probe: ReadyHint,
 {
     type Output = Turn<Result<(), Failure>>;
 
@@ -254,6 +297,9 @@ where
         if this.shutdown {
             return Poll::Ready(Turn::Shutdown);
         }
+        if idle(this.parked, this.probe, this.signal) {
+            return Poll::Pending;
+        }
         match this.stream.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(msg))) => {
                 this.slot.fill(msg);
@@ -261,7 +307,11 @@ where
             }
             Poll::Ready(Some(Err(err))) => Poll::Ready(Turn::Delivery(Err(err))),
             Poll::Ready(None) => Poll::Ready(Turn::Ended),
-            Poll::Pending => this.cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
+            Poll::Pending => {
+                let waiting = this.cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown);
+                this.parked = waiting.is_pending();
+                waiting
+            }
         }
     }
 }
@@ -302,8 +352,7 @@ pub fn placed<C>(workers: Workers, delivery: &Delivery<C>) -> Workers {
 }
 
 /// One delivery, end to end: the handler, the settle and what the delivery leaves behind.
-// Written over the local twins of the contract, so the future is `Send` exactly where the types
-// it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
+// Written over the contract traits, so the future is `Send` exactly where the types it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 // Each part is the delivery's own or the runner's; bundling them would hide which is which.
@@ -319,11 +368,11 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     failure: &DispatchFailure<Signal>,
     _headers: Headers,
 ) where
-    H: LocalHandler<M, C, St>,
+    H: Handler<M, C, St>,
     // A deferred retry copy carries the broker's context into the work the delivery leaves
     // behind, which may run on another thread.
-    C: BuildContext<M> + Send + Sync + 'static,
-    M: LocalSettle,
+    C: BuildContext<M> + MaybeSendSync + 'static,
+    M: Settle,
     Signal: Halt,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
     Headers: LendHeaders<M>,
@@ -532,14 +581,14 @@ fn record_call<C>(
 /// once the batch has settled (per-element outcomes make a gated hook ill-defined on a batch).
 // The loop hands this everything one batch needs, the buffers it lends included: see
 // spawn_dispatch_workers.
-// Written over the local twins of the contract, so the future is `Send` exactly where the types
-// it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
+// Written over the contract traits, so the future is `Send` exactly where the types it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
 pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     handler: &H,
-    batch: Batch,
+    slot: &mut Batch,
+    taken: &mut H::Taken,
     scratch: &mut H::Scratch,
     encode: &mut BytesMut,
     name: &str,
@@ -548,11 +597,14 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     host: &Host,
     failure: &DispatchFailure<Signal>,
 ) where
-    H: LocalBatchHandler<Batch, Host, C, St>,
+    H: BatchHandler<Batch, C, St>,
     Signal: Halt,
-    Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
+    Host: SendHost<C>,
 {
-    let batch = H::take(batch);
+    // The broker filled `slot`; the exchange leaves it empty for the next batch, and the
+    // handler's own buffer holds this one.
+    H::load(taken, slot);
+    let batch = taken;
     // A batch spans many deliveries, so its context carries only subscription-scoped data, built
     // from its first delivery, or from the batch itself where the handler lends its values; the
     // shared app state is threaded the same way as on the single-message path. A batch with
@@ -575,8 +627,6 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     // the deliveries and a panic consumes them) to record the call the settle path never reached.
     // Only a harness reads that record, so a dispatch no harness watches captures nothing.
     #[cfg(feature = "testing")]
-    let mut batch = batch;
-    #[cfg(feature = "testing")]
     let unsettled = watcher.as_ref().map(|_| batch.unsettled());
     #[cfg(feature = "testing")]
     if let Some(coordinator) = &watcher {
@@ -589,16 +639,24 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
         harness_scope(delivery),
         observed!(
             delivery,
-            AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx, host).await })
-                .catch_unwind()
+            AssertUnwindSafe(async {
+                handler
+                    .handle_batch(&mut *batch, scratch, &mut ctx, host)
+                    .await;
+            })
+            .catch_unwind()
         ),
     )
     .await;
     #[cfg(all(feature = "std", not(feature = "testing")))]
     let result = observed!(
         delivery,
-        AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx, host).await })
-            .catch_unwind()
+        AssertUnwindSafe(async {
+            handler
+                .handle_batch(&mut *batch, scratch, &mut ctx, host)
+                .await;
+        })
+        .catch_unwind()
     )
     .await;
     // Without `std` a panic aborts, so the handler's future runs uncaught.
@@ -606,7 +664,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     let result: Result<(), Infallible> = {
         observed!(
             delivery,
-            handler.handle_batch(batch, scratch, &mut ctx, host)
+            handler.handle_batch(&mut *batch, scratch, &mut ctx, host)
         )
         .await;
         Ok(())
@@ -629,6 +687,9 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
                 panic = %reason,
                 "batch handler panicked",
             );
+            // What the panic left unsettled is dropped, so the worker's storage serves the next
+            // batch.
+            batch.discard();
             #[cfg(feature = "testing")]
             if let (Some(coordinator), Some(deliveries)) = (&watcher, unsettled) {
                 due_calls.extend(record_call(
@@ -675,143 +736,3 @@ mod harness_tests;
 mod headers;
 mod settle;
 mod workers;
-
-#[cfg(test)]
-mod tests {
-    use crate::IncomingMessage;
-    use alloc::rc::Rc;
-    use alloc::sync::Arc;
-    use core::cell::Cell;
-    use core::future::ready;
-    use core::sync::atomic::{AtomicU8, Ordering};
-
-    use bytes::{Bytes, BytesMut};
-
-    use super::fixtures::{PlainMessage, Settlement};
-    use super::{Delivery, HeadersAtOnce, HeadersOnDemand, Slot, dispatch};
-    use crate::context::Context;
-    use crate::failure::{DispatchFailure, FailurePolicies};
-    use crate::handler::{HandlerOutcome, LocalHandler};
-    use crate::testkit::{Shutdown, Tracked};
-    use crate::{AckError, HeaderMap, LocalSettle};
-    use tokio::task::yield_now;
-    use tokio_util::task::TaskTracker;
-
-    /// A handler a device writes: it keeps a count in an `Rc` and holds it across an await, so
-    /// its future is not `Send`.
-    struct CountsOnOneThread(Rc<Cell<u32>>);
-
-    // The future holds an `Rc` across an await on purpose: that is what the body is held to here.
-    #[allow(clippy::future_not_send)]
-    impl LocalHandler<PlainMessage> for CountsOnOneThread {
-        async fn handle(&self, _msg: &PlainMessage, _ctx: &mut Context<'_>) -> HandlerOutcome {
-            let count = Rc::clone(&self.0);
-            yield_now().await;
-            count.set(count.get() + 1);
-            HandlerOutcome::drop()
-        }
-    }
-
-    #[tokio::test]
-    async fn a_local_handler_whose_future_is_not_send_handles_and_settles_a_delivery() {
-        let handled = Rc::new(Cell::new(0));
-        let settled = Arc::new(AtomicU8::new(0));
-        let mut slot = Slot::new(PlainMessage {
-            payload: Bytes::from_static(b"reading"),
-            headers: HeaderMap::new(),
-            settled: Arc::clone(&settled),
-            settlement: Settlement::Accepted,
-        });
-        let delivery: Delivery<()> = Delivery::empty();
-        let failure = DispatchFailure::new(FailurePolicies::default(), Shutdown::new());
-        let host = Tracked(TaskTracker::new());
-
-        dispatch(
-            &CountsOnOneThread(Rc::clone(&handled)),
-            &mut slot,
-            &mut BytesMut::new(),
-            "readings",
-            &(),
-            &delivery,
-            &host,
-            &failure,
-            HeadersOnDemand,
-        )
-        .await;
-
-        assert_eq!(handled.get(), 1, "the handler ran once");
-        assert_eq!(
-            settled.load(Ordering::Relaxed),
-            1,
-            "the delivery was dropped"
-        );
-    }
-
-    /// A delivery of a broker whose types stay on one thread: it records its settlement in an
-    /// `Rc`, so it is neither `Send` nor `Sync`, and it implements only the local contract twin.
-    struct OnOneThread {
-        headers: HeaderMap,
-        nacked: Rc<Cell<bool>>,
-    }
-
-    impl IncomingMessage for OnOneThread {
-        fn payload(&self) -> &[u8] {
-            b"reading"
-        }
-
-        fn headers(&self) -> &HeaderMap {
-            &self.headers
-        }
-    }
-
-    impl LocalSettle for OnOneThread {
-        fn ack(self) -> impl Future<Output = Result<(), AckError>> {
-            ready(Ok(()))
-        }
-
-        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
-            self.nacked.set(true);
-            ready(Ok(()))
-        }
-    }
-
-    #[tokio::test]
-    async fn a_delivery_that_is_not_sync_is_lent_to_the_handler_with_its_headers() {
-        let nacked = Rc::new(Cell::new(false));
-        let mut headers = HeaderMap::new();
-        headers.insert("sensor", "north");
-        let mut slot = Slot::new(OnOneThread {
-            headers,
-            nacked: Rc::clone(&nacked),
-        });
-        let delivery: Delivery<()> = Delivery::empty();
-        let failure = DispatchFailure::new(FailurePolicies::default(), Shutdown::new());
-        let host = Tracked(TaskTracker::new());
-        let read_header = |_: &OnOneThread, ctx: &mut Context<'_>| {
-            let north = ctx.headers().get("sensor") == Some(b"north".as_slice());
-            ready(if north {
-                HandlerOutcome::drop()
-            } else {
-                HandlerOutcome::ack()
-            })
-        };
-
-        dispatch(
-            &Arc::new(read_header),
-            &mut slot,
-            &mut BytesMut::new(),
-            "readings",
-            &(),
-            &delivery,
-            &host,
-            &failure,
-            HeadersAtOnce,
-        )
-        .await;
-
-        assert!(
-            nacked.get(),
-            "the handler read the header and dropped the delivery"
-        );
-    }
-}

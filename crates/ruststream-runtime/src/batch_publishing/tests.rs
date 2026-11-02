@@ -11,6 +11,7 @@ use super::super::batch::handled;
 use super::super::dispatch::Delivery;
 use super::super::publish::{Transactional, TypedPublisher};
 use super::*;
+use crate::HeaderMap;
 use crate::codec::JsonCodec;
 use crate::input::Decoded;
 use crate::testkit::Tracked;
@@ -20,6 +21,7 @@ use crate::{
     IncomingMessage, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource, Take,
 };
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher};
+use ruststream_core::PublishOutcome;
 
 struct Confirm {
     reply_to: &'static str,
@@ -268,13 +270,13 @@ impl Publisher for HalfwayPublisher {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), MemoryError> {
+    ) -> PublishOutcome<'msg, MemoryError, Take> {
         if self.published.fetch_add(1, Ordering::SeqCst) >= self.succeed_first {
-            return Err(MemoryError::ShutDown);
+            return Err(MemoryError::ShutDown.into());
         }
         self.inner.publish(msg, options).await
     }

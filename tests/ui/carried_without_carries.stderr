@@ -49,7 +49,7 @@ help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, 
    | |     Input: Materialize<DecodeCodec, M>,
    | |            --------------------------- unsatisfied requirement introduced here: `ruststream_runtime::input::Carried<Row>: ruststream_runtime::input::Materialize<ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`
 ...  |
-   | |     St: Send + Sync,
+   | |     St: MaybeSendSync,
    | |     Inner: Handler<Input::Target, Cx, St>,
    | |__________________________________________^
    = note: required for `ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Row, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), ruststream::prelude::HandlerOutcome>> {handle::<_>}>>>>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`

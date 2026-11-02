@@ -17,7 +17,7 @@ use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, SubscriberSettings};
-use ruststream::{Broker, Deserialized, LocalPublisher, OutgoingMessage, subscriber};
+use ruststream::{Broker, Deserialized, OutgoingMessage, Publisher, subscriber};
 use static_cell::StaticCell;
 
 /// Executor rounds a step yields: a round polls every task woken before it began.

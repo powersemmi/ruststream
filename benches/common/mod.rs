@@ -89,6 +89,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::convert::Infallible;
 
 use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig};
+use ruststream::PublishOutcome;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{BrokerScope, Identity, MountChain, MountRoutes, PublishIdentity};
@@ -132,11 +133,11 @@ impl Publisher for Sink {
     type Error = Infallible;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), Infallible>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Infallible, Lend>> {
         let (name, payload, headers) = msg.into_parts();
         black_box((name.len(), payload, headers.len()));
         ready(Ok(()))
@@ -209,29 +210,17 @@ const fn messages(configured: Option<&str>) -> usize {
 /// number that goes up is a defect and a number that goes down is lowered here in the same
 /// change.
 pub fn config(steady: u64, cold: u64) -> LibraryBenchmarkConfig {
-    config_every(steady, 1, cold)
-}
-
-/// The same for a scenario whose allocations do not come one per delivery: `steady` blocks per
-/// `per` deliveries.
-///
-/// A batch handler allocates per batch, so a per-delivery figure for it would be a fraction; it
-/// states its floor over a round number of deliveries instead, and the limit scales from there.
-pub fn config_every(steady: u64, per: u64, cold: u64) -> LibraryBenchmarkConfig {
     let mut config = LibraryBenchmarkConfig::default();
     config
         .tool(callgrind())
-        .tool(dhat().hard_limits([(DhatMetric::TotalBlocks, blocks(steady, per, cold))]));
+        .tool(dhat().hard_limits([(DhatMetric::TotalBlocks, blocks(steady, cold))]));
     config
 }
 
 /// The limit for the configured count: the cold part once, plus the steady rate over the longest
 /// run of the scenario, which is twice [`MESSAGES`].
-///
-/// The division rounds up, so a rate stated over a number of deliveries the run is not a
-/// multiple of never trips on the rounding.
-const fn blocks(steady: u64, per: u64, cold: u64) -> u64 {
-    cold + (steady * 2 * MESSAGES as u64).div_ceil(per)
+const fn blocks(steady: u64, cold: u64) -> u64 {
+    cold + steady * 2 * MESSAGES as u64
 }
 
 /// The same configuration without the allocation limit, for a path that is measured and reported

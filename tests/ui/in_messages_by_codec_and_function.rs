@@ -10,11 +10,9 @@ fn by_kind(_message: &impl IncomingMessage) -> Option<OrderEventKind> {
     Some(OrderEventKind::Created)
 }
 
-struct ByRecord;
-
-// A set picks its variant by one rule: a function or a codec-aware discriminator, not both.
+// A set picks its variant by one rule: a function or the codec's frame, not both.
 #[derive(InMessages)]
-#[in_messages(discriminate = by_kind, discriminate_with_codec = ByRecord)]
+#[in_messages(discriminate = by_kind, by_codec)]
 enum OrderEvent {
     Created(OrderCreated),
 }

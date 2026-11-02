@@ -56,11 +56,11 @@ pub use fold::{
 };
 #[doc(hidden)]
 pub use fold_plan::{
-    Dispatched, LocalDispatch, LocalPlanned, LocalRoute, OpenedDispatch, SequentialPlan,
+    Dispatched, OneTaskDispatch, OneTaskPlanned, OneTaskRoute, OpenedDispatch, SequentialPlan,
     UnboundRetry,
 };
 #[doc(hidden)]
-pub use fold_retry::{LocalRetriedRoute, LocalRouteSource};
+pub use fold_retry::{OneTaskRetriedRoute, OneTaskRouteSource};
 #[doc(hidden)]
 pub use mount::DefaultReply;
 pub use mount::IncludeDef;

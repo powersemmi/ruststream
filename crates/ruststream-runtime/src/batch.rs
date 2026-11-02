@@ -8,11 +8,12 @@
 //! [`Handler`](super::Handler) counterpart, and [`TypedBatch`] the [`Typed`](super::Typed) decode
 //! adapter.
 
-use crate::handler::MaybeSend;
 use alloc::format;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::{any, fmt, marker::PhantomData};
+use core::{any, fmt, marker::PhantomData, mem, num::NonZeroUsize};
+use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync, MaybeSync};
 #[cfg(feature = "otel")]
 use std::slice;
 #[cfg(feature = "otel")]
@@ -29,13 +30,13 @@ use serde::de::DeserializeOwned;
 use tracing::warn;
 
 use crate::redelivery::RetryCopies;
-use crate::{BuildBatchContext, LocalSettle, Settle};
+use crate::{BuildBatchContext, Settle};
 
 use super::context::Context;
 use super::dispatch::{Slot, Workers, settle_outcome};
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handle::Deserialized;
-use super::handler::{Continuation, HandlerOutcome, HandlerResult, LocalCall, SendCall};
+use super::handler::{Continuation, HandlerOutcome, HandlerResult};
 use super::host::{HostDetach, PrepareKept, SendHost};
 use super::input::{DecodeWith, InputKind, REPORTED};
 use super::metadata::HandlerMetadata;
@@ -213,7 +214,7 @@ impl UniformFan {
     note = "a batch handler takes (&[T], &mut Context) and returns an IntoBatchResult value; \
             per-element header contracts ride a `&[Message<H, T>]` body instead"
 )]
-pub(crate) trait SliceHandler<T, C = (), S = ()>: Send + Sync {
+pub(crate) trait SliceHandler<T, C = (), S = ()>: MaybeSendSync {
     /// Handles one decoded batch, with the per-batch [`Context`] carrying the broker's
     /// subscription-scoped context `C` and the typed app state `S`.
     fn handle_slice(
@@ -225,8 +226,8 @@ pub(crate) trait SliceHandler<T, C = (), S = ()>: Send + Sync {
 
 impl<T, F, Fut, C, S> SliceHandler<T, C, S> for F
 where
-    F: Fn(&[T], &mut Context<'_, C, S>) -> Fut + Send + Sync,
-    Fut: Future + Send,
+    F: Fn(&[T], &mut Context<'_, C, S>) -> Fut + MaybeSendSync,
+    Fut: Future + MaybeSend,
     Fut::Output: IntoBatchResult,
 {
     fn handle_slice(
@@ -238,50 +239,6 @@ where
         // `&[T]` (which would demand `T: Sync` for it to be `Send`).
         let fut = (self)(batch, ctx);
         async move { fut.await.into_batch_result() }
-    }
-}
-
-/// The local twin of [`SliceHandler`]: a handler of one whole decoded batch on a runner that
-/// polls it where it started, so its future need not be `Send`.
-pub(crate) trait LocalSliceHandler<T, C = (), S = ()> {
-    /// Handles one decoded batch. See [`SliceHandler::handle_slice`].
-    fn handle_slice(
-        &self,
-        batch: &[T],
-        ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = BatchResult>;
-}
-
-/// The runner family a batch adapter calls its inner handler through, as
-/// [`CallHandler`](super::handler::CallHandler) is for one delivery at a time.
-pub(crate) trait CallSlice<Inner, T, C, S> {
-    /// Runs `inner` on one decoded batch.
-    fn handle_slice(
-        inner: &Inner,
-        batch: &[T],
-        ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = BatchResult>;
-}
-
-impl<Inner: SliceHandler<T, C, S>, T, C, S> CallSlice<Inner, T, C, S> for SendCall {
-    #[inline]
-    fn handle_slice(
-        inner: &Inner,
-        batch: &[T],
-        ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = BatchResult> {
-        SliceHandler::handle_slice(inner, batch, ctx)
-    }
-}
-
-impl<Inner: LocalSliceHandler<T, C, S>, T, C, S> CallSlice<Inner, T, C, S> for LocalCall {
-    #[inline]
-    fn handle_slice(
-        inner: &Inner,
-        batch: &[T],
-        ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = BatchResult> {
-        LocalSliceHandler::handle_slice(inner, batch, ctx)
     }
 }
 
@@ -392,12 +349,16 @@ pub trait TakenBatch<C> {
     /// makes here for the record of its settlement, so each value is cloned once.
     #[cfg(feature = "testing")]
     fn unsettled(&mut self) -> Vec<Delivered>;
+
+    /// Drops whatever a handler that panicked left unsettled, so the storage is ready for the
+    /// next batch.
+    fn discard(&mut self);
 }
 
 // The decoding forms collect the deliveries, and a batch's context is built from its first.
 impl<M, C> TakenBatch<C> for Vec<M>
 where
-    M: LocalSettle,
+    M: Settle,
     C: BuildBatchContext<M>,
 {
     fn context(&self) -> Option<C> {
@@ -414,38 +375,77 @@ where
             })
             .collect()
     }
+
+    fn discard(&mut self) {
+        self.clear();
+    }
 }
 
 /// The dispatch-side consumer of one batch the subscription delivered: decode, run the handler,
 /// settle every delivery. The batch counterpart of [`Handler`](super::Handler) at the
 /// raw-message level.
 #[doc(hidden)]
-pub trait BatchHandler<Batch, C = (), S = ()>: Send + Sync {
+pub trait BatchHandler<Slot, C = (), S = ()>: MaybeSendSync {
     /// The buffer the decoded batch is built in.
     ///
     /// A dispatch loop keeps one and lends it to every batch it hands over, so the slice the
     /// handler reads costs one allocation for the subscription rather than one per batch. It is
     /// `()` on the forms whose values the batch already holds or borrows, which cannot outlive
     /// the batch they came from.
-    type Scratch: Default + Send;
+    type Scratch: Default + MaybeSend;
 
-    /// The batch as this handler takes it: its deliveries collected, or the broker's batch whole
-    /// where the handler lends the values the batch holds.
-    type Taken: TakenBatch<C> + Send;
+    /// The batch as this handler takes it: its deliveries collected, or the broker's slot whole
+    /// where the handler lends the values the slot holds. A worker keeps one for good.
+    type Taken: TakenBatch<C> + MaybeSend;
 
-    /// Takes one batch off the subscription.
-    fn take(batch: Batch) -> Self::Taken;
+    /// Allocates a worker's [`Taken`](Self::Taken), with room for batches of `size`.
+    fn taken(size: NonZeroUsize) -> Self::Taken;
 
-    /// Consumes one batch, acknowledging each of its deliveries, decoding into the buffer the
-    /// caller lends. Whatever the buffer holds on entry is discarded. What a delivery leaves
-    /// behind as it settles (a continuation, a deferred copy) goes to the runner's `host`.
+    /// Takes the batch the broker filled `slot` with, leaving `slot` empty and ready to be filled
+    /// again. No storage is allocated: the deliveries move, or the two buffers trade places.
+    fn load(taken: &mut Self::Taken, slot: &mut Slot);
+
+    /// Consumes the batch `taken` holds, acknowledging each of its deliveries and leaving `taken`
+    /// empty with its storage, decoding into the buffer the caller lends. Whatever the buffer holds
+    /// on entry is discarded. What a delivery leaves behind as it settles (a continuation, a
+    /// deferred copy) goes to the runner's `host`.
     fn handle_batch<Host: SendHost<C>>(
         &self,
-        batch: Self::Taken,
+        taken: &mut Self::Taken,
         scratch: &mut Self::Scratch,
         ctx: &mut Context<'_, C, S>,
         host: &Host,
     ) -> impl Future<Output = ()> + MaybeSend;
+}
+
+// A shared handler is a handler: the future is the inner one's own.
+impl<Slot, C, S, H> BatchHandler<Slot, C, S> for Arc<H>
+where
+    H: BatchHandler<Slot, C, S>,
+{
+    type Scratch = H::Scratch;
+    type Taken = H::Taken;
+
+    #[inline]
+    fn taken(size: NonZeroUsize) -> H::Taken {
+        H::taken(size)
+    }
+
+    #[inline]
+    fn load(taken: &mut H::Taken, slot: &mut Slot) {
+        H::load(taken, slot);
+    }
+
+    #[inline]
+    fn handle_batch<Host: SendHost<C>>(
+        &self,
+        taken: &mut H::Taken,
+        scratch: &mut H::Scratch,
+        ctx: &mut Context<'_, C, S>,
+        host: &Host,
+    ) -> impl Future<Output = ()> + MaybeSend {
+        (**self).handle_batch(taken, scratch, ctx, host)
+    }
 }
 
 /// Hands `handler` one batch of deliveries the way the dispatch loop does once it took them off
@@ -460,12 +460,13 @@ pub(crate) async fn handled<H, M, C, S, Host>(
     host: &Host,
 ) where
     H: BatchHandler<Vec<M>, C, S, Taken = Vec<M>>,
-    M: Send,
-    C: Send + Sync,
-    S: Send + Sync,
+    M: MaybeSend,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     Host: SendHost<C>,
 {
-    handler.handle_batch(batch, scratch, ctx, host).await;
+    let mut batch = batch;
+    handler.handle_batch(&mut batch, scratch, ctx, host).await;
 }
 
 /// Build a [`TypedBatch`] that decodes each element with `codec` into `T` and forwards the batch
@@ -478,7 +479,7 @@ pub(crate) fn typed_batch<M, T, C, H>(
 ) -> TypedBatch<M, super::input::Decoded<T>, C, H>
 where
     M: Settle,
-    T: DeserializeOwned + Send + Sync + 'static,
+    T: DeserializeOwned + MaybeSendSync + 'static,
     C: Codec,
 {
     TypedBatch {
@@ -534,33 +535,37 @@ impl<M, Input, DecodeCodec, Inner> fmt::Debug for TypedBatch<M, Input, DecodeCod
     }
 }
 
-impl<Batch, M, Input, DecodeCodec, Inner, C, S> BatchHandler<Batch, C, S>
+impl<Slot, M, Input, DecodeCodec, Inner, C, S> BatchHandler<Slot, C, S>
     for TypedBatch<M, Input, DecodeCodec, Inner>
 where
-    Batch: IntoIterator<Item = M>,
+    Slot: BatchSlot<Message = M>,
     M: Settle,
     Input: DecodeWith<DecodeCodec>,
-    DecodeCodec: Send + Sync,
+    DecodeCodec: MaybeSendSync,
     Inner: SliceHandler<Input::Owned, C, S>,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
-    S: Send + Sync,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
+    S: MaybeSendSync,
 {
     type Scratch = Vec<Input::Owned>;
     type Taken = Vec<M>;
 
-    fn take(batch: Batch) -> Vec<M> {
-        batch.into_iter().collect()
+    fn taken(size: NonZeroUsize) -> Vec<M> {
+        Vec::with_capacity(size.get())
+    }
+
+    fn load(taken: &mut Vec<M>, slot: &mut Slot) {
+        taken.extend(slot.drain());
     }
 
     async fn handle_batch<Host: SendHost<C>>(
         &self,
-        batch: Vec<M>,
+        batch: &mut Vec<M>,
         values: &mut Self::Scratch,
         ctx: &mut Context<'_, C, S>,
         host: &Host,
     ) {
         let subscription = ctx.subscription();
-        let accepted = decode_batch::<M, Input, DecodeCodec, C, S, Host>(
+        decode_batch::<M, Input, DecodeCodec, C, S, Host>(
             batch,
             values,
             &self.codec,
@@ -569,7 +574,7 @@ where
             host,
         )
         .await;
-        if accepted.is_empty() {
+        if batch.is_empty() {
             return;
         }
         let delivery = ctx.delivery();
@@ -578,7 +583,7 @@ where
         // here: a decoded value lives exactly as long as the batch it came from, as it did when
         // the vector was the call's own.
         values.clear();
-        settle_batch(accepted, result, subscription, delivery, host).await;
+        settle_batch(batch, result, subscription, delivery, host).await;
     }
 }
 
@@ -622,14 +627,14 @@ impl<M, F, Inner> fmt::Debug for DeserializedBatch<M, F, Inner> {
     }
 }
 
-impl<Batch, M, F, Inner, C, S> BatchHandler<Batch, C, S> for DeserializedBatch<M, F, Inner>
+impl<Slot, M, F, Inner, C, S> BatchHandler<Slot, C, S> for DeserializedBatch<M, F, Inner>
 where
-    Batch: IntoIterator<Item = M>,
+    Slot: BatchSlot<Message = M>,
     M: Settle,
-    F: Deserialized + Send + Sync + 'static,
+    F: Deserialized + MaybeSendSync + 'static,
     Inner: for<'p> SliceHandler<F::Output<'p>, C, S>,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
-    S: Send + Sync,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
+    S: MaybeSendSync,
 {
     // The constructed values borrow their deliveries' payloads (see the loop below), so a
     // buffer that outlived the batch could not hold them: this form builds its values vector per
@@ -637,45 +642,21 @@ where
     type Scratch = ();
     type Taken = Vec<M>;
 
-    fn take(batch: Batch) -> Vec<M> {
-        batch.into_iter().collect()
+    fn taken(size: NonZeroUsize) -> Vec<M> {
+        Vec::with_capacity(size.get())
     }
 
-    fn handle_batch<Host: SendHost<C>>(
-        &self,
-        batch: Vec<M>,
-        scratch: &mut (),
-        ctx: &mut Context<'_, C, S>,
-        host: &Host,
-    ) -> impl Future<Output = ()> + MaybeSend {
-        self.handle_local::<SendCall, C, S, Host>(batch, scratch, ctx, host)
+    fn load(taken: &mut Vec<M>, slot: &mut Slot) {
+        taken.extend(slot.drain());
     }
-}
 
-impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
-    /// Constructs each element in place and runs the inner handler on those that construct: the
-    /// adapter's body, for a batch of either family. The [`BatchHandler`] impl is this future; a
-    /// runner whose deliveries are not `Sync` reaches it through
-    /// [`LocalBatch`](local::LocalBatch).
-    // `Send` exactly where the deliveries are: the `BatchHandler` impl's signature proves it there.
-    #[allow(clippy::future_not_send)]
-    pub(crate) async fn handle_local<
-        Via,
-        C,
-        S,
-        Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
-    >(
+    async fn handle_batch<Host: SendHost<C>>(
         &self,
-        batch: Vec<M>,
+        batch: &mut Vec<M>,
         _scratch: &mut (),
         ctx: &mut Context<'_, C, S>,
         host: &Host,
-    ) where
-        M: LocalSettle,
-        F: Deserialized,
-        Via: for<'p> CallSlice<Inner, F::Output<'p>, C, S>,
-        C: BuildBatchContext<M> + Send + Sync + 'static,
-    {
+    ) {
         let subscription = ctx.subscription();
         if batch.is_empty() {
             return;
@@ -715,7 +696,7 @@ impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
         let result = if values.is_empty() {
             BatchResult::PerElement(Vec::new())
         } else {
-            Via::handle_slice(&self.inner, &values, ctx).await
+            self.inner.handle_slice(&values, ctx).await
         };
         drop(values);
         settle_split_batch(batch, rejected, result, subscription, delivery, host).await;
@@ -765,26 +746,25 @@ pub(crate) fn record_batch_size(destination: &KeyValue, len: usize) {
 // `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
 #[allow(clippy::future_not_send)]
 pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S, Host>(
-    batch: Vec<M>,
+    batch: &mut Vec<M>,
     values: &mut Vec<Input::Owned>,
     codec: &DecodeCodec,
     decode: FailurePolicy,
     ctx: &mut Context<'_, C, S>,
     host: &Host,
-) -> Vec<M>
-where
+) where
     M: Settle,
     Input: DecodeWith<DecodeCodec>,
-    DecodeCodec: Sync,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
-    S: Send + Sync,
+    DecodeCodec: MaybeSync,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
+    S: MaybeSendSync,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     let subscription = ctx.subscription();
     // Taken before the loop: the settle below awaits, and a borrow of `ctx` held across it would
     // demand `Context: Sync` (see the signature's note).
     let delivery = ctx.delivery();
-    let rejected = decode_elements::<_, Input, _, _, _>(&batch, values, codec, decode, ctx);
+    let rejected = decode_elements::<_, Input, _, _, _>(batch, values, codec, decode, ctx);
     // Only batches that reach a handler count: a fully-rejected batch is short-circuited by the
     // callers and would skew the size distribution with zeros.
     #[cfg(feature = "otel")]
@@ -792,13 +772,15 @@ where
         record_batch_size(delivery.destination(subscription), values.len());
     }
     if rejected.is_empty() {
-        return batch;
+        return;
     }
     // A rejected element is settled before the handler runs, as it always was, and the accepted
-    // remainder is collected on the way past it.
-    let mut accepted = Vec::with_capacity(batch.len() - rejected.len());
+    // remainder is put back on the way past it. A batch that has a rejection in it pays one
+    // allocation for the room of the accepted rest.
+    let all = mem::take(batch);
+    batch.reserve(all.len() - rejected.len());
     let mut rejected = rejected.into_iter().peekable();
-    for (index, msg) in batch.into_iter().enumerate() {
+    for (index, msg) in all.into_iter().enumerate() {
         if rejected.peek().is_some_and(|(at, _)| *at == index) {
             let (_, outcome) = rejected.next().expect("peeked");
             settle_outcome(
@@ -812,9 +794,8 @@ where
             .await;
             continue;
         }
-        accepted.push(msg);
+        batch.push(msg);
     }
-    accepted
 }
 
 /// The decoding half of [`decode_batch`]: fills `values` with what decodes, and returns each
@@ -872,7 +853,7 @@ pub(crate) fn reported<M, C, S>(
     ctx: &Context<'_, C, S>,
 ) -> Option<HandlerResult>
 where
-    M: LocalSettle,
+    M: Settle,
 {
     let err = msg.decode_error()?;
     warn!(
@@ -906,11 +887,9 @@ pub(crate) fn rejection<C, S>(
 }
 
 mod carried;
-mod local;
 mod settle;
 
 pub(crate) use carried::{CarriedBatch, SourceCarriesBatch};
-pub use local::{LocalBatch, LocalBatchHandler};
 use settle::settle_split_batch;
 pub(crate) use settle::{LentValues, lent_nothing, settle_batch, settle_lent_batch};
 

@@ -6,7 +6,7 @@ use ruststream_memory::local::{
     LocalMemorySubscriber,
 };
 use ruststream_runtime::{
-    Context, Deserialized, HandlerOutcome, Input, LocalHandle, SoloDeserialized, local_subscriber,
+    Context, Deserialized, HandlerOutcome, Input, Handle, SoloDeserialized, subscriber,
 };
 use ruststream_runtime_embassy::{EmbeddedApp, Mounts};
 use ruststream_core::{BrokerMoves, SubscriptionSource};
@@ -56,7 +56,7 @@ impl Input for Reading<'_> {
 
 struct Log;
 
-impl LocalHandle<Reading<'_>> for Log {
+impl Handle<Reading<'_>> for Log {
     fn handle(
         &self,
         reading: &Reading<'_>,
@@ -70,7 +70,7 @@ impl LocalHandle<Reading<'_>> for Log {
 
 fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
-        b.include(local_subscriber(Sensor(LocalMemorySource::new("readings")), Log).build())
+        b.include(subscriber(Sensor(LocalMemorySource::new("readings")), Log).build())
     })
 }
 

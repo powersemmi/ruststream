@@ -3,8 +3,9 @@
 
 use alloc::borrow::ToOwned;
 use core::marker::PhantomData;
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
-use crate::{BatchSubscriber, Broker, Connected, LocalBatchSubscriber, SubscriptionSource};
+use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
 use crate::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch, batch_metadata};
 use crate::batch_inject::{BatchInjectDef, batch_inject_metadata};
@@ -43,7 +44,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Def: SubscriberDef,
         Def::Input: Materialize<DecodeCodec, LocalSourceMessage<B, Source>>,
         Def::Handler: 'static,
-        DecodeCodec: Send + Sync + 'static,
+        DecodeCodec: MaybeSendSync + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def)
             .materialized_with::<Def::Input, DecodeCodec, LocalSourceMessage<B, Source>>()
@@ -71,12 +72,12 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     ) -> IncludedBatchRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
         B: Broker,
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+        Source::Subscriber: BatchSubscriber + MaybeSend + 'static,
         Def: BatchDef + BatchSized,
         Def::Input: DecodeWith<DecodeCodec>,
         Def::Handler: 'static,
-        DecodeCodec: Send + Sync + 'static,
+        DecodeCodec: MaybeSendSync + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def)
             .decoded_with::<Def::Input, DecodeCodec>()
@@ -108,7 +109,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     ) -> IncludedRawBatchRouter<B, Source, Def, F, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
         Source: SubscriptionSource<Connected<B>> + 'static,
-        Source::Subscriber: LocalBatchSubscriber,
+        Source::Subscriber: BatchSubscriber,
         Def: BatchDef<Input = Provided<F>> + BatchSized,
         Def::Handler: 'static,
     {
@@ -141,11 +142,11 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     ) -> IncludedCarriedBatchRouter<B, Source, Def, T, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
         B: Broker,
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+        Source::Subscriber: BatchSubscriber + MaybeSend + 'static,
         Def: BatchDef<Input = Carried<T>> + BatchSized,
         Def::Handler: 'static,
-        T: Clone + Send + Sync + 'static,
+        T: Clone + MaybeSendSync + 'static,
     {
         // No codec reads the values, so the media type it would report is the one nothing
         // produced.
@@ -230,11 +231,11 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     >
     where
         B: Broker,
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+        Source::Subscriber: BatchSubscriber + MaybeSend + 'static,
         Def: BatchInjectDef + BatchSized + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
-        DecodeCodec: Send + Sync + 'static,
+        DecodeCodec: MaybeSendSync + 'static,
     {
         let meta = batch_inject_metadata(source.name().to_owned(), &def)
             .decoded_with::<Def::Input, DecodeCodec>()
@@ -284,11 +285,11 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     >
     where
         B: Broker,
-        Source: SubscriptionSource<Connected<B>> + Send + 'static,
-        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+        Source::Subscriber: BatchSubscriber + MaybeSend + 'static,
         Def: BatchPublishingDef + BatchSized + 'static,
         Def::Input: DecodeWith<DecodeCodec>,
-        DecodeCodec: Send + Sync + 'static,
+        DecodeCodec: MaybeSendSync + 'static,
         ReplySource: 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def)

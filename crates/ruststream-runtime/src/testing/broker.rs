@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 use core::any::{Any, TypeId, type_name};
 use core::fmt;
 use core::time::Duration;
+use ruststream_core::MaybeSendSync;
 
 use tokio::time;
 use tokio::time::Instant;
@@ -142,7 +143,7 @@ use super::Coordinator;
                     enables that feature in `[dev-dependencies]`, a broker author implements the \
                     trait there"
 )]
-pub trait InProcess: Broker<Connected: LocalTestableBroker> {
+pub trait InProcess: Broker<Connected: TestableBroker> {
     /// Connects to the in-process transport, consuming the configuration.
     ///
     /// # Errors
@@ -152,186 +153,167 @@ pub trait InProcess: Broker<Connected: LocalTestableBroker> {
     fn connect_in_process(self) -> impl Future<Output = Result<Self::Connected, Self::Error>>;
 }
 
-ruststream_core::__contract_twin! {
-    send {
-        /// The view of a connected broker the test tooling drives.
-        ///
-        /// Implemented on the **connected form** a broker's [`InProcess`] transition produces: the
-        /// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html)
-        /// harness connects every broker of the app in process, then drives it through this, and
-        /// [`conformance::harness::run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html)
-        /// checks the routing contract through the same surface.
-        ///
-        /// The transport answers settlement the way the real transport answers it. A transport that
-        /// cannot acknowledge (`ZeroMQ`, MQTT `QoS 0`, Redis pub/sub, Core NATS) reports
-        /// [`AckError::Unsupported`](crate::AckError::Unsupported) from its deliveries in
-        /// production, so the in-process one reports it too: both the harness and
-        /// [`run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html)
-        /// accept that answer, while a transport that claims success makes a handler's retry look
-        /// settled in a test and lose the message in production. Either way the delivery is
-        /// released to [`Coordinator::consumed`] once (from its `Drop`, which a refused settlement
-        /// reaches like any other).
-        ///
-        /// To plug into the harness, the transport also calls [`Coordinator::enqueued`] on every
-        /// live enqueue into a subscriber and [`Coordinator::consumed`] when a delivery is acked,
-        /// nacked, or dropped (so the harness can tell when the reaction has settled), and routes
-        /// delayed redeliveries through [`Coordinator::schedule_redelivery`].
-        ///
-        /// [`ConnectedMemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.ConnectedMemoryBroker.html)
-        /// is the in-tree reference implementation.
-        ///
-        /// It is a separate, object-safe capability rather than a
-        /// [`ConnectedBroker`](crate::ConnectedBroker) supertrait: the broker traits are not
-        /// dyn-compatible, and the harness holds `&dyn TestableBroker`.
-        ///
-        /// # Examples
-        ///
-        /// ```no_run
-        /// # async fn run() {
-        /// use ruststream::conformance::harness;
-        /// use ruststream::memory::MemoryBroker;
-        ///
-        /// // A broker crate's conformance test: the suite drives the connected form through this view
-        /// // and checks its answers against what the transport does.
-        /// harness::run_suite(MemoryBroker::new).await;
-        /// # }
-        /// ```
-        #[diagnostic::on_unimplemented(
-            message = "the connected form `{Self}` cannot be driven by the test harness",
-            label = "no `TestableBroker` view",
-            note = "a broker's in-process mode implements `TestableBroker` on the connected form \
+/// The view of a connected broker the test tooling drives.
+///
+/// Implemented on the **connected form** a broker's [`InProcess`] transition produces: the
+/// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html)
+/// harness connects every broker of the app in process, then drives it through this, and
+/// [`conformance::harness::run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html)
+/// checks the routing contract through the same surface.
+///
+/// The transport answers settlement the way the real transport answers it. A transport that
+/// cannot acknowledge (`ZeroMQ`, MQTT `QoS 0`, Redis pub/sub, Core NATS) reports
+/// [`AckError::Unsupported`](crate::AckError::Unsupported) from its deliveries in
+/// production, so the in-process one reports it too: both the harness and
+/// [`run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html)
+/// accept that answer, while a transport that claims success makes a handler's retry look
+/// settled in a test and lose the message in production. Either way the delivery is
+/// released to [`Coordinator::consumed`] once (from its `Drop`, which a refused settlement
+/// reaches like any other).
+///
+/// To plug into the harness, the transport also calls [`Coordinator::enqueued`] on every
+/// live enqueue into a subscriber and [`Coordinator::consumed`] when a delivery is acked,
+/// nacked, or dropped (so the harness can tell when the reaction has settled), and routes
+/// delayed redeliveries through [`Coordinator::schedule_redelivery`].
+///
+/// [`ConnectedMemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.ConnectedMemoryBroker.html)
+/// is the in-tree reference implementation.
+///
+/// It is a separate, object-safe capability rather than a
+/// [`ConnectedBroker`](crate::ConnectedBroker) supertrait: the broker traits are not
+/// dyn-compatible, and the harness holds `&dyn TestableBroker`.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn run() {
+/// use ruststream::conformance::harness;
+/// use ruststream::memory::MemoryBroker;
+///
+/// // A broker crate's conformance test: the suite drives the connected form through this view
+/// // and checks its answers against what the transport does.
+/// harness::run_suite(MemoryBroker::new).await;
+/// # }
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "the connected form `{Self}` cannot be driven by the test harness",
+    label = "no `TestableBroker` view",
+    note = "a broker's in-process mode implements `TestableBroker` on the connected form \
                     its `InProcess` transition produces"
-        )]
-        pub trait TestableBroker: Send + Sync
+)]
+pub trait TestableBroker: MaybeSendSync {
+    /// Installs the harness coordinator into this broker's bus for a test run. Idempotent: a
+    /// second install on the same broker is ignored.
+    fn install_coordinator(&self, coordinator: Coordinator);
+
+    /// Injects a message onto the bus as an external producer would, synchronously (no
+    /// awaiting). Routes through the broker's normal fanout, so it is recorded and counted like
+    /// any publish.
+    ///
+    /// The payload is lent whichever form the transport's own [`Publisher`](crate::Publisher)
+    /// declared: an injection is a test writing bytes it holds, so the transport copies them as
+    /// it stores them rather than the test building a buffer for it.
+    fn inject(&self, message: OutgoingMessage<'_>);
+
+    /// Returns every message published to `name` on this broker, in publish order, after the
+    /// [`evicted`](Self::evicted) ones. Backs the harness's `published::<T>(name)` assertions
+    /// and [`expect_published`].
+    fn published(&self, name: &str) -> Vec<RawMessage>;
+
+    /// How many of the oldest messages published to `name` this broker no longer holds, so
+    /// [`published`](Self::published) starts after them.
+    ///
+    /// The default, zero, is the answer of a log that keeps every message. A broker whose log
+    /// keeps only its newest messages answers how many it dropped: the harness pairs the
+    /// options of the publishes it recorded with what the log still holds, and needs to know
+    /// where the log starts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # struct BoundedBus { dropped: usize }
+    /// # impl BoundedBus {
+    /// /// A ring that keeps the newest messages of a name counts what it pushed out.
+    /// fn evicted(&self, _name: &str) -> usize {
+    ///     self.dropped
+    /// }
+    /// # }
+    /// ```
+    fn evicted(&self, name: &str) -> usize {
+        let _ = name;
+        0
     }
-    local {
-        #[doc = include_str!("local/testable.md")]
-        #[diagnostic::on_unimplemented(
-            message = "the connected form `{Self}` cannot be driven by the test harness",
-            label = "no `LocalTestableBroker` view",
-            note = "the in-process mode of a broker whose types are not `Send` implements \
-                    `LocalTestableBroker` on the connected form its `InProcess` transition \
-                    produces"
-        )]
-        pub trait LocalTestableBroker
+
+    /// Which subscriptions of this broker a message published to `destination` is delivered to,
+    /// as the broker's own routing picks them: the positions in `subscriptions` (the names the
+    /// app subscribed under on this broker) of the ones it delivers to.
+    ///
+    /// The answer is the broker's routing, not a guess about it, and a setting the broker was
+    /// configured with is read here, off the connected form. The default delivers to every
+    /// subscription of the destination's name. A broker whose subscription names are patterns
+    /// answers with its own rule: every matching subscription where it fans out to all of them
+    /// (NATS subjects), or the one it picks where it picks one.
+    ///
+    /// A live
+    /// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html)
+    /// waits on it: a publish to this broker is owed once by each subscription this answers,
+    /// and by no other.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # struct SubjectBus;
+    /// # impl SubjectBus {
+    /// /// A subject broker fans a publish out to every subscription whose pattern matches it.
+    /// fn routes(&self, destination: &str, subscriptions: &[&str]) -> Vec<usize> {
+    ///     subscriptions
+    ///         .iter()
+    ///         .enumerate()
+    ///         .filter(|(_, pattern)| matches(pattern, destination))
+    ///         .map(|(position, _)| position)
+    ///         .collect()
+    /// }
+    /// # }
+    /// # fn matches(pattern: &str, subject: &str) -> bool {
+    /// #     pattern == subject
+    /// #         || pattern.strip_suffix(".>").is_some_and(|prefix| subject.starts_with(prefix))
+    /// # }
+    /// ```
+    fn routes(&self, destination: &str, subscriptions: &[&str]) -> Vec<usize> {
+        subscriptions
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| **name == destination)
+            .map(|(position, _)| position)
+            .collect()
     }
-    blanket { impl<T: TestableBroker + ?Sized> LocalTestableBroker for T }
-    forward { <T as TestableBroker> }
-    docs { TestableBroker }
-    fns {
-        /// Installs the harness coordinator into this broker's bus for a test run. Idempotent: a
-        /// second install on the same broker is ignored.
-        fn install_coordinator(&self, coordinator: Coordinator);
 
-        /// Injects a message onto the bus as an external producer would, synchronously (no
-        /// awaiting). Routes through the broker's normal fanout, so it is recorded and counted like
-        /// any publish.
-        ///
-        /// The payload is lent whichever form the transport's own [`Publisher`](crate::Publisher)
-        /// declared: an injection is a test writing bytes it holds, so the transport copies them as
-        /// it stores them rather than the test building a buffer for it.
-        fn inject(&self, message: OutgoingMessage<'_>);
-
-        /// Returns every message published to `name` on this broker, in publish order, after the
-        /// [`evicted`](Self::evicted) ones. Backs the harness's `published::<T>(name)` assertions
-        /// and [`expect_published`].
-        fn published(&self, name: &str) -> [Vec<RawMessage>];
-
-        /// How many of the oldest messages published to `name` this broker no longer holds, so
-        /// [`published`](Self::published) starts after them.
-        ///
-        /// The default, zero, is the answer of a log that keeps every message. A broker whose log
-        /// keeps only its newest messages answers how many it dropped: the harness pairs the
-        /// options of the publishes it recorded with what the log still holds, and needs to know
-        /// where the log starts.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// # struct BoundedBus { dropped: usize }
-        /// # impl BoundedBus {
-        /// /// A ring that keeps the newest messages of a name counts what it pushed out.
-        /// fn evicted(&self, _name: &str) -> usize {
-        ///     self.dropped
-        /// }
-        /// # }
-        /// ```
-        fn evicted(&self, name: &str) -> [usize] {
-            let _ = name;
-            0
-        }
-
-        /// Which subscriptions of this broker a message published to `destination` is delivered to,
-        /// as the broker's own routing picks them: the positions in `subscriptions` (the names the
-        /// app subscribed under on this broker) of the ones it delivers to.
-        ///
-        /// The answer is the broker's routing, not a guess about it, and a setting the broker was
-        /// configured with is read here, off the connected form. The default delivers to every
-        /// subscription of the destination's name. A broker whose subscription names are patterns
-        /// answers with its own rule: every matching subscription where it fans out to all of them
-        /// (NATS subjects), or the one it picks where it picks one.
-        ///
-        /// A live
-        /// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html)
-        /// waits on it: a publish to this broker is owed once by each subscription this answers,
-        /// and by no other.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// # struct SubjectBus;
-        /// # impl SubjectBus {
-        /// /// A subject broker fans a publish out to every subscription whose pattern matches it.
-        /// fn routes(&self, destination: &str, subscriptions: &[&str]) -> Vec<usize> {
-        ///     subscriptions
-        ///         .iter()
-        ///         .enumerate()
-        ///         .filter(|(_, pattern)| matches(pattern, destination))
-        ///         .map(|(position, _)| position)
-        ///         .collect()
-        /// }
-        /// # }
-        /// # fn matches(pattern: &str, subject: &str) -> bool {
-        /// #     pattern == subject
-        /// #         || pattern.strip_suffix(".>").is_some_and(|prefix| subject.starts_with(prefix))
-        /// # }
-        /// ```
-        fn routes(&self, destination: &str, subscriptions: &[&str]) -> [Vec<usize>] {
-            subscriptions
-                .iter()
-                .enumerate()
-                .filter(|(_, name)| **name == destination)
-                .map(|(position, _)| position)
-                .collect()
-        }
-
-        /// What a subscription opened by name receives of the messages published to that name
-        /// before it opened, as the real broker answers it: [`Backlog::Missed`] for
-        /// publish/subscribe, [`Backlog::Delivered`] for a queue or a log that keeps them.
-        ///
-        /// The in-process transport behaves as declared, and
-        /// [`run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html)
-        /// checks that it does. A setting the broker was configured with is read here, off the
-        /// connected form, where it decides the answer (a log read from its earliest offset, a
-        /// stream consumer delivering all). The default is [`Backlog::Missed`].
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use ruststream::testing::Backlog;
-        ///
-        /// # struct LogBus { from_earliest: bool }
-        /// # impl LogBus {
-        /// /// A consumer group that starts from the earliest offset reads what was published before it
-        /// /// joined; one that starts from the latest does not.
-        /// fn backlog(&self) -> Backlog {
-        ///     if self.from_earliest { Backlog::Delivered } else { Backlog::Missed }
-        /// }
-        /// # }
-        /// ```
-        fn backlog(&self) -> [Backlog] {
-            Backlog::Missed
-        }
+    /// What a subscription opened by name receives of the messages published to that name
+    /// before it opened, as the real broker answers it: [`Backlog::Missed`] for
+    /// publish/subscribe, [`Backlog::Delivered`] for a queue or a log that keeps them.
+    ///
+    /// The in-process transport behaves as declared, and
+    /// [`run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html)
+    /// checks that it does. A setting the broker was configured with is read here, off the
+    /// connected form, where it decides the answer (a log read from its earliest offset, a
+    /// stream consumer delivering all). The default is [`Backlog::Missed`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::testing::Backlog;
+    ///
+    /// # struct LogBus { from_earliest: bool }
+    /// # impl LogBus {
+    /// /// A consumer group that starts from the earliest offset reads what was published before it
+    /// /// joined; one that starts from the latest does not.
+    /// fn backlog(&self) -> Backlog {
+    ///     if self.from_earliest { Backlog::Delivered } else { Backlog::Missed }
+    /// }
+    /// # }
+    /// ```
+    fn backlog(&self) -> Backlog {
+        Backlog::Missed
     }
 }
 
@@ -420,7 +402,7 @@ where
                 None,
             )
             .await
-            .map_err(BoxError::from)
+            .map_err(|failed| BoxError::from(failed.into_error()))
     })
 }
 

@@ -8,8 +8,8 @@ use tokio::time::timeout;
 use super::{DELIVERY_TIMEOUT, QUIET, connect_in_process, settle_ack};
 use crate::helpers::unique_subject;
 use ruststream_core::{
-    Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher, SendBroker,
-    SendSource, SendSubscribe, Settle, Subscribe, Subscriber, SubscriptionSource,
+    Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher, SendBroker, Settle,
+    Subscribe, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::testing::{Backlog, InProcess, TestableBroker};
 
@@ -112,7 +112,7 @@ pub async fn backlog_matches_server<B, MkBroker, Pub, MkPub>(
     make_publisher: MkPub,
 ) where
     B: InProcess + SendBroker,
-    B::Connected: SendSubscribe + TestableBroker,
+    B::Connected: Subscribe + TestableBroker,
     MkBroker: Fn() -> B,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
@@ -347,9 +347,9 @@ pub async fn refuses_like_the_server<B, MkBroker, Src, Pub, MkPub>(
     refusals: impl IntoIterator<Item = Refusal<Src>> + Send,
 ) where
     B: InProcess + SendBroker,
-    B::Connected: SendSubscribe + TestableBroker,
+    B::Connected: Subscribe + TestableBroker,
     MkBroker: Fn() -> B + Send,
-    Src: SendSource<Connected<B>> + Clone + Send + Sync,
+    Src: SubscriptionSource<Connected<B>> + Clone + Send + Sync,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub + Send + Sync,
 {
@@ -395,7 +395,7 @@ pub async fn refuses_like_the_server<B, MkBroker, Src, Pub, MkPub>(
 async fn admits_like_the_server<B, MkBroker>(make_broker: MkBroker)
 where
     B: InProcess + SendBroker,
-    B::Connected: SendSubscribe + TestableBroker,
+    B::Connected: Subscribe + TestableBroker,
     MkBroker: Fn() -> B + Send,
 {
     let mut admitted = [[false; 3]; 2];
@@ -455,7 +455,7 @@ async fn probe<C, Src, Pub, MkPub>(
     make_publisher: &MkPub,
 ) -> bool
 where
-    C: SendSubscribe,
+    C: Subscribe,
     Src: SubscriptionSource<C> + Clone + Sync,
     Pub: Publisher,
     MkPub: Fn(&C) -> Pub + Sync,
@@ -497,7 +497,7 @@ async fn probe_payload_over<C, Pub, MkPub>(
     make_publisher: &MkPub,
 ) -> bool
 where
-    C: SendSubscribe,
+    C: Subscribe,
     Pub: Publisher,
     MkPub: Fn(&C) -> Pub + Sync,
 {

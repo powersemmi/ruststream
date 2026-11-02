@@ -441,7 +441,7 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
-    use crate::capability::tests::replaying;
+    use crate::capability::tests::{filled, replaying};
     use crate::{MemoryBroker, MemorySource, Retention};
     #[cfg(feature = "testing")]
     use ruststream_core::Subscribe;
@@ -671,14 +671,14 @@ mod tests {
         }
 
         let mut stream = std::pin::pin!(sub.batches(nonzero!(64)));
-        let batch = stream.next().await.unwrap().unwrap();
+        let batch = filled(&mut stream).await.unwrap();
         assert_eq!(batch.len(), 3);
         for msg in batch {
             msg.ack().await.unwrap();
         }
 
         seeker.seek(MemoryPosition::start()).await.unwrap();
-        let replayed = stream.next().await.unwrap().unwrap();
+        let replayed = filled(&mut stream).await.unwrap();
         let payloads: Vec<&[u8]> = replayed.iter().map(IncomingMessage::payload).collect();
         assert_eq!(
             payloads,
@@ -749,7 +749,7 @@ mod tests {
         }
 
         let mut stream = std::pin::pin!(sub.batches(nonzero!(2)));
-        let mut batch = stream.next().await.unwrap().unwrap();
+        let mut batch = filled(&mut stream).await.unwrap();
         assert_eq!(batch.len(), 2);
         let held_b = batch.pop().unwrap();
         let held_a = batch.pop().unwrap();
@@ -758,11 +758,11 @@ mod tests {
 
         // Clamped to the log end: queued "c" is drained and nothing is replayed.
         seeker.seek(MemoryPosition::sequence(10)).await.unwrap();
-        assert!(futures::poll!(stream.next()).is_pending());
+        assert!(futures::poll!(std::pin::pin!(filled(&mut stream))).is_pending());
 
         // A stale copy at the head of the queue: the first-element loop filters it out.
         held_b.nack(true).await.unwrap();
-        assert!(futures::poll!(stream.next()).is_pending());
+        assert!(futures::poll!(std::pin::pin!(filled(&mut stream))).is_pending());
 
         // A stale copy behind a live delivery: the batch-fill loop filters it out.
         publisher
@@ -770,13 +770,13 @@ mod tests {
             .await
             .unwrap();
         held_a.nack(true).await.unwrap();
-        let live = stream.next().await.unwrap().unwrap();
+        let live = filled(&mut stream).await.unwrap();
         let payloads: Vec<&[u8]> = live.iter().map(IncomingMessage::payload).collect();
         assert_eq!(payloads, [b"d".as_slice()]);
         for msg in live {
             msg.ack().await.unwrap();
         }
-        assert!(futures::poll!(stream.next()).is_pending());
+        assert!(futures::poll!(std::pin::pin!(filled(&mut stream))).is_pending());
     }
 
     #[cfg(feature = "testing")]

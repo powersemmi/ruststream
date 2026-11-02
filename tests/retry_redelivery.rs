@@ -43,6 +43,7 @@ use ruststream::{
     OutgoingFor, OutgoingMessage, PairError, PublishPolicy, Publisher, RedeliveryAddress,
     RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
 };
+use ruststream::{PublishMessageError, PublishOutcome};
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
@@ -369,11 +370,11 @@ impl<P: Publisher> Publisher for Stamped<P> {
     type Error = P::Error;
     type Options = P::Options;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         self.inner.publish(msg, options).await
     }
 
@@ -431,18 +432,23 @@ impl<P: Publisher> Publisher for PriorityPublisher<P> {
     type Error = P::Error;
     type Options = PriorityOptions;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         let priority = options
             .and_then(|options| options.priority)
             .unwrap_or(self.default_priority);
         let mut headers = msg.headers().clone();
         headers.insert("priority", priority.to_string());
         let stamped = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
-        self.inner.publish(stamped, None).await
+        let error = match self.inner.publish(stamped, None).await {
+            Ok(()) => return Ok(()),
+            Err(failed) => failed.into_error(),
+        };
+        // The stamped copy was built here, so the refusal hands back the message it was given.
+        Err(PublishMessageError::with_message(error, msg))
     }
 }
 

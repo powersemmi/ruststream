@@ -1,7 +1,7 @@
 //! The subscription descriptor of the local bus, its subscriber and one delivery.
 
+use super::share::Shared;
 use alloc::borrow::Cow;
-use alloc::rc::Rc;
 use core::convert::Infallible;
 use core::fmt;
 use core::future::ready;
@@ -12,8 +12,8 @@ use core::task::{Context, Poll};
 
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, AddressedCopies, FromName, HeaderMap, IncomingMessage, LocalBatchSubscriber,
-    LocalSettle, LocalSubscriber, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource,
+    AckError, AddressedCopies, BatchStream, BatchSubscriber, FromName, HeaderMap, IncomingMessage,
+    ReadyHint, RedeliveryAddress, RedeliveryAddressed, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -40,7 +40,8 @@ use super::{ConnectedLocalMemoryBroker, LocalMemoryError};
 ///     connected
 ///         .publisher()
 ///         .publish(OutgoingMessage::produced("sensors/temp", BytesMut::from(&[21u8][..])), None)
-///         .await?;
+///         .await
+///         .map_err(PublishMessageError::into_error)?;
 ///     let mut deliveries = core::pin::pin!(readings.stream());
 ///     let Some(Ok(reading)) = deliveries.next().await else {
 ///         unreachable!("the bus is open and its stream yields no error");
@@ -163,7 +164,8 @@ impl<const CAP: usize> RedeliveryAddressed<ConnectedLocalMemoryBroker<CAP>> for 
 ///     connected
 ///         .publisher()
 ///         .publish(OutgoingMessage::produced("actuator/cmd", BytesMut::from("open")), None)
-///         .await?;
+///         .await
+///         .map_err(PublishMessageError::into_error)?;
 ///     connected.shutdown().await?;
 ///     Ok::<_, LocalMemoryError>(commands(subscriber).await)
 /// })?;
@@ -171,12 +173,15 @@ impl<const CAP: usize> RedeliveryAddressed<ConnectedLocalMemoryBroker<CAP>> for 
 /// # Ok::<(), LocalMemoryError>(())
 /// ```
 pub struct LocalMemorySubscriber<const CAP: usize> {
-    subscription: Rc<Subscription<CAP>>,
-    bus: Rc<Bus<CAP>>,
+    subscription: Shared<Subscription<CAP>>,
+    bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> LocalMemorySubscriber<CAP> {
-    pub(super) const fn new(subscription: Rc<Subscription<CAP>>, bus: Rc<Bus<CAP>>) -> Self {
+    pub(super) const fn new(
+        subscription: Shared<Subscription<CAP>>,
+        bus: Shared<Bus<CAP>>,
+    ) -> Self {
         Self { subscription, bus }
     }
 
@@ -184,7 +189,7 @@ impl<const CAP: usize> LocalMemorySubscriber<CAP> {
         LocalMemoryMessage {
             delivery,
             settled: false,
-            subscription: Rc::clone(&self.subscription),
+            subscription: Clone::clone(&self.subscription),
         }
     }
 }
@@ -203,22 +208,36 @@ impl<const CAP: usize> fmt::Debug for LocalMemorySubscriber<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalSubscriber for LocalMemorySubscriber<CAP> {
+impl<const CAP: usize> Subscriber for LocalMemorySubscriber<CAP> {
     type Message = LocalMemoryMessage<CAP>;
     type Error = Infallible;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + '_ {
         Deliveries { subscriber: self }
     }
+
+    fn ready_hint(&self) -> impl ReadyHint + 'static + use<CAP> {
+        DeliveriesWaiting(Clone::clone(&self.subscription))
+    }
 }
 
-impl<const CAP: usize> LocalBatchSubscriber for LocalMemorySubscriber<CAP> {
+/// The probe of one subscription: a handle on the state its stream reads, taken once when the
+/// subscription starts.
+struct DeliveriesWaiting<const CAP: usize>(Shared<Subscription<CAP>>);
+
+impl<const CAP: usize> ReadyHint for DeliveriesWaiting<CAP> {
+    fn may_be_ready(&self) -> bool {
+        self.0.may_be_ready()
+    }
+}
+
+impl<const CAP: usize> BatchSubscriber for LocalMemorySubscriber<CAP> {
     type Batch = Vec<LocalMemoryMessage<CAP>>;
 
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, Self::Error>> + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = Self::Error> + '_ {
         Batches {
             subscriber: self,
             size,
@@ -251,10 +270,14 @@ struct Batches<'a, const CAP: usize> {
     size: NonZeroUsize,
 }
 
-impl<const CAP: usize> Stream for Batches<'_, CAP> {
-    type Item = Result<Vec<LocalMemoryMessage<CAP>>, Infallible>;
+impl<const CAP: usize> BatchStream<Vec<LocalMemoryMessage<CAP>>> for Batches<'_, CAP> {
+    type Error = Infallible;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_fill(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        slot: &mut Vec<LocalMemoryMessage<CAP>>,
+    ) -> Poll<Option<Result<(), Infallible>>> {
         let subscriber = self.subscriber;
         let Poll::Ready(first) = subscriber.subscription.poll_next(cx) else {
             return Poll::Pending;
@@ -262,16 +285,14 @@ impl<const CAP: usize> Stream for Batches<'_, CAP> {
         let Some(first) = first else {
             return Poll::Ready(None);
         };
-        // At most the capacity waits in the queue, so a batch never grows past it.
-        let mut batch = Vec::with_capacity(self.size.get().min(CAP));
-        batch.push(subscriber.message(first));
-        while batch.len() < self.size.get() {
+        slot.push(subscriber.message(first));
+        while slot.len() < self.size.get() {
             let Some(next) = subscriber.subscription.try_next() else {
                 break;
             };
-            batch.push(subscriber.message(next));
+            slot.push(subscriber.message(next));
         }
-        Poll::Ready(Some(Ok(batch)))
+        Poll::Ready(Some(Ok(())))
     }
 }
 
@@ -298,6 +319,7 @@ impl<const CAP: usize> Stream for Batches<'_, CAP> {
 ///         .publisher()
 ///         .publish(OutgoingMessage::produced("actuator/cmd", BytesMut::from("open")), None)
 ///         .await
+///         .map_err(PublishMessageError::into_error)
 ///         .ok()?;
 ///     let mut deliveries = core::pin::pin!(commands.stream());
 ///     let busy = deliveries.next().await?.ok()?;
@@ -318,7 +340,7 @@ pub struct LocalMemoryMessage<const CAP: usize> {
     delivery: Delivery,
     // Set by a settlement, so the drop that follows it releases the place without a requeue.
     settled: bool,
-    subscription: Rc<Subscription<CAP>>,
+    subscription: Shared<Subscription<CAP>>,
 }
 
 impl<const CAP: usize> LocalMemoryMessage<CAP> {
@@ -398,7 +420,7 @@ impl<const CAP: usize> IncomingMessage for LocalMemoryMessage<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalSettle for LocalMemoryMessage<CAP> {
+impl<const CAP: usize> Settle for LocalMemoryMessage<CAP> {
     fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {
         self.settled = true;
         ready(Ok(()))
@@ -418,6 +440,7 @@ impl<const CAP: usize> LocalSettle for LocalMemoryMessage<CAP> {
 
 #[cfg(test)]
 mod tests {
+    use core::future::poll_fn;
     use core::pin::pin;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -426,17 +449,17 @@ mod tests {
     use embassy_futures::block_on;
     use futures::{FutureExt, StreamExt};
     use ruststream_core::{
-        Broker, BytesMut, ConnectedBroker, LocalPublisher, OutgoingMessage, Subscribe,
+        Broker, BytesMut, ConnectedBroker, OutgoingMessage, Publisher, Subscribe,
     };
 
     #[cfg(feature = "testing")]
-    use ruststream_runtime::testing::{Coordinator, LocalTestableBroker};
+    use ruststream_runtime::testing::{Coordinator, TestableBroker};
 
     use ruststream_runtime::RETRY_COUNT_HEADER;
 
     use super::*;
     use crate::local::LocalMemoryBroker;
-    use crate::local::drive::{ended, waiting};
+    use crate::local::drive::waiting;
 
     async fn open(name: &str) -> (ConnectedLocalMemoryBroker<4>, LocalMemorySubscriber<4>) {
         let connected = LocalMemoryBroker::<4>::new().connect().await.unwrap();
@@ -559,6 +582,20 @@ mod tests {
         });
     }
 
+    /// The next batch the stream fills a fresh slot with, or `None` where the subscription ended.
+    /// A stream with nothing waiting fails the test rather than hanging it.
+    fn filled<S>(stream: &mut Pin<&mut S>) -> Option<Vec<LocalMemoryMessage<4>>>
+    where
+        S: BatchStream<Vec<LocalMemoryMessage<4>>>,
+    {
+        let mut slot = Vec::new();
+        let Some(step) = poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot)).now_or_never()
+        else {
+            panic!("the stream has nothing waiting");
+        };
+        step.map(|_| slot)
+    }
+
     #[test]
     fn a_batch_takes_what_waits_up_to_its_size() {
         block_on(async {
@@ -567,15 +604,15 @@ mod tests {
                 publish(&connected, "cmd", payload).await;
             }
             let mut batches = pin!(subscriber.batches(NonZeroUsize::new(2).unwrap()));
-            let first = waiting(&mut batches).unwrap();
-            let second = waiting(&mut batches).unwrap();
+            let first = filled(&mut batches).unwrap();
+            let second = filled(&mut batches).unwrap();
             let sizes = [first.len(), second.len()];
             for delivery in first.into_iter().chain(second) {
                 delivery.ack().await.unwrap();
             }
             assert_eq!(sizes, [2, 1]);
             connected.shutdown().await.unwrap();
-            assert!(ended(&mut batches));
+            assert!(filled(&mut batches).is_none());
         });
     }
 

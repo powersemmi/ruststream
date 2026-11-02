@@ -7,6 +7,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::any::type_name;
+use ruststream_core::MaybeSendSync;
 
 use crate::batch::BatchResult;
 use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
@@ -93,10 +94,10 @@ impl<A, R, E, C, H, Doc, Dest> PublishingDef
 where
     A: SoloAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
-    E: EntryMarkers + Send + Sync,
-    C: Send + Sync,
-    H: Send + Sync,
-    Doc: AxisDocs<A> + Send + Sync,
+    E: EntryMarkers + MaybeSendSync,
+    C: MaybeSendSync,
+    H: MaybeSendSync,
+    Doc: AxisDocs<A> + MaybeSendSync,
     Dest: ReplyDest<R>,
 {
     type Input = A::Kind;
@@ -168,11 +169,11 @@ impl<T, R, E, C, S, H, Doc, Dest> PublishingCall<S>
     for Sealed<ReplyValue<HandleValue<Solo<T>, R, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: PublishingDef<Input = <Solo<T> as Axis>::Kind, Injections = Outs<E>, Reply = R, Context = C>,
-    T: Input<Axis = Solo<T>> + Send + Sync + 'static,
+    T: Input<Axis = Solo<T>> + MaybeSendSync + 'static,
     R: ReplyShape,
-    E: Send + Sync,
-    C: Send + Sync,
-    S: Send + Sync,
+    E: MaybeSendSync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<T, R, Outs<E>, C, S>,
 {
     async fn call(
@@ -194,11 +195,11 @@ where
             Reply = R,
             Context = C,
         >,
-    T: Input<Axis = SoloSet<T>> + Send + Sync + 'static,
+    T: Input<Axis = SoloSet<T>> + MaybeSendSync + 'static,
     R: ReplyShape,
-    E: Send + Sync,
-    C: Send + Sync,
-    S: Send + Sync,
+    E: MaybeSendSync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<T, R, Outs<E>, C, S>,
 {
     async fn call(
@@ -220,11 +221,11 @@ where
             Reply = R,
             Context = C,
         >,
-    T: Input<Axis = SoloCarried<T>> + Clone + Send + Sync + 'static,
+    T: Input<Axis = SoloCarried<T>> + Clone + MaybeSendSync + 'static,
     R: ReplyShape,
-    E: Send + Sync,
-    C: Send + Sync,
-    S: Send + Sync,
+    E: MaybeSendSync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<T, R, Outs<E>, C, S>,
 {
     async fn call(
@@ -246,12 +247,12 @@ where
             Reply = R,
             Context = C,
         >,
-    F: Deserialized + Send + Sync + 'static,
+    F: Deserialized + MaybeSendSync + 'static,
     for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
     R: ReplyShape,
-    E: Send + Sync,
-    C: Send + Sync,
-    S: Send + Sync,
+    E: MaybeSendSync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: for<'p> Handle<F::Output<'p>, R, Outs<E>, C, S>,
 {
     async fn call(
@@ -275,12 +276,12 @@ where
             Context = C,
         >,
     Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
-    Hd: Send + Sync + 'static,
-    P: Send + Sync + 'static,
+    Hd: MaybeSendSync + 'static,
+    P: MaybeSendSync + 'static,
     R: ReplyShape,
-    E: Send + Sync,
-    C: Send + Sync,
-    S: Send + Sync,
+    E: MaybeSendSync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<Message<Hd, P>, R, Outs<E>, C, S>,
 {
     async fn call(
@@ -297,10 +298,10 @@ impl<A, R, E, C, H, Doc, Dest> BatchPublishingDef
 where
     A: BatchedAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
-    E: EntryMarkers + Send + Sync,
-    C: Send + Sync,
-    H: Send + Sync,
-    Doc: AxisDocs<A> + Send + Sync,
+    E: EntryMarkers + MaybeSendSync,
+    C: MaybeSendSync,
+    H: MaybeSendSync,
+    Doc: AxisDocs<A> + MaybeSendSync,
     Dest: ReplyDest<R>,
 {
     type Input = A::Kind;
@@ -377,11 +378,11 @@ where
             Reply = R,
         >,
     [T]: Input<Axis = Batch<T>>,
-    T: Send + Sync + 'static,
+    T: MaybeSendSync + 'static,
     R: ReplyShape,
-    E: Send + Sync,
-    C: Send + Sync,
-    S: Send + Sync,
+    E: MaybeSendSync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<[T], Vec<R>, Outs<E>, C, S>,
 {
     async fn call(
@@ -405,11 +406,11 @@ where
             Reply = R,
         >,
     [T]: Input<Axis = BatchSet<T>>,
-    T: Send + Sync + 'static,
+    T: MaybeSendSync + 'static,
     R: ReplyShape,
-    E: Send + Sync,
-    C: Send + Sync,
-    S: Send + Sync,
+    E: MaybeSendSync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<[T], Vec<R>, Outs<E>, C, S>,
 {
     async fn call(
@@ -433,12 +434,12 @@ where
             Reply = R,
         >,
     [Message<Hd, P>]: Input<Axis = BatchPair<Hd, P>>,
-    Hd: Send + Sync + 'static,
-    P: Send + Sync + 'static,
+    Hd: MaybeSendSync + 'static,
+    P: MaybeSendSync + 'static,
     R: ReplyShape,
-    E: Send + Sync,
-    C: Send + Sync,
-    S: Send + Sync,
+    E: MaybeSendSync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<[Message<Hd, P>], Vec<R>, Outs<E>, C, S>,
 {
     async fn call(

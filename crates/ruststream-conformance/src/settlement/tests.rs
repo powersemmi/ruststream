@@ -19,6 +19,7 @@ use ruststream::memory::{
     ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
     MemoryPublisher, MemorySource, MemorySubscriber,
 };
+use ruststream_core::PublishOutcome;
 use ruststream_core::{
     AckError, AddressedCopies, Broker, ConnectedBroker, HeaderMap, IncomingMessage, Lend,
     OutgoingMessage, Publisher, RawMessage, Subscriber, SubscriptionSource,
@@ -449,12 +450,12 @@ impl Publisher for Refusing {
     type Error = MemoryError;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        _msg: OutgoingMessage<'_, &[u8]>,
+        _msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        ready(Err(MemoryError::ShutDown))
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> + Send {
+        ready(Err(MemoryError::ShutDown.into()))
     }
 }
 

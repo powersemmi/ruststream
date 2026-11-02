@@ -11,11 +11,15 @@ use core::marker::PhantomData;
 use core::mem;
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, Ordering};
+use ruststream_core::{MaybeSend, MaybeSendSync};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 
+use super::on_thread::OnThread;
+
 use futures::FutureExt;
+#[cfg(feature = "tokio")]
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -30,13 +34,13 @@ use super::coordinator::Coordinator;
 type HookFuture<'a> = Pin<Box<dyn Future<Output = ()> + 'a>>;
 
 /// An `on_call` hook with its closure type erased.
-pub(crate) trait CallHook: Send + Sync {
+pub(crate) trait CallHook: MaybeSendSync {
     fn call<'a>(&'a self, handle: SubscriberAssertions<'a>) -> HookFuture<'a>;
 }
 
 impl<Hook> CallHook for Hook
 where
-    Hook: AsyncFn(SubscriberAssertions<'_>) + Send + Sync,
+    Hook: AsyncFn(SubscriberAssertions<'_>) + MaybeSendSync,
 {
     fn call<'a>(&'a self, handle: SubscriberAssertions<'a>) -> HookFuture<'a> {
         Box::pin(self(handle))
@@ -45,7 +49,7 @@ where
 
 /// An `on_publish` hook with its closure and payload types erased: it builds the handle it is
 /// handed, so the registry needs neither.
-trait PublishHook: Send + Sync {
+trait PublishHook: MaybeSendSync {
     fn call<'a>(
         &'a self,
         coordinator: &Coordinator,
@@ -62,7 +66,7 @@ struct TypedPublishHook<Payload, Hook> {
 
 impl<Payload, Hook> PublishHook for TypedPublishHook<Payload, Hook>
 where
-    Hook: AsyncFn(PublishedAssertions<Payload>) + Send + Sync,
+    Hook: AsyncFn(PublishedAssertions<Payload>) + MaybeSendSync,
 {
     fn call<'a>(
         &'a self,
@@ -148,12 +152,44 @@ pub struct Hooks {
     pending: Mutex<Vec<PendingHooks>>,
 }
 
+#[cfg(feature = "tokio")]
+type PendingRun = Box<dyn for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send>;
+
+/// See the `tokio` form: without the feature the hooks run on the thread that polls the app.
+#[cfg(not(feature = "tokio"))]
+type PendingRun = OnThread<Box<dyn for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c>>>;
+
+fn pending_run<Run>(hooks: Run) -> PendingRun
+where
+    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + MaybeSend + 'static,
+{
+    #[cfg(feature = "tokio")]
+    {
+        Box::new(hooks)
+    }
+    #[cfg(not(feature = "tokio"))]
+    {
+        OnThread::new(Box::new(hooks))
+    }
+}
+
+fn start_pending(run: PendingRun, coordinator: &Coordinator) -> HookFuture<'_> {
+    #[cfg(feature = "tokio")]
+    {
+        run(coordinator)
+    }
+    #[cfg(not(feature = "tokio"))]
+    {
+        run.into_inner()(coordinator)
+    }
+}
+
 /// The hooks of one event, handed to the harness that polls an app running as one future: the
 /// harness turns them into a future and polls it beside the app.
 // Machinery the harness crate drives, hidden from the docs; it holds an erased closure.
 #[allow(missing_debug_implementations)]
 pub struct PendingHooks {
-    run: Box<dyn for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send>,
+    run: PendingRun,
     done: oneshot::Sender<()>,
 }
 
@@ -164,7 +200,9 @@ impl PendingHooks {
     pub fn into_future(self, coordinator: Coordinator) -> Pin<Box<dyn Future<Output = ()>>> {
         let Self { run, done } = self;
         Box::pin(async move {
-            let outcome = AssertUnwindSafe(run(&coordinator)).catch_unwind().await;
+            let outcome = AssertUnwindSafe(start_pending(run, &coordinator))
+                .catch_unwind()
+                .await;
             if let Err(payload) = outcome {
                 lock(&coordinator.hooks().failed).get_or_insert(payload);
             }
@@ -173,17 +211,20 @@ impl PendingHooks {
     }
 }
 
+/// A registered hook, shared by the events it runs on.
+type Held<Hook> = Arc<OnThread<Box<Hook>>>;
+
 /// An `on_call` hook, with the handle it was registered on.
 struct OnCall {
     scope_id: usize,
     name: String,
-    hook: Arc<dyn CallHook>,
+    hook: Held<dyn CallHook>,
 }
 
 /// An `on_publish` hook, with what its handle reads.
 struct OnPublish {
     target: PublishTarget,
-    hook: Arc<dyn PublishHook>,
+    hook: Held<dyn PublishHook>,
 }
 
 /// One recorded call and the hooks it runs: those registered on its handle when it was recorded.
@@ -193,7 +234,7 @@ pub(crate) struct DueCall {
     scope_id: usize,
     name: String,
     within: Within,
-    hooks: Vec<Arc<dyn CallHook>>,
+    hooks: Vec<Held<dyn CallHook>>,
 }
 
 /// One recorded publish and the hooks it runs, or nothing when no hook matched it.
@@ -208,7 +249,7 @@ struct PublishRun {
     coordinator: Coordinator,
     target: PublishTarget,
     within: Within,
-    hooks: Vec<Arc<dyn PublishHook>>,
+    hooks: Vec<Held<dyn PublishHook>>,
 }
 
 impl DuePublish {
@@ -228,12 +269,12 @@ impl Hooks {
     /// Registers `hook` on the calls of the subscription `name` of the broker at `scope_id`.
     pub(crate) fn on_call<Hook>(&self, scope_id: usize, name: String, hook: Hook)
     where
-        Hook: AsyncFn(SubscriberAssertions<'_>) + Send + Sync + 'static,
+        Hook: AsyncFn(SubscriberAssertions<'_>) + MaybeSendSync + 'static,
     {
         lock(&self.calls).push(OnCall {
             scope_id,
             name,
-            hook: Arc::new(hook),
+            hook: Arc::new(OnThread::new(Box::new(hook))),
         });
         self.registered.store(true, Ordering::SeqCst);
     }
@@ -242,7 +283,7 @@ impl Hooks {
     pub(crate) fn on_publish<Payload, Hook>(&self, target: PublishTarget, hook: Hook)
     where
         Payload: 'static,
-        Hook: AsyncFn(PublishedAssertions<Payload>) + Send + Sync + 'static,
+        Hook: AsyncFn(PublishedAssertions<Payload>) + MaybeSendSync + 'static,
     {
         let hook = TypedPublishHook {
             hook,
@@ -250,7 +291,7 @@ impl Hooks {
         };
         lock(&self.publishes).push(OnPublish {
             target,
-            hook: Arc::new(hook),
+            hook: Arc::new(OnThread::new(Box::new(hook))),
         });
         self.registered.store(true, Ordering::SeqCst);
     }
@@ -261,7 +302,7 @@ impl Hooks {
         &self,
         scope_id: usize,
         name: &str,
-    ) -> Option<Vec<Arc<dyn CallHook>>> {
+    ) -> Option<Vec<Held<dyn CallHook>>> {
         if !self.registered.load(Ordering::SeqCst) {
             return None;
         }
@@ -330,7 +371,7 @@ impl DueCall {
         scope_id: usize,
         name: String,
         within: Within,
-        hooks: Vec<Arc<dyn CallHook>>,
+        hooks: Vec<Held<dyn CallHook>>,
     ) -> Self {
         Self {
             scope_id,
@@ -391,10 +432,13 @@ impl DuePublish {
 /// raise for the test to raise again ([`Hooks::raise_failure`]).
 async fn run_hooks<Run>(coordinator: &Coordinator, hooks: Run)
 where
-    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send + 'static,
+    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + MaybeSend + 'static,
 {
     match coordinator.hooks().runner {
+        #[cfg(feature = "tokio")]
         HookRunner::Thread => on_hook_thread(coordinator, hooks).await,
+        #[cfg(not(feature = "tokio"))]
+        HookRunner::Thread => in_place(coordinator, hooks).await,
         HookRunner::InPlace => in_place(coordinator, hooks).await,
     }
 }
@@ -404,11 +448,11 @@ where
 /// it ([`Hooks::take_pending`]).
 async fn in_place<Run>(coordinator: &Coordinator, hooks: Run)
 where
-    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send + 'static,
+    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + MaybeSend + 'static,
 {
     let (done, finished) = oneshot::channel();
     lock(&coordinator.hooks().pending).push(PendingHooks {
-        run: Box::new(hooks),
+        run: pending_run(hooks),
         done,
     });
     // The harness answers once the hooks are done, or drops the answer with the hooks when the
@@ -427,9 +471,10 @@ where
 /// The hooks are dropped where they wait as soon as the caller stops waiting for them (a shutdown
 /// timeout aborted the dispatch that ran them) or the test ends ([`HookFailures::stop`]), so no
 /// hook outlives the harness.
+#[cfg(feature = "tokio")]
 async fn on_hook_thread<Run>(coordinator: &Coordinator, hooks: Run)
 where
-    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + Send + 'static,
+    Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + MaybeSend + 'static,
 {
     let runtime = Handle::current();
     let owned = coordinator.clone();

@@ -120,7 +120,10 @@ mod assert_shut_down {
         tb.assert_shut_down();
         assert!(matches!(
             tb.message(&Order { id: 7 }).publish().await,
-            Err(PublishError::Publish(TestError::ShutDown))
+            Err(PublishError::Publish {
+                source: TestError::ShutDown,
+                ..
+            })
         ));
         Ok(())
     }

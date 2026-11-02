@@ -14,11 +14,12 @@ use alloc::vec::Vec;
 use core::any::type_name;
 use core::fmt;
 use core::hash::Hash;
+use ruststream_core::MaybeSendSync;
 
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 
-use crate::codec::{Codec, CodecError};
+use crate::codec::{Codec, CodecError, FrameNames};
 use crate::handle::{Deserialized, Input, Solo, SoloDeserialized};
 use crate::metadata::IncomingMessageMetadata;
 use crate::{IncomingMessage, MessageInfo};
@@ -29,10 +30,15 @@ use crate::{IncomingMessage, MessageInfo};
 /// The enum is the handler's input: the set decodes one delivery into the variant it picks, and
 /// the generated document lists every variant's model as a message of the subscription, with
 /// that model's own name, description, headers and content type. The variant is picked left to
-/// right by default, by the function `#[in_messages(discriminate = path)]` names, by the
-/// [`CodecDiscriminator`] type `#[in_messages(discriminate_with_codec = Type)]` names, which
-/// reads the decode codec beside the delivery, or by the header `#[in_messages(header = "..")]`
-/// names with one `#[in_messages(value = "..")]` per variant.
+/// right by default, by the function `#[in_messages(discriminate = path)]` names, by the frame
+/// the decode codec reads with `#[in_messages(by_codec)]`, or by the header
+/// `#[in_messages(header = "..")]` names with one `#[in_messages(value = "..")]` per variant.
+///
+/// The trait takes the decode codec as a parameter. A set whose rule does not read the codec
+/// implements it for every codec; a `by_codec` set implements it for the codecs that implement
+/// [`FrameNames`](crate::codec::FrameNames) for each of its models, so mounting it under any
+/// other codec is a compile error at the mount site. A bound on a set names the codec:
+/// `Set: InMessages<DecodeCodec>`.
 ///
 /// # Examples
 ///
@@ -146,14 +152,10 @@ use crate::{IncomingMessage, MessageInfo};
 ///
 /// /// The `event` header names the variant; the rule is the one `#[in_messages(header =
 /// /// "event")]` writes.
-/// impl InMessages for OrderEvent {
+/// impl<DecodeCodec: Codec> InMessages<DecodeCodec> for OrderEvent {
 ///     type Kind = OrderEventKind;
 ///
-///     fn decode<DecodeCodec, M>(codec: &DecodeCodec, msg: &M) -> Result<Self, CodecError>
-///     where
-///         DecodeCodec: Codec,
-///         M: IncomingMessage,
-///     {
+///     fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<Self, CodecError> {
 ///         let kind = match msg.headers().get("event") {
 ///             Some(b"created") => OrderEventKind::Created,
 ///             Some(b"cancelled") => OrderEventKind::Cancelled,
@@ -191,9 +193,9 @@ use crate::{IncomingMessage, MessageInfo};
 ///     type Axis = SoloSet<OrderEvent>;
 /// }
 /// ```
-pub trait InMessages: Sized + Send + Sync + 'static {
+pub trait InMessages<DecodeCodec: Codec>: Sized + MaybeSendSync + 'static {
     /// The kinds of the set: one unit variant per model, what a discriminator names.
-    type Kind: Copy + Eq + Hash + fmt::Debug + Send + Sync + 'static;
+    type Kind: Copy + Eq + Hash + fmt::Debug + MaybeSendSync + 'static;
 
     /// Decodes one delivery into the variant the set's rule picks.
     ///
@@ -202,173 +204,43 @@ pub trait InMessages: Sized + Send + Sync + 'static {
     /// Returns [`CodecError`] when no variant decodes the delivery, when the rule picks none, or
     /// when the variant it picks does not decode. The subscriber's decode failure policy settles
     /// the delivery.
-    fn decode<DecodeCodec, M>(codec: &DecodeCodec, msg: &M) -> Result<Self, CodecError>
-    where
-        DecodeCodec: Codec,
-        M: IncomingMessage;
+    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<Self, CodecError>;
 
     /// The models of the set, in the order of the variants, as the generated document lists
     /// them.
     fn incoming() -> Vec<IncomingMessageMetadata>;
 }
 
-/// Picks the variant of a message set from the decode codec and the delivery, for a set
-/// declared with `#[in_messages(discriminate_with_codec = Type)]`.
+/// The codec of a `by_codec` set names one of its models: the bound `#[derive(InMessages)]`
+/// writes once per model.
 ///
-/// `Kind` is the set's kind enum (`OrderEventKind` for `OrderEvent`), and `DecodeCodec` is the
-/// codec of the scope or router the set mounts under. [`kind`](Self::kind) returns `Some(kind)`
-/// to decode that variant, or `None`, which fails the delivery with a decode error naming the
-/// set. An impl that bounds the codec makes the set mount only under codecs that satisfy the
-/// bound: a set mounted under a codec that cannot answer is a compile error at the mount site.
-/// The call is static, so a delivery pays nothing beyond the discriminator's own work.
-///
-/// A set picked this way implements the decode of every codec its discriminator accepts, not
-/// [`InMessages`] itself: it is a handler input everywhere a set is, and it does not satisfy a
-/// `T: InMessages` bound.
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
-/// # mod demo {
-/// use ruststream::codec::{Codec, CodecError, JsonCodec};
-/// use ruststream::memory::prelude::*;
-/// use serde::de::DeserializeOwned;
-/// use serde::{Deserialize, Serialize};
-///
-/// /// What a registry codec answers beside decoding: the record a schema id stands for.
-/// pub trait RecordNames: Codec {
-///     fn record_name(&self, schema: &[u8]) -> Option<&'static str>;
-/// }
-///
-/// /// JSON whose records are named by the registry the codec holds.
-/// #[derive(Clone)]
-/// pub struct Registry;
-///
-/// impl Codec for Registry {
-///     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
-///         JsonCodec.encode(value)
-///     }
-///
-///     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
-///         JsonCodec.decode(bytes)
-///     }
-/// }
-///
-/// impl RecordNames for Registry {
-///     fn record_name(&self, schema: &[u8]) -> Option<&'static str> {
-///         match schema {
-///             b"1" => Some("OrderCreated"),
-///             b"2" => Some("OrderShipped"),
-///             _ => None,
-///         }
-///     }
-/// }
-///
-/// /// An order was placed.
-/// #[derive(Deserialize, MessageInfo)]
-/// struct OrderCreated {
-///     id: u64,
-/// }
-///
-/// /// An order was shipped: the same shape, so only the registry tells the two apart.
-/// #[derive(Deserialize, MessageInfo)]
-/// struct OrderShipped {
-///     id: u64,
-/// }
-///
-/// #[derive(InMessages)]
-/// #[in_messages(discriminate_with_codec = ByRecord)]
-/// enum OrderEvent {
-///     Created(OrderCreated),
-///     Shipped(OrderShipped),
-/// }
-///
-/// /// Picks the variant by the record the registry names for the `schema` header.
-/// struct ByRecord;
-///
-/// impl<DecodeCodec: RecordNames> CodecDiscriminator<OrderEventKind, DecodeCodec> for ByRecord {
-///     fn kind<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Option<OrderEventKind> {
-///         match codec.record_name(msg.headers().get("schema")?)? {
-///             "OrderCreated" => Some(OrderEventKind::Created),
-///             "OrderShipped" => Some(OrderEventKind::Shipped),
-///             _ => None,
-///         }
-///     }
-/// }
-///
-/// #[subscriber("orders")]
-/// async fn on_event(event: &OrderEvent) -> HandlerOutcome {
-///     match event {
-///         OrderEvent::Created(created) => tracing::info!(created.id, "created"),
-///         OrderEvent::Shipped(shipped) => tracing::info!(shipped.id, "shipped"),
-///     }
-///     HandlerOutcome::ack()
-/// }
-///
-/// fn app() -> RustStream {
-///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker_codec(
-///         MemoryBroker::new(),
-///         Registry,
-///         |b| {
-///             b.include(on_event)
-///         },
-///     )
-/// }
-/// # }
-/// # fn main() {}
-/// ```
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` cannot pick a variant of `{Kind}` with the codec `{DecodeCodec}`",
-    label = "the set's discriminator does not accept this codec",
-    note = "a set declared with `#[in_messages(discriminate_with_codec = {Self})]` decodes only \
-            under the codecs `{Self}` implements `CodecDiscriminator<{Kind}, _>` for: mount it \
-            in a scope or router whose codec does"
-)]
-pub trait CodecDiscriminator<Kind, DecodeCodec> {
-    /// The kind of the variant to decode, or `None` when the delivery names none of the set.
-    fn kind<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Option<Kind>;
-}
-
-/// The decode of a message set under one codec: what the handler input of a set reads.
-///
-/// Every [`InMessages`] set implements it for every codec. A set declared with
-/// `#[in_messages(discriminate_with_codec = ..)]` implements it alone, for the codecs its
-/// [`CodecDiscriminator`] accepts. Machinery behind the derive; never named in user code.
+/// It holds for a set under every codec that implements [`FrameNames`] for the model. The set is
+/// the `Self` of the bound so that the error names it and the model beside the codec. Machinery
+/// behind the derive; never named in user code.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
-    message = "the message set `{Self}` does not decode with the codec `{DecodeCodec}`",
+    message = "the message set `{Self}` does not decode with the codec `{DecodeCodec}`: its frame \
+               does not name `{Model}`",
     label = "mounted under `{DecodeCodec}` here",
-    note = "a set declared with `#[in_messages(discriminate_with_codec = ..)]` decodes only under \
-            the codecs its discriminator implements `CodecDiscriminator` for: mount it in a scope \
-            or router whose codec it accepts"
+    note = "a set declared with `#[in_messages(by_codec)]` decodes only under a codec that \
+            implements `FrameNames` for each of its models: mount it in a scope or router whose \
+            codec does"
 )]
-pub trait DecodeSet<DecodeCodec>: Sized + Send + Sync + 'static {
-    /// Decodes one delivery into the variant the set's rule picks.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CodecError`] as [`InMessages::decode`] does.
-    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<Self, CodecError>;
-
-    /// The models of the set, as [`InMessages::incoming`] lists them.
-    fn incoming() -> Vec<IncomingMessageMetadata>;
+pub trait NamedByFrame<DecodeCodec: Codec, Model> {
+    /// Whether the frame the codec read names `Model`.
+    fn named(frame: &DecodeCodec::Frame<'_>) -> bool;
 }
 
-// The set's own `InMessages` impl is what a user wrote or derived; the blanket stays out of an
-// error about a set that has neither.
+// The bound on the codec is what the user reads; the trait behind it is the machinery of the
+// check, so its own message stays out of the error.
 #[diagnostic::do_not_recommend]
-impl<Set, DecodeCodec> DecodeSet<DecodeCodec> for Set
+impl<Set, DecodeCodec, Model> NamedByFrame<DecodeCodec, Model> for Set
 where
-    Set: InMessages,
-    DecodeCodec: Codec,
+    DecodeCodec: FrameNames<Model>,
 {
-    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<Self, CodecError> {
-        <Set as InMessages>::decode(codec, msg)
-    }
-
-    fn incoming() -> Vec<IncomingMessageMetadata> {
-        <Set as InMessages>::incoming()
+    #[inline]
+    fn named(frame: &DecodeCodec::Frame<'_>) -> bool {
+        <DecodeCodec as FrameNames<Model>>::names(frame)
     }
 }
 
@@ -385,7 +257,7 @@ where
             the codec of the mount (`serde::Deserialize`) or constructs itself from the payload \
             bytes (`Deserialized`, owning what it constructs)"
 )]
-pub trait InVariant<Set>: Sized + Send + Sync + 'static {
+pub trait InVariant<Set>: Sized + MaybeSendSync + 'static {
     /// True when the model reads its own bytes ([`Deserialized`]): no codec decodes it, so its
     /// message in the document carries no media type and no schema by design.
     const DESERIALIZED: bool;
@@ -413,7 +285,7 @@ pub trait InVariant<Set>: Sized + Send + Sync + 'static {
 #[diagnostic::do_not_recommend]
 impl<Set, Model> InVariant<Set> for Model
 where
-    Model: MessageInfo + Input + Sized + Send + Sync + 'static,
+    Model: MessageInfo + Input + Sized + MaybeSendSync + 'static,
     Model::Axis: VariantLane<Model>,
 {
     const DESERIALIZED: bool = <Model::Axis as VariantLane<Model>>::DESERIALIZED;
@@ -513,6 +385,8 @@ fn list(failures: &[(&'static str, CodecError)]) -> String {
 enum NoVariant {
     #[error("the discriminator of the message set `{set}` chose no variant for the delivery")]
     Chosen { set: &'static str },
+    #[error("the codec frame names no variant of the message set `{set}`")]
+    FrameNamesNone { set: &'static str },
     #[error(
         "the message set `{set}` reads its variant from the `{header}` header, and the delivery \
          carries no `{header}` header"
@@ -556,6 +430,14 @@ pub fn no_variant_chosen(set: &'static str) -> CodecError {
     CodecError::Decode(Box::new(NoVariant::Chosen { set }))
 }
 
+/// The decode error of a `by_codec` set whose codec frame names none of its models. Machinery
+/// behind the derive.
+#[doc(hidden)]
+#[must_use]
+pub fn frame_names_no_variant(set: &'static str) -> CodecError {
+    CodecError::Decode(Box::new(NoVariant::FrameNamesNone { set }))
+}
+
 /// The decode error of a header-discriminated set whose header the delivery lacks. Machinery
 /// behind the derive.
 #[doc(hidden)]
@@ -584,7 +466,10 @@ pub fn header_unknown(
 
 #[cfg(test)]
 mod tests {
-    use super::{every_variant_failed, header_missing, header_unknown, no_variant_chosen};
+    use super::{
+        every_variant_failed, frame_names_no_variant, header_missing, header_unknown,
+        no_variant_chosen,
+    };
     use crate::codec::CodecError;
     use alloc::borrow::ToOwned;
     use alloc::string::ToString;
@@ -616,6 +501,14 @@ mod tests {
             no_variant_chosen("OrderEvent").to_string(),
             "decode failed: the discriminator of the message set `OrderEvent` chose no variant \
              for the delivery"
+        );
+    }
+
+    #[test]
+    fn a_frame_that_names_nothing_names_the_set() {
+        assert_eq!(
+            frame_names_no_variant("OrderEvent").to_string(),
+            "decode failed: the codec frame names no variant of the message set `OrderEvent`"
         );
     }
 

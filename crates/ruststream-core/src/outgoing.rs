@@ -7,7 +7,7 @@ use core::hash::{Hash, Hasher};
 use core::mem;
 use core::ops::Deref;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 
 use crate::HeaderMap;
@@ -206,6 +206,8 @@ pub(crate) enum Payload<'a> {
     Lent(&'a [u8]),
     /// A buffer of this message's own: codec output, or the copy a write asked for.
     Owned(BytesMut),
+    /// Nothing: the transport took the buffer and did not give it back.
+    Consumed,
 }
 
 impl Payload<'_> {
@@ -215,19 +217,23 @@ impl Payload<'_> {
         match self {
             Self::Lent(bytes) => bytes,
             Self::Owned(buf) => buf,
+            Self::Consumed => &[],
         }
     }
 
     /// The buffer, making it this message's own on the first call.
     fn to_mut(&mut self) -> &mut BytesMut {
-        if let Self::Lent(bytes) = *self {
-            *self = Self::Owned(BytesMut::from(bytes));
+        match *self {
+            Self::Lent(bytes) => *self = Self::Owned(BytesMut::from(bytes)),
+            Self::Consumed => *self = Self::Owned(BytesMut::new()),
+            Self::Owned(_) => {}
         }
         match self {
             Self::Owned(buf) => buf,
-            // The branch above leaves nothing lent, which the borrow checker cannot carry across
-            // this match; `Cow::to_mut` in the standard library is written the same way.
-            Self::Lent(_) => unreachable!(),
+            // The branch above leaves nothing lent or consumed, which the borrow checker cannot
+            // carry across this match; `Cow::to_mut` in the standard library is written the same
+            // way.
+            Self::Lent(_) | Self::Consumed => unreachable!(),
         }
     }
 }
@@ -369,7 +375,39 @@ impl<'a> Outgoing<'a> {
         match mem::replace(&mut self.payload, Payload::Lent(&[])) {
             Payload::Lent(bytes) => BytesMut::from(bytes),
             Payload::Owned(buf) => buf,
+            Payload::Consumed => BytesMut::new(),
         }
+    }
+
+    /// The buffer this message owns, frozen and taken out, or `None` while it only lends the
+    /// bytes it was built from.
+    ///
+    /// What a stage that reads a refused message back calls: the buffer moves out without a
+    /// copy, and bytes that live with the lender are left for the lender to take.
+    #[doc(hidden)]
+    pub fn take_owned_payload(&mut self) -> Option<Bytes> {
+        match &mut self.payload {
+            Payload::Lent(_) | Payload::Consumed => None,
+            Payload::Owned(buf) => Some(mem::take(buf).freeze()),
+        }
+    }
+
+    /// Marks the message as one a transport consumed and did not give back: the payload and the
+    /// headers are gone, and [`is_consumed`](Self::is_consumed) says so.
+    #[doc(hidden)]
+    pub fn consume(&mut self) {
+        self.payload = Payload::Consumed;
+        self.headers = HeaderMap::new();
+    }
+
+    /// Whether a transport consumed the message and did not give it back.
+    ///
+    /// What a stage that reads a refused message back asks, to tell a payload that is empty from
+    /// one that is gone.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn is_consumed(&self) -> bool {
+        matches!(self.payload, Payload::Consumed)
     }
 
     /// The outgoing headers.

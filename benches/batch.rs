@@ -32,9 +32,7 @@ fn app(messages: usize) -> Pending {
     common::pending(messages, 0, |b| b.include(consume.batch(nonzero!(64))))
 }
 
-// The allocations come per batch rather than per delivery, so the floor is stated over a
-// thousand of them.
-#[library_benchmark(config = common::config_every(16, 1_000, 29))]
+#[library_benchmark(config = common::config(0, 30))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]

@@ -299,7 +299,13 @@ async fn a_refused_subscription_aborts_startup_and_unwinds_the_broker() {
         .await
         .expect_err("the connected broker must not survive the failed startup");
     assert!(
-        matches!(refused, PublishError::Publish(MemoryError::ShutDown)),
+        matches!(
+            refused,
+            PublishError::Publish {
+                source: MemoryError::ShutDown,
+                ..
+            }
+        ),
         "got: {refused:?}",
     );
     line_with(
@@ -427,7 +433,13 @@ async fn a_refused_broker_shutdown_still_closes_the_others_and_runs_after_shutdo
         .await
         .expect_err("the memory broker must be shut down too");
     assert!(
-        matches!(refused, PublishError::Publish(MemoryError::ShutDown)),
+        matches!(
+            refused,
+            PublishError::Publish {
+                source: MemoryError::ShutDown,
+                ..
+            }
+        ),
         "got: {refused:?}",
     );
     assert!(after_shutdown_ran.load(Ordering::SeqCst));

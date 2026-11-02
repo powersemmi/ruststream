@@ -2,31 +2,30 @@
 //! router, its reply policy paired against the connected broker of the local family when the
 //! subscription opens.
 
-// Written over the local twins of the contract for a runner that polls on one thread: the
+// Written over the contract traits for a runner that polls on one thread: the
 // futures are `Send` exactly where the types they run are, and nothing here spawns them.
 #![allow(clippy::future_not_send)]
 
 use core::any::type_name;
+use ruststream_core::{MaybeSendSync, MaybeSync};
 
-use crate::inject::LocalFromStartup;
+use crate::inject::FromStartup;
 use crate::input::{InputKind, Materialize};
 use crate::lifecycle::BoxError;
 use crate::publish::{
     BatchTransformIdentity, Direct, ForReply, PublishCodec, PublishIdentity, PublishTransform,
     RawReplyWiring, ReplyWiring, TypedPublisher,
 };
-use crate::publishing::{
-    EncodeReply, LocalPublishing, LocalPublishingCall, PublishingHandler, warn_ignored_reply_name,
-};
+use crate::publishing::{EncodeReply, PublishingCall, PublishingHandler, warn_ignored_reply_name};
 use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Origin;
 use crate::{
-    Broker, BuildContext, Connected, LocalPublisher, LocalSettle, LocalSubscriber, PublishPolicy,
-    RetryDeclaration, Serialized, SubscriptionSource,
+    Broker, BuildContext, Connected, PublishPolicy, Publisher, RetryDeclaration, Serialized,
+    Settle, Subscriber, SubscriptionSource,
 };
 
-use super::fold_plan::{LocalRoute, OpenLocalRoute};
+use super::fold_plan::{OneTaskRoute, OpenOneTaskRoute};
 use super::local::LocalPipeline;
 use super::routes_publish::{PublishingRoute, RawReplyRoute};
 
@@ -36,11 +35,11 @@ type LocalStack<Policy, B, Enc, PL> =
 
 /// The local handler of a reply definition whose reply leaves through `Wiring`.
 type LocalReply<Def, DecodeCodec, Wiring> =
-    LocalPublishing<PublishingHandler<Def, DecodeCodec, Wiring, LocalPipeline>>;
+    PublishingHandler<Def, DecodeCodec, Wiring, LocalPipeline>;
 
 // A single-message reply runs the per-message transforms only, as on the multi-thread runner,
 // so its wiring carries no batch stack.
-impl<B, State, Source, M, Def, DecodeCodec, Policy, Enc, PL, Extra> OpenLocalRoute<B, State>
+impl<B, State, Source, M, Def, DecodeCodec, Policy, Enc, PL, Extra> OpenOneTaskRoute<B, State>
     for PublishingRoute<
         Source,
         Def,
@@ -51,17 +50,19 @@ impl<B, State, Source, M, Def, DecodeCodec, Policy, Enc, PL, Extra> OpenLocalRou
 where
     B: Broker,
     Source: SubscriptionSource<Connected<B>>,
-    Source::Subscriber: LocalSubscriber<Message = M>,
-    M: LocalSettle,
-    Def: LocalPublishingCall<State>,
+    Source::Subscriber: Subscriber<Message = M>,
+    M: Settle,
+    Def: PublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
-    Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
-    Def::Reply: EncodeReply,
-    Def::Context: BuildContext<M> + Send + Sync + 'static,
+    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + MaybeSendSync,
+    DecodeCodec: MaybeSendSync,
+    State: MaybeSendSync,
+    Def::Reply: EncodeReply + MaybeSendSync,
+    Def::Context: BuildContext<M> + MaybeSendSync + 'static,
     Policy: PublishPolicy<Connected<B>>,
-    Policy::Live: LocalPublisher,
+    Policy::Live: Publisher,
     Enc: PublishCodec<Codec: Clone>,
-    PL: PublishTransform<ForReply<Def::Context>, <Policy::Live as LocalPublisher>::Options>,
+    PL: PublishTransform<ForReply<Def::Context>, <Policy::Live as Publisher>::Options>,
 {
     type Source = Source;
     type Declaration = Undeclared;
@@ -78,7 +79,7 @@ where
         connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
-    ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
+    ) -> Result<OneTaskRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
             def,
@@ -100,10 +101,10 @@ where
             .pair_local(connected)
             .await
             .map_err(BoxError::from)?;
-        let injections = Def::Injections::resolve_local(extra, connected, &subscriber)
+        let injections = Def::Injections::resolve(extra, connected, &subscriber)
             .await
             .map_err(BoxError::from)?;
-        let handler = LocalPublishing(PublishingHandler {
+        let handler = PublishingHandler {
             def,
             codec,
             publisher,
@@ -112,8 +113,8 @@ where
             decode: policies.decode,
             #[cfg(feature = "testing")]
             origin: Origin::default(),
-        });
-        Ok(LocalRoute {
+        };
+        Ok(OneTaskRoute {
             subscriber,
             handler,
             name,
@@ -124,20 +125,22 @@ where
     }
 }
 
-impl<B, State, Source, M, Def, DecodeCodec, Policy, Extra> OpenLocalRoute<B, State>
+impl<B, State, Source, M, Def, DecodeCodec, Policy, Extra> OpenOneTaskRoute<B, State>
     for RawReplyRoute<Source, Def, DecodeCodec, RawReplyWiring<Policy>, Extra>
 where
     B: Broker,
     Source: SubscriptionSource<Connected<B>>,
-    Source::Subscriber: LocalSubscriber<Message = M>,
-    M: LocalSettle,
-    Def: LocalPublishingCall<State>,
+    Source::Subscriber: Subscriber<Message = M>,
+    M: Settle,
+    Def: PublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
-    Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
-    Def::Reply: Serialized,
-    Def::Context: BuildContext<M> + Send + Sync + 'static,
+    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + MaybeSendSync,
+    DecodeCodec: MaybeSendSync,
+    State: MaybeSendSync,
+    Def::Reply: Serialized + MaybeSendSync + MaybeSync,
+    Def::Context: BuildContext<M> + MaybeSendSync + 'static,
     Policy: PublishPolicy<Connected<B>>,
-    Policy::Live: LocalPublisher,
+    Policy::Live: Publisher,
 {
     type Source = Source;
     type Declaration = Undeclared;
@@ -154,7 +157,7 @@ where
         connected: &Connected<B>,
         scope: &ScopeDelivery,
         declaration: RetryDeclaration,
-    ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
+    ) -> Result<OneTaskRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
             def,
@@ -176,10 +179,10 @@ where
             .pair_local(connected)
             .await
             .map_err(BoxError::from)?;
-        let injections = Def::Injections::resolve_local(extra, connected, &subscriber)
+        let injections = Def::Injections::resolve(extra, connected, &subscriber)
             .await
             .map_err(BoxError::from)?;
-        let handler = LocalPublishing(PublishingHandler {
+        let handler = PublishingHandler {
             def,
             codec,
             publisher,
@@ -188,8 +191,8 @@ where
             decode: policies.decode,
             #[cfg(feature = "testing")]
             origin: Origin::default(),
-        });
-        Ok(LocalRoute {
+        };
+        Ok(OneTaskRoute {
             subscriber,
             handler,
             name,

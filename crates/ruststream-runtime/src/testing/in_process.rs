@@ -11,7 +11,7 @@ use core::fmt;
 
 use crate::redelivery::ScopeDelivery;
 
-use super::broker::{InProcess, LocalTestableBroker};
+use super::broker::{InProcess, TestableBroker};
 use super::coordinator::{Coordinator, Origin, TestHooks};
 
 /// The record of one in-process run of an app that runs as one future, shared by the runner,
@@ -36,7 +36,7 @@ pub struct RunBroker {
     broker: TypeId,
     name: &'static str,
     scope_id: usize,
-    testable: Weak<dyn LocalTestableBroker>,
+    testable: Weak<dyn TestableBroker>,
     connected: Weak<dyn Any>,
 }
 
@@ -62,7 +62,7 @@ impl RunBroker {
 
     /// The connected form, while the app holds it.
     #[must_use]
-    pub fn testable(&self) -> Option<Rc<dyn LocalTestableBroker>> {
+    pub fn testable(&self) -> Option<Rc<dyn TestableBroker>> {
         self.testable.upgrade()
     }
 
@@ -116,7 +116,7 @@ impl InProcessRun {
         // A publisher the runtime pairs against this broker names it by this address.
         self.coordinator
             .locate_local(Origin::of::<B::Connected>(connected), scope_id);
-        let shared: Rc<dyn LocalTestableBroker> = connected.clone();
+        let shared: Rc<dyn TestableBroker> = connected.clone();
         let typed: Rc<dyn Any> = connected.clone();
         brokers.push(RunBroker {
             broker: TypeId::of::<B>(),

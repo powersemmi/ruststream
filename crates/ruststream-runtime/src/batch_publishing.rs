@@ -9,12 +9,13 @@
 //! each reply independently, while a `.transactional()` one makes the whole batch's replies
 //! visible atomically - the consume-transform-produce pattern.
 
-use crate::handler::MaybeSend;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::num::NonZeroUsize;
 use core::{any, fmt};
+use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync};
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use serde::Serialize;
 use tracing::warn;
 
@@ -31,9 +32,8 @@ use super::host::SendHost;
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
-use super::publish_failure::{FailedMessage, publish_done};
-use super::publishing::EncodeReply;
-use crate::HeaderMap;
+use super::publish_failure::publish_done;
+use super::publishing::{EncodeReply, lent_bytes};
 
 /// A batch subscriber definition that produces replies to publish.
 ///
@@ -41,7 +41,7 @@ use crate::HeaderMap;
 /// whole decoded batch and returns the replies for it, all-or-nothing. Selective per-element
 /// outcomes are not available here: a handler needing them publishes manually from a plain batch
 /// handler, through a publisher held in the typed application state.
-pub trait BatchPublishingDef: Send + Sync {
+pub trait BatchPublishingDef: MaybeSendSync {
     /// The input kind of one batch element ([`Decoded<T>`](super::Decoded); see
     /// [`BatchDef::Input`](super::BatchDef::Input)). The handler consumes `&[T]`.
     type Input: InputKind;
@@ -198,34 +198,38 @@ impl<D: BatchPublishingDef, C, R, PP> fmt::Debug for BatchPublishingHandler<D, C
 impl<Batch, M, D, C, R, PP, S> BatchHandler<Batch, D::Context, S>
     for BatchPublishingHandler<D, C, R, PP>
 where
-    Batch: IntoIterator<Item = M>,
+    Batch: BatchSlot<Message = M>,
     M: Settle,
     D: BatchPublishingCall<S>,
     D::Input: DecodeWith<C>,
-    D::Injections: Send + Sync,
-    D::Reply: Serialize + Send + Sync,
-    D::Context: BuildBatchContext<M> + Send + Sync + 'static,
-    C: Send + Sync,
+    D::Injections: MaybeSendSync,
+    D::Reply: Serialize + MaybeSendSync,
+    D::Context: BuildBatchContext<M> + MaybeSendSync + 'static,
+    C: MaybeSendSync,
     R: ReplyPublisher<D::Context>,
     PP: PublishPipeline,
-    S: Send + Sync,
+    S: MaybeSendSync,
 {
     type Scratch = Vec<<D::Input as InputKind>::Owned>;
     type Taken = Vec<M>;
 
-    fn take(batch: Batch) -> Vec<M> {
-        batch.into_iter().collect()
+    fn taken(size: NonZeroUsize) -> Vec<M> {
+        Vec::with_capacity(size.get())
+    }
+
+    fn load(taken: &mut Vec<M>, slot: &mut Batch) {
+        taken.extend(slot.drain());
     }
 
     async fn handle_batch<Host: SendHost<D::Context>>(
         &self,
-        batch: Vec<M>,
+        batch: &mut Vec<M>,
         values: &mut Self::Scratch,
         ctx: &mut Context<'_, D::Context, S>,
         host: &Host,
     ) {
         let subscription = ctx.subscription();
-        let accepted = decode_batch::<M, D::Input, C, D::Context, S, Host>(
+        decode_batch::<M, D::Input, C, D::Context, S, Host>(
             batch,
             values,
             &self.codec,
@@ -234,7 +238,7 @@ where
             host,
         )
         .await;
-        if accepted.is_empty() {
+        if batch.is_empty() {
             return;
         }
         // The batch the broker delivered is the batch the handler answers for, whole: the size it
@@ -264,22 +268,18 @@ where
                     let follow = match (sent, reaction) {
                         (Ok(()), reaction) => publish_done(reaction),
                         // The `.error` the context registered is told of every reply.
-                        (Err(err), Some(reaction)) => {
+                        (Err(refusal), Some(reaction)) => {
                             let codec = self.publisher.reply_codec();
-                            // A plain publish stops at the first failure: the replies before
-                            // it went out and are not lost.
-                            let sent = err.sent();
-                            let err = err.into_error();
-                            let lost = replies[sent..]
-                                .iter()
-                                .map(|reply| {
-                                    let bytes = reply.encoded_with(codec);
-                                    FailedMessage::new(name, bytes, HeaderMap::new())
-                                })
-                                .collect();
+                            let (err, lost) = refusal.into_lost(
+                                name,
+                                &replies,
+                                |reply| reply.encoded_with(codec),
+                                |addr, len| lent_bytes(encode, addr, len, Bytes::new),
+                            );
                             Some(reaction.failed_all(err, lost))
                         }
-                        (Err(err), None) => {
+                        (Err(refusal), None) => {
+                            let err = refusal.into_error();
                             warn!(
                                 target: "ruststream::dispatch",
                                 subscription = %subscription,
@@ -299,7 +299,7 @@ where
             Err(result) => result,
         };
         values.clear();
-        settle_batch(accepted, result, subscription, ctx.delivery(), host).await;
+        settle_batch(batch, result, subscription, ctx.delivery(), host).await;
     }
 }
 

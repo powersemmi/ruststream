@@ -2,6 +2,7 @@
 
 use core::fmt;
 use core::marker::PhantomData;
+use ruststream_core::MaybeSendSync;
 
 use super::Outgoing;
 use crate::HeaderMap;
@@ -439,7 +440,7 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
             writes none is generic over them - `impl<K: ContextKind, Options> \
             PublishTransform<K, Options> for ..` - and mounts anywhere"
 )]
-pub trait PublishTransform<K: ContextKind, Options = ()>: Send + Sync + Clone {
+pub trait PublishTransform<K: ContextKind, Options = ()>: MaybeSendSync + Clone {
     /// What this transform does to the destination: [`Reads`] or [`Names`].
     type Destination: DestinationUse;
 
@@ -511,7 +512,7 @@ where
             Options> for ..` - and mounts anywhere. `for_batch(..)` lifts a per-message \
             `PublishTransform` onto this path"
 )]
-pub trait BatchPublishTransform<C = (), Options = ()>: Send + Sync {
+pub trait BatchPublishTransform<C = (), Options = ()>: MaybeSendSync {
     /// Transforms one of the batch's outgoing replies before it is sent.
     ///
     /// `cx` is the batch's context, not the reply's own delivery: see the trait's own docs for

@@ -24,6 +24,7 @@ use ruststream_core::{
     Publisher, RedeliveryAddress, RedeliveryAddressed, Settle, Subscribe, Subscriber,
     SubscriptionSource, Take,
 };
+use ruststream_core::{PublishMessageError, PublishOutcome};
 use ruststream_runtime::RETRY_COUNT_HEADER;
 
 mod broker_moves;
@@ -591,7 +592,7 @@ impl Settle for ProbeMessage {
                 self.publisher
                     .publish(OutgoingMessage::new(&self.name, CONTROL), None)
                     .await
-                    .map_err(|err| AckError::Broker(Box::new(err)))?;
+                    .map_err(|failed| AckError::Broker(Box::new(failed.into_error())))?;
             }
             Ok::<(), AckError>(())
         };
@@ -647,12 +648,12 @@ impl Publisher for Refuses {
     type Error = MemoryError;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        _msg: OutgoingMessage<'_, BytesMut>,
+        _msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), MemoryError>> + Send {
-        ready(Err(MemoryError::ShutDown))
+    ) -> impl Future<Output = PublishOutcome<'msg, MemoryError, Take>> + Send {
+        ready(Err(MemoryError::ShutDown.into()))
     }
 }
 
@@ -665,20 +666,24 @@ impl Publisher for Duplicates {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&()>,
-    ) -> Result<(), MemoryError> {
+    ) -> PublishOutcome<'msg, MemoryError, Take> {
         let (name, payload, headers) = msg.into_parts();
         let twin = OutgoingMessage::produced(name, payload.clone()).with_headers(headers.clone());
-        self.0.publish(twin, options).await?;
+        self.0
+            .publish(twin, options)
+            .await
+            .map_err(PublishMessageError::without_message)?;
         self.0
             .publish(
                 OutgoingMessage::produced(name, payload).with_headers(headers),
                 options,
             )
             .await
+            .map_err(PublishMessageError::without_message)
     }
 }
 
@@ -691,11 +696,11 @@ impl Publisher for StripsHeaders {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&()>,
-    ) -> Result<(), MemoryError> {
+    ) -> PublishOutcome<'msg, MemoryError, Take> {
         let (name, payload, mut headers) = msg.into_parts();
         match self.1 {
             Some(dropped) => {
@@ -722,11 +727,11 @@ impl Publisher for SpawnsOnCaller {
     type Error = MemoryError;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), MemoryError>> + Send {
+    ) -> impl Future<Output = PublishOutcome<'msg, MemoryError, Take>> + Send {
         let (name, payload, headers) = msg.into_parts();
         let name = name.to_owned();
         let publisher = self.0.clone();
@@ -750,11 +755,11 @@ impl Publisher for AttachesOnFirstUse {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&()>,
-    ) -> Result<(), MemoryError> {
+    ) -> PublishOutcome<'msg, MemoryError, Take> {
         let Some(attached) = self.1.get() else {
             let _ = self.1.set(Handle::current());
             return self.0.publish(msg, options).await;

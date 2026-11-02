@@ -1,14 +1,10 @@
 //! One service, two runners: the same `#[subscriber]` handlers mount on a tokio app and on an
 //! embedded app, in one build with both runtime features on.
 
-// The embedded app and the handler that holds an `Rc` are not `Send`: the embedded harness polls
-// them inside the test's future.
+// The embedded app is not `Send`: the embedded harness polls it inside the test's future.
 #![allow(clippy::future_not_send)]
-// `--cfg proto_rejected` builds the case the multi-thread runner rejects.
-#![allow(unexpected_cfgs)]
 
 use std::error::Error;
-use std::rc::Rc;
 
 use embassy_futures::{block_on, yield_now};
 use ruststream::memory::MemoryBroker;
@@ -44,12 +40,12 @@ async fn on_audit(reading: &Reading<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-/// Holds a value that is not `Send` across an await: it mounts on the embedded app only.
+/// Holds a value across an await: it mounts on the embedded app.
 #[subscriber("local")]
 async fn on_local(reading: &Reading<'_>) -> HandlerOutcome {
-    let held = Rc::new(reading.0.len());
+    let held = reading.0.len();
     yield_now().await;
-    if *held == 0 {
+    if held == 0 {
         return HandlerOutcome::retry();
     }
     HandlerOutcome::ack()
@@ -60,14 +56,6 @@ fn server() -> RustStream {
     RustStream::new(AppInfo::new("levels", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(on_reading).include(on_audit)
     })
-}
-
-/// The server's app with the handler that holds an `Rc`: rejected where tokio mounts it. Built
-/// with `--cfg proto_rejected` to show the error.
-#[cfg(proto_rejected)]
-fn server_with_local() -> RustStream {
-    RustStream::new(AppInfo::new("levels", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(on_local))
 }
 
 /// The device's app, on embassy: the same handlers, and one that only a device runs.

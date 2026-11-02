@@ -348,7 +348,7 @@ mod with_header {
     impl PublishLayer for ServiceStamp {
         async fn on_publish<'a, N: PublishPipeline, P: Publisher>(
             &'a self,
-            out: &'a mut Outgoing<'a>,
+            out: &'a mut Outgoing<'_>,
             next: PublishNext<'a, N, P>,
         ) -> Result<(), Box<dyn Error + Send + Sync>> {
             out.headers_mut().insert("x-service", "orders");

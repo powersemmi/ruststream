@@ -33,7 +33,7 @@ embassy_set := "cbor,embassy,json,macros,memory,msgpack"
 # baseline holds the gated ones to an instruction limit; the ungated one is measured and reported,
 # and held to no number. The wall-clock one is in neither list: it runs under a different harness,
 # which takes none of the arguments below.
-gated_benches := "--bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench consume_pool --bench consume_threads --bench middleware --bench batch --bench reply --bench reply_lending --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench continuation"
+gated_benches := "--bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench consume_pool --bench consume_threads --bench middleware --bench batch --bench batch_pool --bench reply --bench reply_lending --bench out_slot --bench out_slot_lending --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench continuation"
 ungated_benches := "--bench retry_copy --bench retry_copy_deferred"
 
 default: check
@@ -60,6 +60,13 @@ check:
     # no codec feature at all; only encoding and decoding may demand one.
     cargo check --workspace --exclude ruststream-no-std-probe --no-default-features \
         --features testing,memory,macros
+    # The core's `send` feature is additive: a build that enables it without the Tokio runner (any
+    # crate may) takes the `Send` bounds in every boxed future of the runtime as well.
+    cargo check -p ruststream-runtime --features ruststream-core/send
+    cargo check -p ruststream-runtime --no-default-features --features alloc,ruststream-core/send
+    # The firmware facade with no serde codec: an embedded handler's `Out` slot mounts, and only
+    # an encoding publish asks for a codec.
+    cargo check -p ruststream --no-default-features --features embassy,macros,memory --tests
     cargo check -p ruststream-no-std-probe
     # The contract builds without `std`, for a Cortex-M4F with an allocator and for a Cortex-M0+,
     # which has no compare-and-swap: there `bytes` takes `extra-platforms`, and the library build
@@ -141,6 +148,9 @@ test:
     cargo test -p ruststream-testing --features embassy,json
     # The same crate on the tokio runner alone: every embedded target gates itself on embassy.
     cargo test -p ruststream-testing --features tokio,json
+    # The Tokio runner off: the contract traits ask nothing of a broker's types, and a broker that
+    # keeps its state in `Rc` runs a body written once for every broker.
+    cargo test --no-default-features --features memory,testing,json,embassy --test local_family
     # The reduced-feature legs CI runs, in CI's order. A module compiled only with a feature off
     # is invisible to the workspace run above, so an API a refactor removed can survive there
     # until CI says otherwise: `codec_free_lanes` and `ui_codec_free` build only where no codec
@@ -222,6 +232,7 @@ bench *ARGS:
     fi
     cargo bench {{ gated_benches }} {{ ungated_benches }} --bench wall_clock --no-run \
         --no-default-features --features {{ bench_features }}
+    cargo bench -p ruststream-runtime-embassy --bench embedded_idle --no-run
     status=0
     cargo bench {{ gated_benches }} --no-fail-fast \
         --no-default-features --features {{ bench_features }} \
@@ -231,6 +242,10 @@ bench *ARGS:
         -- --output-format=json "$@" >> target/bench-summary.json || status=$?
     cargo bench --bench wall_clock --no-default-features --features {{ bench_features }} \
         || status=$?
+    # The embedded app builds without tokio, so its scenario is a bench of the embedded runner's own
+    # crate, and its allocation floor is absolute like the others; its summaries join the rest.
+    cargo bench -p ruststream-runtime-embassy --bench embedded_idle --no-fail-fast \
+        -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
     python3 scripts/bench_results.py --messages "$messages" target/bench-summary.json \
         docs/benchmarks/results.json
     exit "$status"

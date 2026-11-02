@@ -13,11 +13,15 @@ use core::pin::Pin;
 use crate::lifecycle::BoxError;
 pub use crate::outgoing::{Outgoing, OutgoingName};
 pub use crate::wire::{Serialized, WireBytes};
+use ruststream_core::IfSend;
 
 // The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
 // The static pipeline returns unboxed RPITIT futures; only the opt-in runtime-composed list
 // pays this allocation.
-pub(super) type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>;
+pub(super) type PublishFut<'a> = IfSend<
+    Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>,
+    Pin<Box<dyn Future<Output = Result<(), BoxError>> + 'a>>,
+>;
 
 mod sealed {
     /// Seals [`ReplyPublisher`](super::ReplyPublisher): the reply-publishing strategies are the
@@ -34,6 +38,7 @@ mod out;
 mod pipeline;
 mod publisher;
 mod reply;
+mod scratch;
 mod sink;
 mod transaction;
 mod transform;
@@ -50,8 +55,8 @@ pub use builder::{
 };
 pub use ext::PublishExt;
 pub use out::{
-    LocalOutPipeline, LowerOutTransforms, NamedDestinationSend, NarrowToUse, OutPipeline,
-    PipelinePublishError, SendOnlyPolicy, SlotStackUse, SlotTransforms,
+    LowerOutTransforms, NamedDestinationSend, NarrowToUse, OutPipeline, PipelinePublishError,
+    SendOnlyPolicy, SlotStackUse, SlotTransforms,
 };
 pub(crate) use pipeline::SendThrough;
 pub use pipeline::{
@@ -59,8 +64,8 @@ pub use pipeline::{
     PublishPipeline, PublishStack,
 };
 pub use publisher::{Transactional, TypedPublisher};
-pub use reply::{PublishBatchError, ReplyPublisher};
-pub use sink::{CallCodec, LocalPublishSink, PublishCodec, PublishSink, UnnamedCodec};
+pub use reply::{BatchRefusal, ReplyPublisher};
+pub use sink::{CallCodec, PublishCodec, PublishSink, SinkOutcome, SinkRefusal, UnnamedCodec};
 pub use transaction::{
     Admits, AnyDeclared, TransactionPublishError, TransactionScope, TypedTransaction,
 };

@@ -57,7 +57,7 @@ struct Stamp {
 impl PublishDynLayer for Stamp {
     fn on_publish<'a>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishDynNext<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send + 'a>> {
         out.headers_mut()

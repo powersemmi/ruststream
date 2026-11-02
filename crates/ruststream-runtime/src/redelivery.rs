@@ -18,6 +18,7 @@ use core::fmt;
 use core::future::ready;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
 use thiserror::Error;
 use tracing::info;
@@ -32,6 +33,7 @@ use crate::publish::PublishIdentity;
 use crate::publish::{
     ForReply, OutPipeline, PublishContext, PublishTransform, PublishTransformIdentity,
 };
+use crate::publish_failure::Refusal;
 use crate::{
     AddressedCopies, Broker, BrokerMoves, Connected, ConnectedBroker, DeclareRetryError,
     DefaultPublish, NamedCopies, OutgoingMessage, PairError, PayloadForm, PublishPolicy, Publisher,
@@ -98,13 +100,13 @@ impl<Retry> RetryRoute<Retry> {
 /// publish future is the publisher's own, held by the task that waits out the delay: no box, no
 /// dynamic call. Machinery; never named directly.
 #[doc(hidden)]
-pub trait RetryCopies<Cx>: Send + Sync + 'static {
+pub trait RetryCopies<Cx>: MaybeSendSync + 'static {
     /// Sends one copy, with the delivery it is a copy of in hand.
     fn publish_copy<'a>(
         &'a self,
         msg: OutgoingMessage<'a>,
         cx: &'a PublishContext<'a, Cx>,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
+    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend + 'a;
 }
 
 /// The retry publisher of a host that has none: there is none.
@@ -122,7 +124,7 @@ impl<Cx> RetryCopies<Cx> for NoRetry {
         &'a self,
         _msg: OutgoingMessage<'a>,
         _cx: &'a PublishContext<'a, Cx>,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
+    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend + 'a {
         async move { match *self {} }
     }
 }
@@ -147,16 +149,16 @@ impl<Live, Stack, Pipeline> fmt::Debug for RetryLeaf<Live, Stack, Pipeline> {
 
 impl<Cx, Live, Stack, Pipeline> RetryCopies<Cx> for RetryLeaf<Live, Stack, Pipeline>
 where
-    Cx: Send + Sync + 'static,
-    Live: Publisher + Send + Sync + 'static,
-    Stack: PublishTransform<ForReply<Cx>, Live::Options> + Send + Sync + 'static,
+    Cx: MaybeSendSync + 'static,
+    Live: Publisher + MaybeSendSync + 'static,
+    Stack: PublishTransform<ForReply<Cx>, Live::Options> + MaybeSendSync + 'static,
     Pipeline: OutPipeline<Live> + 'static,
 {
     async fn publish_copy<'a>(
         &'a self,
         msg: OutgoingMessage<'a>,
         cx: &'a PublishContext<'a, Cx>,
-    ) -> Result<(), BoxError> {
+    ) -> Result<(), Refusal> {
         // The publisher's own constants sit under the delivery's headers, as they do under
         // any publish through it; the transforms then see the message as it will be sent.
         let (name, payload, delivered) = msg.into_parts();
@@ -186,7 +188,11 @@ where
         let publish = self.pipeline.send(&self.live, sent, options.as_ref());
         #[cfg(feature = "testing")]
         let publish = publishing_to(self.origin, publish);
-        publish.await.map_err(BoxError::from)
+        // What comes back is the message that was sent, transforms applied: its headers, and its
+        // bytes, a buffer of this call that a transform wrote included.
+        let refused = publish.await;
+        refused
+            .map_err(|refusal| Refusal::from_sink(refusal.reclaiming::<Live::Payload>(&mut kept)))
     }
 }
 
@@ -197,7 +203,7 @@ pub(crate) fn bare_retry_publisher<P>(
     live: P,
 ) -> RetryLeaf<P, PublishTransformIdentity, PublishIdentity>
 where
-    P: Publisher + Send + Sync + 'static,
+    P: Publisher + MaybeSendSync + 'static,
 {
     RetryLeaf {
         live,
@@ -278,10 +284,10 @@ macro_rules! impl_default_pairing {
         impl<B, Cx, Pipeline> CopyPathPairing<B, Cx, Pipeline> for $path
         where
             B: Broker + 'static,
-            Cx: Send + Sync + 'static,
+            Cx: MaybeSendSync + 'static,
             Connected<B>: DefaultPublish,
-            DefaultPolicy<B>: Send + 'static,
-            DefaultLive<B>: Publisher + Send + Sync + 'static,
+            DefaultPolicy<B>: MaybeSend + 'static,
+            DefaultLive<B>: Publisher + MaybeSendSync + 'static,
             Pipeline: OutPipeline<DefaultLive<B>> + 'static,
         {
             type Pairing = RetryParts<DefaultPolicy<B>, PublishTransformIdentity, Pipeline>;
@@ -325,7 +331,7 @@ pub trait CopyPathAddress<C: ConnectedBroker, Source> {
 impl<C, Source> CopyPathAddress<C, Source> for AddressedCopies
 where
     C: ConnectedBroker,
-    Source: RedeliveryAddressed<C> + Sync,
+    Source: RedeliveryAddressed<C> + MaybeSync,
 {
     async fn address(
         source: &Source,
@@ -507,7 +513,7 @@ impl<B: Broker + 'static, Cx, Slot> RetrySetup<B, Cx, Slot> {
 /// one a `.to(name)` gave the copies - which is after the position is bound; pairing consumes the
 /// policy later still, at startup. Machinery; never named directly.
 #[doc(hidden)]
-pub trait BoundRetry<B: Broker, Cx>: Send + 'static {
+pub trait BoundRetry<B: Broker, Cx>: MaybeSend + 'static {
     /// The live retry publisher the pairing produces, in its concrete type.
     type Leaf: RetryCopies<Cx>;
 
@@ -569,14 +575,14 @@ impl<Policy, Stack, Pipe> RetryParts<Policy, Stack, Pipe> {
 impl<B, Cx, Policy, Stack, Pipe> BoundRetry<B, Cx> for RetryParts<Policy, Stack, Pipe>
 where
     B: Broker + 'static,
-    Cx: Send + Sync + 'static,
-    Policy: PublishPolicy<Connected<B>> + Send + 'static,
-    Policy::Live: Publisher + Send + Sync + 'static,
+    Cx: MaybeSendSync + 'static,
+    Policy: PublishPolicy<Connected<B>> + MaybeSend + 'static,
+    Policy::Live: Publisher + MaybeSendSync + 'static,
     Stack: PublishTransform<ForReply<Cx>, <Policy::Live as Publisher>::Options>
-        + Send
-        + Sync
+        + MaybeSend
+        + MaybeSync
         + 'static,
-    Pipe: OutPipeline<Policy::Live> + Send + 'static,
+    Pipe: OutPipeline<Policy::Live> + MaybeSend + 'static,
 {
     type Leaf = RetryLeaf<Policy::Live, Stack, Pipe>;
 
@@ -794,7 +800,7 @@ pub(crate) async fn open_subscription<B, Source, Cx, Pairing>(
 ) -> Result<OpenedSubscription<Source::Subscriber, Cx, Pairing::Leaf>, BoxError>
 where
     B: Broker + 'static,
-    Cx: Send + Sync + 'static,
+    Cx: MaybeSendSync + 'static,
     Pairing: BoundRetry<B, Cx>,
     Source: SubscriptionSource<Connected<B>>,
     Source::Copies: CopyPathAddress<Connected<B>, Source>,

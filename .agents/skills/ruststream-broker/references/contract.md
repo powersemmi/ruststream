@@ -22,14 +22,19 @@ Each rule names the trait it concerns; the rustdoc of that trait is the referenc
 - What stays a runtime rule is aliasing: publishers handed out earlier and clones of a shareable
   broker must surface an error when used after shutdown, never a silent success against a dead
   connection. `shutdown` never blocks or panics; do all fallible teardown there.
-- The per-message traits promise `Send` futures, because the tokio runtime moves deliveries and
-  their futures across threads; the lifecycle traits (`Broker`, `ConnectedBroker`, `Subscribe`,
-  `SubscriptionSource`, `PublishPolicy`) carry no `Send`. A broker whose client holds `Rc` or
-  `RefCell` implements the lifecycle traits as they are and the per-message `Local*` twins
-  (`LocalSubscriber`, `LocalSettle`, `LocalPublisher`, a local form of each capability): the same
-  items without `Send`. A delivery implements `IncomingMessage` (the accessors) and `Settle` (or
-  `LocalSettle`). A blanket impl makes every Send implementation a local one, so a crate implements
-  and imports one family; with both in scope a method call on its own type is ambiguous (E0034).
+- The per-message traits (`Subscriber`, `Settle`, `Publisher` and the capability traits) are one
+  trait per concept for every runtime. Their futures and supertraits ask for `Send` when `tokio`
+  is on and for nothing on the embedded runner alone; the lifecycle traits (`Broker`,
+  `ConnectedBroker`, `Subscribe`, `SubscriptionSource`, `PublishPolicy`) carry no `Send`. A broker
+  whose client holds `Rc` or `RefCell` implements all of them as they are and serves the embedded
+  runner; a build with both runtime features takes the stricter bound, so it does not compile
+  next to tokio. A delivery implements `IncomingMessage` (the accessors) and `Settle`.
+- A broker on a channel or a socket (a device broker) returns a probe from `Subscriber::ready_hint`:
+  a `ReadyHint` handle on the state its stream reads, taken before the stream opens. `may_be_ready`
+  is `true` whenever the next poll could return an item, an error or the end, and the stream
+  registers its waker whenever it returns `Pending`. The embedded app skips the poll of an idle
+  subscription while the probe says `false`; the constant `true` is legal and gains nothing. Run
+  `harness::local_readiness` beside `run_local_suite` to hold the probe to this.
 - Implement `Subscribe` on the **connected** form for the by-name `#[subscriber("topic")]` form,
   and ship a `SubscriptionSource<Connected<B>>` descriptor for broker-specific options (even a
   parameter-less broker ships one). Give the descriptor a constructor and derive `Clone`; add
@@ -100,7 +105,10 @@ Each rule names the trait it concerns; the rustdoc of that trait is the referenc
   `RequestReply`, `Partitioned`, `Seekable`/`Seeker`, `Positioned`, `DescribeServer`) only for what
   the broker natively supports - never emulate. `BatchSubscriber` is the exception worth stretching
   for: a transport that delivers one message at a time still offers it, assembled on the client
-  with the core's `BufferedSubscriber`, whose `batches` honours the size the mount named. The size
+  with the core's `BufferedSubscriber`, whose `batches` honours the size the mount named. The
+  batch is collected into a `BatchSlot` the runtime lends and reuses (a `Vec` of your messages is
+  one; a batch type of your own implements the trait), so `batches` returns a `BatchStream` whose
+  `poll_fill` pushes into the slot and allocates no container. The size
   is the framework's word and not yours; the deadline that closes a partial batch is yours, so put
   it on your descriptor (`.max_wait(..)`) - the 10 ms default is sized for an in-process bus, and
   the shipping broker crates settle between 10 and 50 ms. Put the capability on

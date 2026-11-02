@@ -9,9 +9,10 @@
 // A plain build compiles the service; the tests that use it exist only in the test build.
 #![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
+use ruststream::PublishOutcome;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
-use ruststream::runtime::{LocalPublishSink, Outgoing, PublishBuilder};
+use ruststream::runtime::{Outgoing, PublishBuilder, PublishSink};
 use ruststream::{OutgoingMessage, PairError, Take};
 use serde::{Deserialize, Serialize};
 
@@ -73,17 +74,17 @@ impl Publisher for PriorityPublisher {
     type Error = MemoryError;
     type Options = PriorityOptions;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Take> {
         let priority = options
             .and_then(|options| options.priority)
             .unwrap_or(self.default_priority);
-        let mut headers = msg.headers().clone();
+        let (name, payload, mut headers) = msg.into_parts();
         headers.insert("priority", priority.to_string());
-        let stamped = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
+        let stamped = OutgoingMessage::with_payload(name, payload).with_headers(headers);
         self.inner.publish(stamped, None).await
     }
 }
@@ -98,7 +99,7 @@ trait PriorityPublishSteps {
 impl<Sink, Body, Enc, Hdrs, Dest> PriorityPublishSteps
     for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
 where
-    Sink: LocalPublishSink<Options = PriorityOptions>,
+    Sink: PublishSink<Options = PriorityOptions>,
 {
     fn priority(mut self, priority: u8) -> Self {
         self.options_mut()

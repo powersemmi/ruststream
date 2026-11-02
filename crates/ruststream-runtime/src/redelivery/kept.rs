@@ -2,7 +2,7 @@
 //! default publisher and the subscription's redelivery address, paired once when the
 //! registration opens, typed in the route so a copy is published with no dynamic call.
 
-// Written over the local twins of the contract for a runner that polls on one thread.
+// Written over the contract traits for a runner that polls on one thread.
 #![allow(clippy::future_not_send)]
 
 use alloc::borrow::{Cow, ToOwned};
@@ -12,6 +12,7 @@ use core::any::type_name;
 use core::future::ready;
 use core::marker::PhantomData;
 use core::mem;
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
 use bytes::BytesMut;
 
@@ -21,19 +22,20 @@ use crate::lifecycle::BoxError;
 use crate::publish::{
     ForReply, PublishContext, PublishTransform, PublishTransformIdentity, PublishTransformStack,
 };
+use crate::publish_failure::Refusal;
 use crate::{
-    AddressedCopies, Broker, BrokerMoves, Connected, DefaultPublish, HeaderMap, LocalPublisher,
-    LocalSettle, NamedCopies, Outgoing, OutgoingMessage, PayloadForm, PublishPolicy, Reads,
-    RedeliveryAddressed, SubscriptionSource,
+    AddressedCopies, Broker, BrokerMoves, Connected, DefaultPublish, HeaderMap, NamedCopies,
+    Outgoing, OutgoingMessage, PayloadForm, PublishPolicy, Publisher, Reads, RedeliveryAddressed,
+    Settle, SubscriptionSource,
 };
 
 /// Where a kept copy leaves: the publisher and the address that reaches the subscription
 /// again. Machinery; never named directly.
 #[doc(hidden)]
-pub trait CopyPublisher {
+pub trait CopyPublisher: MaybeSync {
     /// The per-message settings a kept copy carries to its publish: what the mount site's
     /// transforms wrote when the copy was kept.
-    type Options;
+    type Options: MaybeSendSync;
 
     /// The address a copy back to the subscription is published under.
     fn address(&self) -> &str;
@@ -49,7 +51,7 @@ pub trait CopyPublisher {
         payload: &[u8],
         headers: HeaderMap,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), BoxError>>;
+    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend;
 }
 
 /// A copy path that prepares the copy of a delivery whose broker context is `Cx` while the
@@ -59,7 +61,7 @@ pub trait PrepareCopy<Cx>: CopyPublisher {
     /// Puts the publisher's own constants under the delivery's headers and runs the mount site's
     /// transforms over the copy bound for `destination`, the way a publish through the
     /// multi-thread runner's retry slot does.
-    fn prepare<M: LocalSettle>(
+    fn prepare<M: Settle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -80,7 +82,7 @@ pub struct AddressedCopy<Live, Stack = PublishTransformIdentity> {
     stack: Stack,
 }
 
-impl<Live: LocalPublisher, Stack> CopyPublisher for AddressedCopy<Live, Stack> {
+impl<Live: Publisher, Stack: MaybeSync> CopyPublisher for AddressedCopy<Live, Stack> {
     type Options = Live::Options;
 
     fn address(&self) -> &str {
@@ -93,7 +95,7 @@ impl<Live: LocalPublisher, Stack> CopyPublisher for AddressedCopy<Live, Stack> {
         payload: &[u8],
         headers: HeaderMap,
         options: Option<&Live::Options>,
-    ) -> Result<(), BoxError> {
+    ) -> Result<(), Refusal> {
         // A transport that reads the bytes is lent the record's buffer; one that keeps them is
         // handed a copy of its own.
         let form = <Live::Payload as PayloadForm>::Form::from(payload);
@@ -101,16 +103,16 @@ impl<Live: LocalPublisher, Stack> CopyPublisher for AddressedCopy<Live, Stack> {
         self.live
             .publish(msg, options)
             .await
-            .map_err(BoxError::from)
+            .map_err(Refusal::returned::<Live::Payload>)
     }
 }
 
 impl<Cx, Live, Stack> PrepareCopy<Cx> for AddressedCopy<Live, Stack>
 where
-    Live: LocalPublisher,
-    Stack: KeptTransforms<Cx, Live::Options>,
+    Live: Publisher,
+    Stack: KeptTransforms<Cx, Live::Options> + MaybeSync,
 {
-    fn prepare<M: LocalSettle>(
+    fn prepare<M: Settle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -147,7 +149,7 @@ where
 )]
 pub trait KeptTransforms<Cx, Options> {
     /// Runs the stack over the copy bound for `destination`.
-    fn apply_kept<M: LocalSettle>(
+    fn apply_kept<M: Settle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -160,7 +162,7 @@ pub trait KeptTransforms<Cx, Options> {
 // Nothing to run: the copy is kept as it was filled, and the context is never built.
 impl<Cx, Options> KeptTransforms<Cx, Options> for PublishTransformIdentity {
     #[inline]
-    fn apply_kept<M: LocalSettle>(
+    fn apply_kept<M: Settle>(
         &self,
         _payload: &mut BytesMut,
         _headers: &mut HeaderMap,
@@ -175,7 +177,7 @@ impl<Cx, Options, Inner, Outer> KeptTransforms<Cx, Options> for PublishTransform
 where
     Self: PublishTransform<ForReply<Cx>, Options, Destination = Reads>,
 {
-    fn apply_kept<M: LocalSettle>(
+    fn apply_kept<M: Settle>(
         &self,
         payload: &mut BytesMut,
         headers: &mut HeaderMap,
@@ -217,14 +219,14 @@ impl CopyPublisher for NoCopyPath {
         _payload: &[u8],
         _headers: HeaderMap,
         _options: Option<&()>,
-    ) -> Result<(), BoxError> {
+    ) -> Result<(), Refusal> {
         match *self {}
     }
 }
 
 #[allow(clippy::uninhabited_references)]
 impl<Cx> PrepareCopy<Cx> for NoCopyPath {
-    fn prepare<M: LocalSettle>(
+    fn prepare<M: Settle>(
         &self,
         _payload: &mut BytesMut,
         _headers: &mut HeaderMap,
@@ -371,7 +373,7 @@ where
     B: Broker,
     Source: RedeliveryAddressed<Connected<B>>,
     Connected<B>: DefaultPublish,
-    DefaultLive<B>: LocalPublisher,
+    DefaultLive<B>: Publisher,
 {
     type Path = AddressedCopy<DefaultLive<B>>;
 
@@ -439,9 +441,9 @@ where
     Source: SubscriptionSource<Connected<B>>,
     Source::Copies: SlotAddress<B, Source>,
     Policy: PublishPolicy<Connected<B>>,
-    Policy::Live: LocalPublisher,
+    Policy::Live: Publisher,
     // The transforms run over each copy as it is kept, reading the delivery it copies.
-    Stack: KeptTransforms<Cx, <Policy::Live as LocalPublisher>::Options>,
+    Stack: KeptTransforms<Cx, <Policy::Live as Publisher>::Options> + MaybeSync,
 {
     type Path = AddressedCopy<Policy::Live, Stack>;
 
@@ -520,6 +522,7 @@ mod tests {
     use alloc::sync::Arc;
     use alloc::vec::Vec;
     use core::future::ready;
+    use ruststream_core::PublishOutcome;
     use std::io;
     use std::sync::Mutex;
 
@@ -553,11 +556,11 @@ mod tests {
         type Error = io::Error;
         type Options = Priority;
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            msg: OutgoingMessage<'_, &[u8]>,
+            msg: OutgoingMessage<'msg, &'msg [u8]>,
             options: Option<&Priority>,
-        ) -> impl Future<Output = Result<(), io::Error>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
             let (name, payload, headers) = msg.into_parts();
             self.sent.lock().expect("one test thread").push((
                 name.to_owned(),

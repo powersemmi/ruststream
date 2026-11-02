@@ -37,8 +37,9 @@ use ruststream_core::ConnectedBroker;
 #[cfg(feature = "asyncapi")]
 use ruststream_core::DescribeServer;
 use ruststream_core::{
-    AckError, Connected, HeaderMap, IncomingMessage, OutgoingFor, OutgoingMessage, PublishPolicy,
-    Publisher, SendBroker, SendSource, Settle, Subscriber,
+    AckError, Connected, HeaderMap, IncomingMessage, OutgoingFor, OutgoingMessage,
+    PublishMessageError, PublishPolicy, Publisher, SendBroker, Settle, Subscriber,
+    SubscriptionSource,
 };
 use ruststream_runtime::RETRY_COUNT_HEADER;
 #[cfg(feature = "asyncapi")]
@@ -92,7 +93,7 @@ pub(crate) async fn publisher_carries<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
@@ -359,7 +360,7 @@ pub async fn keyed_order<B, MkBroker, Src, MkSrc, Pub, MkPub, KeyWith>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
@@ -622,7 +623,7 @@ pub async fn publish_options<B, MkBroker, Src, MkSrc, Policy, Observed, Observe>
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Policy: PublishPolicy<Connected<B>>,
@@ -905,7 +906,9 @@ async fn publish_within<Pub: Publisher>(
     options: Option<&Pub::Options>,
     what: &str,
 ) -> Result<(), Pub::Error> {
-    within(publisher.publish(msg, options), what).await
+    within(publisher.publish(msg, options), what)
+        .await
+        .map_err(PublishMessageError::into_error)
 }
 
 /// Awaits the next delivery, failing the check on a timeout, an ended stream or an error.

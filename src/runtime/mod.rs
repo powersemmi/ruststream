@@ -42,8 +42,8 @@ pub use ruststream_runtime::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{
-    AnyOutPos, BindSlotsBody, LocalBindSlotsBody, MaybeSendPublisher, MaybeSendSink, MaybeSendSync,
-    SelectEntry, SlotEntry, SlotPublish, SlotTransactions,
+    AnyOutPos, BindSlotsBody, MaybeSendSink, MaybeSendSync, SelectEntry, SlotEntry, SlotPublish,
+    SlotTransactions,
 };
 #[doc(hidden)]
 pub use ruststream_runtime::{AsBodyFn, BodyCall, BodyTag, DeclareBody, FnBody, FnDecl};
@@ -86,9 +86,7 @@ pub use ruststream_runtime::{
 };
 #[cfg(not(target_os = "none"))]
 pub use ruststream_runtime::{Bindable, Bound, BrokerRegistration};
-pub use ruststream_runtime::{
-    BlanketLayer, HandlerExt, Identity, Layer, LocalBlanketLayer, Stack, layers,
-};
+pub use ruststream_runtime::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 #[doc(hidden)]
 pub use ruststream_runtime::{
     BoundRetry, CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere,
@@ -97,9 +95,6 @@ pub use ruststream_runtime::{
 #[doc(hidden)]
 pub use ruststream_runtime::{CapsBatches, DefinitionInputCodec, MountsWith};
 pub use ruststream_runtime::{Clock, ShutdownWait};
-pub use ruststream_runtime::{
-    CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,
-};
 pub use ruststream_runtime::{Ctx, CtxKey, FromContext, FromRef, Headers, State};
 #[doc(hidden)]
 pub use ruststream_runtime::{
@@ -108,21 +103,24 @@ pub use ruststream_runtime::{
     UnbuiltDefinition, WireDocs, declared_reply_destination, reply_destination,
 };
 pub use ruststream_runtime::{DynMiddleware, DynStack, DynStackHandler, Next};
-pub use ruststream_runtime::{Failed, FailedMessage, Failures, NoFreeRecordError};
+pub use ruststream_runtime::{
+    Failed, FailedMessage, Failures, MissingPayloadError, NoFreeRecordError,
+};
 pub use ruststream_runtime::{FailurePolicies, FailurePolicy};
-pub use ruststream_runtime::{Handler, HandlerOutcome, LocalHandler};
+pub use ruststream_runtime::{Handler, HandlerOutcome};
 pub use ruststream_runtime::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
     OutgoingMessageMetadata,
 };
+pub use ruststream_runtime::{InMessages, InVariant, MessageDeclaration, VariantOf};
 pub use ruststream_runtime::{
     IncludeDef, LocalPipeline, MapPublisher, MountChain, Router, RouterDef, RouterHandlers,
     RouterOut, RouterPublishing, RouterPublishingOut, RouterWith, forms,
 };
 #[doc(hidden)]
-pub use ruststream_runtime::{LocalBindSlots, LocalHasSlots};
 pub use ruststream_runtime::{
-    LocalHandle, LocalOutEntry, LocalPublishSink, LocalSlot, local_subscriber,
+    NamedByFrame, VariantLane, every_variant_failed, frame_names_no_variant, header_missing,
+    header_unknown, no_variant_chosen,
 };
 pub use ruststream_runtime::{Placement, RETRY_COUNT_HEADER, Workers};
 #[cfg(feature = "poll-diagnostics")]
@@ -130,10 +128,6 @@ pub use ruststream_runtime::{PollDiagnostics, PollReport};
 #[doc(hidden)]
 pub use ruststream_runtime::{Provided, TypedLane};
 pub use ruststream_runtime::{Typed, typed};
-#[doc(hidden)]
-pub use ruststream_runtime::{
-    VariantLane, every_variant_failed, header_missing, header_unknown, no_variant_chosen,
-};
 #[doc(hidden)]
 pub use ruststream_runtime::{batch_verdict, uniform_batch};
 

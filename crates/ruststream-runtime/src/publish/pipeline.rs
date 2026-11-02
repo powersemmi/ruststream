@@ -3,12 +3,14 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::fmt;
+use ruststream_core::{IfSend, MaybeSend, MaybeSendSync, MaybeSync};
 
 use super::{Outgoing, PublishFut};
 use crate::lifecycle::BoxError;
+use crate::publish_failure::Refusal;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::PipelinePublish;
-use crate::{LocalPublisher, PayloadForm, Publisher};
+use crate::{PayloadForm, Publisher};
 
 /// A static, app-wide publish pipeline: an around-style chain of [`PublishLayer`] ending in
 /// the broker send.
@@ -21,15 +23,15 @@ use crate::{LocalPublisher, PayloadForm, Publisher};
 /// dispatch. You rarely name this trait; it is built for you. (A runtime-composed escape hatch, the
 /// publish counterpart of [`DynStack`](crate::DynStack), can be layered in later without changing
 /// this contract.)
-pub trait PublishPipeline: Send + Sync {
+pub trait PublishPipeline: MaybeSendSync {
     /// Runs `out` through the remaining middleware, then sends it via `send` with the broker's
     /// per-message settings the call site adjusted (`None` on a reply, which has no call site).
     fn run<'a, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
+    ) -> impl Future<Output = Result<(), BoxError>> + MaybeSend + 'a;
 }
 
 /// The last step of a typed publish: how the message reaches the leaf publisher `P`.
@@ -37,26 +39,26 @@ pub trait PublishPipeline: Send + Sync {
 /// Every [`PublishPipeline`] is one for every [`Publisher`], through a forwarding impl whose
 /// future is the pipeline's own, so the multi-thread runner's publish stays `Send`. The pipeline
 /// of a [`Router::local`](crate::Router::local) chain is one for every
-/// [`LocalPublisher`](crate::LocalPublisher). Machinery; never named directly.
+/// [`Publisher`](crate::Publisher). Machinery; never named directly.
 #[doc(hidden)]
-pub(crate) trait SendThrough<P: LocalPublisher> {
+pub(crate) trait SendThrough<P: Publisher>: MaybeSync {
     /// Sends `out` to `send` with the per-message settings the call site adjusted.
     fn send_through<'a>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
-    ) -> impl Future<Output = Result<(), BoxError>> + 'a;
+    ) -> impl Future<Output = Result<(), BoxError>> + MaybeSend + 'a;
 }
 
 impl<Pipeline: PublishPipeline, P: Publisher> SendThrough<P> for Pipeline {
     #[inline]
     fn send_through<'a>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
-    ) -> impl Future<Output = Result<(), BoxError>> + 'a {
+    ) -> impl Future<Output = Result<(), BoxError>> + MaybeSend + 'a {
         self.run(out, send, options)
     }
 }
@@ -69,16 +71,21 @@ pub struct PublishIdentity;
 impl PublishPipeline for PublishIdentity {
     async fn run<'a, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
     ) -> Result<(), BoxError> {
         // The broker is the last reader of this message, so what the stages produced travels
         // into it in the form the publisher declared, and the map they filled moves with it.
-        let msg = <P::Payload as PayloadForm>::leaving(out);
+        let msg = <P::Payload as PayloadForm>::leaving(&mut *out);
         #[cfg(feature = "testing")]
         let recorded = PipelinePublish::capture(&msg, options);
-        let result = send.publish(msg, options).await.map_err(BoxError::from);
+        // A refusal puts the message back into `out`, so the caller reads what was sent.
+        let result = send
+            .publish(msg, options)
+            .await
+            .map_err(Refusal::returned::<P::Payload>)
+            .map_err(|refusal| refusal.restore::<P::Payload>(out));
         #[cfg(feature = "testing")]
         if result.is_ok() {
             recorded.sent().await;
@@ -106,10 +113,10 @@ impl<Head, Tail> PublishStack<Head, Tail> {
 impl<Head: PublishLayer, Tail: PublishPipeline> PublishPipeline for PublishStack<Head, Tail> {
     fn run<'a, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         send: &'a P,
         options: Option<&'a P::Options>,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
+    ) -> impl Future<Output = Result<(), BoxError>> + MaybeSend + 'a {
         self.head.on_publish(
             out,
             PublishNext {
@@ -127,13 +134,13 @@ impl<Head: PublishLayer, Tail: PublishPipeline> PublishPipeline for PublishStack
 /// ends in the actual broker publish. Static (no `dyn` dispatch): a middleware is generic over the
 /// rest of the pipeline `N`, so the whole chain monomorphizes. Added app-wide with
 /// [`RustStream::publish_layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.publish_layer).
-pub trait PublishLayer: Send + Sync {
+pub trait PublishLayer: MaybeSendSync {
     /// Handle the outgoing message, calling `next` to continue the pipeline.
     fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishNext<'a, N, P>,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
+    ) -> impl Future<Output = Result<(), BoxError>> + MaybeSend + 'a;
 }
 
 /// A cursor over the rest of the publish pipeline, ending in the broker send. Handed to a
@@ -148,8 +155,8 @@ impl<'a, N: PublishPipeline, P: Publisher> PublishNext<'a, N, P> {
     /// Runs the rest of the pipeline (the remaining middleware, then the send).
     pub fn run(
         self,
-        out: &'a mut Outgoing<'a>,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
+        out: &'a mut Outgoing<'_>,
+    ) -> impl Future<Output = Result<(), BoxError>> + MaybeSend + 'a {
         self.tail.run(out, self.send, self.options)
     }
 }
@@ -167,14 +174,19 @@ impl<N, P: Publisher> fmt::Debug for PublishNext<'_, N, P> {
 /// live in one [`PublishDynStack`]), so it continues through the type-erased [`PublishDynNext`]
 /// instead. Use it only when the middleware set is decided at runtime; otherwise a static
 /// [`PublishLayer`] is zero-cost.
-pub trait PublishDynLayer: Send + Sync {
+pub trait PublishDynLayer: MaybeSendSync {
     /// Handle the outgoing message, calling `next` to continue.
     fn on_publish<'a>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishDynNext<'a>,
     ) -> PublishFut<'a>;
 }
+
+type PublishTail<'a> = IfSend<
+    Box<dyn for<'o> FnOnce(&'a mut Outgoing<'o>) -> PublishFut<'a> + Send + 'a>,
+    Box<dyn for<'o> FnOnce(&'a mut Outgoing<'o>) -> PublishFut<'a> + 'a>,
+>;
 
 /// A cursor over the rest of a [`PublishDynStack`], ending in the surrounding static pipeline.
 ///
@@ -184,12 +196,12 @@ pub struct PublishDynNext<'a> {
     rest: &'a [Arc<dyn PublishDynLayer>],
     // The surrounding static `PublishNext::run`, erased so this cursor need not carry its type. A
     // one-shot continuation: `run` is called exactly once per published message.
-    tail: Box<dyn FnOnce(&'a mut Outgoing<'a>) -> PublishFut<'a> + Send + 'a>,
+    tail: PublishTail<'a>,
 }
 
 impl<'a> PublishDynNext<'a> {
     /// Runs the next dynamic middleware, or the surrounding static pipeline if the list is done.
-    pub fn run(self, out: &'a mut Outgoing<'a>) -> PublishFut<'a> {
+    pub fn run(self, out: &'a mut Outgoing<'_>) -> PublishFut<'a> {
         match self.rest.split_first() {
             Some((middleware, rest)) => middleware.on_publish(
                 out,
@@ -260,9 +272,9 @@ impl fmt::Debug for PublishDynStack {
 impl PublishLayer for PublishDynStack {
     fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishNext<'a, N, P>,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
+    ) -> impl Future<Output = Result<(), BoxError>> + MaybeSend + 'a {
         // Erase the static continuation into a one-shot closure so the object-safe walker can end
         // by handing control back to the surrounding static pipeline. Boxing starts here: only
         // the dynamic list pays it.
