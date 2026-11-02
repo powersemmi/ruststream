@@ -12,15 +12,20 @@ use crate::common;
 use std::convert::Infallible;
 use std::future::ready;
 use std::io;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemoryError};
+use futures::Stream;
+use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage};
 use ruststream::runtime::{
     App, AppInfo, HandlerOutcome, PublishError, PublishExt, RustStream, RustStreamError,
 };
-use ruststream::{Broker, ConnectedBroker, subscriber};
+use ruststream::{
+    Broker, BrokerMoves, ConnectedBroker, Subscriber, SubscriptionSource, subscriber,
+};
 use tokio::sync::Notify;
 use tokio::task::{LocalSet, spawn_local};
 use tokio::time::timeout;
@@ -309,6 +314,82 @@ async fn a_failing_state_producer_aborts_startup_before_any_broker_connects() {
         .expect_err("the failing state producer must abort startup");
     assert!(matches!(err, RustStreamError::Startup(_)), "got: {err:?}");
     assert_eq!(dials.load(Ordering::SeqCst), 0, "a broker was dialled");
+}
+
+/// A subscription whose stream panics when the dispatch loop first reads it.
+#[derive(Debug, Clone, Copy)]
+struct PanickingQueue;
+
+impl PanickingQueue {
+    const fn new() -> Self {
+        Self
+    }
+}
+
+impl SubscriptionSource<ConnectedMemoryBroker> for PanickingQueue {
+    type Subscriber = PanickingConsumer;
+    type Copies = BrokerMoves;
+
+    fn name(&self) -> &'static str {
+        "started.panicking"
+    }
+
+    fn subscribe(
+        self,
+        _connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<PanickingConsumer, MemoryError>> {
+        ready(Ok(PanickingConsumer))
+    }
+}
+
+struct PanickingConsumer;
+
+/// Signals that the loop reached the stream, then panics.
+static POLLED: Notify = Notify::const_new();
+
+struct PanickingStream;
+
+impl Stream for PanickingStream {
+    type Item = Result<MemoryMessage, Infallible>;
+
+    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        POLLED.notify_one();
+        panic!("the subscription stream panicked");
+    }
+}
+
+impl Subscriber for PanickingConsumer {
+    type Message = MemoryMessage;
+    type Error = Infallible;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<MemoryMessage, Infallible>> + Send + '_ {
+        PanickingStream
+    }
+}
+
+#[subscriber(PanickingQueue::new())]
+async fn never_delivered(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
+}
+
+/// A dispatch loop that panicked outside a handler fails the shutdown, with the shutdown timeout
+/// the service sets as without one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panicked_subscription_stream_fails_shutdown_under_a_timeout() {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .shutdown_timeout(Duration::from_secs(5))
+        .with_broker(MemoryBroker::new(), |b| b.include(never_delivered));
+
+    let running = app.start().await.expect("startup failed");
+    timeout(Duration::from_secs(5), POLLED.notified())
+        .await
+        .expect("the loop never read the stream");
+
+    let err = running
+        .shutdown()
+        .await
+        .expect_err("a panicked loop must fail the shutdown");
+    assert!(matches!(err, RustStreamError::Join(_)), "got: {err:?}");
 }
 
 /// `#[ruststream::app(worker_threads = n)]` builds: the generated `main` runs the service on a

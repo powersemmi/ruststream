@@ -176,8 +176,8 @@ async fn run_hooks(hooks: Vec<BoundHook>, phase: &'static str) {
 }
 
 /// Awaits all handler tasks, bounded by `timeout` if set. On timeout the remaining tasks are
-/// aborted and awaited, so a loop is gone, not merely told to go, when this returns; without a
-/// timeout, a panicking task surfaces as [`RustStreamError::Join`].
+/// aborted and awaited, so a loop is gone, not merely told to go, when this returns. A task that
+/// panicked surfaces as [`RustStreamError::Join`], with a timeout or without one.
 pub(crate) async fn drain_handles(
     handles: Vec<JoinHandle<()>>,
     timeout: Option<Duration>,
@@ -198,8 +198,17 @@ pub(crate) async fn drain_handles(
 
     let until = Tokio.now() + timeout;
     let mut timed_out = false;
+    let mut joined = Ok(());
     for mut handle in handles {
-        if time::timeout_at(until, &mut handle).await.is_ok() {
+        if let Ok(outcome) = time::timeout_at(until, &mut handle).await {
+            // A loop that finished before the deadline reports a panic as the untimed path does;
+            // a cancelled one says nothing.
+            if let Err(err) = outcome
+                && err.is_panic()
+                && joined.is_ok()
+            {
+                joined = Err(RustStreamError::Join(err));
+            }
             continue;
         }
         if !timed_out {
@@ -213,7 +222,7 @@ pub(crate) async fn drain_handles(
         // The aborted loop ends at its next await; its outcome (cancelled) says nothing more.
         let _ = handle.await;
     }
-    Ok(())
+    joined
 }
 
 /// Closes the post-settle continuation tracker and waits for the in-flight continuations to finish,
@@ -279,6 +288,28 @@ mod tests {
         assert!(
             gated_finished,
             "the drain returned while a loop was still running"
+        );
+    }
+
+    /// A dispatch loop that panics is reported by `run` with a shutdown timeout set, as it is
+    /// without one.
+    #[tokio::test]
+    async fn a_panicked_loop_fails_run_under_a_shutdown_timeout() {
+        let panicked = tokio::spawn(async { panic!("dispatch loop panicked") });
+        let teardown = Teardown {
+            shutdown: Shutdown::new(),
+            handles: vec![panicked],
+            hooks: ShutdownHooks::bind::<()>(Vec::new(), Vec::new(), &Arc::new(())),
+            brokers: Vec::new(),
+            shutdown_timeout: Some(Duration::from_secs(5)),
+            continuations: TaskTracker::new(),
+        };
+
+        let result = teardown.run().await;
+
+        assert!(
+            matches!(result, Err(RustStreamError::Join(_))),
+            "got: {result:?}"
         );
     }
 }
