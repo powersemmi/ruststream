@@ -3,6 +3,7 @@ members = [
     "crates/ruststream-core",
     "crates/ruststream-runtime",
     "crates/ruststream-runtime-tokio",
+    "crates/ruststream-runtime-compio",
     "crates/ruststream-memory",
     "crates/ruststream-asyncapi",
     "crates/ruststream-observability",
@@ -73,6 +74,11 @@ defmt = "1"
 quanta = "0.13.0"
 pin-project-lite = "0.2"
 
+# The compio runner: one runtime per core. 0.19 is pinned to its minor line (0.x releases break on
+# the minor); the default driver is io-uring on Linux and polling elsewhere.
+compio = { version = "0.19", features = ["time", "signal"] }
+# The parked wait of a shutdown: one `Event` that every core's loop listens on.
+event-listener = "5.4"
 # The embedded runner. Every one builds without `std`; a device binary picks the executor's
 # platform and the time driver, a host test picks `platform-std` and the mock driver.
 embassy-executor = "0.10"
@@ -97,6 +103,7 @@ ruststream-core = { version = "=0.8.0", path = "crates/ruststream-core", default
 ruststream-runtime = { version = "=0.8.0", path = "crates/ruststream-runtime", default-features = false }
 ruststream-runtime-tokio = { version = "=0.8.0", path = "crates/ruststream-runtime-tokio" }
 ruststream-runtime-embassy = { version = "=0.8.0", path = "crates/ruststream-runtime-embassy" }
+ruststream-runtime-compio = { version = "=0.8.0", path = "crates/ruststream-runtime-compio" }
 # Without its default `std`: the facade's runtime feature picks the tokio side or the embassy side.
 ruststream-memory = { version = "=0.8.0", path = "crates/ruststream-memory", default-features = false }
 ruststream-asyncapi = { version = "=0.8.0", path = "crates/ruststream-asyncapi" }

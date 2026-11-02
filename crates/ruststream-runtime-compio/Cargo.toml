@@ -1,0 +1,52 @@
+[package]
+name = "ruststream-runtime-compio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The compio runner of the RustStream messaging framework: one runtime per core, the clock, the shutdown and the core launcher; services use it through `ruststream`."
+keywords = ["messaging", "async", "compio", "io-uring", "ruststream"]
+categories = ["asynchronous", "network-programming"]
+readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+# The virtual clock the test harness moves: `CompioClock` and `time::sleep` read it where a lease
+# is held on the thread, and compio's own timers everywhere else.
+testing = ["ruststream-runtime/testing"]
+
+[dependencies]
+ruststream-core = { workspace = true, features = ["std"] }
+ruststream-runtime = { workspace = true, features = ["compio"] }
+compio.workspace = true
+event-listener.workspace = true
+futures = { workspace = true, features = ["std"] }
+# Finds the CPUs the process may run on, so a restricted cgroup is pinned inside its own set.
+core_affinity = "0.8.3"
+# A timer is created on the core that first polls it; the wrapper lets the not-yet-created timer
+# travel as a `Send` future.
+send_wrapper = "0.6"
+thiserror = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+futures = { workspace = true, features = ["std", "async-await"] }
+
+[lints]
+workspace = true
+
+# The tests of the virtual clock need the `testing` feature.
+[[test]]
+name = "time"
+path = "tests/time/main.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "tasks"
+path = "tests/tasks/main.rs"
+required-features = ["testing"]
