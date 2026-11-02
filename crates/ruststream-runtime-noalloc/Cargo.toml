@@ -41,4 +41,4 @@ trybuild = "1"
 
 # The sources are the runtime's, and name features this build never has.
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("alloc", "asyncapi", "cbor", "json", "macros", "memory", "metrics", "msgpack", "otel", "poll-diagnostics", "std", "testing", "tokio"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("alloc", "asyncapi", "cbor", "compio", "json", "macros", "memory", "metrics", "msgpack", "otel", "poll-diagnostics", "std", "testing", "tokio"))'] }
