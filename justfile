@@ -243,9 +243,9 @@ bench *ARGS:
     cargo bench --bench wall_clock --no-default-features --features {{ bench_features }} \
         || status=$?
     # The embedded app builds without tokio, so its scenario is a bench of the embedded runner's own
-    # crate, and its allocation floor is absolute like the others.
+    # crate, and its allocation floor is absolute like the others; its summaries join the rest.
     cargo bench -p ruststream-runtime-embassy --bench embedded_idle --no-fail-fast \
-        -- --output-format=json "$@" > target/bench-embedded-summary.json || status=$?
+        -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
     python3 scripts/bench_results.py --messages "$messages" target/bench-summary.json \
         docs/benchmarks/results.json
     exit "$status"
