@@ -37,7 +37,7 @@ embassy-futures.workspace = true
 # Projects a worker's future through the gate that keeps a parked worker from being polled.
 pin-project-lite.workspace = true
 # The keyed lanes' hasher: 32-bit FNV-1a, no state and no allocation; heapless already depends on it.
-hash32 = { version = "0.3", default-features = false }
+hash32 = { version = "1.0", default-features = false }
 
 [dev-dependencies]
 # The thread-mode executor of the `std` platform: the executor a device runs, hosted on a thread.
