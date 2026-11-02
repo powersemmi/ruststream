@@ -366,7 +366,7 @@ where
         // and cannot be named in the opened list.
         let handler = BlanketLayer::apply::<Sub::Message, Cx, State, _>(&self.layers, self.handler);
         run_sequential(
-            Cooperative(self.subscriber),
+            Cooperative::new(self.subscriber),
             handler,
             signal,
             self.name,

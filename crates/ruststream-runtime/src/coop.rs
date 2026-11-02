@@ -8,7 +8,9 @@
 // The stream and the deliveries it carries are not `Send`, on the app's one task.
 #![allow(clippy::future_not_send)]
 
+use alloc::sync::Arc;
 use core::pin::Pin;
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll};
 
 use futures::Stream;
@@ -24,20 +26,61 @@ pub(crate) const YIELD_AFTER: u32 = 128;
 
 /// A subscriber whose stream yields to the executor after [`YIELD_AFTER`] ready items in a row.
 #[derive(Debug)]
-pub(crate) struct Cooperative<Sub>(pub(crate) Sub);
+pub(crate) struct Cooperative<Sub> {
+    subscriber: Sub,
+    // Set while the stream has yielded and not yet been polled to a `Pending` of its own.
+    yielded: Arc<AtomicBool>,
+}
+
+impl<Sub> Cooperative<Sub> {
+    /// Bounds `subscriber`'s stream to [`YIELD_AFTER`] ready items in a row.
+    #[must_use]
+    pub(crate) fn new(subscriber: Sub) -> Self {
+        Self {
+            subscriber,
+            yielded: Arc::default(),
+        }
+    }
+}
 
 impl<Sub: Subscriber> Subscriber for Cooperative<Sub> {
     type Message = Sub::Message;
     type Error = Sub::Error;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + '_ {
-        Bounded::new(self.0.stream(), YIELD_AFTER)
+        Bounded::gated(
+            self.subscriber.stream(),
+            YIELD_AFTER,
+            Arc::clone(&self.yielded),
+        )
     }
 
-    // The bound adds nothing to the answer: a stream that yielded to the executor after a run of
-    // deliveries left them waiting, so the probe still says ready.
     fn ready_hint(&self) -> impl ReadyHint + 'static {
-        self.0.ready_hint()
+        YieldedOr {
+            probe: self.subscriber.ready_hint(),
+            yielded: Arc::clone(&self.yielded),
+        }
+    }
+}
+
+/// The probe of a bounded subscription: the subscriber's own, held open from the forced yield
+/// until the stream has answered `Pending` itself.
+///
+/// The yield returns `Pending` without polling the stream, so the stream has registered no waker
+/// for the deliveries that arrive after it; a probe that reported only the subscriber's answer
+/// would let the app skip the poll that registers one.
+struct YieldedOr<Probe> {
+    probe: Probe,
+    yielded: Arc<AtomicBool>,
+}
+
+impl<Probe: ReadyHint> ReadyHint for YieldedOr<Probe> {
+    // A subscriber that declares no probe is polled on every wake, yield or not.
+    const GATED: bool = Probe::GATED;
+
+    #[inline]
+    fn may_be_ready(&self) -> bool {
+        self.probe.may_be_ready() || self.yielded.load(Ordering::Relaxed)
     }
 }
 
@@ -48,6 +91,8 @@ pin_project! {
         inner: Inner,
         ready: u32,
         limit: u32,
+        // Raised at the forced yield, lowered where the inner stream answers `Pending`.
+        yielded: Option<Arc<AtomicBool>>,
     }
 }
 
@@ -59,6 +104,19 @@ impl<Inner> Bounded<Inner> {
             inner,
             ready: 0,
             limit,
+            yielded: None,
+        }
+    }
+
+    /// Bounds `inner` to `limit` ready items in a row and reports, through `yielded`, whether it
+    /// has yielded since the inner stream last answered `Pending`.
+    #[must_use]
+    pub(crate) const fn gated(inner: Inner, limit: u32, yielded: Arc<AtomicBool>) -> Self {
+        Self {
+            inner,
+            ready: 0,
+            limit,
+            yielded: Some(yielded),
         }
     }
 }
@@ -71,6 +129,9 @@ impl<Inner: Stream> Stream for Bounded<Inner> {
         if *this.ready >= *this.limit {
             // Woken before it parks: the task is polled again once the others have had a turn.
             *this.ready = 0;
+            if let Some(yielded) = this.yielded {
+                yielded.store(true, Ordering::Relaxed);
+            }
             cx.waker().wake_by_ref();
             return Poll::Pending;
         }
@@ -79,6 +140,9 @@ impl<Inner: Stream> Stream for Bounded<Inner> {
             *this.ready += 1;
         } else {
             *this.ready = 0;
+            if let Some(yielded) = this.yielded {
+                yielded.store(false, Ordering::Relaxed);
+            }
         }
         next
     }
@@ -114,11 +178,15 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::sync::Arc;
+    use alloc::task::Wake;
     use alloc::vec::Vec;
-    use core::future::ready;
+    use core::future::{Pending, pending, poll_fn, ready};
     use core::iter;
-    use core::pin::pin;
+    use core::pin::{Pin, pin};
+    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use core::task::{Context, Poll, Waker};
+    use std::sync::Mutex;
 
     use futures::Stream;
     use futures::stream;
@@ -127,7 +195,9 @@ mod tests {
 
     use ruststream_core::{ReadyHint, Settle, Subscriber};
 
-    use super::{Bounded, Cooperative};
+    use super::{Bounded, Cooperative, YIELD_AFTER};
+    use crate::ShutdownWait;
+    use crate::dispatch::idle;
 
     /// Polls `stream` `count` times and says which polls were ready.
     fn readiness<S: Stream>(stream: S, count: usize) -> Vec<bool> {
@@ -212,7 +282,139 @@ mod tests {
 
     #[test]
     fn the_cooperative_bound_hands_on_the_probe_of_the_subscriber_it_wraps() {
-        let bounded = Cooperative(Hinted);
+        let bounded = Cooperative::new(Hinted);
         assert!(!bounded.ready_hint().may_be_ready());
+    }
+
+    /// A subscription's queue: the stream registers its waker where it finds the queue empty,
+    /// and a push wakes it.
+    #[derive(Default)]
+    struct Line {
+        queued: usize,
+        waker: Option<Waker>,
+    }
+
+    impl Line {
+        fn push(&mut self) {
+            self.queued += 1;
+            if let Some(waker) = self.waker.take() {
+                waker.wake();
+            }
+        }
+    }
+
+    struct LineStream(Arc<Mutex<Line>>);
+
+    impl Stream for LineStream {
+        type Item = Result<Waiting, Infallible>;
+
+        fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let mut line = self.0.lock().unwrap();
+            let next = if line.queued == 0 {
+                line.waker = Some(cx.waker().clone());
+                Poll::Pending
+            } else {
+                line.queued -= 1;
+                Poll::Ready(Some(Ok(Waiting)))
+            };
+            drop(line);
+            next
+        }
+    }
+
+    struct LineWaiting(Arc<Mutex<Line>>);
+
+    impl ReadyHint for LineWaiting {
+        fn may_be_ready(&self) -> bool {
+            self.0.lock().unwrap().queued > 0
+        }
+    }
+
+    struct Queue(Arc<Mutex<Line>>);
+
+    impl Subscriber for Queue {
+        type Message = Waiting;
+        type Error = Infallible;
+
+        fn stream(&mut self) -> impl Stream<Item = Result<Waiting, Infallible>> + '_ {
+            LineStream(Arc::clone(&self.0))
+        }
+
+        fn ready_hint(&self) -> impl ReadyHint + 'static {
+            LineWaiting(Arc::clone(&self.0))
+        }
+    }
+
+    /// A shutdown that is never signalled.
+    struct Never;
+
+    impl ShutdownWait for Never {
+        type Wait<'a> = Pending<()>;
+
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+
+        fn cancelled(&self) -> Pending<()> {
+            pending()
+        }
+    }
+
+    /// The task's waker: only a wake makes the driver poll the task again.
+    #[derive(Default)]
+    struct Wakes(AtomicBool);
+
+    impl Wake for Wakes {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn a_delivery_after_a_full_run_of_the_bound_wakes_the_idle_subscription() {
+        let line = Arc::new(Mutex::new(Line::default()));
+        line.lock().unwrap().queued = YIELD_AFTER as usize;
+        let mut queue = Cooperative::new(Queue(Arc::clone(&line)));
+        let handled = Arc::new(AtomicU32::new(0));
+        // The loop of a subscription: the stream is polled first, and a parked subscription is
+        // not polled again while its probe says nothing waits.
+        let counted = Arc::clone(&handled);
+        let mut task = pin!(async move {
+            let probe = queue.ready_hint();
+            let mut stream = pin!(queue.stream());
+            loop {
+                let mut parked = false;
+                let next = poll_fn(|cx| {
+                    if idle(parked, &probe, &Never) {
+                        return Poll::Pending;
+                    }
+                    let polled = stream.as_mut().poll_next(cx);
+                    parked = polled.is_pending();
+                    polled
+                })
+                .await;
+                assert!(next.is_some(), "the stream does not end");
+                counted.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        let wakes = Arc::new(Wakes(AtomicBool::new(true)));
+        let task_waker = Waker::from(Arc::clone(&wakes));
+        let mut cx = Context::from_waker(&task_waker);
+        let mut run_until_quiet = || {
+            while wakes.0.swap(false, Ordering::Relaxed) {
+                let _ = task.as_mut().poll(&mut cx);
+            }
+        };
+
+        run_until_quiet();
+        assert_eq!(handled.load(Ordering::Relaxed), YIELD_AFTER);
+        line.lock().unwrap().push();
+        run_until_quiet();
+
+        assert_eq!(
+            handled.load(Ordering::Relaxed),
+            YIELD_AFTER + 1,
+            "the delivery after the run was left unread"
+        );
     }
 }
