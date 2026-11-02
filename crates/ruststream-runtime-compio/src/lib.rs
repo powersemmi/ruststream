@@ -5,7 +5,8 @@
 //! - [`Cores`]: the launcher, core 0 on the calling thread and a thread per further core.
 //! - [`Stop`]: the shutdown signal, a flag and a wait.
 //! - [`Tasks`]: where the work a delivery leaves behind runs, and the wait for it to end.
-//! - [`RustStream`]: the app builder, with the tokio runner's names.
+//! - [`RustStream`]: the app builder, with the tokio runner's names, and the run that starts the
+//!   cores: [`run`](RustStream::run), [`run_until`](RustStream::run_until), [`start`](RustStream::start).
 //! - [`yield_now`]: the cooperative yield after each delivery.
 
 // The contract and the shared body, under the names the runner's modules reach them by
@@ -28,7 +29,12 @@ pub mod time;
 mod virtual_clock;
 mod yield_now;
 
-pub use app::{AppInfo, BrokerScope, RustStream, Setup, Wired};
+#[doc(hidden)]
+pub use app::AppDescription;
+pub use app::{
+    App, AppInfo, BrokerScope, HealthProbe, HealthState, RunningApp, RustStream, RustStreamError,
+    Setup, SubscriptionCount, SubscriptionEnd, Wired,
+};
 #[doc(hidden)]
 pub use app::{
     Launch, MountRoutes, Mounted, ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup,
@@ -38,7 +44,7 @@ pub use app::{LifecycleHook, RegisteredBroker, Starter};
 pub use clock::CompioClock;
 pub use cores::{Cores, CoresError};
 pub use sink::CoreSink;
-pub use stop::{Cancelled, Stop, StreamEnd};
+pub use stop::{Cancelled, Stop};
 pub use tasks::Tasks;
 pub use yield_now::{YieldNow, yield_now};
 

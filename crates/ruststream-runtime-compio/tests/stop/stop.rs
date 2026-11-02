@@ -8,7 +8,7 @@ use std::task::Poll;
 use compio::runtime::{self, Runtime};
 use futures::poll;
 use ruststream_runtime::{Halt, ShutdownWait};
-use ruststream_runtime_compio::{Stop, StreamEnd, yield_now};
+use ruststream_runtime_compio::{Stop, SubscriptionEnd, yield_now};
 
 fn on_runtime(test: impl Future<Output = ()>) {
     Runtime::new().expect("a compio runtime").block_on(test);
@@ -84,7 +84,7 @@ fn a_stream_ending_while_the_service_runs_follows_the_policy() {
     logging.stream_ended("orders");
     assert!(!logging.is_cancelled(), "the default reaction only logs");
 
-    let failing = Stop::new(StreamEnd::FailFast);
+    let failing = Stop::new(SubscriptionEnd::FailFast);
     failing.stream_ended("orders");
     assert!(failing.is_cancelled());
     assert_eq!(
@@ -95,13 +95,13 @@ fn a_stream_ending_while_the_service_runs_follows_the_policy() {
 
 #[test]
 fn a_stream_ending_during_shutdown_is_part_of_it() {
-    let stop = Stop::new(StreamEnd::FailFast);
+    let stop = Stop::new(SubscriptionEnd::FailFast);
     stop.begin();
     stop.stream_ended("orders");
     assert!(!stop.is_cancelled());
     assert_eq!(stop.failure(), None);
 
-    let stopped = Stop::new(StreamEnd::FailFast);
+    let stopped = Stop::new(SubscriptionEnd::FailFast);
     stopped.cancel();
     stopped.stream_ended("orders");
     assert_eq!(stopped.failure(), None);

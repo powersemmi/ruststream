@@ -19,7 +19,7 @@ use crate::sink::CoreSink;
 use crate::{BoxError, BrokerCell, BrokerLifecycle};
 use crate::{Described, PublishIdentity, PublishLayer, PublishStack};
 use crate::{Identity, Stack};
-use crate::{StreamEnd, Tasks};
+use crate::{SubscriptionEnd, Tasks};
 
 use super::include::MountRoutes;
 use super::scope::BrokerScope;
@@ -62,7 +62,7 @@ pub struct RustStream<Layers = Identity, State = (), Pipeline = PublishIdentity,
     pub(super) on_shutdown: Vec<LifecycleHook<State>>,
     pub(super) after_shutdown: Vec<LifecycleHook<State>>,
     pub(super) shutdown_timeout: Option<Duration>,
-    pub(super) stream_end: StreamEnd,
+    pub(super) subscription_end: SubscriptionEnd,
     /// Tracks post-settle `and_after` continuations spawned during dispatch, so a graceful
     /// shutdown drains them after the dispatch loops stop. Shared (cloned) into every
     /// [`Delivery`].
@@ -125,7 +125,7 @@ impl RustStream<Identity, (), PublishIdentity, Setup> {
             on_shutdown: Vec::new(),
             after_shutdown: Vec::new(),
             shutdown_timeout: None,
-            stream_end: StreamEnd::default(),
+            subscription_end: SubscriptionEnd::default(),
             continuations: Tasks::default(),
             global: Identity,
             phase: PhantomData,
@@ -153,7 +153,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             on_shutdown: self.on_shutdown,
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
-            stream_end: self.stream_end,
+            subscription_end: self.subscription_end,
             continuations: self.continuations,
             global: Stack::new(layer, self.global),
             phase: PhantomData,
@@ -217,7 +217,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             on_shutdown: Vec::new(),
             after_shutdown: Vec::new(),
             shutdown_timeout: self.shutdown_timeout,
-            stream_end: self.stream_end,
+            subscription_end: self.subscription_end,
             continuations: self.continuations,
             global: self.global,
             phase: PhantomData,
@@ -262,7 +262,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             on_shutdown: self.on_shutdown,
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
-            stream_end: self.stream_end,
+            subscription_end: self.subscription_end,
             continuations: self.continuations,
             global: self.global,
             phase: PhantomData,
@@ -285,7 +285,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             on_shutdown: self.on_shutdown,
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
-            stream_end: self.stream_end,
+            subscription_end: self.subscription_end,
             continuations: self.continuations,
             global: self.global,
             phase: PhantomData,
@@ -369,12 +369,12 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
 
     /// Sets what a subscription's stream ending while the service runs does.
     ///
-    /// The default, [`StreamEnd::Log`], logs the end and lets the rest of the service run
-    /// on. [`StreamEnd::FailFast`] tears the service down the way a
+    /// The default, [`SubscriptionEnd::Log`], logs the end and lets the rest of the service run
+    /// on. [`SubscriptionEnd::FailFast`] tears the service down the way a
     /// fail-fast handler failure does. An end during shutdown is never reported.
     #[must_use]
-    pub fn on_subscription_end(mut self, on_end: StreamEnd) -> Self {
-        self.stream_end = on_end;
+    pub fn on_subscription_end(mut self, on_end: SubscriptionEnd) -> Self {
+        self.subscription_end = on_end;
         self
     }
 

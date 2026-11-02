@@ -37,8 +37,9 @@ tracing = { workspace = true, features = ["std"] }
 [dev-dependencies]
 # The compile-fail snapshots.
 trybuild = "1"
-# The broker the builder tests mount handlers on.
-ruststream-memory = { workspace = true, features = ["std"] }
+# The brokers the builder and the run tests mount handlers on: the tokio one to describe an app, the
+# local one, which needs no reactor, to run one.
+ruststream-memory = { workspace = true, features = ["std", "embassy", "alloc"] }
 # Counts the allocations of the thread a closure runs on, so a test reads what a sleep or a delivery
 # costs.
 allocation-counter = "0.8.1"

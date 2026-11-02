@@ -3,10 +3,24 @@
 //! - [`RustStream`]: the builder, with the names of the tokio runner's.
 //! - [`BrokerScope`]: what a `with_broker` closure registers handlers on.
 //! - [`Launch`] and [`Mounted`]: what each mount is started with, once the cores exist.
+//! - [`RustStream::run`], [`run_until`](RustStream::run_until) and [`start`](RustStream::start):
+//!   running it, and [`RunningApp`], the handle of a started one.
+//! - [`HealthProbe`]: what a sibling task reads of the running service.
 
+mod app_trait;
+mod health;
 mod include;
+mod run;
 mod scope;
 mod service;
+mod teardown;
+
+pub use app_trait::App;
+#[doc(hidden)]
+pub use app_trait::AppDescription;
+pub use health::HealthProbe;
+pub use run::RunningApp;
+pub use ruststream_runtime::{HealthState, SubscriptionCount, SubscriptionEnd};
 
 #[doc(hidden)]
 pub use include::MountRoutes;
@@ -20,9 +34,10 @@ pub use service::{RustStream, Setup, Wired};
 use std::sync::Arc;
 
 use compio::runtime::JoinHandle;
+use thiserror::Error;
 
-use crate::dispatch::Fabric;
-use crate::{BoxError, BoxFuture, LocalBoxFuture, Stop, Workers};
+use crate::dispatch::{Fabric, LayoutError};
+use crate::{BoxError, BoxFuture, CoresError, LocalBoxFuture, Stop, Workers};
 
 /// What a mount is started with: the stop signal of the app, the mailboxes through which core 0
 /// starts lanes on the other cores, and the cores this mount was placed on.
@@ -113,4 +128,37 @@ pub(super) mod lifecycle_hooks {
             })
         })
     }
+}
+
+/// Errors surfaced while running a [`RustStream`] service.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum RustStreamError {
+    /// A broker failed to [`connect`](crate::Broker::connect) at startup.
+    #[error("broker connect failed: {0}")]
+    Connect(#[source] BoxError),
+    /// An `on_startup` or `after_startup` lifespan hook failed.
+    #[error("startup hook failed: {0}")]
+    Startup(#[source] BoxError),
+    /// A subscription failed to open after connect.
+    #[error("subscription failed: {0}")]
+    Subscribe(#[source] BoxError),
+    /// A broker failed to [`shutdown`](crate::ConnectedBroker::shutdown) during graceful
+    /// shutdown.
+    #[error("broker shutdown failed: {0}")]
+    Shutdown(#[source] BoxError),
+    /// A dispatch task panicked. The string says what the task reported.
+    #[error("dispatch task failed: {0}")]
+    Join(String),
+    /// A subscriber hit a fail-fast failure (a handler panic, or a decode failure under
+    /// `on_failure(decode = fail_fast)`) and tore the service down. The string names the
+    /// subscription and the reason.
+    #[error("dispatch failed: {0}")]
+    Dispatch(String),
+    /// The `threads` mounts need more cores than the service has besides core 0.
+    #[error("the mounts do not fit the cores: {0}")]
+    Layout(#[from] LayoutError),
+    /// A core could not start or ended with a failure.
+    #[error("a core failed: {0}")]
+    Cores(#[from] CoresError),
 }

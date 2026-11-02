@@ -7,19 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use event_listener::{Event, EventListener};
-use ruststream_runtime::{Halt, ShutdownWait};
+use ruststream_runtime::{Halt, ShutdownWait, SubscriptionEnd};
 use tracing::{debug, error};
-
-/// What a stream that ends while the service runs does to the service.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum StreamEnd {
-    /// The end is logged and the service goes on.
-    #[default]
-    Log,
-    /// The end stops the service, with the subscription named as the failure.
-    FailFast,
-}
 
 /// What every dispatch loop stops on, in the two forms a loop asks for, plus the reason where a
 /// failure raised it.
@@ -81,14 +70,14 @@ struct State {
     stopping: AtomicBool,
     failure: Mutex<Option<String>>,
     parked: Event,
-    on_end: StreamEnd,
+    on_end: SubscriptionEnd,
 }
 
 impl Stop {
     /// A signal nobody has raised yet, where a stream ending outside shutdown does what `on_end`
     /// says.
     #[must_use]
-    pub fn new(on_end: StreamEnd) -> Self {
+    pub fn new(on_end: SubscriptionEnd) -> Self {
         Self(Arc::new(State {
             on_end,
             ..State::default()
@@ -154,13 +143,15 @@ impl Halt for Stop {
         if self.is_cancelled() || self.0.stopping.load(Ordering::Relaxed) {
             return;
         }
-        match self.0.on_end {
-            StreamEnd::Log => debug!(
+        if self.0.on_end == SubscriptionEnd::FailFast {
+            self.fail(subscription, "the subscription's stream ended");
+        } else {
+            // `Log`, and any end the enum may name later, is logged and the service goes on.
+            debug!(
                 target: "ruststream::dispatch",
                 subscription = %subscription,
                 "subscriber stream ended",
-            ),
-            StreamEnd::FailFast => self.fail(subscription, "the subscription's stream ended"),
+            );
         }
     }
 }

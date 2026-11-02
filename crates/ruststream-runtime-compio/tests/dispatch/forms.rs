@@ -16,7 +16,7 @@ use ruststream_runtime::{BatchHandler, Context, SendHost, Workers};
 use ruststream_runtime_compio::dispatch::{
     Fabric, Layout, Mount, spawn_batch_dispatch, spawn_dispatch_workers,
 };
-use ruststream_runtime_compio::{Stop, StreamEnd, Tasks};
+use ruststream_runtime_compio::{Stop, SubscriptionEnd, Tasks};
 use thiserror::Error;
 
 use crate::support::{
@@ -327,7 +327,7 @@ fn shutdown_wakes_a_loop_parked_on_an_empty_subscription() {
 }
 
 /// Runs the loop until it ends on its own under `end`, and hands back the stop it ran on.
-fn ended_under(shape: Shape, form: Workers, end: StreamEnd) -> Stop {
+fn ended_under(shape: Shape, form: Workers, end: SubscriptionEnd) -> Stop {
     let stop = Stop::new(end);
     on_cores_stopping(3, &stop, async |fabric, stop, tasks| {
         let (seen, _arrived) = mpsc::unbounded();
@@ -348,7 +348,7 @@ fn ended_under(shape: Shape, form: Workers, end: StreamEnd) -> Stop {
 fn a_stream_end_is_logged_by_default_and_leaves_the_service_running() {
     for shape in SHAPES {
         for &form in forms(shape) {
-            let stop = ended_under(shape, form, StreamEnd::Log);
+            let stop = ended_under(shape, form, SubscriptionEnd::Log);
             // `on_cores` raises the stop when the run is over; a failure is what a stream end
             // would have recorded.
             assert_eq!(stop.failure(), None, "{shape:?} under {form:?}");
@@ -360,7 +360,7 @@ fn a_stream_end_is_logged_by_default_and_leaves_the_service_running() {
 fn a_stream_end_under_fail_fast_names_the_subscription() {
     for shape in SHAPES {
         for &form in forms(shape) {
-            let stop = ended_under(shape, form, StreamEnd::FailFast);
+            let stop = ended_under(shape, form, SubscriptionEnd::FailFast);
             let reason = stop.failure().unwrap_or_default();
             assert!(
                 reason.starts_with("orders: "),
