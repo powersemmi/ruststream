@@ -828,6 +828,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e4e11d13d42fc8d55326b323c63978c75721fbbb695a6e6686765bcb8b33917"
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -839,7 +845,7 @@ version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
 dependencies = [
- "hash32",
+ "hash32 0.3.1",
  "stable_deref_trait",
 ]
 
@@ -1746,7 +1752,7 @@ dependencies = [
  "futures",
  "futures-core",
  "gungraun",
- "hash32",
+ "hash32 1.0.0",
  "heapless",
  "pin-project-lite",
  "ruststream",

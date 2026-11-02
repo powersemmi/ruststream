@@ -35,6 +35,9 @@ skip = [
     # embedded-hal 0.2 and 1.0 unconditionally in every release up to 0.5.1. Drop this skip
     # once embassy-time makes the 0.2 traits optional.
     { crate = "embedded-hal@0.2", reason = "embassy-time depends on both HAL generations" },
+    # The embedded runtime hashes lane keys with hash32 1.0, while heapless 0.9.3 still
+    # depends on hash32 0.3. Drop this skip once heapless moves to hash32 1.0.
+    { crate = "hash32@0.3", reason = "heapless 0.9.3 depends on hash32 0.3" },
 ]
 
 [sources]
