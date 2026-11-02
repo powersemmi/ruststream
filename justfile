@@ -131,6 +131,15 @@ check:
         --features cbor,embassy,macros,memory --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream --no-default-features \
         --features json,embassy,macros,memory --target thumbv7em-none-eabihf
+    # A firmware binary on the no-alloc build, linked for both Cortex-M targets with no global
+    # allocator: it fails to link while any crate of the build needs a heap. Once with no codec
+    # and once for each slice codec.
+    for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do \
+        for features in "" postcard json-core; do \
+            RUSTFLAGS="" cargo build --locked --manifest-path crates/ruststream-firmware-noalloc/Cargo.toml \
+                --target $target ${features:+--features $features} || exit 1; \
+        done; \
+    done
     # The embassy runtime alone, as a device service builds it: the facade with the embassy set,
     # where every target that needs tokio names it and drops out, then the embedded runner and
     # the local bus with their tests.

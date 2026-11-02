@@ -314,6 +314,14 @@ jobs:
             --features embassy,macros,memory,defmt,log --target thumbv7em-none-eabihf
           cargo build --locked -p ruststream-runtime --no-default-features --features defmt \
             --target thumbv6m-none-eabi
+          # A firmware binary on the no-alloc build, linked for both Cortex-M targets with no
+          # global allocator: it fails to link while any crate of the build needs a heap.
+          for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do
+            for features in "" postcard json-core; do
+              cargo build --locked --manifest-path crates/ruststream-firmware-noalloc/Cargo.toml \
+                --target $target ${features:+--features $features}
+            done
+          done
 
       # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
       # It also rewrites the manifests while it runs, which is why this is the last step and the
