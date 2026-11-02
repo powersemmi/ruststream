@@ -74,9 +74,9 @@ defmt = "1"
 quanta = "0.13.0"
 pin-project-lite = "0.2"
 
-# The compio runner: one runtime per core. 0.19 is pinned to its minor line (0.x releases break on
-# the minor); the default driver is io-uring on Linux and polling elsewhere.
-compio = { version = "0.19", features = ["time", "signal"] }
+# The compio runner: one runtime per core. The pin is a beta and moves to 0.20 final when it
+# ships (0.x releases break on the minor); the default driver is io-uring on Linux and polling elsewhere.
+compio = { version = "=0.20.0-beta.1", features = ["time", "signal"] }
 # The parked wait of a shutdown: one `Event` that every core's loop listens on.
 event-listener = "5.4"
 # The embedded runner. Every one builds without `std`; a device binary picks the executor's

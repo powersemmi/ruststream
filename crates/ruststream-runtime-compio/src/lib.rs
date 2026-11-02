@@ -1,5 +1,6 @@
 //! The compio runner of [RustStream](https://docs.rs/ruststream): one compio runtime per core,
-//! with the clock, the shutdown and the launcher a service on `io_uring` runs on.
+//! with the clock, the shutdown and the launcher a service on `io_uring` runs on. The runner builds
+//! on compio 0.20 beta and moves to compio 0.20 final when it ships.
 //!
 //! - [`CompioClock`] and [`time::sleep`]: the app's clock over compio's timers.
 //! - [`Cores`]: the launcher, core 0 on the calling thread and a thread per further core.

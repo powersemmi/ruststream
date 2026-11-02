@@ -24,6 +24,10 @@ use ruststream_runtime::{
 use ruststream_runtime_compio::dispatch::{Fabric, Hosted, Layout, Mount, spawn_dispatch_workers};
 use ruststream_runtime_compio::{Stop, Tasks, time};
 
+/// What a hand-off to another core may cost per delivery: compio's cross-thread wake queue takes a
+/// block of 31 slots for every 31 wakes, and a delivery wakes a parked core at most once.
+const HAND_OFF_BOUND: f64 = 1.0 / 31.0;
+
 /// Far longer than a run: the timer never fires while deliveries are counted.
 const WAITING: Duration = Duration::from_hours(1);
 
@@ -194,11 +198,11 @@ fn a_delivery_allocates_nothing_on_core_zero_or_across_the_hand_off() {
         "sequential allocates {sequential} per delivery"
     );
     assert!(
-        threads < 0.01,
+        threads < HAND_OFF_BOUND,
         "threads(2) allocates {threads} per delivery"
     );
     assert!(
-        keyed < 0.01,
+        keyed < HAND_OFF_BOUND,
         "threads(2, by_key) allocates {keyed} per delivery"
     );
 }
@@ -218,11 +222,11 @@ fn a_delivery_allocates_nothing_while_a_timer_waits_on_the_core() {
         "sequential allocates {sequential} per delivery with a timer pending"
     );
     assert!(
-        threads < 0.01,
+        threads < HAND_OFF_BOUND,
         "threads(2) allocates {threads} per delivery with a timer pending"
     );
     assert!(
-        keyed < 0.01,
+        keyed < HAND_OFF_BOUND,
         "threads(2, by_key) allocates {keyed} per delivery with a timer pending"
     );
 }

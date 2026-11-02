@@ -30,9 +30,9 @@ allow = [
 # unavoidable duplicates get a targeted skip with the chain that pulls them in.
 multiple-versions = "deny"
 skip = [
-    # compio 0.19 depends on spin 0.9 while the rest of the graph is on spin 0.10. Drop this skip
+    # compio 0.20 (through flume) depends on spin 0.9 while the rest of the graph is on spin 0.10. Drop this skip
     # once compio moves to spin 0.10.
-    { crate = "spin@0.9", reason = "compio 0.19 depends on spin 0.9" },
+    { crate = "spin@0.9", reason = "compio 0.20 depends on spin 0.9 through flume" },
     # The proc-macro ecosystem is migrating from syn 2 to syn 3: serde_derive,
     # clap_derive, and thiserror-impl are already on 3, while schemars_derive,
     # tokio-macros, tracing-attributes, and zerocopy-derive still pull 2. Drop
