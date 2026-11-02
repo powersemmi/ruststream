@@ -470,6 +470,23 @@ mod tests {
     use crate::local::LocalMemoryBroker;
     use crate::local::drive::waiting;
 
+    /// A name the program wrote down is reported as static, so a loop can borrow it whole; one
+    /// built at run time is not.
+    #[test]
+    fn only_a_literal_name_is_reported_as_static() {
+        let literal = LocalMemorySource::from_name("sensors/temp");
+        let built = LocalMemorySource::new("sensors/temp");
+
+        assert_eq!(
+            SubscriptionSource::<ConnectedLocalMemoryBroker<4>>::static_name(&literal),
+            Some("sensors/temp")
+        );
+        assert_eq!(
+            SubscriptionSource::<ConnectedLocalMemoryBroker<4>>::static_name(&built),
+            None
+        );
+    }
+
     async fn open(name: &str) -> (ConnectedLocalMemoryBroker<4>, LocalMemorySubscriber<4>) {
         let connected = LocalMemoryBroker::<4>::new().connect().await.unwrap();
         let subscriber = connected.subscribe(name).await.unwrap();
