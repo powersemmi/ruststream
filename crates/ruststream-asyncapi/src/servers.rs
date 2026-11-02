@@ -5,13 +5,13 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use ruststream_runtime_tokio::App;
+use ruststream_runtime::Described;
 
 use super::spec::{Reference, Server};
 
 /// Renders the service's registered servers, collecting the security schemes they reference into
 /// the components map as it goes.
-pub(super) fn build_servers<A: App>(
+pub(super) fn build_servers<A: Described>(
     app: &A,
 ) -> (BTreeMap<String, Server>, BTreeMap<String, Value>) {
     let mut security_schemes = BTreeMap::new();

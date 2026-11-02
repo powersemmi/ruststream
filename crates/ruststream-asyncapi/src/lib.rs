@@ -23,8 +23,8 @@ pub use spec::{
 pub use viewer::{ViewerOptions, render_viewer_html};
 
 use ruststream_core::Tag;
+use ruststream_runtime::Described;
 use ruststream_runtime::OutgoingKind;
-use ruststream_runtime_tokio::App;
 
 use operations::{add_outgoing, add_receive, send_operation_id};
 use servers::{build_servers, resolve_server};
@@ -76,7 +76,7 @@ use spec::ASYNCAPI_VERSION;
 /// # fn main() {}
 /// ```
 #[must_use]
-pub fn build_spec<A: App>(app: &A) -> Spec {
+pub fn build_spec<A: Described>(app: &A) -> Spec {
     // The generator's warnings go where the app's would: the app's own selection, if any.
     app.select_logger();
     let contact = app.info().contact.clone();

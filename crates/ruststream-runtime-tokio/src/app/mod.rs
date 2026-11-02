@@ -11,10 +11,11 @@ mod teardown;
 
 pub use app_trait::App;
 pub(crate) use health::HealthReport;
-pub use health::{HealthProbe, HealthState, SubscriptionCount, SubscriptionEnd};
+pub use health::{HealthProbe, SubscriptionEnd};
 #[doc(hidden)]
 pub use include::MountRoutes;
 pub use run::RunningApp;
+pub use ruststream_runtime::{HealthState, SubscriptionCount};
 pub use scope::BrokerScope;
 #[doc(hidden)]
 pub use scope::{ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup};
@@ -24,13 +25,15 @@ pub use service::TestParts;
 pub use service::{RustStream, Setup, Wired};
 pub use teardown::{ConnectedEntry, ShutdownHooks, Teardown};
 
+pub use ruststream_runtime::AppInfo;
+
 use std::sync::Arc;
 
 use thiserror::Error;
 use tokio::task::{JoinError, JoinHandle};
 
 use crate::shutdown::Shutdown;
-use crate::{AppId, Contact, ExternalDocs, License, Tag};
+
 use crate::{BoxError, BoxFuture, LocalBoxFuture};
 
 /// A registration deferred until [`RustStream::run`].
@@ -59,197 +62,6 @@ enum LifecyclePhase {
     AfterStartup,
     OnShutdown,
     AfterShutdown,
-}
-
-/// Service-level metadata, surfaced to the `AsyncAPI` generator as the spec `Info` object.
-///
-/// The title and the version are what a service must state; everything else is optional and
-/// reaches the document only when it is filled in.
-///
-/// # Examples
-///
-/// ```
-/// use ruststream::runtime::{App, AppInfo, RustStream};
-/// use ruststream::{Contact, License, Tag};
-///
-/// fn app() -> impl App {
-///     let info = AppInfo::new("payments", "1.4.0")
-///         .description("everything the payment domain publishes")
-///         .contact(Contact::new().email("payments@example.com"))
-///         .license(License::new("Apache-2.0"))
-///         .tag(Tag::new("payments"));
-///     RustStream::new(info)
-/// }
-/// ```
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct AppInfo {
-    /// Human-readable service title.
-    pub title: String,
-    /// Service version string.
-    pub version: String,
-    /// Optional longer description.
-    pub description: Option<String>,
-    /// The service's own identifier, a URI. Emitted as the document's root `id`.
-    pub id: Option<AppId>,
-    /// Where the terms of service are published.
-    pub terms_of_service: Option<String>,
-    /// Who to contact about the service.
-    pub contact: Contact,
-    /// The licence the service is published under.
-    pub license: Option<License>,
-    /// Labels grouping the service among its neighbours.
-    pub tags: Vec<Tag>,
-    /// Where the prose about this service lives.
-    pub external_docs: Option<ExternalDocs>,
-}
-
-impl AppInfo {
-    /// Creates info with a title and version and nothing else.
-    #[must_use]
-    pub fn new(title: impl Into<String>, version: impl Into<String>) -> Self {
-        Self {
-            title: title.into(),
-            version: version.into(),
-            description: None,
-            id: None,
-            terms_of_service: None,
-            contact: Contact::new(),
-            license: None,
-            tags: Vec::new(),
-            external_docs: None,
-        }
-    }
-
-    /// Sets the description.
-    #[must_use]
-    pub fn description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
-    }
-
-    /// Sets the service's own identifier.
-    ///
-    /// The identifier is a URI, which [`AppId`] checks on construction, so the document cannot
-    /// carry a title where a reader expects an identifier.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::runtime::{App, AppInfo, RustStream};
-    /// use ruststream::{AppId, AppIdError};
-    ///
-    /// /// The id comes from the deployment's configuration, so a malformed one fails the build of
-    /// /// the app.
-    /// fn app(id: &str) -> Result<impl App, AppIdError> {
-    ///     let info = AppInfo::new("payments", "1.4.0").id(id.parse::<AppId>()?);
-    ///     Ok(RustStream::new(info))
-    /// }
-    /// ```
-    #[must_use]
-    pub fn id(mut self, id: AppId) -> Self {
-        self.id = Some(id);
-        self
-    }
-
-    /// Sets where the terms of service are published.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::runtime::{App, AppInfo, RustStream};
-    ///
-    /// fn app() -> impl App {
-    ///     let info =
-    ///         AppInfo::new("payments", "1.4.0").terms_of_service("https://example.com/terms");
-    ///     RustStream::new(info)
-    /// }
-    /// ```
-    #[must_use]
-    pub fn terms_of_service(mut self, url: impl Into<String>) -> Self {
-        self.terms_of_service = Some(url.into());
-        self
-    }
-
-    /// Sets who to contact about the service.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::Contact;
-    /// use ruststream::runtime::{App, AppInfo, RustStream};
-    ///
-    /// fn app() -> impl App {
-    ///     let info =
-    ///         AppInfo::new("payments", "1.4.0").contact(Contact::new().name("Payments team"));
-    ///     RustStream::new(info)
-    /// }
-    /// ```
-    #[must_use]
-    pub fn contact(mut self, contact: Contact) -> Self {
-        self.contact = contact;
-        self
-    }
-
-    /// Sets the licence the service is published under.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::License;
-    /// use ruststream::runtime::{App, AppInfo, RustStream};
-    ///
-    /// fn app() -> impl App {
-    ///     let info = AppInfo::new("payments", "1.4.0").license(License::new("MIT"));
-    ///     RustStream::new(info)
-    /// }
-    /// ```
-    #[must_use]
-    pub fn license(mut self, license: License) -> Self {
-        self.license = Some(license);
-        self
-    }
-
-    /// Adds one label to the service. Call repeatedly for several.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::Tag;
-    /// use ruststream::runtime::{App, AppInfo, RustStream};
-    ///
-    /// fn app() -> impl App {
-    ///     let info = AppInfo::new("payments", "1.4.0")
-    ///         .tag(Tag::new("payments"))
-    ///         .tag(Tag::new("public"));
-    ///     RustStream::new(info)
-    /// }
-    /// ```
-    #[must_use]
-    pub fn tag(mut self, tag: Tag) -> Self {
-        self.tags.push(tag);
-        self
-    }
-
-    /// Sets where the prose about this service lives.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::ExternalDocs;
-    /// use ruststream::runtime::{App, AppInfo, RustStream};
-    ///
-    /// fn app() -> impl App {
-    ///     let info = AppInfo::new("payments", "1.4.0")
-    ///         .external_docs(ExternalDocs::new("https://example.com/payments"));
-    ///     RustStream::new(info)
-    /// }
-    /// ```
-    #[must_use]
-    pub fn external_docs(mut self, docs: ExternalDocs) -> Self {
-        self.external_docs = Some(docs);
-        self
-    }
 }
 
 /// Errors surfaced while running a [`RustStream`] service.

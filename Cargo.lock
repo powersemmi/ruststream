@@ -1666,7 +1666,6 @@ dependencies = [
  "ruststream",
  "ruststream-core",
  "ruststream-runtime",
- "ruststream-runtime-tokio",
  "schemars",
  "serde",
  "serde_json",

@@ -6,8 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::HandlerMetadata;
 use crate::ServerSpec;
+use crate::{Described, HandlerMetadata};
 
 use super::{AppInfo, RunningApp, RustStream, RustStreamError};
 
@@ -73,7 +73,7 @@ mod sealed {
     note = "an EmbeddedApp runs on embassy: await `EmbeddedApp::run(&CONTROL)` in an embassy task; \
             the CLI, MainRuntime, metrics and OTel run on the tokio runtime"
 )]
-pub trait App: sealed::Sealed + Sized {
+pub trait App: Described + sealed::Sealed + Sized {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`), then shuts down gracefully.
     ///
     /// # Errors
@@ -100,21 +100,6 @@ pub trait App: sealed::Sealed + Sized {
     /// Returns [`RustStreamError`] if the state producer or an `after_startup` hook fails, a
     /// broker fails to connect, or a subscription fails to open.
     fn start(self) -> impl Future<Output = Result<RunningApp, RustStreamError>>;
-
-    /// The service metadata (title, version, description): the `AsyncAPI` `info` object.
-    fn info(&self) -> &AppInfo;
-
-    /// The registered `AsyncAPI` servers, keyed by name.
-    fn servers(&self) -> &BTreeMap<String, ServerSpec>;
-
-    /// Metadata for every registered handler, in registration order: input to the `AsyncAPI`
-    /// generator.
-    fn handlers(&self) -> &[HandlerMetadata];
-
-    /// Applies the logger the app selected, so a tool that reads the app without running it (the
-    /// spec generator) reports through it too.
-    #[doc(hidden)]
-    fn select_logger(&self);
 }
 
 // `Pipeline: Send` is what makes the run futures `Send`: `run` consumes `self`, which holds the
@@ -142,7 +127,11 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
     fn start(self) -> impl Future<Output = Result<RunningApp, RustStreamError>> {
         RustStream::start(self)
     }
+}
 
+// Spelled as in the `App` impl above: the calls delegate to the inherent methods of the same names.
+#[allow(clippy::use_self)]
+impl<Layers, State, Pipeline, Phase> Described for RustStream<Layers, State, Pipeline, Phase> {
     fn info(&self) -> &AppInfo {
         RustStream::info(self)
     }
