@@ -8,9 +8,7 @@
 // The stream and the deliveries it carries are not `Send`, on the app's one task.
 #![allow(clippy::future_not_send)]
 
-use alloc::sync::Arc;
 use core::pin::Pin;
-use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll};
 
 use futures::Stream;
@@ -26,20 +24,13 @@ pub(crate) const YIELD_AFTER: u32 = 128;
 
 /// A subscriber whose stream yields to the executor after [`YIELD_AFTER`] ready items in a row.
 #[derive(Debug)]
-pub(crate) struct Cooperative<Sub> {
-    subscriber: Sub,
-    // Set while the stream has yielded and not yet been polled to a `Pending` of its own.
-    yielded: Arc<AtomicBool>,
-}
+pub(crate) struct Cooperative<Sub>(Sub);
 
 impl<Sub> Cooperative<Sub> {
     /// Bounds `subscriber`'s stream to [`YIELD_AFTER`] ready items in a row.
     #[must_use]
-    pub(crate) fn new(subscriber: Sub) -> Self {
-        Self {
-            subscriber,
-            yielded: Arc::default(),
-        }
+    pub(crate) const fn new(subscriber: Sub) -> Self {
+        Self(subscriber)
     }
 }
 
@@ -48,110 +39,76 @@ impl<Sub: Subscriber> Subscriber for Cooperative<Sub> {
     type Error = Sub::Error;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + '_ {
-        Bounded::gated(
-            self.subscriber.stream(),
-            YIELD_AFTER,
-            Arc::clone(&self.yielded),
-        )
+        let probe = self.0.ready_hint();
+        Bounded::new(self.0.stream(), YIELD_AFTER, probe)
     }
 
+    // The bound adds nothing to the answer: it yields only while the probe says more may be
+    // waiting, so a yielded stream still reads as ready.
     fn ready_hint(&self) -> impl ReadyHint + 'static + use<Sub> {
-        YieldedOr {
-            probe: self.subscriber.ready_hint(),
-            yielded: Arc::clone(&self.yielded),
-        }
-    }
-}
-
-/// The probe of a bounded subscription: the subscriber's own, held open from the forced yield
-/// until the stream has answered `Pending` itself.
-///
-/// The yield returns `Pending` without polling the stream, so the stream has registered no waker
-/// for the deliveries that arrive after it; a probe that reported only the subscriber's answer
-/// would let the app skip the poll that registers one.
-struct YieldedOr<Probe> {
-    probe: Probe,
-    yielded: Arc<AtomicBool>,
-}
-
-impl<Probe: ReadyHint> ReadyHint for YieldedOr<Probe> {
-    // A subscriber that declares no probe is polled on every wake, yield or not.
-    const GATED: bool = Probe::GATED;
-
-    #[inline]
-    fn may_be_ready(&self) -> bool {
-        self.probe.may_be_ready() || self.yielded.load(Ordering::Relaxed)
+        self.0.ready_hint()
     }
 }
 
 pin_project! {
-    /// A stream that returns `Pending` once, after waking its task, every `limit` ready items.
-    pub(crate) struct Bounded<Inner> {
+    /// A stream that returns `Pending` once, after waking its task, every `limit` ready items,
+    /// when its probe says more may be waiting.
+    ///
+    /// A yield returns `Pending` without polling the stream, so the stream registers no waker. An
+    /// app skips a lane whose probe says nothing is ready, so a yield past the last delivery would
+    /// leave the lane parked with no waker for the next one. The bound yields only while the probe
+    /// says more may be waiting; otherwise it polls the stream, which parks with its waker.
+    pub(crate) struct Bounded<Inner, Probe> {
         #[pin]
         inner: Inner,
         ready: u32,
         limit: u32,
-        // Raised at the forced yield, lowered where the inner stream answers `Pending`.
-        yielded: Option<Arc<AtomicBool>>,
+        probe: Probe,
     }
 }
 
-impl<Inner> Bounded<Inner> {
-    /// Bounds `inner` to `limit` ready items in a row.
+impl<Inner, Probe> Bounded<Inner, Probe> {
+    /// Bounds `inner` to `limit` ready items in a row, yielding while `probe` says more may be
+    /// waiting.
     #[must_use]
-    pub(crate) const fn new(inner: Inner, limit: u32) -> Self {
+    pub(crate) const fn new(inner: Inner, limit: u32, probe: Probe) -> Self {
         Self {
             inner,
             ready: 0,
             limit,
-            yielded: None,
-        }
-    }
-
-    /// Bounds `inner` to `limit` ready items in a row and reports, through `yielded`, whether it
-    /// has yielded since the inner stream last answered `Pending`.
-    #[must_use]
-    pub(crate) const fn gated(inner: Inner, limit: u32, yielded: Arc<AtomicBool>) -> Self {
-        Self {
-            inner,
-            ready: 0,
-            limit,
-            yielded: Some(yielded),
+            probe,
         }
     }
 }
 
-impl<Inner: Stream> Stream for Bounded<Inner> {
+impl<Inner: Stream, Probe: ReadyHint> Stream for Bounded<Inner, Probe> {
     type Item = Inner::Item;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
         if *this.ready >= *this.limit {
-            // Woken before it parks: the task is polled again once the others have had a turn.
             *this.ready = 0;
-            if let Some(yielded) = this.yielded {
-                yielded.store(true, Ordering::Relaxed);
+            if this.probe.may_be_ready() {
+                // Woken before it parks: the task is polled again once the others have had a turn.
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
             }
-            cx.waker().wake_by_ref();
-            return Poll::Pending;
         }
         let next = this.inner.poll_next(cx);
         if next.is_ready() {
             *this.ready += 1;
         } else {
             *this.ready = 0;
-            if let Some(yielded) = this.yielded {
-                yielded.store(false, Ordering::Relaxed);
-            }
         }
         next
     }
 }
 
 /// A batch stream bounded the same way: one fill counts as one ready item.
-impl<Inner, Slot> BatchStream<Slot> for Bounded<Inner>
+impl<Inner, Probe, Slot> BatchStream<Slot> for Bounded<Inner, Probe>
 where
     Inner: BatchStream<Slot>,
+    Probe: ReadyHint,
 {
     type Error = Inner::Error;
 
@@ -163,8 +120,10 @@ where
         let this = self.project();
         if *this.ready >= *this.limit {
             *this.ready = 0;
-            cx.waker().wake_by_ref();
-            return Poll::Pending;
+            if this.probe.may_be_ready() {
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
         }
         let next = this.inner.poll_fill(cx, slot);
         if next.is_ready() {
@@ -210,7 +169,7 @@ mod tests {
 
     #[test]
     fn a_ready_stream_yields_once_after_exactly_the_limit() {
-        let seen = readiness(Bounded::new(stream::iter(0..100), 3), 9);
+        let seen = readiness(Bounded::new(stream::iter(0..100), 3, ()), 9);
         assert_eq!(
             seen,
             [true, true, true, false, true, true, true, false, true]
@@ -225,7 +184,7 @@ mod tests {
             Some(true) => Poll::Ready(Some(0)),
             _ => Poll::Pending,
         });
-        let seen = readiness(Bounded::new(inner, 3), 8);
+        let seen = readiness(Bounded::new(inner, 3, ()), 8);
         assert_eq!(seen, [true, true, false, true, true, true, false, true]);
     }
 
