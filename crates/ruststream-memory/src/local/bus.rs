@@ -16,6 +16,8 @@ use ruststream_core::{BytesMut, HeaderMap, OutgoingMessage, PublishMessageError}
 use ruststream_runtime::RETRY_COUNT_HEADER;
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::Coordinator;
+#[cfg(test)]
+use std::sync::Mutex;
 
 use super::LocalMemoryError;
 use super::alloc_prelude::*;
@@ -65,6 +67,23 @@ pub(super) struct Subscription<const CAP: usize> {
     state: Guarded<SubscriptionState>,
     #[cfg(feature = "testing")]
     pub(super) harness: Shared<Harness>,
+    // Lets a test run another thread's step at a point inside a critical section.
+    #[cfg(test)]
+    pauses: Mutex<Option<PauseHook>>,
+}
+
+/// What a test runs when a subscription reaches a [`Pause`].
+#[cfg(test)]
+type PauseHook = Box<dyn Fn(Pause) + Send + Sync>;
+
+/// The points of a subscription's critical sections a test can pause at.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum Pause {
+    /// A delivery left the queue and is not yet counted in hand.
+    AfterDequeue,
+    /// A requeue read the subscription as open and has not yet enqueued.
+    AfterStanding,
 }
 
 /// What a subscription changes as deliveries come and go.
@@ -80,8 +99,18 @@ impl<const CAP: usize> Subscription<CAP> {
         &self.name
     }
 
+    #[cfg(test)]
+    fn pause(&self, at: Pause) {
+        if let Some(hook) = self.pauses.lock().unwrap().as_ref() {
+            hook(at);
+        }
+    }
+
     fn has_room(&self) -> bool {
-        self.queue.len() + self.state.with(|state| state.in_hand) < CAP
+        // One section for both counts: a receiver that moves a delivery from the queue to its
+        // handler's hands changes them together, so the sum is never read between the two.
+        self.state
+            .with(|state| self.queue.len() + state.in_hand < CAP)
     }
 
     /// Puts `delivery` in the queue, which [`has_room`](Self::has_room) or a delivery in hand has
@@ -107,27 +136,36 @@ impl<const CAP: usize> Subscription<CAP> {
             self.state.with(|state| state.closing.register(cx.waker()));
             return Poll::Pending;
         }
-        match self.queue.poll_receive(cx) {
+        // Taking the delivery and counting it in hand is one section: a publisher on another
+        // thread must not see the place free between the two and fill it, or the delivery's
+        // requeue would find the channel full.
+        self.state.with(|state| match self.queue.poll_receive(cx) {
             Poll::Ready(delivery) => {
-                self.state.with(|state| state.in_hand += 1);
+                #[cfg(test)]
+                self.pause(Pause::AfterDequeue);
+                state.in_hand += 1;
                 Poll::Ready(Some(delivery))
             }
-            Poll::Pending => self.state.with(|state| {
+            Poll::Pending => {
                 if state.standing == Standing::ShutDown {
                     Poll::Ready(None)
                 } else {
                     state.closing.register(cx.waker());
                     Poll::Pending
                 }
-            }),
-        }
+            }
+        })
     }
 
     /// The next delivery already waiting, without registering a waker.
     pub(super) fn try_next(&self) -> Option<Delivery> {
-        let delivery = self.queue.try_receive().ok()?;
-        self.state.with(|state| state.in_hand += 1);
-        Some(delivery)
+        self.state.with(|state| {
+            let delivery = self.queue.try_receive().ok()?;
+            #[cfg(test)]
+            self.pause(Pause::AfterDequeue);
+            state.in_hand += 1;
+            Some(delivery)
+        })
     }
 
     /// Releases the place of a delivery that left its handler's hands.
@@ -139,14 +177,19 @@ impl<const CAP: usize> Subscription<CAP> {
 
     /// Puts a delivery in hand back at the end of the queue, before its place is released.
     pub(super) fn requeue(&self, delivery: Delivery) -> Result<(), LocalMemoryError> {
-        match self.state.with(|state| state.standing) {
+        // The standing is read and the delivery enqueued in one section, so a subscriber that
+        // leaves on another thread drains the queue either before the check (the requeue lands
+        // nowhere) or after the enqueue (the drain releases it), never between.
+        self.state.with(|state| match state.standing {
             Standing::Open => {
+                #[cfg(test)]
+                self.pause(Pause::AfterStanding);
                 self.enqueue(delivery);
                 Ok(())
             }
             Standing::Unsubscribed => Ok(()),
             Standing::ShutDown => Err(LocalMemoryError::ShutDown),
-        }
+        })
     }
 
     /// Marks the subscription as left by its subscriber and releases what waits in its queue.
@@ -155,11 +198,11 @@ impl<const CAP: usize> Subscription<CAP> {
             if state.standing == Standing::Open {
                 state.standing = Standing::Unsubscribed;
             }
+            while self.queue.try_receive().is_ok() {
+                #[cfg(feature = "testing")]
+                self.harness.consumed();
+            }
         });
-        while self.queue.try_receive().is_ok() {
-            #[cfg(feature = "testing")]
-            self.harness.consumed();
-        }
     }
 
     fn shut_down(&self) {
@@ -218,6 +261,8 @@ impl<const CAP: usize> Bus<CAP> {
                 }),
                 #[cfg(feature = "testing")]
                 harness: Clone::clone(&self.harness),
+                #[cfg(test)]
+                pauses: Mutex::new(None),
             });
             state.subscriptions.push(Clone::clone(&subscription));
             Ok(subscription)
@@ -401,5 +446,97 @@ impl Harness {
         if let Some(coordinator) = self.coordinator.try_get() {
             coordinator.consumed();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::mpsc::channel;
+    use std::thread;
+    use std::time::Duration;
+
+    use super::*;
+
+    /// Whether the bus took the publish, or the error that refused it.
+    fn publish(bus: &Bus<1>, payload: &'static [u8]) -> Result<(), LocalMemoryError> {
+        bus.fanout("a", Bytes::from_static(payload), HeaderMap::new())
+            .map_err(|unsent| unsent.error)
+    }
+
+    /// Runs `other` on a thread when the subscription reaches `at`, and gives it a moment to
+    /// finish while the subscription is paused there. A step that has to wait for the pause to
+    /// end is still waiting when the moment is over, and the pause carries on.
+    fn run_at<Out: Send + 'static>(
+        subscription: &Subscription<1>,
+        at: Pause,
+        other: impl FnOnce() -> Out + Send + 'static,
+    ) -> thread::JoinHandle<Out> {
+        let (go, started) = channel();
+        let (finished, done) = channel();
+        let thread = thread::spawn(move || {
+            started.recv().unwrap();
+            let out = other();
+            let _ = finished.send(());
+            out
+        });
+        let go = Mutex::new(Some(go));
+        let done = Mutex::new(done);
+        *subscription.pauses.lock().unwrap() = Some(Box::new(move |reached| {
+            let go = if mem::discriminant(&reached) == mem::discriminant(&at) {
+                go.lock().unwrap().take()
+            } else {
+                None
+            };
+            if let Some(go) = go {
+                go.send(()).unwrap();
+                let _ = done
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_millis(100));
+            }
+        }));
+        thread
+    }
+
+    fn open() -> (Arc<Bus<1>>, Shared<Subscription<1>>) {
+        let bus = Arc::new(Bus::<1>::new());
+        bus.connect();
+        let subscription = bus.subscribe("a").unwrap();
+        (bus, subscription)
+    }
+
+    #[test]
+    fn a_publish_cannot_fill_the_place_of_a_delivery_a_receiver_is_taking() {
+        let (bus, subscription) = open();
+        publish(&bus, b"first").unwrap();
+        let publisher = Arc::clone(&bus);
+        let other = run_at(&subscription, Pause::AfterDequeue, move || {
+            publish(&publisher, b"second")
+        });
+
+        let taken = subscription.try_next().unwrap();
+        let second = other.join().unwrap();
+
+        assert!(matches!(second, Err(LocalMemoryError::Full { .. })));
+        subscription.requeue(taken).unwrap();
+        assert!(subscription.try_next().is_some());
+    }
+
+    #[test]
+    fn a_requeue_is_not_stranded_by_a_subscriber_that_leaves_meanwhile() {
+        let (bus, subscription) = open();
+        publish(&bus, b"first").unwrap();
+        let taken = subscription.try_next().unwrap();
+        let leaver = Arc::clone(&bus);
+        let leaving = Shared::clone(&subscription);
+        let other = run_at(&subscription, Pause::AfterStanding, move || {
+            leaver.unsubscribe(&leaving);
+        });
+
+        subscription.requeue(taken).unwrap();
+        other.join().unwrap();
+
+        assert!(subscription.try_next().is_none());
     }
 }
