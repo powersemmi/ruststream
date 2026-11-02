@@ -157,13 +157,12 @@ pub(crate) async fn settle_reacting<M, C, Host>(
     match reaction.map(Reaction::into_unpublished) {
         Some(Unpublished::Then(Some(then))) => detach_continuation!(host, then),
         Some(Unpublished::Part(index)) => {
-            // Tells the fan of the batch outcome that this element made no publish, and runs what
-            // the report of the last element hands back. In place, not a layer of its own: the
-            // chain of futures of a registration is as deep as the recursion limit allows.
-            if let Some(fan) = host.kept().and_then(KeptCopies::fan)
-                && let Some(follow) = fan.report(index, Ok(())).await
-            {
-                detach_continuation!(host, follow);
+            // Tells the fan of the batch outcome that this element made no publish; the last
+            // element's report runs the outcome's closure and follow-up. In place, not a layer of
+            // its own: the chain of futures of a registration is as deep as the recursion limit
+            // allows.
+            if let Some(fan) = host.kept().and_then(KeptCopies::fan) {
+                fan.report(index, Ok(())).await;
             }
         }
         Some(Unpublished::Then(None)) | None => {}

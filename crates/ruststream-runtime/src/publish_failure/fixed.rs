@@ -13,6 +13,7 @@ use core::{fmt, iter};
 
 use dyn_utils::DynObject;
 use dyn_utils::storage::Raw;
+use futures::future::join;
 use heapless::{Vec, VecView};
 use ruststream_core::diag::warn;
 
@@ -340,9 +341,8 @@ pub fn publish_lost<const ELEMENTS: usize>(
 /// Where the elements of one batch outcome report their publishes: the worker for an element that
 /// made none, the store for a copy it published or failed to publish.
 ///
-/// The element that reports last gets the continuation to run (the outcome's `.then`, when an
-/// element's publish succeeded), after the `.error` closure has run on every failure. Machinery;
-/// never named directly.
+/// The element that reports last runs the `.error` closure on every failure and, beside it, the
+/// outcome's `.then` when an element's publish succeeded. Machinery; never named directly.
 #[doc(hidden)]
 pub trait Gathers {
     /// Takes the outcome's closure and `.then` for `elements` elements, waiting while an earlier
@@ -355,13 +355,13 @@ pub trait Gathers {
     ) -> impl Future<Output = ()>;
 
     /// Reports the element at `index`: `Ok` for a publish that went out or none at all, the
-    /// error and the message for one that failed. Returns what the report of the last element
-    /// runs.
+    /// error and the message for one that failed. The last element runs the closure and the
+    /// follow-up before it returns.
     fn report(
         &self,
         index: usize,
         outcome: Result<(), (BoxError, FailedMessage)>,
-    ) -> impl Future<Output = Option<Continuation>>;
+    ) -> impl Future<Output = ()>;
 }
 
 /// The gatherer of a store that has none: a single delivery has no batch outcome.
@@ -376,11 +376,7 @@ impl Gathers for NoFan {
         match *self {}
     }
 
-    async fn report(
-        &self,
-        _index: usize,
-        _outcome: Result<(), (BoxError, FailedMessage)>,
-    ) -> Option<Continuation> {
+    async fn report(&self, _index: usize, _outcome: Result<(), (BoxError, FailedMessage)>) {
         match *self {}
     }
 }
@@ -479,11 +475,7 @@ impl<const ELEMENTS: usize> Gathers for BatchFan<ELEMENTS> {
 
     // The borrow of the buffer lives across the closure on purpose, see below.
     #[allow(clippy::await_holding_refcell_ref)]
-    async fn report(
-        &self,
-        index: usize,
-        outcome: Result<(), (BoxError, FailedMessage)>,
-    ) -> Option<Continuation> {
+    async fn report(&self, index: usize, outcome: Result<(), (BoxError, FailedMessage)>) {
         let last = {
             let mut gathered = self.state.borrow_mut();
             match outcome {
@@ -504,34 +496,42 @@ impl<const ELEMENTS: usize> Gathers for BatchFan<ELEMENTS> {
             gathered.pending == 0
         };
         if !last {
-            return None;
+            return;
         }
-        // The last element runs the closure on the failures the fan holds, then frees the fan for
-        // the next outcome. The closure is part of this future, not a layer of its own: a
+        // The last element runs the closure on the failures the fan holds and the outcome's
+        // `.then` beside it, `.error` polled first, then frees the fan for the next outcome as
+        // soon as the closure is done. They run in this future, not in layers of its own: a
         // registration's chain of futures is as deep as the recursion limit allows.
         let (error, then) = {
             let mut gathered = self.state.borrow_mut();
             let sent = gathered.sent;
             (gathered.error.take(), gathered.then.take().filter(|_| sent))
         };
-        {
-            // Held across the closure's suspension points: the fan is busy, so nothing writes the
-            // buffer meanwhile.
-            let gathered = self.state.borrow();
-            if let Some(error) = error.filter(|_| !gathered.failures.is_empty()) {
-                error.react(gathered.failures.as_view()).await;
+        let react = async {
+            {
+                // Held across the closure's suspension points: the fan is busy, so nothing
+                // writes the buffer meanwhile.
+                let gathered = self.state.borrow();
+                if let Some(error) = error.filter(|_| !gathered.failures.is_empty()) {
+                    error.react(gathered.failures.as_view()).await;
+                }
             }
-        }
-        {
-            let mut gathered = self.state.borrow_mut();
-            gathered.failures.clear();
-            gathered.order.clear();
-        }
-        self.busy.set(false);
-        if let Some(waker) = self.waiting.borrow_mut().take() {
-            waker.wake();
-        }
-        then
+            {
+                let mut gathered = self.state.borrow_mut();
+                gathered.failures.clear();
+                gathered.order.clear();
+            }
+            self.busy.set(false);
+            if let Some(waker) = self.waiting.borrow_mut().take() {
+                waker.wake();
+            }
+        };
+        let follow = async {
+            if let Some(then) = then {
+                then.await;
+            }
+        };
+        join(react, follow).await;
     }
 }
 
@@ -717,9 +717,10 @@ mod tests {
             second.as_mut().poll(&mut cx).is_pending(),
             "the fan is busy"
         );
-        let core::task::Poll::Ready(then) = last.as_mut().poll(&mut cx) else {
-            panic!("the closure finished");
-        };
+        assert!(
+            last.as_mut().poll(&mut cx).is_ready(),
+            "the closure finished"
+        );
         assert!(
             second.as_mut().poll(&mut cx).is_ready(),
             "free once the closure has run"
@@ -730,17 +731,67 @@ mod tests {
             134,
             "in the order of the batch"
         );
-        assert!(finishes(then.expect("one element published")));
         assert_eq!(AFTER.load(Ordering::SeqCst), 1);
+    }
+
+    /// Pending until `flag` is set by someone else.
+    struct Until(&'static AtomicUsize);
+
+    impl Future for Until {
+        type Output = ();
+
+        fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> core::task::Poll<()> {
+            if self.0.load(Ordering::SeqCst) > 0 {
+                return core::task::Poll::Ready(());
+            }
+            cx.waker().wake_by_ref();
+            core::task::Poll::Pending
+        }
+    }
+
+    #[test]
+    fn the_error_closure_and_the_follow_up_of_a_batch_run_together() {
+        static SIGNAL: AtomicUsize = AtomicUsize::new(0);
+        let mut cx = Context::from_waker(Waker::noop());
+        let fan = BatchFan::<2>::new();
+        // The closure finishes only after the follow-up has run.
+        let error = ErrorHook::new(async |_: &Failures| Until(&SIGNAL).await);
+        let then = Continuation::new(async {
+            SIGNAL.fetch_add(1, Ordering::SeqCst);
+        });
+        assert!(
+            pin!(fan.begin(error, Some(then), 2))
+                .as_mut()
+                .poll(&mut cx)
+                .is_ready()
+        );
+        assert!(
+            pin!(fan.report(0, Ok(())))
+                .as_mut()
+                .poll(&mut cx)
+                .is_ready()
+        );
+
+        let mut last = pin!(fan.report(1, lost("d2")));
+        let mut polls = 0;
+        while last.as_mut().poll(&mut cx).is_pending() {
+            polls += 1;
+            assert!(polls < 4, "the closure waits for a follow-up nobody runs");
+        }
+
+        assert_eq!(SIGNAL.load(Ordering::SeqCst), 1);
     }
 
     #[test]
     fn a_batch_where_every_element_failed_has_no_follow_up() {
         static SEEN: AtomicUsize = AtomicUsize::new(0);
+        static FOLLOWED: AtomicUsize = AtomicUsize::new(0);
         let mut cx = Context::from_waker(Waker::noop());
         let fan = BatchFan::<2>::new();
         let error = ErrorHook::new(async |failures: &Failures| read_into(&SEEN, failures));
-        let then = Continuation::new(async {});
+        let then = Continuation::new(async {
+            FOLLOWED.fetch_add(1, Ordering::SeqCst);
+        });
         assert!(
             pin!(fan.begin(error, Some(then), 2))
                 .as_mut()
@@ -755,20 +806,24 @@ mod tests {
                 .is_ready()
         );
         let mut last = pin!(fan.report(1, lost("d2")));
-        let core::task::Poll::Ready(follow) = last.as_mut().poll(&mut cx) else {
-            panic!("no suspension in the closure");
-        };
+        assert!(
+            last.as_mut().poll(&mut cx).is_ready(),
+            "no suspension in the closure"
+        );
 
-        assert!(follow.is_none());
+        assert_eq!(FOLLOWED.load(Ordering::SeqCst), 0);
         assert_eq!(SEEN.load(Ordering::SeqCst), 12);
     }
 
     #[test]
-    fn a_batch_without_a_failure_does_not_run_the_closure_and_hands_back_the_follow_up() {
+    fn a_batch_without_a_failure_does_not_run_the_closure_and_runs_the_follow_up() {
+        static FOLLOWED: AtomicUsize = AtomicUsize::new(0);
         let mut cx = Context::from_waker(Waker::noop());
         let fan = BatchFan::<2>::new();
         let error = ErrorHook::new(async |_: &Failures| panic!("nothing failed"));
-        let then = Continuation::new(async {});
+        let then = Continuation::new(async {
+            FOLLOWED.fetch_add(1, Ordering::SeqCst);
+        });
         assert!(
             pin!(fan.begin(error, Some(then), 2))
                 .as_mut()
@@ -783,11 +838,9 @@ mod tests {
                 .is_ready()
         );
         let mut last = pin!(fan.report(1, Ok(())));
-        let core::task::Poll::Ready(follow) = last.as_mut().poll(&mut cx) else {
-            panic!("no suspension");
-        };
+        assert!(last.as_mut().poll(&mut cx).is_ready(), "no suspension");
 
-        assert!(follow.is_some());
+        assert_eq!(FOLLOWED.load(Ordering::SeqCst), 1);
     }
 
     #[test]

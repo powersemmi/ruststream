@@ -441,23 +441,24 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
         {
             failed.react().await;
             if let Some((index, outcome)) = part {
-                return self.report(index, outcome).await;
+                self.report(index, outcome).await;
+                return None;
             }
         }
         follow
     }
 
-    /// Reports the copy of the batch element at `index` to the mount's fan, which hands back what
-    /// the report of the last element runs.
+    /// Reports the copy of the batch element at `index` to the mount's fan, whose last report
+    /// runs the outcome's closure and follow-up.
     // Not an `async fn`: a frame of its own would sit between the copy and the fan for nothing.
     #[cfg(not(ruststream_alloc))]
     fn report(
         &self,
         index: usize,
         outcome: Result<(), (BoxError, FailedMessage)>,
-    ) -> impl Future<Output = Option<Continuation>> {
+    ) -> impl Future<Output = ()> {
         self.fan.as_ref().map_or_else(
-            || Either::Right(ready(None)),
+            || Either::Right(ready(())),
             |fan| Either::Left(fan.report(index, outcome)),
         )
     }
@@ -624,10 +625,14 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned> KeptC
             #[cfg(not(ruststream_alloc))]
             {
                 match (sent, reaction.as_ref().and_then(Reaction::part_index)) {
-                    (Ok(()), Some(index)) => self.report(index, Ok(())).await,
+                    (Ok(()), Some(index)) => {
+                        self.report(index, Ok(())).await;
+                        None
+                    }
                     (Err(refusal), Some(index)) => {
                         let lost = refusal.into_message(target, |_, _| payload.clone());
-                        self.report(index, Err(lost)).await
+                        self.report(index, Err(lost)).await;
+                        None
                     }
                     (Ok(()), None) => publish_done(reaction),
                     (Err(refusal), None) => {
@@ -679,9 +684,9 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned> KeptC
             // An element of a batch's uniform outcome reports to the mount's fan.
             if let Some(index) = reaction.as_ref().and_then(Reaction::part_index) {
                 let message = FailedMessage::new(target, payload, headers);
-                return self
-                    .report(index, Err((BoxError::from(cause), message)))
+                self.report(index, Err((BoxError::from(cause), message)))
                     .await;
+                return None;
             }
             publish_lost(
                 reaction,
