@@ -89,6 +89,15 @@ impl Unsent {
         self,
         name: &str,
     ) -> PublishMessageError<MemoryError, OutgoingMessage<'_, BytesMut>> {
+        self.returned_as(name, |error| error)
+    }
+
+    /// [`returned`](Self::returned) for a publisher that reports the bus's error as its own.
+    fn returned_as<Error>(
+        self,
+        name: &str,
+        map: impl FnOnce(MemoryError) -> Error,
+    ) -> PublishMessageError<Error, OutgoingMessage<'_, BytesMut>> {
         let Self {
             error,
             payload,
@@ -100,7 +109,7 @@ impl Unsent {
             .try_into_mut()
             .unwrap_or_else(|shared| BytesMut::from(shared.as_ref()));
         PublishMessageError::with_message(
-            error,
+            map(error),
             OutgoingMessage::with_payload(name, buffer).with_headers(headers),
         )
     }
