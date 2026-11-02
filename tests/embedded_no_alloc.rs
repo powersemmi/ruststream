@@ -432,3 +432,92 @@ fn a_mount_at_the_default_room_refuses_a_reply_of_four_hundred_bytes() -> Result
         Ok(())
     })
 }
+
+/// Leaves a continuation that waits on the clock before it counts itself.
+#[subscriber(LocalMemorySource::new("slow"))]
+async fn on_slow(job: &Job<'_>, ctx: &mut Context<'_, (), Counter>) -> HandlerOutcome {
+    let _ = job.0;
+    let finished = ctx.state().clone();
+    HandlerOutcome::ack().and_after(async move {
+        embassy_time::Timer::after(embassy_time::Duration::from_secs(5)).await;
+        finished.0.set(finished.0.get() + 1);
+    })
+}
+
+/// A job for the slow continuation.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "slow")]
+struct Slow(&'static [u8]);
+
+fn sequential_slow_app(bus: Bus) -> EmbeddedApp<impl Mounts<State = Counter>> {
+    EmbeddedApp::new()
+        .with_state(Counter::default())
+        .with_broker(bus, |b| b.include(on_slow))
+}
+
+fn sized_slow_app(bus: Bus) -> EmbeddedApp<impl Mounts<State = Counter>> {
+    EmbeddedApp::new()
+        .with_state(Counter::default())
+        .with_broker(bus, |b| b.include(on_slow).encode_capacity::<512>())
+}
+
+fn pooled_slow_app(bus: Bus) -> EmbeddedApp<impl Mounts<State = Counter>> {
+    EmbeddedApp::new()
+        .with_state(Counter::default())
+        .with_broker(bus, |b| b.include(on_slow).pool::<2>())
+}
+
+fn keyed_slow_app(bus: Bus) -> EmbeddedApp<impl Mounts<State = Counter>> {
+    EmbeddedApp::new()
+        .with_state(Counter::default())
+        .with_broker(bus, |b| b.include(on_slow).keyed::<2>())
+}
+
+/// Publishes one job to an app whose handler leaves a five-second continuation, moves the clock
+/// past it and returns how many continuations had finished by then.
+async fn continuations_finished<Plan: Mounts<State = Counter> + 'static>(
+    make: fn(Bus) -> EmbeddedApp<Plan>,
+) -> Result<u32, Box<dyn Error>> {
+    let finished = Counter::default();
+    let shared = finished.clone();
+    let tb = TestApp::with_state(make(Bus::new(&BUS)), move |_| shared).await?;
+    tb.broker::<Bus>().message(&Slow(b"job")).publish().await?;
+    tb.advance(Duration::from_secs(6)).await?;
+    let count = finished.0.get();
+    tb.shutdown().await?;
+    Ok(count)
+}
+
+#[test]
+fn a_continuation_on_one_lane_finishes_once_the_clock_reaches_it() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        assert_eq!(continuations_finished(sequential_slow_app).await?, 1);
+        Ok(())
+    })
+}
+
+#[test]
+fn a_continuation_on_a_sized_lane_finishes_once_the_clock_reaches_it() -> Result<(), Box<dyn Error>>
+{
+    block_on(async {
+        assert_eq!(continuations_finished(sized_slow_app).await?, 1);
+        Ok(())
+    })
+}
+
+#[test]
+fn a_continuation_on_a_pool_finishes_once_the_clock_reaches_it() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        assert_eq!(continuations_finished(pooled_slow_app).await?, 1);
+        Ok(())
+    })
+}
+
+#[test]
+fn a_continuation_on_keyed_lanes_finishes_once_the_clock_reaches_it() -> Result<(), Box<dyn Error>>
+{
+    block_on(async {
+        assert_eq!(continuations_finished(keyed_slow_app).await?, 1);
+        Ok(())
+    })
+}

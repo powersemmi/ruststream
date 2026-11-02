@@ -224,7 +224,7 @@ impl Lanes for OneLane {
     {
         // The lane's own continuation slot, beside its deliveries.
         let lane = LaneHost::new(host);
-        lane.around(route.run_sequential(signal, state, &lane, parked, Enc::room()))
+        lane.around(route.run_sequential(signal, state, &lane, lane.parks(parked), Enc::room()))
             .await;
     }
 }
@@ -519,14 +519,21 @@ async fn work<Message, Body, Cx, State, Signal, Host, Enc, const COUNT: usize>(
 {
     #[cfg(ruststream_alloc)]
     {
-        deliveries::<_, _, _, _, _, _, _, Enc, COUNT>(mailbox, free, shared, shared.host).await;
+        deliveries::<_, _, _, _, _, _, _, Enc, COUNT>(mailbox, free, shared, shared.host, || false)
+            .await;
     }
     // The worker's own continuation slot: a delivery whose continuation finds it busy waits here.
     #[cfg(not(ruststream_alloc))]
     {
         let lane = LaneHost::new(shared.host);
+        // A worker whose continuation still runs stays awake: the continuation's timer wakes the
+        // app task, and a parked worker would not be polled to drive it.
         lane.around(deliveries::<_, _, _, _, _, _, _, Enc, COUNT>(
-            mailbox, free, shared, &lane,
+            mailbox,
+            free,
+            shared,
+            &lane,
+            || lane.is_busy(),
         ))
         .await;
     }
@@ -538,6 +545,7 @@ async fn deliveries<Message, Body, Cx, State, Signal, Host, Lent, Enc, const COU
     free: Option<(&Channel<NoopRawMutex, usize, COUNT>, usize)>,
     shared: &Shared<'_, Body, Cx, State, Signal, Host>,
     host: &Lent,
+    holding: impl Fn() -> bool,
 ) where
     Enc: EncodeSize,
     Message: Settle,
@@ -549,7 +557,7 @@ async fn deliveries<Message, Body, Cx, State, Signal, Host, Lent, Enc, const COU
     // One encode buffer per worker, as the sequential loop keeps one.
     let mut room = Enc::room();
     let encode = room.buffer();
-    while let Some(msg) = mailbox.receive().await {
+    while let Some(msg) = mailbox.receive(&holding).await {
         let mut slot = DeliverySlot::new(msg);
         dispatch(
             shared.handler,

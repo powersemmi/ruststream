@@ -17,7 +17,9 @@ use core::time::Duration;
 use embassy_sync::waitqueue::WakerRegistration;
 use futures::future::join;
 use ruststream_core::diag::error;
-use ruststream_runtime::{Clock, Continuation, Detach, HostDetach, MaybeSend, MaybeSendSync};
+use ruststream_runtime::{
+    Clock, Continuation, Detach, HostDetach, MaybeSend, MaybeSendSync, Parks,
+};
 
 use crate::clock::EmbassyClock;
 
@@ -59,6 +61,12 @@ impl Slot {
             self.driver.borrow_mut().wake();
             Poll::Ready(())
         })
+    }
+
+    /// Whether a continuation was handed over and has not finished: its timers wake the app task,
+    /// so the lane that owns this slot must be resumed on that wake, idle or not.
+    pub(crate) fn is_busy(&self) -> bool {
+        self.busy.get()
     }
 
     /// Stops taking work: the driver ends once the continuation it holds has finished.
@@ -168,6 +176,19 @@ impl<'host, Inner> LaneHost<'host, Inner> {
         }
     }
 
+    /// Whether the lane's continuation is still running.
+    pub(crate) fn is_busy(&self) -> bool {
+        self.slot.is_busy()
+    }
+
+    /// `park` with its idleness withheld while the lane's continuation runs.
+    pub(crate) const fn parks<Park: Parks>(&self, park: Park) -> LaneParks<'_, Park> {
+        LaneParks {
+            park,
+            busy: &self.slot.busy,
+        }
+    }
+
     /// Runs `lane`, the lane's deliveries, beside its continuation slot's driver, and ends the
     /// driver when the lane has ended.
     pub(crate) async fn around(&self, lane: impl Future<Output = ()>) {
@@ -176,6 +197,20 @@ impl<'host, Inner> LaneHost<'host, Inner> {
             self.slot.close();
         };
         join(lane, self.slot.drive()).await;
+    }
+}
+
+/// Where a lane records that it is idle: a lane whose continuation still runs is never idle, so
+/// the join above keeps resuming it until the continuation's timer has fired.
+#[derive(Clone, Copy)]
+pub(crate) struct LaneParks<'lane, Park> {
+    park: Park,
+    busy: &'lane Cell<bool>,
+}
+
+impl<Park: Parks> Parks for LaneParks<'_, Park> {
+    fn park(self, parked: bool) {
+        self.park.park(parked && !self.busy.get());
     }
 }
 
