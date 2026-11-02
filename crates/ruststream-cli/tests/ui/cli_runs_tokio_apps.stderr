@@ -12,7 +12,7 @@ help: the trait `ruststream_runtime_tokio::app::app_trait::App` is implemented f
   | |     for RustStream<Layers, State, Pipeline, Phase>
   | |__________________________________________________^
 note: required by a bound in `run_main`
- --> src/lib.rs
+ --> src/entry.rs
   |
   | pub fn run_main<A, F>(build: F) -> ExitCode
   |        -------- required by a bound in this function
