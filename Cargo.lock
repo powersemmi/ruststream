@@ -2114,13 +2114,13 @@ dependencies = [
 name = "ruststream-runtime-compio"
 version = "0.8.0"
 dependencies = [
+ "allocation-counter",
  "compio",
  "core_affinity",
  "event-listener",
  "futures",
  "ruststream-core",
  "ruststream-runtime",
- "send_wrapper",
  "thiserror",
  "tracing",
 ]

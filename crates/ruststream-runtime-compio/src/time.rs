@@ -7,27 +7,29 @@
 
 use std::fmt;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use compio::time::sleep_until;
-use send_wrapper::SendWrapper;
-
+use crate::time::wheel::{Key, Status, Wheel};
 #[cfg(feature = "testing")]
 use crate::virtual_clock::{self, Armed, TimerKey};
+
+mod wheel;
 
 /// How far ahead a delay too long for an `Instant` waits instead.
 const FAR: Duration = Duration::from_hours(24 * 365 * 30);
 
 /// The timer of the app's clock: ready once its deadline has passed.
 ///
-/// The compio timer is made on the first poll, on the core that polls it, because compio's timers
-/// belong to the runtime of their core. A sleep that has not been polled holds only its deadline,
-/// so it is `Send` and may be handed to another core; one that has been polled stays on its core.
+/// A sleep is `Send` and may be polled by any core, at any point of its life: it holds its deadline
+/// and, once polled, a place in the timers of the core that polled it first. That core wakes it, so
+/// a sleep handed to another core after its first poll still ends, as long as the first core runs.
+/// The first poll must run on a compio runtime, as compio's own timers must.
 ///
-/// Cost: the first poll makes one box for compio's timer, which inserts one `BTreeMap` node, and
-/// each poll after that is a dynamic call. Only `retry_after`, `Buffered`, the teardown and a
-/// handler's own waits sleep, never the sequential delivery path.
+/// Cost: the first poll takes one lock and one share of a `BTreeMap` node, and every poll after
+/// that one lock. Only `retry_after`, `Buffered`, the teardown and a handler's own waits sleep,
+/// never the sequential delivery path.
 pub struct Sleep {
     deadline: Instant,
     state: State,
@@ -36,8 +38,8 @@ pub struct Sleep {
 enum State {
     /// Not polled yet.
     Fresh,
-    /// compio's timer, made on the core that polled the sleep first.
-    Wall(SendWrapper<Pin<Box<dyn Future<Output = ()>>>>),
+    /// A timer in the wheel of the core that polled the sleep first.
+    Wall(Arc<Wheel>, Key),
     /// A timer on the thread's virtual timeline.
     #[cfg(feature = "testing")]
     Virtual(TimerKey),
@@ -78,10 +80,19 @@ impl Future for Sleep {
                         }
                         None => {}
                     }
-                    let wall = Box::pin(sleep_until(this.deadline));
-                    this.state = State::Wall(SendWrapper::new(wall));
+                    let wheel = Wheel::current();
+                    let Some(key) = wheel.arm(this.deadline, cx.waker()) else {
+                        return Poll::Ready(());
+                    };
+                    this.state = State::Wall(wheel, key);
+                    return Poll::Pending;
                 }
-                State::Wall(timer) => return timer.as_mut().poll(cx),
+                State::Wall(wheel, key) => match wheel.poll(key, cx.waker()) {
+                    Status::Ready => return Poll::Ready(()),
+                    Status::Pending => return Poll::Pending,
+                    // The core that drove the timer is gone: it goes on where it is polled now.
+                    Status::Orphaned => this.state = State::Fresh,
+                },
                 #[cfg(feature = "testing")]
                 State::Virtual(key) => match virtual_clock::poll(key, cx) {
                     Some(poll) => return poll,
@@ -93,11 +104,13 @@ impl Future for Sleep {
     }
 }
 
-#[cfg(feature = "testing")]
 impl Drop for Sleep {
     fn drop(&mut self) {
-        if let State::Virtual(key) = &self.state {
-            virtual_clock::cancel(key);
+        match &self.state {
+            State::Wall(wheel, key) => wheel.cancel(key),
+            #[cfg(feature = "testing")]
+            State::Virtual(key) => virtual_clock::cancel(key),
+            State::Fresh => {}
         }
     }
 }
