@@ -201,6 +201,9 @@ pub struct Refusal {
 /// The message a refused publish handed back, as its owner reads it.
 #[derive(Debug)]
 struct Unsent {
+    // Where the message was sent, which a naming transform may have changed from the
+    // destination the mount site declared.
+    destination: String,
     payload: KeptPayload,
     headers: HeaderMap,
 }
@@ -226,8 +229,9 @@ impl Refusal {
         Self {
             error: error.into(),
             unsent: message.map(|message| {
-                let (_, payload, headers) = message.into_parts();
+                let (destination, payload, headers) = message.into_parts();
                 Box::new(Unsent {
+                    destination: destination.to_owned(),
                     payload: Form::kept(payload),
                     headers,
                 })
@@ -241,7 +245,13 @@ impl Refusal {
         let (error, unsent) = refusal.into_parts();
         Self {
             error: error.into(),
-            unsent: unsent.map(|(_, payload, headers)| Box::new(Unsent { payload, headers })),
+            unsent: unsent.map(|(destination, payload, headers)| {
+                Box::new(Unsent {
+                    destination,
+                    payload,
+                    headers,
+                })
+            }),
         }
     }
 
@@ -252,7 +262,10 @@ impl Refusal {
     /// message from `out` once the error reaches them. A refusal with no message leaves `out`
     /// empty.
     pub fn restore<Form: PayloadForm>(self, out: &mut Outgoing<'_>) -> BoxError {
-        if let Some(Unsent { payload, headers }) = self.unsent.map(|unsent| *unsent) {
+        if let Some(Unsent {
+            payload, headers, ..
+        }) = self.unsent.map(|unsent| *unsent)
+        {
             Form::restored(payload, out);
             *out.headers_mut() = headers;
         } else {
@@ -281,25 +294,27 @@ impl Refusal {
         Self {
             error,
             unsent: Some(Box::new(Unsent {
+                destination: out.name().to_owned(),
                 payload,
                 headers: mem::take(out.headers_mut()),
             })),
         }
     }
 
-    /// The refusal as a sink reports it: the cause wrapped by `wrap`, and the message that was
-    /// bound for `destination`.
+    /// The refusal as a sink reports it: the cause wrapped by `wrap`, and the message where it
+    /// was sent.
     #[must_use]
     pub(crate) fn into_sink<Error>(
         self,
-        destination: &str,
         wrap: impl FnOnce(BoxError) -> Error,
     ) -> SinkRefusal<Error> {
         let error = wrap(self.error);
         match self.unsent.map(|unsent| *unsent) {
-            Some(Unsent { payload, headers }) => {
-                SinkRefusal::with_message(error, destination, payload, headers)
-            }
+            Some(Unsent {
+                destination,
+                payload,
+                headers,
+            }) => SinkRefusal::with_message(error, &destination, payload, headers),
             None => SinkRefusal::new(error),
         }
     }
@@ -316,7 +331,8 @@ impl Refusal {
         self.error
     }
 
-    /// The cause and the message that was sent to `destination`.
+    /// The cause and the message where it was sent; `destination` names it when the publisher
+    /// returned no message.
     ///
     /// `lent` takes the bytes a lending publisher was shown, given where they were: the caller
     /// that owns them moves them out instead of copying. A refusal with no message (the client
@@ -328,12 +344,20 @@ impl Refusal {
         lent: impl FnOnce(usize, usize) -> Bytes,
     ) -> (BoxError, FailedMessage) {
         let message = match self.unsent.map(|unsent| *unsent) {
-            Some(Unsent { payload, headers }) => {
+            Some(Unsent {
+                destination,
+                payload,
+                headers,
+            }) => {
                 let payload = match payload {
                     KeptPayload::Owned(bytes) => bytes,
                     KeptPayload::Lent { addr, len } => lent(addr, len),
                 };
-                FailedMessage::new(destination, Some(payload), headers)
+                FailedMessage {
+                    destination,
+                    payload: Some(payload),
+                    headers,
+                }
             }
             None => FailedMessage::new(destination, None, HeaderMap::new()),
         };

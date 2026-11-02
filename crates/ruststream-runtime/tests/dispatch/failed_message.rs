@@ -17,7 +17,7 @@ use ruststream::runtime::RETRY_COUNT_HEADER;
 use ruststream::testing::TestApp;
 use ruststream::{Lend, OutgoingMessage, PairError, Take};
 use ruststream_core::{PublishMessageError, PublishOutcome};
-use ruststream_runtime::{Failed, Outgoing};
+use ruststream_runtime::{Failed, Outgoing, PublishContext};
 use serde::{Deserialize, Serialize};
 
 use super::error::{Job, Queue, RETRY_DELAY};
@@ -72,6 +72,7 @@ struct Log {
     headers: Vec<(String, String)>,
     payloads: Vec<Vec<u8>>,
     consumed: Vec<bool>,
+    destinations: Vec<String>,
 }
 
 fn record(log: &Mutex<Log>, failed: &Failed) {
@@ -301,4 +302,70 @@ async fn a_consumed_buffer_is_not_forwarded_as_an_empty_message() {
     tb.broker::<MemoryBroker>()
         .published::<Job>("dead")
         .assert_not_called();
+}
+
+/// A reply that leaves its destination to the mount site, so a transform may name another.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Outgoing)]
+struct OpenAnswer {
+    id: u32,
+}
+
+/// Sends each reply to the inbox of the request it answers.
+#[derive(Clone)]
+struct ToInbox;
+
+impl<C, Options> PublishTransform<ForReply<C>, Options> for ToInbox {
+    type Destination = Names;
+
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        _cx: &PublishContext<'_, C>,
+    ) {
+        out.set_name("inbox-7");
+    }
+}
+
+/// Records where each lost reply was going.
+#[subscriber("ask-inbox", reply("answers"))]
+async fn ask_inbox(
+    job: &Job,
+    ctx: &mut Context,
+    State(seen): State<Arc<Mutex<Log>>>,
+) -> OpenAnswer {
+    ctx.after(HandlerOutcome::ack())
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let destination = failed.message().destination().to_owned();
+                seen.lock().expect("log").destinations.push(destination);
+            }
+        });
+    OpenAnswer { id: job.id }
+}
+
+/// A reply a transform sent elsewhere reaches `.error` with the destination it was sent to, not
+/// the mount site's fallback.
+#[tokio::test(start_paused = true)]
+async fn a_refused_reply_reaches_error_with_the_destination_a_transform_named() {
+    let seen = Seen::default();
+    let startup = seen.clone();
+    let app = RustStream::new(AppInfo::new("failed", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(startup))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(ask_inbox)
+                .out_reply(StampingDownPublish)
+                .transform(ToInbox)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&Job { id: 7 })
+        .to("ask-inbox")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    assert_eq!(seen.log.lock().expect("log").destinations, ["inbox-7"]);
 }
