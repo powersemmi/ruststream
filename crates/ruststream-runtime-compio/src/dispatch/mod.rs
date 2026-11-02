@@ -15,13 +15,14 @@ mod workers;
 
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, ready};
 
 use bytes::BytesMut;
 use compio::runtime::{self, JoinHandle};
 use futures::Stream;
 use pin_project_lite::pin_project;
-use ruststream_core::{BuildContext, Subscriber};
+use ruststream_core::{BuildContext, ReadyHint, Subscriber};
 use ruststream_runtime::{
     Copying, Delivery, DispatchFailure, Handler, HeadersOnDemand, Lent, RetryCopies, RetryRoute,
     run_sequential,
@@ -86,7 +87,43 @@ pub(crate) struct Shared<Body, State, Cx, Retry> {
 /// compio has no budget of its own: a loop whose handler never waits would keep the core inside
 /// one poll, and the continuations, hooks and retry timers on that core would wait for the whole
 /// burst. The yield comes before the next poll of the stream, after the delivery was settled.
-pub(crate) struct Yielding<Inner>(pub(crate) Inner);
+///
+/// While a yield is owed the subscription's probe answers that something may be ready: the yield
+/// completes only in a poll of the stream, and a loop that skipped that poll on an idle probe
+/// would never be woken again, the wake of the stream having been spent on the delivery before.
+pub(crate) struct Yielding<Inner> {
+    inner: Inner,
+    owed: Arc<AtomicBool>,
+}
+
+impl<Inner> Yielding<Inner> {
+    pub(crate) fn new(inner: Inner) -> Self {
+        Self {
+            inner,
+            owed: Arc::default(),
+        }
+    }
+}
+
+/// The probe of a [`Yielding`] subscriber: the inner probe, or a yield still owed.
+struct Owing<Probe> {
+    probe: Probe,
+    owed: Arc<AtomicBool>,
+}
+
+impl<Probe: ReadyHint> ReadyHint for Owing<Probe> {
+    const GATED: bool = Probe::GATED;
+
+    #[inline]
+    fn may_be_ready(&self) -> bool {
+        self.owed.load(Ordering::Relaxed) || self.probe.may_be_ready()
+    }
+}
+
+/// Whether the runtime consults `probe` at all.
+const fn gated<Probe: ReadyHint>(_probe: &Probe) -> bool {
+    Probe::GATED
+}
 
 impl<Inner: Subscriber> Subscriber for Yielding<Inner> {
     type Message = Inner::Message;
@@ -96,17 +133,20 @@ impl<Inner: Subscriber> Subscriber for Yielding<Inner> {
         &mut self,
     ) -> impl Stream<Item = Result<Self::Message, Self::Error>> + ruststream_core::MaybeSend + '_
     {
+        // Only a gated probe reads the flag, so a subscriber without one never writes it.
+        let flag = gated(&self.inner.ready_hint()).then(|| Arc::clone(&self.owed));
         YieldingStream {
-            inner: self.0.stream(),
+            inner: self.inner.stream(),
             owed: None,
+            flag,
         }
     }
 
-    fn ready_hint(
-        &self,
-    ) -> impl ruststream_core::ReadyHint + ruststream_core::MaybeSendSync + 'static + use<Inner>
-    {
-        self.0.ready_hint()
+    fn ready_hint(&self) -> impl ReadyHint + ruststream_core::MaybeSendSync + 'static + use<Inner> {
+        Owing {
+            probe: self.inner.ready_hint(),
+            owed: Arc::clone(&self.owed),
+        }
     }
 }
 
@@ -115,6 +155,7 @@ pin_project! {
         #[pin]
         inner: Items,
         owed: Option<YieldNow>,
+        flag: Option<Arc<AtomicBool>>,
     }
 }
 
@@ -126,10 +167,16 @@ impl<Items: Stream> Stream for YieldingStream<Items> {
         if let Some(owed) = this.owed {
             ready!(Pin::new(owed).poll(cx));
             *this.owed = None;
+            if let Some(flag) = this.flag {
+                flag.store(false, Ordering::Relaxed);
+            }
         }
         let polled = this.inner.poll_next(cx);
         if matches!(polled, Poll::Ready(Some(_))) {
             *this.owed = Some(yield_now());
+            if let Some(flag) = this.flag {
+                flag.store(true, Ordering::Relaxed);
+            }
         }
         polled
     }
@@ -158,7 +205,7 @@ where
     St: Send + Sync + 'static,
 {
     runtime::spawn(run_sequential(
-        Yielding(subscriber),
+        Yielding::new(subscriber),
         handler,
         stop,
         name,
