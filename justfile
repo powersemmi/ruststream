@@ -176,6 +176,7 @@ test-no-alloc:
         echo "error: the framework's alloc feature is on in the local bus crate" >&2; exit 1; \
     fi
     cargo test --no-default-features --features embassy,memory,macros,testing --test embedded_no_alloc
+    cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_out
     cargo test --no-default-features --features embassy,memory,macros,testing,log --test embedded_diagnostics
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_name
     # The device service the embedded runtime page teaches, under the failing allocator.

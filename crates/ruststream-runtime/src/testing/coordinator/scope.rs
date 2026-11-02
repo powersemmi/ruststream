@@ -98,9 +98,12 @@ where
 {
     HARNESS
         .try_with(|scope| {
-            scope
-                .coordinator
-                .record_slot(slot, msg, RecordedOptions::capture(options))
+            // The harness's own copy of the message, made inside the handler's publish.
+            harness_section(|| {
+                scope
+                    .coordinator
+                    .record_slot(slot, msg, RecordedOptions::capture(options))
+            })
         })
         .unwrap_or(DuePublish::NONE)
 }

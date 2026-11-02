@@ -954,6 +954,12 @@ name = "embedded_no_alloc"
 path = "tests/embedded_no_alloc.rs"
 required-features = ["embassy", "memory", "macros", "testing"]
 
+# The `Out` slot of a handler of one message, on the build without `alloc`.
+[[test]]
+name = "embedded_no_alloc_out"
+path = "tests/embedded_no_alloc_out.rs"
+required-features = ["embassy", "memory", "macros", "testing", "postcard"]
+
 # A reply a naming transform sent past the fixed name room, on the build without `alloc`.
 [[test]]
 name = "embedded_no_alloc_name"
