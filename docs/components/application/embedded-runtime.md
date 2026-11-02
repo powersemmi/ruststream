@@ -133,7 +133,7 @@ With `retry_after`, the wait lasts the delay of the first batch's copies.
 Outcomes without an `.error`, one outcome per element, and copies that go out at once do not wait.
 
 An outcome for one element carries its own `.then` and `.error`.
-Each lane of the mount has one continuation slot, so the continuations of the elements run one after another, in the order of the batch.
+Each worker of the mount has one continuation slot, so the continuations of the elements run one after another, in the order of the batch.
 
 ### Out slots
 

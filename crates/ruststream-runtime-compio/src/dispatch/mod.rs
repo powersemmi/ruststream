@@ -3,10 +3,10 @@
 //!
 //! - Core 0 receives every subscription. A sequential mount runs [`spawn_dispatch`] there and
 //!   yields to the core after each delivery.
-//! - `workers(n)` and `threads(n)` hand deliveries to lanes on other cores ([`spawn_dispatch_workers`]) through
+//! - `workers(n)` and `threads(n)` hand deliveries to workers on other cores ([`spawn_dispatch_workers`]) through
 //!   the rings of `ruststream-runtime`: one queue push and a wake per delivery, no allocation
-//!   once the lanes have started. `by_key` hashes the key on core 0.
-//! - [`Layout`] places the mounts over the cores at startup and [`Fabric`] starts the lanes there.
+//!   once the workers have started. `by_key` hashes the key on core 0.
+//! - [`Layout`] places the mounts over the cores at startup and [`Fabric`] starts the workers there.
 
 mod batch;
 mod cores;
@@ -31,7 +31,7 @@ use crate::spawn::spawn;
 use crate::{Stop, Tasks};
 
 pub use batch::spawn_batch_dispatch;
-pub use cores::{Fabric, LaneGuard, Layout, LayoutError, Mount, StartLaneError};
+pub use cores::{Fabric, Layout, LayoutError, Mount, StartWorkerError, WorkerGuard};
 pub use workers::spawn_dispatch_workers;
 
 /// What one subscription's loop dispatches under.
@@ -73,7 +73,7 @@ impl<C, Retry: RetryCopies<C>> Lent<C> for Hosted<C, Retry> {
     }
 }
 
-/// What the loop shares with every lane it starts, behind one reference count taken once per lane.
+/// What the loop shares with every worker it starts, behind one reference count taken once per worker.
 pub(crate) struct Shared<Body, State, Cx, Retry> {
     pub(crate) handler: Arc<Body>,
     pub(crate) name: Arc<str>,
@@ -120,11 +120,11 @@ impl<Inner: Subscriber> Subscriber for Yielding<Inner> {
 /// tokio gives a task, and the bound of the embedded runner.
 const YIELD_AFTER: u32 = 128;
 
-/// A lane's count of deliveries since its last turn to the core.
+/// A worker's count of deliveries since its last turn to the core.
 ///
-/// A lane has no readiness probe to consult: the yield after the run is a plain [`yield_now`],
+/// A worker has no readiness probe to consult: the yield after the run is a plain [`yield_now`],
 /// which completes on its next poll, so taking it with nothing else waiting costs one turn per
-/// [`YIELD_AFTER`] deliveries and never strands the lane.
+/// [`YIELD_AFTER`] deliveries and never strands the worker.
 ///
 /// [`yield_now`]: crate::yield_now
 #[derive(Debug, Default)]
@@ -133,7 +133,7 @@ pub(crate) struct Budget {
 }
 
 impl Budget {
-    /// Counts one handled delivery; `true` when the run has used the budget and the lane owes the
+    /// Counts one handled delivery; `true` when the run has used the budget and the worker owes the
     /// core a turn.
     #[inline]
     pub(crate) const fn spend(&mut self) -> bool {
@@ -364,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lane_owes_the_core_a_turn_once_per_run_of_deliveries() {
+    fn a_worker_owes_the_core_a_turn_once_per_run_of_deliveries() {
         let mut budget = Budget::default();
         for _ in 1..YIELD_AFTER {
             assert!(!budget.spend(), "no turn inside the run");

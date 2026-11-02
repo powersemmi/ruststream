@@ -154,7 +154,7 @@ fn allocations_of(total: usize, workers: Workers, keyed: bool, timer_pending: bo
                     &fabric,
                     layout.cores(0),
                 )
-                .expect("the lanes start");
+                .expect("the workers start");
                 finished.await.expect("the last delivery is handled");
                 stop.cancel();
                 drop(looped);

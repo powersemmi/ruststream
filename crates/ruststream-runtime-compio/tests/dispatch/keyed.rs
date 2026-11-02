@@ -1,28 +1,28 @@
-//! `by_key`: core 0 hashes the key and hands the delivery to the lane the key maps to.
+//! `by_key`: core 0 hashes the key and hands the delivery to the worker the key maps to.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use futures::channel::mpsc;
-use ruststream_runtime::{Workers, lane_of};
+use ruststream_runtime::{Workers, key_index};
 use ruststream_runtime_compio::dispatch::{Layout, Mount, spawn_dispatch_workers};
 
 use crate::support::{Msg, channel, collect, failure, hosted, nonzero, on_cores, reporting};
 
-/// Two keys that map to different lanes of two.
-fn keys_on_different_lanes() -> (&'static str, &'static str) {
+/// Two keys that map to different workers of two.
+fn keys_on_different_workers() -> (&'static str, &'static str) {
     const KEYS: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "h"];
     let first = KEYS[0];
     let other = KEYS
         .into_iter()
-        .find(|key| lane_of(key.as_bytes(), 2) != lane_of(first.as_bytes(), 2))
-        .expect("a key on the other lane");
+        .find(|key| key_index(key.as_bytes(), 2) != key_index(first.as_bytes(), 2))
+        .expect("a key on the other worker");
     (first, other)
 }
 
 #[test]
 fn a_key_keeps_its_order_and_its_core_across_workers() {
-    let (first, other) = keys_on_different_lanes();
+    let (first, other) = keys_on_different_workers();
     let seen = on_cores(3, async |fabric, stop, tasks| {
         let workers = Workers::keyed(nonzero(2));
         let layout = Layout::plan(
@@ -47,7 +47,7 @@ fn a_key_keeps_its_order_and_its_core_across_workers() {
             &fabric,
             layout.cores(0),
         )
-        .expect("the lanes start");
+        .expect("the workers start");
         for position in 0..200 {
             let key = if position % 2 == 0 { first } else { other };
             feed.unbounded_send(Msg::numbered(position, Some(key)))

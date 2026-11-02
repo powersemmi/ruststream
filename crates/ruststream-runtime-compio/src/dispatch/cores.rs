@@ -1,5 +1,5 @@
 //! Which core each part of a subscription runs on: the placement table made at startup, and the
-//! mailbox through which core 0 starts a lane on another core.
+//! mailbox through which core 0 starts a worker on another core.
 
 use std::fmt::{self, Debug, Formatter, Write};
 use std::iter;
@@ -108,7 +108,7 @@ impl Layout {
         Ok(Self { mounts: placed })
     }
 
-    /// The cores of mount `index`, one per worker or lane.
+    /// The cores of mount `index`, one per worker or worker.
     ///
     /// # Panics
     ///
@@ -119,50 +119,52 @@ impl Layout {
     }
 }
 
-/// The core a lane was to start on is gone: its mailbox is closed.
+/// The core a worker was to start on is gone: its mailbox is closed.
 #[derive(Debug, Error)]
-#[error("subscription `{subscription}` could not start a lane on core {core}: the core has ended")]
-pub struct StartLaneError {
+#[error(
+    "subscription `{subscription}` could not start a worker on core {core}: the core has ended"
+)]
+pub struct StartWorkerError {
     subscription: String,
     core: usize,
 }
 
-/// What a core runs when its mailbox hands it a lane: it spawns the lane on the core's runtime.
+/// What a core runs when its mailbox hands it a worker: it spawns the worker on the core's runtime.
 type Job = Box<dyn FnOnce() -> JoinHandle<()> + Send>;
 
-/// A lane to start: the subscription it belongs to, which a failure of the lane names, and the job
+/// A worker to start: the subscription it belongs to, which a failure of the worker names, and the job
 /// that spawns it.
 struct Mail {
     subscription: Box<str>,
     job: Job,
 }
 
-/// The mailboxes of the cores: how core 0 starts a lane on another core.
+/// The mailboxes of the cores: how core 0 starts a worker on another core.
 ///
-/// A mailbox is made at startup and used only then, once per lane, so a job is boxed; a delivery
+/// A mailbox is made at startup and used only then, once per worker, so a job is boxed; a delivery
 /// never passes through it (deliveries travel the rings). A clone shares the mailboxes.
 #[derive(Clone)]
 pub struct Fabric {
     senders: Arc<[UnboundedSender<Mail>]>,
     inboxes: Arc<Mutex<Vec<Option<UnboundedReceiver<Mail>>>>>,
-    lanes: Arc<Lanes>,
+    workers: Arc<WorkerCount>,
 }
 
-/// How many lanes exist, on any core, and the wait for the last one to be gone.
+/// How many workers exist, on any core, and the wait for the last one to be gone.
 #[derive(Debug, Default)]
-struct Lanes {
+struct WorkerCount {
     alive: AtomicUsize,
     gone: Event,
     /// Set once the teardown has closed the mailboxes no core had started serving.
     unserved_closed: AtomicBool,
 }
 
-/// A lane's place in the count of live lanes, held by the lane for as long as it exists: it is
-/// released when the lane ends, is cancelled with its core, or is dropped unstarted.
+/// A worker's place in the count of live workers, held by the worker for as long as it exists: it is
+/// released when the worker ends, is cancelled with its core, or is dropped unstarted.
 #[derive(Debug)]
-pub struct LaneGuard(Arc<Lanes>);
+pub struct WorkerGuard(Arc<WorkerCount>);
 
-impl Drop for LaneGuard {
+impl Drop for WorkerGuard {
     fn drop(&mut self) {
         if self.0.alive.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.0.gone.notify(usize::MAX);
@@ -191,78 +193,78 @@ impl Fabric {
         Self {
             senders: senders.into(),
             inboxes: Arc::new(Mutex::new(inboxes)),
-            lanes: Arc::default(),
+            workers: Arc::default(),
         }
     }
 
-    /// A place in the count of live lanes, for a lane about to be started: the lane holds it for
+    /// A place in the count of live workers, for a worker about to be started: the worker holds it for
     /// its whole life.
     #[must_use]
-    pub fn lane_guard(&self) -> LaneGuard {
-        self.lanes.alive.fetch_add(1, Ordering::AcqRel);
-        LaneGuard(Arc::clone(&self.lanes))
+    pub fn worker_guard(&self) -> WorkerGuard {
+        self.workers.alive.fetch_add(1, Ordering::AcqRel);
+        WorkerGuard(Arc::clone(&self.workers))
     }
 
-    /// Resolves once no lane exists on any core: every handler a lane ran is finished or dropped.
+    /// Resolves once no worker exists on any core: every handler a worker ran is finished or dropped.
     ///
-    /// A lane cancelled at the shutdown cap is gone only when its own core has dropped it, which
+    /// A worker cancelled at the shutdown cap is gone only when its own core has dropped it, which
     /// this waits for. The mailbox of a core that has not started serving is closed first, with
-    /// the lanes mailed to it: called at teardown, after the loops that feed the lanes are over,
+    /// the workers mailed to it: called at teardown, after the loops that feed the workers are over,
     /// a core that never started would otherwise hold the wait for good.
-    pub async fn lanes_gone(&self) {
+    pub async fn workers_gone(&self) {
         self.close_unserved();
         loop {
-            if self.lanes.alive.load(Ordering::Acquire) == 0 {
+            if self.workers.alive.load(Ordering::Acquire) == 0 {
                 return;
             }
-            let listener = self.lanes.gone.listen();
-            if self.lanes.alive.load(Ordering::Acquire) == 0 {
+            let listener = self.workers.gone.listen();
+            if self.workers.alive.load(Ordering::Acquire) == 0 {
                 return;
             }
             listener.await;
         }
     }
 
-    /// Closes the mailboxes no core has taken, which drops the lanes mailed to them.
+    /// Closes the mailboxes no core has taken, which drops the workers mailed to them.
     fn close_unserved(&self) {
         if let Ok(mut inboxes) = self.inboxes.lock() {
-            self.lanes.unserved_closed.store(true, Ordering::Release);
+            self.workers.unserved_closed.store(true, Ordering::Release);
             inboxes.iter_mut().for_each(|inbox| drop(inbox.take()));
         }
     }
 
-    /// Asks core `core` to spawn what `job` returns, on the core's own runtime: the lane is built
+    /// Asks core `core` to spawn what `job` returns, on the core's own runtime: the worker is built
     /// there and never leaves it.
     ///
     /// # Errors
     ///
-    /// [`StartLaneError`] where the core's [`serve`](Self::serve) has ended, or never ran.
-    pub fn run_on<Lane>(
+    /// [`StartWorkerError`] where the core's [`serve`](Self::serve) has ended, or never ran.
+    pub fn run_on<Start>(
         &self,
         core: usize,
         subscription: &str,
-        job: Lane,
-    ) -> Result<(), StartLaneError>
+        job: Start,
+    ) -> Result<(), StartWorkerError>
     where
-        Lane: FnOnce() -> JoinHandle<()> + Send + 'static,
+        Start: FnOnce() -> JoinHandle<()> + Send + 'static,
     {
         self.senders[core]
             .unbounded_send(Mail {
                 subscription: subscription.into(),
                 job: Box::new(job),
             })
-            .map_err(|_| StartLaneError {
+            .map_err(|_| StartWorkerError {
                 subscription: subscription.to_owned(),
                 core,
             })
     }
 
-    /// Runs the lanes mounted on this core until `stop` is raised, then the ones already
-    /// mailed, and returns once every lane has ended. Each core calls it once, as its work.
+    /// Runs the workers mounted on this core until `stop` is raised, then the ones already
+    /// mailed, and returns once every worker has ended. Each core calls it once, as its work.
     ///
     /// # Cancel safety
     ///
-    /// Not cancel-safe: dropping it cancels the lanes this core runs.
+    /// Not cancel-safe: dropping it cancels the workers this core runs.
     pub async fn serve(&self, core: usize, stop: &Stop) {
         let taken = self
             .inboxes
@@ -270,21 +272,21 @@ impl Fabric {
             .ok()
             .and_then(|mut all| all[core].take());
         let Some(mut inbox) = taken else {
-            if self.lanes.unserved_closed.load(Ordering::Acquire) {
-                // The teardown got here first, and this core's lanes went with the mailbox.
+            if self.workers.unserved_closed.load(Ordering::Acquire) {
+                // The teardown got here first, and this core's workers went with the mailbox.
                 debug!(target: "ruststream::dispatch", core, "the mailbox was closed before the core served it");
                 return;
             }
             error!(target: "ruststream::dispatch", core, "the mailbox of the core is already served");
             return;
         };
-        let mut lanes = FuturesUnordered::new();
+        let mut workers = FuturesUnordered::new();
         let ended = |subscription: &str, outcome: Result<(), JoinError>| {
             if outcome.is_err() {
-                error!(target: "ruststream::dispatch", core, subscription, "a lane panicked");
-                // A lane that is gone leaves the subscription on fewer lanes than it asked for,
+                error!(target: "ruststream::dispatch", core, subscription, "a worker panicked");
+                // A worker that is gone leaves the subscription on fewer workers than it asked for,
                 // so the service fails like it does for a handler that panics.
-                stop.fail(subscription, &format!("a lane panicked on core {core}"));
+                stop.fail(subscription, &format!("a worker panicked on core {core}"));
             }
         };
         {
@@ -293,35 +295,35 @@ impl Fabric {
             loop {
                 select! {
                     mail = inbox.next() => match mail {
-                        Some(mail) => lanes.push(watch(mail)),
+                        Some(mail) => workers.push(watch(mail)),
                         None => break,
                     },
-                    (subscription, outcome) = lanes.select_next_some() => {
+                    (subscription, outcome) = workers.select_next_some() => {
                         ended(&subscription, outcome);
                     }
                     () = cancelled => break,
                 }
             }
         }
-        // What was mailed before the stop is still started: its ring is drained by it, and a lane
+        // What was mailed before the stop is still started: its ring is drained by it, and a worker
         // that never started would leave the loop feeding it waiting.
         inbox.close();
         while let Some(mail) = inbox.next().await {
-            lanes.push(watch(mail));
+            workers.push(watch(mail));
         }
-        while let Some((subscription, outcome)) = lanes.next().await {
+        while let Some((subscription, outcome)) = workers.next().await {
             ended(&subscription, outcome);
         }
     }
 }
 
-/// Starts the lane of `mail` on this core and resolves with how it ended, named by its
+/// Starts the worker of `mail` on this core and resolves with how it ended, named by its
 /// subscription.
 fn watch(mail: Mail) -> impl Future<Output = (Box<str>, Result<(), JoinError>)> {
     let Mail { subscription, job } = mail;
-    // Spawned now, not when the result is first polled: the lane's ring is waiting for it.
-    let lane = job();
-    async move { (subscription, lane.await) }
+    // Spawned now, not when the result is first polled: the worker's ring is waiting for it.
+    let worker = job();
+    async move { (subscription, worker.await) }
 }
 
 #[cfg(test)]

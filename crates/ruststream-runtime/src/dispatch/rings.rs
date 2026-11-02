@@ -4,11 +4,11 @@
 //! The subscription's loop ([`Feed`]) reads the stream. It spreads what it reads over the rings
 //! round-robin, skipping a full ring to the next one with room, and stops polling only when every
 //! ring is full; `by_key` hashes the key onto a fixed ring and waits on that one, so a key keeps
-//! its order. A thread's [`Lane`] drains its ring and parks only when it has found it empty for a
+//! its order. A thread's [`Drain`] drains its ring and parks only when it has found it empty for a
 //! few microseconds of spinning; the loop wakes it only when it is flagged parked, so under load a
 //! delivery costs no wake, and behind a handler lighter than the loop's read few do. A loop that
-//! waits on room is woken by the first ring to drain to half (or, waiting on a lane, by the
-//! lane's first free slot), not by every pop.
+//! waits on room is woken by the first ring to drain to half (or, waiting on a thread, by the
+//! thread's first free slot), not by every pop.
 //!
 //! Per delivery, under load: `rtrb`'s push and pop (a store each, the other side's index read only
 //! when the cached copy runs out; the ring is preallocated by [`open`], so nothing allocates), a
@@ -16,7 +16,7 @@
 //! reference count that tells the loop the thread is still there. The read-ahead is bounded by
 //! `n` times (1 + ring size): one delivery in hand per thread plus a full ring each.
 //!
-//! The runner starts the threads and runs [`Lane::work`] on each, and runs [`Feed::read`] in the
+//! The runner starts the threads and runs [`Drain::work`] on each, and runs [`Feed::read`] in the
 //! subscription's loop. A thread that never waits in its handler never yields to its own runtime:
 //! the runner's handler yields cooperatively after a run of deliveries, so a continuation, a hook
 //! or a retry timer on that runtime does not wait for a whole burst.
@@ -62,17 +62,17 @@ const SPIN: Duration = Duration::from_micros(10);
 /// The spins between two looks at an empty ring, at their longest.
 const LONGEST_GAP: u32 = 64;
 
-/// The lane a partition `key` belongs to among `lanes`: the same key always maps to the same one.
+/// The thread a partition `key` belongs to among `threads`: the same key always maps to the same one.
 ///
-/// `lanes` is not zero.
+/// `threads` is not zero.
 #[must_use]
-pub fn lane_of(key: &[u8], lanes: usize) -> usize {
+pub fn key_index(key: &[u8], threads: usize) -> usize {
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);
-    // The modulo keeps the value below `lanes`, which is a usize.
+    // The modulo keeps the value below `threads`, which is a usize.
     #[allow(clippy::cast_possible_truncation)]
     {
-        (hasher.finish() % lanes as u64) as usize
+        (hasher.finish() % threads as u64) as usize
     }
 }
 
@@ -104,7 +104,7 @@ struct Signals {
 /// Which ring the loop waits on for room.
 #[derive(Clone, Copy)]
 enum Which {
-    /// This one: the lane a key hashes to.
+    /// This one: the thread a key hashes to.
     One(usize),
     /// The first with room from here on, in turn.
     Next(usize),
@@ -237,21 +237,21 @@ impl Drop for Leaving<'_> {
 
 /// One thread's end of a ring: it drains the ring through a handler and ends once the loop has
 /// let go of the ring and it is empty.
-pub struct Lane<Item> {
+pub struct Drain<Item> {
     signals: Arc<Signals>,
     index: usize,
     ring: Consumer<Item>,
 }
 
-impl<Item> Debug for Lane<Item> {
+impl<Item> Debug for Drain<Item> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Lane")
+        f.debug_struct("Drain")
             .field("index", &self.index)
             .finish_non_exhaustive()
     }
 }
 
-impl<Item> Lane<Item> {
+impl<Item> Drain<Item> {
     /// Drains the ring through `handle`, parks when it has stayed empty for [`SPIN`], and returns
     /// once the loop has let go of the ring and it is empty.
     ///
@@ -334,7 +334,7 @@ fn arrives<Item>(ring: &Consumer<Item>) -> bool {
 }
 
 /// The loop's end of the rings: it reads a subscription's stream and hands each delivery to a
-/// thread's [`Lane`].
+/// thread's [`Drain`].
 pub struct Feed<Item> {
     rings: Vec<Producer<Item>>,
     signals: Arc<Signals>,
@@ -352,23 +352,23 @@ impl<Item> Debug for Feed<Item> {
 
 /// Opens `count` rings for a subscription, preallocated, and returns the loop's [`Feed`].
 ///
-/// `start` is handed each ring's [`Lane`] in ring order, to run on a thread of its own. `keyed`
+/// `start` is handed each ring's [`Drain`] in ring order, to run on a thread of its own. `keyed`
 /// hashes each delivery's partition key onto a fixed ring.
 ///
 /// # Errors
 ///
-/// The first error `start` returns, for a thread that could not start; the lanes handed so far
+/// The first error `start` returns, for a thread that could not start; the threads handed so far
 /// find their rings abandoned and end.
 pub fn open<Item, Failure>(
     count: usize,
     keyed: bool,
-    mut start: impl FnMut(Lane<Item>) -> Result<(), Failure>,
+    mut start: impl FnMut(Drain<Item>) -> Result<(), Failure>,
 ) -> Result<Feed<Item>, Failure> {
     let signals = Arc::new(Signals::new(count));
     let mut rings = Vec::with_capacity(count);
     for index in 0..count {
         let (producer, consumer) = RingBuffer::new(RING);
-        start(Lane {
+        start(Drain {
             signals: Arc::clone(&signals),
             index,
             ring: consumer,
@@ -406,14 +406,14 @@ impl<Item> Feed<Item> {
         let mut stream = pin!(stream);
         let mut cancelled = pin!(shutdown.cancelled());
         // The next ring in turn: the pool's round-robin, and where keyless deliveries of the
-        // lanes go.
+        // threads go.
         let mut turn = 0usize;
         loop {
             if shutdown.is_cancelled() {
                 break;
             }
             // A pool picks its ring before it reads, so nothing comes off the stream that no ring
-            // could take; a lane learns its ring from the delivery.
+            // could take; a thread learns its ring from the delivery.
             let picked = if self.keyed {
                 None
             } else {
@@ -436,11 +436,11 @@ impl<Item> Feed<Item> {
                 Turn::Delivery(Ok(item)) => {
                     let keyed = if picked.is_some() { None } else { key(&item) };
                     let index =
-                        picked.unwrap_or_else(|| keyed.map_or(turn, |key| lane_of(key, count)));
+                        picked.unwrap_or_else(|| keyed.map_or(turn, |key| key_index(key, count)));
                     if keyed.is_none() {
                         turn = (index + 1) % count;
                     }
-                    // A lane waits for its own ring, whatever else has room: a key stays in order.
+                    // A thread waits for its own ring, whatever else has room: a key stays in order.
                     // Shutdown does not cut the wait short, so the delivery in hand is handed over
                     // rather than dropped.
                     if picked.is_none()
@@ -559,7 +559,7 @@ mod tests {
         fn stream_ended(&self, _subscription: &str) {}
     }
 
-    /// Opens `count` rings and runs each lane's work on a thread of its own.
+    /// Opens `count` rings and runs each thread's work on a thread of its own.
     fn start<Item, Each, Handle>(
         count: usize,
         keyed: bool,
@@ -571,9 +571,9 @@ mod tests {
         Handle: AsyncFnMut(Item) + Send + 'static,
     {
         let mut threads = Vec::with_capacity(count);
-        let feed = open(count, keyed, |lane| {
+        let feed = open(count, keyed, |drain| {
             let handle = each();
-            threads.push(thread::spawn(move || block_on(lane.work(handle))));
+            threads.push(thread::spawn(move || block_on(drain.work(handle))));
             Ok::<_, Infallible>(())
         })
         .expect("the threads start");
@@ -632,7 +632,7 @@ mod tests {
     }
 
     /// A thread whose work ends early (a panic outside the handler's own catch) stops the loop
-    /// rather than leaving it waiting on a ring nobody drains, the lane's strict wait included.
+    /// rather than leaving it waiting on a ring nobody drains, the thread's strict wait included.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_thread_that_dies_stops_the_loop() {
         for keyed in [false, true] {
@@ -660,9 +660,9 @@ mod tests {
         }
     }
 
-    /// A key keeps one lane, so its deliveries reach the handler in the order they were read.
+    /// A key keeps one thread, so its deliveries reach the handler in the order they were read.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_key_keeps_its_order_on_its_lane() {
+    async fn a_key_keeps_its_order_on_its_thread() {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let (mut feed, threads) = start(3, true, || {
             let seen = Arc::clone(&seen);
@@ -686,29 +686,29 @@ mod tests {
     #[test]
     fn a_thread_that_cannot_start_refuses_the_rings() {
         let mut started = Vec::new();
-        let opened = open::<u32, _>(3, false, |lane| {
+        let opened = open::<u32, _>(3, false, |drain| {
             if started.len() == 1 {
-                return Err("no thread for lane 1");
+                return Err("no thread for ring 1");
             }
             started.push(thread::spawn(move || {
-                block_on(lane.work(async move |_item: u32| {}));
+                block_on(drain.work(async move |_item: u32| {}));
             }));
             Ok(())
         });
-        assert_eq!(opened.err(), Some("no thread for lane 1"));
+        assert_eq!(opened.err(), Some("no thread for ring 1"));
         for thread in started {
             thread.join().expect("the started thread ends");
         }
     }
 
-    /// The lane is below the lane count for any key, and one key always lands on one lane.
+    /// The thread is below the thread count for any key, and one key always lands on one thread.
     #[test]
-    fn a_lane_is_below_the_count_and_stable() {
-        for lanes in 1..=7 {
+    fn a_key_index_is_below_the_count_and_stable() {
+        for threads in 1..=7 {
             for key in [b"".as_slice(), b"a", b"orders-17", &[0xff; 64]] {
-                let lane = lane_of(key, lanes);
-                assert!(lane < lanes);
-                assert_eq!(lane, lane_of(key, lanes));
+                let drain = key_index(key, threads);
+                assert!(drain < threads);
+                assert_eq!(drain, key_index(key, threads));
             }
         }
     }

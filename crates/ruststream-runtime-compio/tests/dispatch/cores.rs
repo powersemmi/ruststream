@@ -51,7 +51,7 @@ fn the_stream_of_a_worker_mount_is_read_on_core_zero_only() {
             &fabric,
             layout.cores(0),
         )
-        .expect("the lanes start");
+        .expect("the workers start");
         for position in 0..30 {
             feed.unbounded_send(Msg::numbered(position, None))
                 .expect("the loop reads");
@@ -69,9 +69,9 @@ fn the_stream_of_a_worker_mount_is_read_on_core_zero_only() {
 }
 
 #[test]
-fn a_lane_mailed_to_a_core_that_never_started_does_not_hold_the_teardown() {
+fn a_worker_mailed_to_a_core_that_never_started_does_not_hold_the_teardown() {
     let fabric = Fabric::open(2);
-    let guard = fabric.lane_guard();
+    let guard = fabric.worker_guard();
     fabric
         .run_on(1, "orders", move || {
             let _held = guard;
@@ -79,12 +79,12 @@ fn a_lane_mailed_to_a_core_that_never_started_does_not_hold_the_teardown() {
         })
         .expect("the mailbox is open");
 
-    let mut gone = pin!(fabric.lanes_gone());
+    let mut gone = pin!(fabric.workers_gone());
 
     assert!(
         gone.as_mut()
             .poll(&mut Context::from_waker(Waker::noop()))
             .is_ready(),
-        "the teardown waits for a lane no core will ever start"
+        "the teardown waits for a worker no core will ever start"
     );
 }

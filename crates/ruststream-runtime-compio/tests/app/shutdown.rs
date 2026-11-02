@@ -171,7 +171,7 @@ fn a_handler_stuck_past_the_timeout_is_cancelled_at_the_cap() {
 }
 
 #[test]
-fn the_brokers_close_only_after_a_lane_on_another_core_is_gone() {
+fn the_brokers_close_only_after_a_worker_on_another_core_is_gone() {
     let log = Log::default();
     let (source, line) = wire("orders", &log);
     let poster = line.poster();
@@ -244,7 +244,7 @@ fn the_brokers_close_only_after_a_lane_on_another_core_is_gone() {
 }
 
 #[test]
-fn a_lane_stuck_on_another_core_is_cancelled_at_the_cap_and_the_run_ends() {
+fn a_worker_stuck_on_another_core_is_cancelled_at_the_cap_and_the_run_ends() {
     let log = Log::default();
     let (source, line) = wire("orders", &log);
     let poster = line.poster();

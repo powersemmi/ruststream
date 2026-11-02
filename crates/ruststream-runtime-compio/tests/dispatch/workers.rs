@@ -1,4 +1,4 @@
-//! `workers(n)` and `threads(n)`: deliveries handed from core 0 to lanes on other cores.
+//! `workers(n)` and `threads(n)`: deliveries handed from core 0 to workers on other cores.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -80,7 +80,7 @@ fn workers_three_have_three_deliveries_in_flight_at_once() {
             &fabric,
             layout.cores(0),
         )
-        .expect("the lanes start");
+        .expect("the workers start");
         for position in 0..3 {
             feed.unbounded_send(Msg::numbered(position, None))
                 .expect("the loop reads");
@@ -123,7 +123,7 @@ fn threads_two_on_three_cores_run_on_cores_one_and_two_only() {
             &fabric,
             layout.cores(0),
         )
-        .expect("the lanes start");
+        .expect("the workers start");
         for position in 0..40 {
             feed.unbounded_send(Msg::numbered(position, None))
                 .expect("the loop reads");
@@ -162,12 +162,12 @@ fn threads_two_on_three_cores_run_on_cores_one_and_two_only() {
 }
 
 #[test]
-fn a_lane_that_panics_fails_the_app_while_it_runs() {
+fn a_worker_that_panics_fails_the_app_while_it_runs() {
     let reason = on_cores(3, async |fabric, stop, _tasks| {
         fabric
             .run_on(1, "orders", || {
                 spawn(async {
-                    panic!("a lane outside the handler");
+                    panic!("a worker outside the handler");
                 })
             })
             .expect("core 1 serves");
@@ -176,7 +176,7 @@ fn a_lane_that_panics_fails_the_app_while_it_runs() {
         stop.failure()
     });
 
-    let reason = reason.expect("the lane's panic is the failure");
+    let reason = reason.expect("the worker's panic is the failure");
     assert!(
         reason.contains("orders") && reason.contains("core 1"),
         "got {reason}"

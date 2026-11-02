@@ -466,7 +466,7 @@ impl Drop for Release {
 }
 
 /// What a core other than core 0 does: serves its mailbox until the app stops, and gives the
-/// lanes it runs until `timeout` after that to finish.
+/// workers it runs until `timeout` after that to finish.
 async fn serve_core(fabric: &Fabric, core: usize, stop: &Stop, timeout: Option<Duration>) {
     let serving = pin!(fabric.serve(core, stop));
     let Some(timeout) = timeout else {
@@ -698,7 +698,7 @@ async fn unwind_started(
             "draining dispatch tasks failed during the startup unwind",
         );
     }
-    fabric.lanes_gone().await;
+    fabric.workers_gone().await;
     drain_continuations(continuations, shutdown_timeout).await;
     unwind_connected(brokers).await;
 }

@@ -7,7 +7,7 @@ use std::task::{Context, Poll};
 ///
 /// compio has no budget of its own and no `yield_now`: a subscription whose handler never waits
 /// would keep the core inside one poll, and the continuations, hooks and retry timers on that
-/// core would wait for the whole burst. A subscription's loop and each lane of `workers` or
+/// core would wait for the whole burst. A subscription's loop and each worker of `workers` or
 /// `threads` yield after a run of 128 deliveries.
 ///
 /// Cost: one `Pending` that wakes its own task, which compio's executor queues behind the tasks

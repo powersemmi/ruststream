@@ -147,11 +147,12 @@ impl<Item: Send + 'static> Threads<Item> {
                     // continuation, an `after(..)` hook or a `retry_after` timer on this runtime
                     // would wait for the whole burst. Each delivery takes one unit of the task's
                     // cooperative budget, and the thread yields once it runs out.
-                    thread.work(async move |item| {
-                        handle(item).await;
-                        consume_budget().await;
-                    })
-                    .await;
+                    thread
+                        .work(async move |item| {
+                            handle(item).await;
+                            consume_budget().await;
+                        })
+                        .await;
                     // The ring is drained; what its deliveries left behind (a continuation, a
                     // hook, a retry timer) finishes here before the thread and its runtime go.
                     own.close();

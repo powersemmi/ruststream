@@ -1,5 +1,5 @@
 //! Batch subscriptions: one `BatchSubscriber::batches` item per invocation on core 0, or whole
-//! batches handed to lanes on other cores.
+//! batches handed to workers on other cores.
 
 use std::future::poll_fn;
 use std::num::NonZeroUsize;
@@ -16,8 +16,8 @@ use ruststream_runtime::{
 use tracing::error;
 
 use super::slots::{Filled, Stock};
-use super::workers::{read_then_join, start_lanes};
-use super::{Fabric, Hosted, Shared, StartLaneError};
+use super::workers::{read_then_join, start_workers};
+use super::{Fabric, Hosted, Shared, StartWorkerError};
 use crate::spawn::spawn;
 use crate::{Stop, yield_now};
 
@@ -26,13 +26,13 @@ use crate::{Stop, yield_now};
 /// It runs until `stop` is raised or the stream terminates. The handler owns the batch's
 /// deliveries and settles each of them; the items are those of [`BatchSubscriber::batches`].
 ///
-/// With a non-sequential `workers` policy the batches are handed to lanes on `cores`, as whole
-/// batches through the rings, each lane with a decode and an encode buffer of its own; keyed lanes
+/// With a non-sequential `workers` policy the batches are handed to workers on `cores`, as whole
+/// batches through the rings, each worker with a decode and an encode buffer of its own; keyed workers
 /// do not apply at batch granularity, so a keyed policy spreads batches as the plain one does.
 ///
 /// # Errors
 ///
-/// [`StartLaneError`] when a core a lane was to start on has ended.
+/// [`StartWorkerError`] when a core a worker was to start on has ended.
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 pub fn spawn_batch_dispatch<S, H, C, St, Retry>(
     subscriber: S,
@@ -46,7 +46,7 @@ pub fn spawn_batch_dispatch<S, H, C, St, Retry>(
     batch_size: NonZeroUsize,
     fabric: &Fabric,
     cores: &[usize],
-) -> Result<JoinHandle<()>, StartLaneError>
+) -> Result<JoinHandle<()>, StartWorkerError>
 where
     Retry: RetryCopies<C> + 'static,
     S: BatchSubscriber + 'static,
@@ -70,14 +70,14 @@ where
         }));
     }
     let count = workers.count().get();
-    // A slot per place a batch can wait: a full ring and a batch in hand for each lane, and the
+    // A slot per place a batch can wait: a full ring and a batch in hand for each worker, and the
     // one being filled.
     let most = count * (RING + 1) + 1;
     let stock = Stock::<S::Batch>::new(most);
-    let lanes = Arc::clone(&shared);
+    let for_workers = Arc::clone(&shared);
     let returns = Arc::clone(&stock);
-    let (feed, crew) = start_lanes(fabric, &shared.name, &cores[..count], false, move || {
-        let shared = Arc::clone(&lanes);
+    let (feed, crew) = start_workers(fabric, &shared.name, &cores[..count], false, move || {
+        let shared = Arc::clone(&for_workers);
         let stock = Arc::clone(&returns);
         let mut taken = <H as BatchHandler<S::Batch, C, St>>::taken(batch_size);
         let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();

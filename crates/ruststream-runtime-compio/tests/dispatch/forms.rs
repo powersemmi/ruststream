@@ -176,7 +176,7 @@ const FORMS: [Workers; 5] = [
     Workers::threads_keyed(nonzero_two()),
 ];
 
-/// The forms of a batch loop; keyed lanes do not apply at batch granularity.
+/// The forms of a batch loop; keyed workers do not apply at batch granularity.
 const BATCH_FORMS: [Workers; 3] = [
     Workers::sequential(),
     Workers::pool(nonzero_two()),

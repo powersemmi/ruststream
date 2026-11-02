@@ -43,14 +43,14 @@ use crate::dispatch::{Fabric, LayoutError};
 use crate::{BoxError, BoxFuture, CoresError, LocalBoxFuture, Stop, Workers};
 
 /// What a mount is started with: the stop signal of the app, the mailboxes through which core 0
-/// starts lanes on the other cores, and the cores this mount was placed on.
+/// starts workers on the other cores, and the cores this mount was placed on.
 #[derive(Clone, Debug)]
 pub struct Launch {
     /// Raised to stop every loop of the app.
     pub stop: Stop,
     /// The mailboxes of the cores.
     pub fabric: Fabric,
-    /// The cores of this mount, one per worker or lane, as [`Layout`](crate::dispatch::Layout)
+    /// The cores of this mount, one per worker or worker, as [`Layout`](crate::dispatch::Layout)
     /// placed them.
     pub cores: Vec<usize>,
     /// The hooks of the harness the app runs under, where a test drives it: each mount records

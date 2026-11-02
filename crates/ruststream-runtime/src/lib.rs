@@ -172,7 +172,7 @@ pub use core_ctx::{Core, CoreGuard};
 pub use described::Described;
 #[cfg(feature = "std")]
 #[doc(hidden)]
-pub use dispatch::rings::{Feed, Lane, RING, lane_of, open as open_rings};
+pub use dispatch::rings::{Drain, Feed, RING, key_index, open as open_rings};
 #[doc(hidden)]
 pub use dispatch::{
     Delivery, EncodeRoom, Gated, HeadersAtOnce, HeadersOnDemand, LendHeaders, Lent, Parks,

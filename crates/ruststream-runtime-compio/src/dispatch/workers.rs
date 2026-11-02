@@ -1,7 +1,7 @@
-//! `workers(n)` and `threads(n)`: a subscription's deliveries handled by lanes on other cores,
+//! `workers(n)` and `threads(n)`: a subscription's deliveries handled by workers on other cores,
 //! each fed through one ring of `ruststream-runtime` (their hand-off is described there).
 //!
-//! This half starts the lanes, one job each through the [`Fabric`], and runs the subscription's
+//! This half starts the workers, one job each through the [`Fabric`], and runs the subscription's
 //! loop on core 0, reading the stream through the rings' feed.
 
 use std::fmt::Display;
@@ -19,35 +19,35 @@ use ruststream_runtime::{
 };
 use tracing::error;
 
-use super::{Budget, Fabric, Hosted, Shared, StartLaneError, spawn_dispatch};
+use super::{Budget, Fabric, Hosted, Shared, StartWorkerError, spawn_dispatch};
 use crate::spawn::spawn;
 use crate::{Stop, yield_now};
 
-/// The lanes a loop started, each reporting when its work has ended.
+/// The workers a loop started, each reporting when its work has ended.
 pub(super) struct Crew(Vec<oneshot::Receiver<()>>);
 
 impl Crew {
     pub(super) async fn join(&mut self) {
         for ended in &mut self.0 {
             if ended.await.is_err() {
-                error!(target: "ruststream::dispatch", "a lane ended abnormally");
+                error!(target: "ruststream::dispatch", "a worker ended abnormally");
             }
         }
     }
 }
 
-/// Opens the rings of a subscription and starts a lane on each of `cores`, running what `each`
+/// Opens the rings of a subscription and starts a worker on each of `cores`, running what `each`
 /// builds there. The loop's end of the rings and the crew come back for the caller to run.
 ///
 /// Everything that can fail happens here, before the subscription's loop runs: a core that is
 /// gone refuses the subscription.
-pub(super) fn start_lanes<Item, Each, Handle>(
+pub(super) fn start_workers<Item, Each, Handle>(
     fabric: &Fabric,
     subscription: &str,
     cores: &[usize],
     keyed: bool,
     each: Each,
-) -> Result<(Feed<Item>, Crew), StartLaneError>
+) -> Result<(Feed<Item>, Crew), StartWorkerError>
 where
     Item: Send + 'static,
     Each: Fn() -> Handle + Send + Clone + 'static,
@@ -55,26 +55,27 @@ where
 {
     let mut crew = Vec::with_capacity(cores.len());
     let mut places = cores.iter().copied();
-    let feed = open_rings(cores.len(), keyed, |lane| {
+    let feed = open_rings(cores.len(), keyed, |worker| {
         let core = places.next().unwrap_or(0);
         let (ended, reported) = oneshot::channel();
         crew.push(reported);
         let each = each.clone();
-        let alive = fabric.lane_guard();
+        let alive = fabric.worker_guard();
         fabric.run_on(core, subscription, move || {
             spawn(async move {
                 let _alive = alive;
                 // Built on the core and never leaving it.
                 let mut handle = each();
                 let mut budget = Budget::default();
-                lane.work(async move |item| {
-                    handle(item).await;
-                    // The core's turn for its continuations, hooks and timers, after a run.
-                    if budget.spend() {
-                        yield_now().await;
-                    }
-                })
-                .await;
+                worker
+                    .work(async move |item| {
+                        handle(item).await;
+                        // The core's turn for its continuations, hooks and timers, after a run.
+                        if budget.spend() {
+                            yield_now().await;
+                        }
+                    })
+                    .await;
                 let _ = ended.send(());
             })
         })
@@ -82,19 +83,19 @@ where
     Ok((feed, Crew(crew)))
 }
 
-/// Spawns a task that drives `subscriber` through `handler` with `workers.count()` lanes.
+/// Spawns a task that drives `subscriber` through `handler` with `workers.count()` workers.
 ///
-/// The lanes run over the shared cores for `workers(n)` and on cores of their own for
+/// The workers run over the shared cores for `workers(n)` and on cores of their own for
 /// `threads(n)`, `cores` naming where each runs (see [`Layout`](super::Layout)). With `by_key`
-/// the lane is picked by hashing the delivery's key on the loop's core.
+/// the worker is picked by hashing the delivery's key on the loop's core.
 ///
 /// A sequential policy is [`spawn_dispatch`]. On shutdown the stream stops being polled and the
-/// lanes drain what their rings hold; dropping the returned handle drops the rings, and the lanes
+/// workers drain what their rings hold; dropping the returned handle drops the rings, and the workers
 /// end once they have drained them.
 ///
 /// # Errors
 ///
-/// [`StartLaneError`] when a core a lane was to start on has ended.
+/// [`StartWorkerError`] when a core a worker was to start on has ended.
 // The parts are independent and each spawn site passes its own; bundling them into a struct
 // would hide that.
 #[allow(clippy::too_many_arguments)]
@@ -109,7 +110,7 @@ pub fn spawn_dispatch_workers<S, H, C, St, Retry>(
     workers: Workers,
     fabric: &Fabric,
     cores: &[usize],
-) -> Result<JoinHandle<()>, StartLaneError>
+) -> Result<JoinHandle<()>, StartWorkerError>
 where
     Retry: RetryCopies<C> + 'static,
     S: Subscriber + 'static,
@@ -131,15 +132,15 @@ where
         hosted,
         failure,
     });
-    let lanes = Arc::clone(&shared);
-    let (feed, crew) = start_lanes(
+    let for_workers = Arc::clone(&shared);
+    let (feed, crew) = start_workers(
         fabric,
         &shared.name,
         &cores[..workers.count().get()],
         workers.by_key(),
         move || {
-            let shared = Arc::clone(&lanes);
-            // One encode buffer per lane, for the reason the sequential loop has one.
+            let shared = Arc::clone(&for_workers);
+            // One encode buffer per worker, for the reason the sequential loop has one.
             let mut encode = BytesMut::new();
             async move |msg: S::Message| {
                 let mut slot = Slot::new(msg);
@@ -171,8 +172,8 @@ where
     }))
 }
 
-/// Lets go of the rings when the loop's task ends, however it ends, so a lane parked on an empty
-/// ring is woken to find the ring abandoned: a loop dropped by its handle takes its lanes down
+/// Lets go of the rings when the loop's task ends, however it ends, so a worker parked on an empty
+/// ring is woken to find the ring abandoned: a loop dropped by its handle takes its workers down
 /// with it, once they have drained what they hold.
 struct LetGo<Item>(Feed<Item>);
 
@@ -182,7 +183,7 @@ impl<Item> Drop for LetGo<Item> {
     }
 }
 
-/// Reads `stream` into the rings until it ends or `stop` fires, then lets the lanes drain what
+/// Reads `stream` into the rings until it ends or `stop` fires, then lets the workers drain what
 /// their rings hold and waits for them.
 pub(super) async fn read_then_join<Item, Items, Failure>(
     feed: Feed<Item>,

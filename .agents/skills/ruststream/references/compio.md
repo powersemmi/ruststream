@@ -10,8 +10,8 @@ without `cores` it runs on every core the process may use. Component pages:
 
 - One single-threaded compio runtime per core, `io_uring` on Linux. Core 0 runs on the calling
   thread, owns the brokers and receives every subscription.
-- A sequential subscription is handled on core 0. `workers(n)` spreads its lanes over the shared
-  cores; `threads(n)` holds `n` cores of its own from core 1 up. `by_key` keeps a key on one lane.
+- A sequential subscription is handled on core 0. `workers(n)` spreads its workers over the shared
+  cores; `threads(n)` holds `n` cores of its own from core 1 up. `by_key` keeps a key on one worker.
 - The `compio` feature turns `send` on: handler state and the future of a body are `Send`, as on
   tokio. A body holding an `Rc` across an `.await` fails at `include`.
 - `Ctx(core): Ctx<Core>` (`ruststream::runtime::compio::Core`) tells a handler which core it runs on; `Core::current()` does the same outside a handler signature.
