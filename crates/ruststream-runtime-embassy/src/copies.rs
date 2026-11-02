@@ -22,10 +22,10 @@ use core::task::{Poll, Waker};
 use core::time::Duration;
 
 use embassy_sync::blocking_mutex::Mutex;
-#[cfg(ruststream_alloc)]
-use ruststream_core::__alloc::bytes::Bytes;
 #[cfg(not(ruststream_alloc))]
 use futures::future::Either;
+#[cfg(ruststream_alloc)]
+use ruststream_core::__alloc::bytes::Bytes;
 #[cfg(ruststream_alloc)]
 use ruststream_core::MaybeSendSync;
 #[cfg(not(ruststream_alloc))]
