@@ -73,8 +73,8 @@ use super::bus::Bus;
 /// assert_eq!(celsius, Ok(vec![21]));
 /// ```
 ///
-/// Without the tokio runner the bus belongs to the task that holds it: it is shared by `Rc`, so
-/// it is not `Send`. Next to the tokio runner it is shared by `Arc` and its state sits behind a
+/// Without the tokio or the compio runner the bus belongs to the task that holds it: it is shared
+/// by `Rc`, so it is not `Send`. Next to either of them it is shared by `Arc` and its state sits behind a
 /// critical section, so it moves between threads.
 pub struct LocalMemoryBroker<const CAP: usize> {
     bus: Shared<Bus<CAP>>,

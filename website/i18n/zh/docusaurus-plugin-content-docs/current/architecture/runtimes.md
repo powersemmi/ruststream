@@ -1,16 +1,19 @@
 ---
 title: 运行时
-description: "服务只写一次，既可以在 tokio 上运行，也可以在 embassy 上运行：处理器相同，由应用选择运行器。"
+description: "服务只写一次，可以在 tokio、compio 或 embassy 上运行：处理器相同，由应用选择运行器。"
 ---
 
 # 运行时
 
-服务只写一次，处理器和挂载链都相同。它在两种运行器之一上运行：tokio 上的多线程运行器，或用于设备的 embassy 上的单任务运行器。
-门面 crate 为每种运行器提供一个 feature：`tokio` 和 `embassy`。两者可以叠加，同一次构建可以同时启用。
+服务只写一次，处理器和挂载链都相同。它在三种运行器之一上运行：tokio 上的多线程运行器、每个核心一个运行时的 compio 运行器，或用于设备的 embassy 上的单任务运行器。
+门面 crate 为每种运行器提供一个 feature：`tokio`、`compio` 和 `embassy`。它们可以叠加，`tokio` 可以与另外两个中的任何一个同时启用。
 
 ```toml
 # 服务器：tokio 在默认 feature 中。
 ruststream = "0.8"
+
+# 每个核心一个单线程运行时的服务器，内核支持时使用 io_uring。
+ruststream = { version = "0.8", default-features = false, features = ["compio", "memory", "macros", "json"] }
 
 # 有堆、没有操作系统的设备：只用 embassy，构建中不会出现 tokio。
 ruststream = { version = "0.8", default-features = false, features = ["embassy", "macros", "json"] }
@@ -25,20 +28,23 @@ ruststream = { version = "0.8", default-features = false, features = ["tokio"] }
 ## 由应用选择运行器
 
 `#[ruststream::app]` 构建 `RustStream`，即 tokio 运行器的应用。
+`#[ruststream::app(runtime = compio, cores = n)]` 构建 compio 运行器的 `RustStream`，它在 `n` 个核心上运行；不写 `cores` 时使用全部可用核心。
 `#[ruststream::app(runtime = embassy)]` 构建 `EmbeddedApp`，即 embassy 运行器的应用，也就是一个 embassy 任务。
 其他任何运行时名称都是编译错误。
-处理器本身不带运行时：`#[subscriber]` 在两种运行器下展开成相同的代码，运行器在挂载处自己声明对处理器的要求。
+处理器本身不带运行时：`#[subscriber]` 在各个运行器下展开成相同的代码，运行器在挂载处自己声明对处理器的要求。
 
 ## 各运行器对处理器的要求
 
 tokio 运行器在每个 `.await` 处可能把处理器移到另一个线程，所以处理器函数体的 future 必须是 `Send`。
 在 `.await` 之间持有 `Rc` 的函数体会在挂载它的 `include` 处报错，错误信息会指出这个处理器。
+compio 运行器会把一条投递交给另一个核心上的通道，所以要求相同：处理器状态和函数体的 future 都必须是 `Send`，在 `.await` 之间持有 `Rc` 的函数体会在 `include` 处报错。
+broker 的连接留在核心 0 上，所有订阅都在那里接收。
 embassy 运行器在同一个任务里轮询所有处理器，对 future 没有要求，所以同一个函数体可以在那里挂载。
 确认之后运行的后续任务（`and_after` 和上下文钩子）遵循同样的规则：启用 tokio 时它的 future 必须是 `Send`，只启用 embassy 时则没有这个要求，因此设备上的后续任务可以通过本地总线发布。
 
-## 两种运行器共用一套 trait
+## 各运行器共用一套 trait
 
-一个 broker 只实现一个 `Publisher`、一个 `Settle` 和一组能力 trait，两种运行器都使用它们。
+一个 broker 只实现一个 `Publisher`、一个 `Settle` 和一组能力 trait，所有运行器都使用它们。
 这些 trait 的 future 和父 trait 在启用 `tokio` 时要求 `Send`（以及 `Sync`），只启用 `embassy` 时没有这些要求，所以设备上的 broker 与服务器上的 broker 实现的是同样的 trait。
 broker 的选项步骤以 `PublishSink<Options = ..>` 为界，在任一运行器上都生效。
 同时启用两个 feature 的构建采用更严格的约束：持有 `Rc` 的 broker 类型无法与 tokio 一起编译，系列自带的本地内存总线在这种情况下改用线程安全的指针共享状态。
@@ -46,6 +52,9 @@ broker 的选项步骤以 `PublishSink<Options = ..>` 为界，在任一运行�
 ## 各运行器提供的能力
 
 tokio 运行器提供 `workers(n)`、`threads(n)`、信号处理、指标、OpenTelemetry 和 CLI。
+compio 运行器提供按核心放置的 `workers(n)`、`threads(n)` 和 `by_key`，告诉处理器自己在哪个核心上运行的 `Core`，信号处理、优雅关闭、健康状态，以及经由 `run_main` 的 `asyncapi gen`。
+核心 0 接收所有订阅，`threads(n)` 挂载从核心 1 起独占 `n` 个核心。
+组件页面[Compio 运行时](../components/application/compio-runtime.md)展示了一个服务及其放置方式。
 embassy 运行器提供固定数量的 worker（`.pool::<N>()` 和 `.keyed::<N>()`）、容量在挂载处声明的重试存储（`.retry_capacity::<CAP>()`），以及通过 `Control` 和 `Health` 进行的关闭与健康状态。
 某个运行器没有提供的条目，在另一个运行器上使用就是编译错误。
 
@@ -80,7 +89,7 @@ embassy 运行器有两种构建形态，一次构建只含其中一种。
 
 ## 测试
 
-`TestApp` 运行 tokio 应用，`testing::embedded::TestApp` 在主机上用 embassy-time 的模拟时钟运行嵌入式应用。
-启用 `testing` 时，两者同时位于门面中。
+`TestApp` 运行 tokio 应用，`testing::compio::TestApp` 在测试自己的 compio 运行时上用运行器的虚拟时钟运行 compio 应用，`testing::embedded::TestApp` 在主机上用 embassy-time 的模拟时钟运行嵌入式应用。
+启用 `testing` 和相应运行器的 feature 时，它们同时位于门面中。
 启用 `testing` 时，嵌入式应用注册的每个 broker 都实现进程内模式 `InProcess`。
 嵌入式的 `TestApp` 跟随构建的形态：没有 `alloc` 时它驱动固定形态，测试程序可以装上一个对框架的任何内存分配都报错的分配器。

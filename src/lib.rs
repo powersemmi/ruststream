@@ -66,13 +66,18 @@
 //! The core traits, the router, middleware and dispatch are always present. Every feature is
 //! additive and opt-in.
 //!
-//! The runtime runs the app's subscriptions. `tokio` and `embassy` provide one each, and they
-//! build together: the handlers are the same for both, and the app picks its runner. A function
-//! marked `#[ruststream::app]` runs on tokio, and `#[ruststream::app(runtime = embassy)]` runs on
-//! embassy.
+//! The runtime runs the app's subscriptions. `tokio`, `compio` and `embassy` provide one each: the
+//! handlers are the same for all of them, and the app picks its runner. `tokio` builds beside
+//! either of the others. A function marked `#[ruststream::app]` runs on tokio,
+//! `#[ruststream::app(runtime = compio, cores = n)]` runs on compio, and
+//! `#[ruststream::app(runtime = embassy)]` runs on embassy.
 //!
 //! * `tokio` (default): the [`runtime::RustStream`] application object on tokio's runtime, its
 //!   lifecycle and the generated entry point ([`runtime::cli`]).
+//! * `compio`: the compio runner, one single-threaded runtime per core with `io_uring` where the
+//!   kernel has it, core 0 receiving and `workers(n)` and `threads(n)` placed across the cores. A
+//!   handler is `Send`, as on tokio. Its items are in [`runtime::compio`], and the harness is
+//!   `testing::compio::TestApp`.
 //! * `embassy`: the embedded runner on embassy's executor and clock, for a device with no
 //!   operating system. Its items (the `EmbeddedApp` application object, its `Control` and
 //!   `Health`, the `EmbassyClock`) are re-exported in [`runtime`], where their reference is.

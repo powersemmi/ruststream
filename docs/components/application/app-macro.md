@@ -23,6 +23,7 @@ An error is printed to stderr and the process exits with a failure code.
 The attribute takes the runtime arguments of `#[tokio::main]`: `flavor = "current_thread"` and `worker_threads = n`.
 The default is a multi-threaded runtime with one worker per core.
 `#[ruststream::app(runtime = embassy)]` builds the [embedded app](../../architecture/runtimes.md) for a device instead: the function returns an `EmbeddedApp`, and the attribute emits an embassy task, `app::task`, that the board's `main` spawns.
+`#[ruststream::app(runtime = compio, cores = n)]` builds the [compio app](./compio-runtime.md): the builder has the shape of the tokio one, and the attribute emits a `main` that runs it on `n` cores, or on every available core without `cores`.
 A hand-written `main` calls [`run_main_on`](api:ruststream::runtime::cli::run_main_on) to choose the runtime as an [`AppRuntime`](api:ruststream::runtime::cli::AppRuntime) value.
 A test runs the same builder function on [`TestApp`](api:ruststream::testing::TestApp), as the example does.
 
