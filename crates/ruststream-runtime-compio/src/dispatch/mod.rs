@@ -120,6 +120,32 @@ impl<Inner: Subscriber> Subscriber for Yielding<Inner> {
 /// tokio gives a task, and the bound of the embedded runner.
 const YIELD_AFTER: u32 = 128;
 
+/// A lane's count of deliveries since its last turn to the core.
+///
+/// A lane has no readiness probe to consult: the yield after the run is a plain [`yield_now`],
+/// which completes on its next poll, so taking it with nothing else waiting costs one turn per
+/// [`YIELD_AFTER`] deliveries and never strands the lane.
+///
+/// [`yield_now`]: crate::yield_now
+#[derive(Debug, Default)]
+pub(crate) struct Budget {
+    spent: u32,
+}
+
+impl Budget {
+    /// Counts one handled delivery; `true` when the run has used the budget and the lane owes the
+    /// core a turn.
+    #[inline]
+    pub(crate) const fn spend(&mut self) -> bool {
+        self.spent += 1;
+        if self.spent < YIELD_AFTER {
+            return false;
+        }
+        self.spent = 0;
+        true
+    }
+}
+
 pin_project! {
     /// A stream that returns `Pending` once after [`YIELD_AFTER`] ready items in a row, having
     /// woken its task, when its probe says more may be waiting.
@@ -222,7 +248,7 @@ mod tests {
     use futures::stream::poll_fn;
     use ruststream_core::ReadyHint;
 
-    use super::{YIELD_AFTER, YieldingStream};
+    use super::{Budget, YIELD_AFTER, YieldingStream};
 
     /// A probe with a fixed answer.
     struct Probe(bool);
@@ -335,5 +361,18 @@ mod tests {
             3 * YIELD_AFTER,
             "every poll reached the stream"
         );
+    }
+
+    #[test]
+    fn a_lane_owes_the_core_a_turn_once_per_run_of_deliveries() {
+        let mut budget = Budget::default();
+        for _ in 1..YIELD_AFTER {
+            assert!(!budget.spend(), "no turn inside the run");
+        }
+        assert!(budget.spend(), "a turn once the run used the budget");
+        for _ in 1..YIELD_AFTER {
+            assert!(!budget.spend(), "the next run starts from zero");
+        }
+        assert!(budget.spend());
     }
 }

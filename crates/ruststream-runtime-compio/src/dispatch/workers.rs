@@ -19,7 +19,7 @@ use ruststream_runtime::{
 };
 use tracing::error;
 
-use super::{Fabric, Hosted, Shared, StartLaneError, spawn_dispatch};
+use super::{Budget, Fabric, Hosted, Shared, StartLaneError, spawn_dispatch};
 use crate::spawn::spawn;
 use crate::{Stop, yield_now};
 
@@ -64,10 +64,13 @@ where
             spawn(async move {
                 // Built on the core and never leaving it.
                 let mut handle = each();
+                let mut budget = Budget::default();
                 lane.work(async move |item| {
                     handle(item).await;
-                    // The core's turn for its continuations, hooks and timers.
-                    yield_now().await;
+                    // The core's turn for its continuations, hooks and timers, after a run.
+                    if budget.spend() {
+                        yield_now().await;
+                    }
                 })
                 .await;
                 let _ = ended.send(());

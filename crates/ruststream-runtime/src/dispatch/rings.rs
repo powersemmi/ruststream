@@ -18,8 +18,8 @@
 //!
 //! The runner starts the threads and runs [`Lane::work`] on each, and runs [`Feed::read`] in the
 //! subscription's loop. A thread that never waits in its handler never yields to its own runtime:
-//! the runner's handler yields cooperatively after each delivery, so a continuation, a hook or a
-//! retry timer on that runtime does not wait for a whole burst.
+//! the runner's handler yields cooperatively after a run of deliveries, so a continuation, a hook
+//! or a retry timer on that runtime does not wait for a whole burst.
 //!
 //! A producer is `Send` and not `Sync`: the loop's task owns every producer, and when a
 //! multi-threaded runtime moves that task to another thread, the scheduler's hand-off orders
