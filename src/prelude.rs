@@ -135,11 +135,13 @@ pub use crate::runtime::{EmbeddedApp, Mounts};
 // for the same kind of reason: it is what a header key and a destination name are made of, and
 // `Str::from_static` is how a constant one is written without paying for a copy.
 pub use crate::{
-    Broker, BytesMut, CallerName, EncodeBuf, FixedName, IncomingMessage, MessageHeaders,
-    MessageInfo, Name, NameTemplate, NoHeaders, OutSlot, OutgoingDestination, OwnedTransactions,
-    PayloadBuf, PublishPolicy, Publisher, RequestReply, Str, TransactionalPublisher, Unnamed,
-    WithHeaders,
+    Broker, CallerName, EncodeBuf, FixedName, IncomingMessage, MessageHeaders, MessageInfo, Name,
+    NameTemplate, NoHeaders, OutSlot, OutgoingDestination, OwnedTransactions, PayloadBuf,
+    PublishPolicy, Publisher, RequestReply, TransactionalPublisher, Unnamed, WithHeaders,
 };
+// The byte buffer and the string only the heap variant has.
+#[cfg(any(ruststream_alloc, feature = "testing"))]
+pub use crate::{BytesMut, Str};
 // The counting macro every `workers(..)` chain writes.
 pub use crate::nonzero;
 

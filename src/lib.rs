@@ -151,6 +151,7 @@
 // The embassy runtime runs on a device with no standard library; the tokio runner needs it.
 #![cfg_attr(not(feature = "tokio"), no_std)]
 
+#[cfg(any(ruststream_alloc, feature = "testing"))]
 extern crate alloc;
 
 pub mod prelude;
@@ -174,21 +175,24 @@ pub use inventory;
 /// Re-exported so that implementing either trait, or taking a published payload, does not also
 /// mean depending on `bytes` directly; a service that already does keeps its own import, which
 /// shadows this one.
-pub use bytes::BytesMut;
+#[cfg(any(ruststream_alloc, feature = "testing"))]
+pub use ruststream_core::__alloc::bytes::BytesMut;
 
 /// The shared byte buffer the message path hands around: a payload, a header value taken with
 /// [`HeaderMap::get_shared`].
 ///
 /// Re-exported for the same reason as [`BytesMut`]: reading a value out of a header map, or
 /// handing one to a publisher, should not also mean depending on `bytes` directly.
-pub use bytes::Bytes;
+#[cfg(any(ruststream_alloc, feature = "testing"))]
+pub use ruststream_core::__alloc::bytes::Bytes;
 
 /// The owned string of the message path: a destination name, a header key.
 ///
 /// A `Bytes` that is valid UTF-8, so it reads as a `str`, clones by reference count and can be
 /// taken as a slice of a buffer the broker already holds. `Str::from_static("orders")` costs
 /// nothing at all; `String` moves in without a copy; `&str` copies once.
-pub use bytes_utils::Str;
+#[cfg(any(ruststream_alloc, feature = "testing"))]
+pub use ruststream_core::__alloc::bytes_utils::Str;
 
 #[cfg(ruststream_alloc)]
 pub use ruststream_core::HeaderMap;
@@ -361,10 +365,21 @@ pub mod __private {
 
     // The standard names the macros emit, reached through the facade so that a `#![no_std]`
     // crate, which has neither `::std` nor these names in its prelude, can use the derives.
+    // The text a schema probe returns: owned with a heap, where a schema can be rendered, and
+    // borrowed without one, where every probe answers `None`.
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
+    pub type SchemaText = String;
+    #[cfg(not(any(ruststream_alloc, feature = "testing")))]
+    pub type SchemaText = &'static str;
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
     pub use alloc::boxed::Box;
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
     pub use alloc::format;
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
     pub use alloc::string::{String, ToString};
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
     pub use alloc::vec;
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
     pub use alloc::vec::Vec;
     // The batch outcome a batch body returns: a `Vec` with `alloc`, a fixed buffer without.
     pub use core::error::Error;
@@ -429,11 +444,11 @@ pub mod __private {
     /// The trait fallback: chosen for any `T` the inherent schema method does not cover.
     pub trait NoSchemaProbe {
         /// Returns `None` (no schema available for the probed type).
-        fn schema_json(&self) -> Option<String>;
+        fn schema_json(&self) -> Option<SchemaText>;
     }
 
     impl<T> NoSchemaProbe for Probe<T> {
-        fn schema_json(&self) -> Option<String> {
+        fn schema_json(&self) -> Option<SchemaText> {
             None
         }
     }
@@ -442,7 +457,7 @@ pub mod __private {
     impl<T: schemars::JsonSchema> Probe<T> {
         /// Returns the serialized JSON Schema for `T` (inherent; preferred over the trait fallback).
         #[must_use]
-        pub fn schema_json(&self) -> Option<String> {
+        pub fn schema_json(&self) -> Option<SchemaText> {
             schema_json::<T>()
         }
     }
@@ -511,11 +526,11 @@ pub mod __private {
     /// contract, or a contract type without a schema.
     pub trait NoHeadersSchemaProbe {
         /// Returns `None` (no headers schema available for the probed type).
-        fn headers_schema_json(&self) -> Option<String>;
+        fn headers_schema_json(&self) -> Option<SchemaText>;
     }
 
     impl<T> NoHeadersSchemaProbe for Probe<T> {
-        fn headers_schema_json(&self) -> Option<String> {
+        fn headers_schema_json(&self) -> Option<SchemaText> {
             None
         }
     }
@@ -551,7 +566,7 @@ pub mod __private {
         /// Returns the schema of `T`'s declared header contract (inherent; preferred over the
         /// trait fallback).
         #[must_use]
-        pub fn headers_schema_json(&self) -> Option<String> {
+        pub fn headers_schema_json(&self) -> Option<SchemaText> {
             <T::Contract as ContractSchema>::schema_json()
         }
     }

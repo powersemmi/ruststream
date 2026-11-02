@@ -1140,18 +1140,10 @@ ruststream-observability = { workspace = true, optional = true }
 ruststream-testing = { workspace = true, optional = true }
 ruststream-cli = { workspace = true, optional = true }
 ruststream-conformance = { workspace = true, optional = true }
-bytes.workspace = true
-bytes-utils.workspace = true
 ruststream-macros = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
-
-# The byte buffers follow the target: every target with an operating system has the standard
-# library, a bare-metal target (`target_os = "none"`, a microcontroller) has none.
-[target.'cfg(not(target_os = "none"))'.dependencies]
-bytes = { workspace = true, features = ["std"] }
-bytes-utils = { workspace = true, features = ["std"] }
 
 # One scenario per file; `benches/common` is the shared setup. `just bench` names them, so a new
 # file is added in two places and `scripts/bench_results.py` fails loudly when one of them is
@@ -1299,6 +1291,10 @@ embassy-time.workspace = true
 embassy-futures.workspace = true
 # The critical section the embedded benchmark locks through, a process-wide mutex on a host.
 critical-section = { version = "1.1", features = ["std"] }
+# The byte buffers the examples and tests write codecs against; the facade re-exports its own
+# through the contract, which brings them in the heap variant only.
+bytes = { workspace = true, features = ["std"] }
+bytes-utils = { workspace = true, features = ["std"] }
 # The sink the diagnostics test reads the records of a build without `alloc` from.
 log = { workspace = true, features = ["std"] }
 # Builds the examples' tests into one test binary (`tests/examples.rs`) instead of a test
