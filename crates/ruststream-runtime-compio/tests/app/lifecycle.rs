@@ -16,7 +16,7 @@ use std::thread;
 use futures::StreamExt;
 use ruststream_memory::local::LocalMemoryBroker;
 use ruststream_runtime::{AppInfo, Workers, subscriber};
-use ruststream_runtime_compio::{Cores, HealthProbe, RustStream, RustStreamError};
+use ruststream_runtime_compio::{Cores, HealthProbe, RustStream, RustStreamError, yield_now};
 
 use super::support::{Log, On, on_runtime, wire};
 
@@ -267,4 +267,30 @@ fn a_failing_after_startup_hook_unwinds_the_start() {
         ["opened orders", "closed orders"],
         "the loop that was started is stopped"
     );
+}
+
+#[test]
+fn dropping_the_handle_detaches_the_service_instead_of_stopping_it() {
+    let log = Log::default();
+    let (source, mut line) = wire("orders", &log);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(LocalMemoryBroker::<8>::new(), |b| {
+            b.include(subscriber(source, On(|_| ready(Ok(())))).build())
+        });
+
+    on_runtime(async {
+        drop(app.start().await.expect("the service starts"));
+        // Turns of the runtime in which a loop that the drop cancelled would end.
+        for _ in 0..8 {
+            yield_now().await;
+        }
+        line.post(1);
+        assert_eq!(
+            line.acked.next().await,
+            Some(1),
+            "the loop outlives the handle"
+        );
+    });
+
+    assert_eq!(log.entries(), ["opened orders", "closed orders"]);
 }

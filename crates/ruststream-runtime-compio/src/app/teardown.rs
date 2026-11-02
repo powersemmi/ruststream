@@ -6,6 +6,7 @@
 #![allow(clippy::future_not_send)]
 
 use std::any::Any;
+use std::mem;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,6 +22,31 @@ use super::{LifecycleHook, RustStreamError};
 
 /// A loop or a task of core 0 that the teardown joins: its outcome, or why it did not end.
 pub(crate) type Loop = JoinHandle<Result<(), JoinError>>;
+
+/// The loops of a started service, which keep running if the handle that holds them is dropped.
+///
+/// compio ends a task whose handle is dropped; a started service is detached instead, as the
+/// tokio runner's is, and only a shutdown ends it.
+pub(crate) struct Held(Vec<Loop>);
+
+impl Held {
+    pub(crate) fn new(loops: Vec<Loop>) -> Self {
+        Self(loops)
+    }
+
+    /// The loops, for the teardown to join.
+    fn take(&mut self) -> Vec<Loop> {
+        mem::take(&mut self.0)
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        for held in self.0.drain(..) {
+            held.detach();
+        }
+    }
+}
 
 /// A broker that finished [`Broker::connect`](crate::Broker::connect), held erased for the
 /// consuming teardown, paired with its optional label.
@@ -72,7 +98,7 @@ pub(crate) struct Teardown {
     /// The service's stop signal.
     pub(crate) stop: Stop,
     /// The dispatch loops, and the task serving core 0's mailbox, to join.
-    pub(crate) handles: Vec<Loop>,
+    pub(crate) handles: Held,
     /// The shutdown hooks the service registered.
     pub(crate) hooks: ShutdownHooks,
     /// The connected brokers, shut down last.
@@ -96,7 +122,7 @@ impl Teardown {
     pub(crate) async fn run(self) -> Result<(), RustStreamError> {
         let Self {
             stop,
-            handles,
+            mut handles,
             hooks,
             brokers,
             shutdown_timeout,
@@ -111,7 +137,7 @@ impl Teardown {
         // Every later step still runs when one fails: a dispatch loop that panicked or a broker
         // that refuses to close must not leave the other brokers open or skip `after_shutdown`.
         // The first failure is the one returned.
-        let drained = drain_handles(handles, shutdown_timeout).await;
+        let drained = drain_handles(handles.take(), shutdown_timeout).await;
 
         // Handlers have stopped, so no new post-settle continuations can be spawned: wait for
         // the in-flight ones, on every core, bounded by the same shutdown timeout. They are

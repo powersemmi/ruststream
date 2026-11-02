@@ -25,7 +25,7 @@ use crate::{
 use super::health::{Consuming, HealthProbe, HealthReport};
 use super::service::RegisteredBroker;
 use super::teardown::{
-    ConnectedEntry, Loop, ShutdownHooks, Teardown, drain_continuations, drain_handles,
+    ConnectedEntry, Held, Loop, ShutdownHooks, Teardown, drain_continuations, drain_handles,
 };
 use super::{HealthState, Launch, LifecycleHook, Mounted, RustStream, RustStreamError, StateInit};
 
@@ -277,7 +277,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         Ok(RunningApp {
             teardown: Teardown {
                 stop,
-                handles,
+                handles: Held::new(handles),
                 hooks: ShutdownHooks::bind(on_shutdown, after_shutdown, &state),
                 brokers: connected,
                 shutdown_timeout,
@@ -291,8 +291,8 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
 /// A started service, handed out by [`RustStream::start`].
 ///
 /// The handle owns the graceful teardown: dropping it without calling
-/// [`shutdown`](Self::shutdown) detaches the service (the tasks go with the runtime that holds
-/// them, nothing is drained), per the crate rule that destructors never block.
+/// [`shutdown`](Self::shutdown) detaches the service (the loops keep running on their cores,
+/// nothing is drained and no hook runs), per the crate rule that destructors never block.
 ///
 /// # Examples
 ///
