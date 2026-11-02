@@ -20,6 +20,7 @@ Each [`Failed`](api:ruststream::runtime::Failed) holds the cause, `error()`, and
 The message is the one that was sent: the headers and bytes the publish transforms and the publisher's base headers produced, so a reply arrives as it left.
 The bytes are `None` only when the publisher took the payload buffer and did not give it back.
 The message is a [`Serialized`](api:ruststream::Serialized) value, so another `Out` republishes it as it is, and nothing is decoded again.
+A message with no bytes cannot be republished: the publish returns [`MissingPayloadError`](api:ruststream::runtime::MissingPayloadError).
 It returns nothing, like [`and_after`](./and-after.md), and runs once the delivery is settled.
 Whatever the reaction needs (a client, state, a counter, an `Out` publisher) the handler moves into the closure.
 An `Out` publisher is cloned for that: declare it `Out<impl Publisher>` and move `alerts.clone()` in, then publish through it in the continuation as in the handler body.

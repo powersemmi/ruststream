@@ -253,3 +253,52 @@ async fn a_consumed_buffer_reaches_error_as_no_payload() {
 
     assert_eq!(seen.log.lock().expect("log").consumed, [true]);
 }
+
+/// Forwards a lost reply through another `Out` and records whether that publish was refused.
+#[subscriber("ask-forwarded", reply)]
+async fn ask_forwarded(
+    job: &Job,
+    ctx: &mut Context,
+    Out(dead): Out<impl Publisher>,
+    State(seen): State<Arc<Mutex<Log>>>,
+) -> Answer {
+    let dead = dead.clone();
+    ctx.after(HandlerOutcome::ack())
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                let message = failed.into_message();
+                let forwarded = dead.message(&message).to("dead").publish().await;
+                seen.lock().expect("log").consumed.push(forwarded.is_err());
+            }
+        });
+    Answer { id: job.id }
+}
+
+/// A message whose bytes the publisher consumed cannot be sent on: forwarding it is refused, and
+/// no empty message reaches the other destination.
+#[tokio::test(start_paused = true)]
+async fn a_consumed_buffer_is_not_forwarded_as_an_empty_message() {
+    let seen = Seen::default();
+    let startup = seen.clone();
+    let app = RustStream::new(AppInfo::new("failed", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(startup))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(ask_forwarded)
+                .out(DefaultSlot, Publish)
+                .out_reply(ConsumingDownPublish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&Job { id: 7 })
+        .to("ask-forwarded")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    assert_eq!(seen.log.lock().expect("log").consumed, [true]);
+    tb.broker::<MemoryBroker>()
+        .published::<Job>("dead")
+        .assert_not_called();
+}

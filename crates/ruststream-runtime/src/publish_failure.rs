@@ -9,7 +9,6 @@ use alloc::vec::{self, Vec};
 use bytes::{Bytes, BytesMut};
 #[cfg(not(feature = "tokio"))]
 use core::cell::RefCell;
-use core::convert::Infallible;
 use core::error::Error as StdError;
 use core::fmt;
 use core::iter::FusedIterator;
@@ -34,6 +33,13 @@ use crate::{
     OutgoingFor, PayloadForm, PublishMessageError, Serialized, SerializedWire, WireBytes,
 };
 use ruststream_core::KeptPayload;
+
+/// The error of sending on a [`FailedMessage`] whose bytes are gone: the publisher that refused
+/// it consumed the buffer and gave nothing back, so there is no message left to send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("the failed message has no bytes to send: its publisher consumed them")]
+#[non_exhaustive]
+pub struct MissingPayloadError;
 
 /// The error of a retry copy the embedded runner has nowhere to hold: every record of the mount's
 /// store is taken.
@@ -148,12 +154,16 @@ impl FailedMessage {
 }
 
 /// The message a runtime publish failed to send is a [`Serialized`] value: its bytes leave as they
-/// are, so another `Out` publishes it unchanged.
+/// are, so another `Out` publishes it unchanged. A message whose bytes the publisher consumed is
+/// refused with [`MissingPayloadError`] rather than sent empty.
 impl Serialized for FailedMessage {
-    type Error = Infallible;
+    type Error = MissingPayloadError;
 
-    fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
-        Ok(WireBytes::Own(self.payload.as_deref().unwrap_or_default()))
+    fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, MissingPayloadError> {
+        self.payload
+            .as_deref()
+            .map(WireBytes::Own)
+            .ok_or(MissingPayloadError)
     }
 }
 
