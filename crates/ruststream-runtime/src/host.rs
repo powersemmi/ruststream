@@ -28,8 +28,8 @@ use crate::redelivery::RetryRoute;
 use crate::redelivery::{NoRetry, RetryCopies};
 use crate::{HeaderSet, Settle};
 
-/// Hands a continuation the delivery holds to the host's lane. With `alloc` the host takes the box
-/// at once. Without it the call waits until the lane has room for the continuation, so the macro
+/// Hands a continuation the delivery holds to the host's worker. With `alloc` the host takes the box
+/// at once. Without it the call waits until the worker has room for the continuation, so the macro
 /// is used only where the caller can wait. Machinery.
 macro_rules! detach_continuation {
     ($host:expr, $work:expr) => {{
@@ -233,10 +233,10 @@ pub trait Detach: MaybeSendSync {
 
     /// Runs a continuation beside the delivery that left it, once the runner has room for it.
     ///
-    /// Without `alloc` a runner keeps one continuation per lane, in the room the continuation
+    /// Without `alloc` a runner keeps one continuation per worker, in the room the continuation
     /// already lives in ([`Continuation`]). While that slot is busy the call stays pending, so the
-    /// delivery waits and its lane takes no next one; the call is ready once the runner holds the
-    /// continuation, and the lane runs it beside its deliveries.
+    /// delivery waits and its worker takes no next one; the call is ready once the runner holds the
+    /// continuation, and the worker runs it beside its deliveries.
     #[cfg(not(ruststream_alloc))]
     fn detach(&self, work: Continuation) -> impl Future<Output = ()> + MaybeSend;
 
@@ -302,7 +302,7 @@ pub trait HostDetach {
     #[cfg(ruststream_alloc)]
     fn detach_boxed(&self, work: Continuation);
 
-    /// Hands a continuation to the runner's lane and waits until the lane holds it: see
+    /// Hands a continuation to the runner's worker and waits until the worker holds it: see
     /// [`Detach::detach`].
     #[cfg(not(ruststream_alloc))]
     fn detach_continuation(&self, work: Continuation) -> impl Future<Output = ()> + MaybeSend;

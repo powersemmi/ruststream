@@ -500,7 +500,7 @@ where
         Host: Detach,
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
-        // A batch subscriber declares no probe: its lane is polled on every wake, so the bound
+        // A batch subscriber declares no probe: its worker is polled on every wake, so the bound
         // always yields.
         let mut stream = pin!(Bounded::new(
             self.subscriber.batches(self.batch_size),

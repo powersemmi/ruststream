@@ -46,9 +46,9 @@ mod hooks;
 mod host;
 #[cfg(feature = "testing")]
 mod in_process;
-mod lanes;
 mod mailbox;
 mod mounts;
+mod workers;
 
 #[doc(hidden)]
 pub use app::AppBrokers;
@@ -64,12 +64,6 @@ pub use hooks::{HookList, Hooks, NoHooks};
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 pub use in_process::StartInProcess;
-pub use lanes::MountSteps;
-#[doc(hidden)]
-pub use lanes::{
-    DEFAULT_ENCODE_CAPACITY, EmbeddedPlan, Encode, EncodeSize, Keyed, Lanes, NoRoom, OneLane, Pool,
-    Room, SoFar,
-};
 #[doc(hidden)]
 #[cfg(ruststream_alloc)]
 pub use mounts::Held;
@@ -80,3 +74,9 @@ pub use mounts::Registration;
 #[doc(hidden)]
 pub use mounts::{BrokerMount, CloseAll, ConnectSlot, NoSlot, SharedConnection, StartMounts};
 pub use ruststream_runtime::MountChain;
+pub use workers::MountSteps;
+#[doc(hidden)]
+pub use workers::{
+    DEFAULT_ENCODE_CAPACITY, EmbeddedPlan, Encode, EncodeSize, Keyed, NoRoom, OneWorker, Pool,
+    Room, SoFar, WorkerSet,
+};

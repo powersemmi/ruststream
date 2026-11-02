@@ -247,9 +247,9 @@ async fn on_pooled(job: &Job<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-/// Takes jobs on keyed lanes.
-#[subscriber(LocalMemorySource::new("lanes"))]
-async fn on_lane(job: &Job<'_>) -> HandlerOutcome {
+/// Takes jobs on keyed workers.
+#[subscriber(LocalMemorySource::new("workers"))]
+async fn on_worker(job: &Job<'_>) -> HandlerOutcome {
     let _ = job.0;
     HandlerOutcome::ack()
 }
@@ -266,21 +266,21 @@ async fn on_batched(jobs: &[Job<'_>]) -> HandlerOutcome {
 #[outgoing(name = "pooled")]
 struct Pooled(&'static [u8]);
 
-/// A job for the lanes.
+/// A job for the workers.
 #[derive(Outgoing, Serialized)]
-#[outgoing(name = "lanes")]
-struct Laned(&'static [u8]);
+#[outgoing(name = "workers")]
+struct KeyedJob(&'static [u8]);
 
 /// A job for the batch.
 #[derive(Outgoing, Serialized)]
 #[outgoing(name = "batched")]
 struct Batched(&'static [u8]);
 
-fn lanes_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+fn workers_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_pooled)
             .pool::<2>()
-            .include(on_lane)
+            .include(on_worker)
             .keyed::<2>()
     })
 }
@@ -290,19 +290,22 @@ fn batch_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
 }
 
 #[test]
-fn a_pool_and_keyed_lanes_make_no_allocation_of_the_framework() -> Result<(), Box<dyn Error>> {
+fn a_pool_and_keyed_workers_make_no_allocation_of_the_framework() -> Result<(), Box<dyn Error>> {
     block_on(async {
-        let tb = TestApp::start(lanes_app(Bus::new(&BUS))).await?;
+        let tb = TestApp::start(workers_app(Bus::new(&BUS))).await?;
         for _ in 0..3 {
             tb.broker::<Bus>()
                 .message(&Pooled(b"job"))
                 .publish()
                 .await?;
-            tb.broker::<Bus>().message(&Laned(b"job")).publish().await?;
+            tb.broker::<Bus>()
+                .message(&KeyedJob(b"job"))
+                .publish()
+                .await?;
         }
 
         tb.broker::<Bus>().subscriber("pooled").assert_called(3);
-        tb.broker::<Bus>().subscriber("lanes").assert_called(3);
+        tb.broker::<Bus>().subscriber("workers").assert_called(3);
         tb.shutdown().await?;
         Ok(())
     })
@@ -491,7 +494,7 @@ async fn continuations_finished<Plan: Mounts<State = Counter> + 'static>(
 }
 
 #[test]
-fn a_continuation_on_one_lane_finishes_once_the_clock_reaches_it() -> Result<(), Box<dyn Error>> {
+fn a_continuation_on_one_worker_finishes_once_the_clock_reaches_it() -> Result<(), Box<dyn Error>> {
     block_on(async {
         assert_eq!(continuations_finished(sequential_slow_app).await?, 1);
         Ok(())
@@ -499,8 +502,8 @@ fn a_continuation_on_one_lane_finishes_once_the_clock_reaches_it() -> Result<(),
 }
 
 #[test]
-fn a_continuation_on_a_sized_lane_finishes_once_the_clock_reaches_it() -> Result<(), Box<dyn Error>>
-{
+fn a_continuation_on_a_sized_worker_finishes_once_the_clock_reaches_it()
+-> Result<(), Box<dyn Error>> {
     block_on(async {
         assert_eq!(continuations_finished(sized_slow_app).await?, 1);
         Ok(())
@@ -516,7 +519,7 @@ fn a_continuation_on_a_pool_finishes_once_the_clock_reaches_it() -> Result<(), B
 }
 
 #[test]
-fn a_continuation_on_keyed_lanes_finishes_once_the_clock_reaches_it() -> Result<(), Box<dyn Error>>
+fn a_continuation_on_keyed_workers_finishes_once_the_clock_reaches_it() -> Result<(), Box<dyn Error>>
 {
     block_on(async {
         assert_eq!(continuations_finished(keyed_slow_app).await?, 1);

@@ -48,7 +48,7 @@ async fn answer(_question: &Reading<'_>) -> Answer {
     Answer(b"yes")
 }
 
-// The reply publisher keeps its payload, so the lane's room past 256 bytes would go unused.
+// The reply publisher keeps its payload, so the worker's room past 256 bytes would go unused.
 fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| b.include(answer).out_reply(Keep).encode_capacity::<512>())
 }

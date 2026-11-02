@@ -321,7 +321,7 @@ fn refused_arrived(check: &str, what: &str) -> ! {
 /// `key_with` is where the broker says how a publish carries a key: it writes the key into the
 /// message's headers, or returns the [`Publisher::Options`] that carry it, or both. A transport
 /// with no key has nothing to report here and does not run this check; one that has keys and
-/// reports `None` fails it, because the runtime's keyed worker lanes (`workers(n, by_key)`) read
+/// reports `None` fails it, because the runtime's keyed workers (`workers(n, by_key)`) read
 /// the key from there.
 ///
 /// # Examples

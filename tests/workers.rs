@@ -1,4 +1,4 @@
-//! Integration tests for the workers(..) dispatch policies: concurrent pools and per-key lanes.
+//! Integration tests for the workers(..) dispatch policies: concurrent pools and per-key workers.
 //!
 //! The pool tests inject their deliveries together rather than one at a time: a pool only has
 //! something to spread over its workers while more than one delivery is in flight, and the
@@ -117,15 +117,15 @@ async fn a_router_chain_gives_a_batch_registration_its_pool() {
 #[subscriber("keyed", workers(4, by_key))]
 async fn keyed(order: &Order) -> HandlerOutcome {
     let _ = order.id;
-    // Encourage interleaving between lanes; each lane itself stays sequential.
+    // Encourage interleaving between workers; each worker itself stays sequential.
     task::yield_now().await;
     HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn by_key_lanes_preserve_per_key_order() {
+async fn by_key_workers_preserve_per_key_order() {
     const PER_KEY: u32 = 10;
-    // The key rides the headers (that is what picks the lane) and the id band says which key a
+    // The key rides the headers (that is what picks the worker) and the id band says which key a
     // delivery belongs to, so per-key order is readable off the recorded deliveries alone.
     const BETA_BAND: u32 = 100;
 
@@ -147,7 +147,7 @@ async fn by_key_lanes_preserve_per_key_order() {
         })
         .collect();
 
-    // Injected together, in publish order, so the lanes have a stream to keep in order.
+    // Injected together, in publish order, so the workers have a stream to keep in order.
     for result in join_all(inputs.iter().map(|(order, headers)| {
         tb.message(order)
             .with_headers(headers.clone())
@@ -211,9 +211,9 @@ async fn defer_pooled(order: &Order, ctx: &mut Context<'_, (), Arc<Seen>>) -> Ha
     }
 }
 
-/// The same over keyed lanes.
+/// The same over keyed workers.
 #[subscriber("deferred", workers(4, by_key))]
-async fn defer_laned(order: &Order, ctx: &mut Context<'_, (), Arc<Seen>>) -> HandlerOutcome {
+async fn defer_keyed(order: &Order, ctx: &mut Context<'_, (), Arc<Seen>>) -> HandlerOutcome {
     if ctx.state().first(order.id) {
         HandlerOutcome::retry_after(RETRY_DELAY)
     } else {
@@ -269,10 +269,10 @@ async fn a_pool_arms_its_redeliveries_on_the_harness_clock() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn keyed_lanes_arm_their_redeliveries_on_the_harness_clock() {
+async fn keyed_workers_arm_their_redeliveries_on_the_harness_clock() {
     let app = RustStream::new(AppInfo::new("deferred", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Seen::default())))
-        .with_broker(MemoryBroker::new(), |b| b.include(defer_laned));
+        .with_broker(MemoryBroker::new(), |b| b.include(defer_keyed));
     let tb = TestApp::start(app).await.expect("startup failed");
     deferred_redeliveries_follow_the_harness_clock(&tb).await;
 }

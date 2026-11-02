@@ -239,7 +239,7 @@ mod scenarios {
         *stand.outcome.borrow_mut() = Some(outcome);
     }
 
-    // As `run_two`: the pool's lanes make the app's future larger than the lint's limit.
+    // As `run_two`: the pool's workers make the app's future larger than the lint's limit.
     #[allow(clippy::large_futures)]
     #[embassy_executor::task]
     async fn run_ending(stand: &'static Stand) {

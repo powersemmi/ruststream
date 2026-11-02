@@ -180,25 +180,25 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
         .assert_called_once();
 }
 
-// A paired value that is NOT a publisher: a lane router in the shape of a broker's
+// A paired value that is NOT a publisher: a route router in the shape of a broker's
 // per-partition producer cache. The capability is broker-defined; the core knows nothing
 // about it.
 #[derive(Clone)]
-struct LaneRouter {
+struct ShardRouter {
     publisher: MemoryPublisher,
 }
 
-/// The broker-defined capability: pick a destination lane for a shard.
-trait ShardLanes {
-    fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str);
+/// The broker-defined capability: pick a destination route for a shard.
+trait ShardRoutes {
+    fn route(&self, shard: u64) -> (&MemoryPublisher, &'static str);
 }
 
-impl ShardLanes for LaneRouter {
-    fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
+impl ShardRoutes for ShardRouter {
+    fn route(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
         let dest = if shard.is_multiple_of(2) {
-            "slots.lane.even"
+            "slots.route.even"
         } else {
-            "slots.lane.odd"
+            "slots.route.odd"
         };
         (&self.publisher, dest)
     }
@@ -208,47 +208,47 @@ impl ShardLanes for LaneRouter {
 // transparent `Deref`: this is how a broker crate extends the slot vocabulary with its own
 // traits. A body holds the entry, so without this impl the capability is reachable by autoderef
 // for a method call but never satisfies a trait bound.
-impl<M, W: ShardLanes, E, Pipe, Body> ShardLanes for Slot<M, W, E, Pipe, Body> {
-    fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
-        (**self).lane(shard)
+impl<M, W: ShardRoutes, E, Pipe, Body> ShardRoutes for Slot<M, W, E, Pipe, Body> {
+    fn route(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
+        (**self).route(shard)
     }
 }
 
 /// The bound the graft buys: a helper generic over the capability, not over the concrete live
 /// type, takes the entry a body holds.
-async fn sent<L: ShardLanes + Sync>(lanes: &L, event: &Event) -> bool {
-    let (publisher, dest) = lanes.lane(event.id);
+async fn sent<L: ShardRoutes + Sync>(routes: &L, event: &Event) -> bool {
+    let (publisher, dest) = routes.route(event.id);
     publisher.message(event).to(dest).publish().await.is_ok()
 }
 
 /// The policy half: pure declaration pairing into the router, like a broker's
 /// `per_partition()` policy pairs into its producer cache. No `Clone`: resolution consumes it.
-struct LanePolicy;
+struct ShardPolicy;
 
-impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
-    type Live = LaneRouter;
+impl PublishPolicy<ConnectedMemoryBroker> for ShardPolicy {
+    type Live = ShardRouter;
 
     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
-        Ok(LaneRouter {
+        Ok(ShardRouter {
             publisher: Publish.pair(connected).await?,
         })
     }
 }
 
 /// The body leaves the wired live value generic and bounds it with the broker-defined
-/// capability, exactly as the attribute's `Out<impl ShardLanes>` does.
+/// capability, exactly as the attribute's `Out<impl ShardRoutes>` does.
 struct RouteShard;
 
-struct Lanes;
+struct Routes;
 
-impl OutSlot for Lanes {
-    const NAME: &'static str = "Lanes";
+impl OutSlot for Routes {
+    const NAME: &'static str = "Routes";
     type Destination = Reads;
 }
 
 impl<L> Handle<Event, (), Outs<(L,)>> for RouteShard
 where
-    L: OutEntry<Lanes, Wire: ShardLanes>,
+    L: OutEntry<Routes, Wire: ShardRoutes>,
 {
     async fn handle(
         &self,
@@ -256,7 +256,7 @@ where
         outs: &Outs<(L,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
-        if sent(outs.get(Lanes), event).await {
+        if sent(outs.get(Routes), event).await {
             Ok(())
         } else {
             Err(HandlerOutcome::retry())
@@ -269,11 +269,11 @@ where
 /// publish log, the documented boundary.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
-    let app = RustStream::new(AppInfo::new("slots-lanes", "0.1.0")).with_broker(
+    let app = RustStream::new(AppInfo::new("slots-routes", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("slots.sharded", RouteShard).build())
-                .out(Lanes, LanePolicy)
+                .out(Routes, ShardPolicy)
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -287,13 +287,13 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
     }
 
     tb.broker::<MemoryBroker>()
-        .published::<Event>("slots.lane.even")
+        .published::<Event>("slots.route.even")
         .assert_called_once()
         .with(&Event { id: 2 });
     tb.broker::<MemoryBroker>()
-        .published::<Event>("slots.lane.odd")
+        .published::<Event>("slots.route.odd")
         .assert_called_once()
         .with(&Event { id: 3 });
     // The live value's publishes are not attributed to the slot: the capture boundary.
-    tb.out::<Lanes>().assert_not_called();
+    tb.out::<Routes>().assert_not_called();
 }

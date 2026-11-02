@@ -15,7 +15,7 @@ use crate::{Broker, Connected, PublishPolicy, Publisher};
 
 /// The room a registration's reply can carry on broker `B`: unbounded where the reply publisher
 /// only reads the bytes (`Lend`), and the room of the codec's own buffer where it keeps them
-/// (`Take`). A mount that asks its lanes for more room reads the type off here, so the error
+/// (`Take`). A mount that asks its workers for more room reads the type off here, so the error
 /// names both numbers. Machinery; never named directly.
 #[doc(hidden)]
 pub trait ReplyRoom<B: Broker> {

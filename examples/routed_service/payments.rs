@@ -1,4 +1,4 @@
-//! Payment handlers: charging a payment across keyed worker lanes, and settling a batch of cleared
+//! Payment handlers: charging a payment across keyed workers, and settling a batch of cleared
 //! payments in one transaction.
 
 use ruststream::runtime::HandlerOutcome;

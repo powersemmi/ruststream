@@ -70,7 +70,7 @@
 //!
 //! The slot's wired value is the policy's live form itself, so a body needing a broker-defined
 //! capability bounds `Wire` with the broker's own trait (or pins the entry to the concrete
-//! [`Slot`], `Outs<(Slot<Lanes, LaneRouter, JsonCodec>,)>`) and calls it directly through the
+//! [`Slot`], `Outs<(Slot<Routes, ShardRouter, JsonCodec>,)>`) and calls it directly through the
 //! entry's transparent `Deref`. Everything is monomorphized: the arena is built once at startup,
 //! and a delivery only ever passes a reference to it.
 //!

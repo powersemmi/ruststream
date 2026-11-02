@@ -90,7 +90,7 @@ mod by_key {
     use super::{Order, charge};
 
     // --8<-- [start:workers_by_key]
-    /// Four lanes by the message's partition key: one customer's orders are charged in order,
+    /// Four workers by the message's partition key: one customer's orders are charged in order,
     /// different customers' at once.
     #[subscriber("orders", workers(4, by_key))]
     async fn bill(order: &Order) -> HandlerOutcome {

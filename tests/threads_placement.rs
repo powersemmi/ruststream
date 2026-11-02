@@ -179,7 +179,7 @@ struct Placed {
 
 #[subscriber("keyed", threads(3, by_key), reply("placed"))]
 async fn placed(job: &Order) -> Placed {
-    // Enough of a pause for the lanes to interleave.
+    // Enough of a pause for the threads to interleave.
     task::yield_now().await;
     Placed {
         id: job.id,
@@ -250,7 +250,7 @@ async fn unkeyed(job: &Order) -> Placed {
     }
 }
 
-/// A delivery without a key belongs to no lane, so the lanes take such deliveries in turn.
+/// A delivery without a key belongs to no thread, so the threads take such deliveries in turn.
 #[test]
 fn keyless_deliveries_of_a_keyed_subscription_take_the_threads_in_turn() {
     const JOBS: u32 = 8;
@@ -280,7 +280,7 @@ fn keyless_deliveries_of_a_keyed_subscription_take_the_threads_in_turn() {
     assert_eq!(
         threads.len(),
         2,
-        "keyless deliveries piled on one lane: {seen:?}"
+        "keyless deliveries piled on one thread: {seen:?}"
     );
     assert!(
         by_id

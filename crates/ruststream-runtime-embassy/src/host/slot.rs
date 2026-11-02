@@ -1,9 +1,9 @@
-//! The host without `alloc`: each lane keeps one continuation in a slot of its own.
+//! The host without `alloc`: each worker keeps one continuation in a slot of its own.
 //!
 //! A delivery hands its continuation over through [`Detach::detach`]; the call is pending while
-//! the lane's slot is busy (the delivery waits and its lane takes no next one) and ready once the
-//! slot holds the continuation. The lane's driver polls the continuation in its own frame, beside
-//! the lane's deliveries, with the app task's waker, as embassy's timer queue requires.
+//! the worker's slot is busy (the delivery waits and its worker takes no next one) and ready once the
+//! slot holds the continuation. The worker's driver polls the continuation in its own frame, beside
+//! the worker's deliveries, with the app task's waker, as embassy's timer queue requires.
 
 // The slot holds work that is not `Send`, and the driver runs it on the app's one task.
 #![allow(clippy::future_not_send)]
@@ -64,7 +64,7 @@ impl Slot {
     }
 
     /// Whether a continuation was handed over and has not finished: its timers wake the app task,
-    /// so the lane that owns this slot must be resumed on that wake, idle or not.
+    /// so the worker that owns this slot must be resumed on that wake, idle or not.
     pub(crate) fn is_busy(&self) -> bool {
         self.busy.get()
     }
@@ -161,14 +161,14 @@ impl AppHost {
     }
 }
 
-/// The host one lane lends its deliveries: the continuation slot of the lane, in front of the
-/// host the lane runs on.
-pub(crate) struct LaneHost<'host, Inner> {
+/// The host one worker lends its deliveries: the continuation slot of the worker, in front of the
+/// host the worker runs on.
+pub(crate) struct WorkerHost<'host, Inner> {
     inner: &'host Inner,
     slot: Slot,
 }
 
-impl<'host, Inner> LaneHost<'host, Inner> {
+impl<'host, Inner> WorkerHost<'host, Inner> {
     pub(crate) const fn new(inner: &'host Inner) -> Self {
         Self {
             inner,
@@ -176,45 +176,45 @@ impl<'host, Inner> LaneHost<'host, Inner> {
         }
     }
 
-    /// Whether the lane's continuation is still running.
+    /// Whether the worker's continuation is still running.
     pub(crate) fn is_busy(&self) -> bool {
         self.slot.is_busy()
     }
 
-    /// `park` with its idleness withheld while the lane's continuation runs.
-    pub(crate) const fn parks<Park: Parks>(&self, park: Park) -> LaneParks<'_, Park> {
-        LaneParks {
+    /// `park` with its idleness withheld while the worker's continuation runs.
+    pub(crate) const fn parks<Park: Parks>(&self, park: Park) -> WorkerParks<'_, Park> {
+        WorkerParks {
             park,
             busy: &self.slot.busy,
         }
     }
 
-    /// Runs `lane`, the lane's deliveries, beside its continuation slot's driver, and ends the
-    /// driver when the lane has ended.
-    pub(crate) async fn around(&self, lane: impl Future<Output = ()>) {
-        let lane = async {
-            lane.await;
+    /// Runs `worker`, the worker's deliveries, beside its continuation slot's driver, and ends the
+    /// driver when the worker has ended.
+    pub(crate) async fn around(&self, worker: impl Future<Output = ()>) {
+        let worker = async {
+            worker.await;
             self.slot.close();
         };
-        join(lane, self.slot.drive()).await;
+        join(worker, self.slot.drive()).await;
     }
 }
 
-/// Where a lane records that it is idle: a lane whose continuation still runs is never idle, so
+/// Where a worker records that it is idle: a worker whose continuation still runs is never idle, so
 /// the join above keeps resuming it until the continuation's timer has fired.
 #[derive(Clone, Copy)]
-pub(crate) struct LaneParks<'lane, Park> {
+pub(crate) struct WorkerParks<'worker, Park> {
     park: Park,
-    busy: &'lane Cell<bool>,
+    busy: &'worker Cell<bool>,
 }
 
-impl<Park: Parks> Parks for LaneParks<'_, Park> {
+impl<Park: Parks> Parks for WorkerParks<'_, Park> {
     fn park(self, parked: bool) {
         self.park.park(parked && !self.busy.get());
     }
 }
 
-impl<Inner: HostDetach> HostDetach for LaneHost<'_, Inner> {
+impl<Inner: HostDetach> HostDetach for WorkerHost<'_, Inner> {
     const STORES_COPIES: bool = Inner::STORES_COPIES;
 
     fn detach_continuation(&self, work: Continuation) -> impl Future<Output = ()> + MaybeSend {
@@ -261,7 +261,7 @@ mod tests {
     // The driver on embassy's clock polls embassy's timer, whose queue lives in the executor.
     use embassy_executor as _;
 
-    use super::{Detached, LaneHost};
+    use super::{Detached, WorkerHost};
 
     /// Pending on its first poll, ready on the second.
     struct YieldOnce(bool);
@@ -327,15 +327,15 @@ mod tests {
     }
 
     #[test]
-    fn a_lane_host_keeps_a_slot_of_its_own() {
+    fn a_worker_host_keeps_a_slot_of_its_own() {
         static RAN: AtomicU32 = AtomicU32::new(0);
         let app = Detached::new();
-        let lane = LaneHost::new(&app);
+        let worker = WorkerHost::new(&app);
         let work = async {
             let mut cx = Context::from_waker(Waker::noop());
-            // The lane's deliveries hand a continuation over and end.
+            // The worker's deliveries hand a continuation over and end.
             ruststream_runtime::HostDetach::detach_continuation(
-                &lane,
+                &worker,
                 Continuation::new(async {
                     YieldOnce(false).await;
                     RAN.fetch_add(1, Ordering::Relaxed);
@@ -344,12 +344,12 @@ mod tests {
             .await;
             let _ = &mut cx;
         };
-        let mut around = pin!(lane.around(work));
+        let mut around = pin!(worker.around(work));
         let mut cx = Context::from_waker(Waker::noop());
         let mut polls = 0;
         while around.as_mut().poll(&mut cx).is_pending() {
             polls += 1;
-            assert!(polls < 10, "the lane ends once its continuation finished");
+            assert!(polls < 10, "the worker ends once its continuation finished");
         }
         assert_eq!(RAN.load(Ordering::Relaxed), 1);
     }

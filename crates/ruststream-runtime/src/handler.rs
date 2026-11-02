@@ -533,11 +533,11 @@ impl HandlerOutcome {
     /// does, with the failures borrowed instead of passed by value.
     ///
     /// The closure is an async closure over a borrow, `async move |failures: &Failures| { .. }`.
-    /// The failures stay in the lane's fixed buffer, so they are stored once and the closure's
+    /// The failures stay in the worker's fixed buffer, so they are stored once and the closure's
     /// own room stays that of any continuation: its captures take at most 128 bytes, and a larger
     /// capture is a compile error that names its size and the room. The future the closure
     /// returns takes at most 256 bytes, the captures included. It runs after the delivery is
-    /// settled and before the lane takes its next delivery. Attaching a second one replaces the
+    /// settled and before the worker takes its next delivery. Attaching a second one replaces the
     /// first.
     ///
     /// # Cancel safety

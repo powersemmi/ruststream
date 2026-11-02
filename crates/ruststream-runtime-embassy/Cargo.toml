@@ -40,7 +40,7 @@ thiserror.workspace = true
 embassy-futures.workspace = true
 # Projects a worker's future through the gate that keeps a parked worker from being polled.
 pin-project-lite.workspace = true
-# The keyed lanes' hasher: 32-bit FNV-1a, no state and no allocation; heapless already depends on it.
+# The keyed workers' hasher: 32-bit FNV-1a, no state and no allocation; heapless already depends on it.
 # Lets the harness's own bookkeeping through the failing allocator of the no-heap test leg.
 assert_no_alloc = { version = "1.1.2", optional = true }
 hash32 = { version = "1.0", default-features = false }
@@ -89,10 +89,10 @@ name = "app"
 path = "tests/app.rs"
 harness = false
 
-# The constant worker pool and keyed lanes on the executor and the mock clock.
+# The constant worker pool and keyed workers on the executor and the mock clock.
 [[test]]
-name = "lanes"
-path = "tests/lanes.rs"
+name = "workers"
+path = "tests/workers.rs"
 harness = false
 
 # A device service's handlers and app written with the attributes, on the executor and the mock
@@ -163,7 +163,7 @@ workspace = true
 # above.
 [[test]]
 name = "coop"
-path = "tests/lanes/coop.rs"
+path = "tests/workers/coop.rs"
 harness = false
 
 # What an idle subscription costs a delivery of the app, in instructions and allocations: run by

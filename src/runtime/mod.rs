@@ -170,8 +170,8 @@ pub use ruststream_runtime_embassy::{Bindable as EmbeddedBindable, Bound as Embe
 #[cfg(feature = "embassy")]
 #[doc(hidden)]
 pub use ruststream_runtime_embassy::{
-    BrokerMount, CloseAll, EmbeddedPlan, HookList, Hooks, Keyed, Lanes, NoHooks, OneLane, Pool,
-    Room, SoFar, StartMounts,
+    BrokerMount, CloseAll, EmbeddedPlan, HookList, Hooks, Keyed, NoHooks, OneWorker, Pool, Room,
+    SoFar, StartMounts, WorkerSet,
 };
 #[cfg(feature = "embassy")]
 pub use ruststream_runtime_embassy::{

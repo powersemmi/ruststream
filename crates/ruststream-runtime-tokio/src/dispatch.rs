@@ -59,7 +59,7 @@ where
 }
 
 /// Spawns a task that drives `subscriber` through `handler` with `workers.count()` long-lived
-/// workers: a pool that hands each delivery to a free worker, or with `by_key` lanes that hand it
+/// workers: a pool that hands each delivery to a free worker, or with `by_key` workers that hand it
 /// to the worker its key hashes to (see [`pool`]).
 ///
 /// Sequential policies delegate to [`spawn_dispatch`]. On shutdown the stream stops being
@@ -172,13 +172,13 @@ where
     }))
 }
 
-pub(super) fn lane_of(key: &[u8], lanes: usize) -> usize {
+pub(super) fn key_index(key: &[u8], workers: usize) -> usize {
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);
-    // The modulo keeps the value below `lanes`, which is a usize.
+    // The modulo keeps the value below `workers`, which is a usize.
     #[allow(clippy::cast_possible_truncation)]
     {
-        (hasher.finish() % lanes as u64) as usize
+        (hasher.finish() % workers as u64) as usize
     }
 }
 
@@ -198,7 +198,7 @@ pub(super) fn log_worker_exit<Done>(joined: Result<Done, JoinError>) -> Option<D
 /// terminates. The handler owns the batch's deliveries and settles each of them.
 ///
 /// With a non-sequential `workers` policy, up to `workers.count()` batches are in flight at once,
-/// each on a worker started with the subscription (see [`batch_pool`]); keyed lanes do not apply at batch granularity (the macro rejects
+/// each on a worker started with the subscription (see [`batch_pool`]); keyed workers do not apply at batch granularity (the macro rejects
 /// `by_key` on batch forms), so a keyed policy degrades to the plain pool.
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 pub(crate) fn spawn_batch_dispatch<S, H, C, St, Retry>(
@@ -322,7 +322,7 @@ async fn batch_loop<S, H, C, St, Retry>(
 }
 
 /// The batch counterpart of [`spawn_dispatch_threads`]: each thread takes whole batches off its
-/// ring, with a decode and an encode buffer of its own. Keyed lanes do not apply to batches, so a
+/// ring, with a decode and an encode buffer of its own. Keyed workers do not apply to batches, so a
 /// keyed policy spreads batches as the plain one does.
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 fn spawn_batch_threads<S, H, C, St, Retry>(

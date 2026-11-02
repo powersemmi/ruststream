@@ -129,7 +129,7 @@ struct Record<At, Options> {
 ///
 /// A failing delivery takes a record and fills it before the delivery settles; a copy that finds
 /// every record taken is the "no free record" failure (see [`KeptCopies::full`]).
-/// [`drive`](Self::drive), joined with the registration's lanes, publishes each copy once it is
+/// [`drive`](Self::drive), joined with the registration's workers, publishes each copy once it is
 /// due: it waits for the earliest one on a single timer, so a wake costs one timer poll however
 /// many copies wait. A record reuses its buffer, so once a buffer has grown to the largest copy,
 /// keeping one allocates nothing.
@@ -144,7 +144,7 @@ pub(crate) struct CopyStore<Path: CopyPublisher, const CAP: usize, Timers: Clock
     records: Mutex<FrameLock, Records<Timers::Instant, Path::Options, CAP>>,
     /// Set when a record was armed since the driver last looked.
     armed: Flag,
-    /// Set once the registration's lanes stopped: the driver ends with the last copy sent.
+    /// Set once the registration's workers stopped: the driver ends with the last copy sent.
     closed: Flag,
     waker: Mutex<FrameLock, RefCell<Option<Waker>>>,
     clock: Timers,
@@ -903,7 +903,7 @@ mod tests {
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
         let (polled, read) = (clock.polls(), clock.reads());
         for _ in 0..10 {
-            // The registration's lanes wake the task on every delivery.
+            // The registration's workers wake the task on every delivery.
             assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
         }
         assert_eq!(

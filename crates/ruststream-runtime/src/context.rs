@@ -246,7 +246,7 @@ pub struct Context<'a, C = (), S = ()> {
     delivery: &'a Delivery<C>,
     after: Hooks,
     /// Where a publish the runtime makes for this delivery leaves its failure for the `.error`
-    /// closure to read; the lane awaits [`FailureSlot::react`] after the settle.
+    /// closure to read; the worker awaits [`FailureSlot::react`] after the settle.
     #[cfg(not(ruststream_alloc))]
     failures: FailureSlot,
     failfast: Option<&'a dyn Halt>,
@@ -359,7 +359,7 @@ impl<'a, C, S> Context<'a, C, S> {
 
     /// Lends this delivery the dispatch loop's encode buffer.
     ///
-    /// One buffer per sequential loop, per keyed lane and per pooled worker task, so a reply
+    /// One buffer per sequential loop, per keyed worker and per pooled worker task, so a reply
     /// encoded into it allocates only while it is growing - which it stops doing after the
     /// subscription's first message. What the buffer is worth to the publish depends on the
     /// broker: a publisher that reads the payload is lent it, and one that keeps the payload is
@@ -884,7 +884,7 @@ impl<'a, C, S> Context<'a, C, S> {
     }
 
     /// The buffer a failed publish left its failure in, taken out so it outlives the context: the
-    /// lane runs the `.error` closure on it after the delivery is settled, and the context goes
+    /// worker runs the `.error` closure on it after the delivery is settled, and the context goes
     /// before that. `None` when nothing failed, which costs the check alone.
     #[cfg(not(ruststream_alloc))]
     pub(crate) fn take_failures(&mut self) -> Option<FailureSlot> {
@@ -1180,7 +1180,7 @@ impl<'ctx, 'a, C, S> After<'ctx, 'a, C, S> {
     }
 
     /// Registers `react` to run if a publish the runtime makes for this delivery fails, as the
-    /// build with `alloc` does, with the failures borrowed from the lane's fixed buffer: the
+    /// build with `alloc` does, with the failures borrowed from the worker's fixed buffer: the
     /// closure is `async move |failures: &Failures| { .. }`, its captures take at most 128 bytes
     /// and the future it returns at most 256.
     #[cfg(not(ruststream_alloc))]
@@ -1283,7 +1283,7 @@ impl<C, S> AfterThen<'_, '_, C, S> {
     }
 
     /// Registers `react` as [`After::error`] does and makes the `.then` just registered its
-    /// success half, with the failures borrowed from the lane's fixed buffer.
+    /// success half, with the failures borrowed from the worker's fixed buffer.
     #[cfg(not(ruststream_alloc))]
     pub fn error<React>(self, react: React)
     where

@@ -139,7 +139,7 @@ use parse::SubscriberArgs;
 /// A `workers(n)` clause processes up to `n` deliveries (or batches) of this subscriber
 /// concurrently on long-lived workers; global processing order is lost by design, and
 /// back-pressure holds at `n` in-flight deliveries. `workers(n, by_key)` switches to `n`
-/// sequential lanes keyed by the message's partition key, preserving per-key ordering
+/// sequential workers keyed by the message's partition key, preserving per-key ordering
 /// (single-message forms only). The default is the sequential loop.
 ///
 /// A `threads(n)` clause is the same position for a handler that computes: the subscription's

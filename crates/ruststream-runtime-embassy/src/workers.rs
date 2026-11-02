@@ -1,4 +1,4 @@
-//! The mount steps of the embedded runner: a constant pool of workers, constant keyed lanes, and
+//! The mount steps of the embedded runner: a constant pool of workers, constant keyed workers, and
 //! a constant capacity for the delayed copies of `retry_after`.
 //!
 //! Each step fixes its count in the registration's type, so a count the runner cannot honour
@@ -42,22 +42,22 @@ use ruststream_runtime::{
 use crate::copies::CopyStore;
 use crate::hooks::{AppState, borrowed};
 #[cfg(not(ruststream_alloc))]
-use crate::host::LaneHost;
+use crate::host::WorkerHost;
 use crate::mailbox::{Mailbox, join_workers};
 
-/// The plan of one registration on the embedded runner: its lanes and the room it keeps for
+/// The plan of one registration on the embedded runner: its workers and the room it keeps for
 /// retry copies, [`NoRoom`] for none.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct EmbeddedPlan<Lanes, Capacity, Encoding = Encode<DEFAULT_ENCODE_CAPACITY>> {
-    lanes: Lanes,
+pub struct EmbeddedPlan<WorkerSet, Capacity, Encoding = Encode<DEFAULT_ENCODE_CAPACITY>> {
+    workers: WorkerSet,
     room: PhantomData<(Capacity, Encoding)>,
 }
 
-/// The room, in bytes, of a lane's encode buffer when a registration names none.
+/// The room, in bytes, of a worker's encode buffer when a registration names none.
 pub const DEFAULT_ENCODE_CAPACITY: usize = 256;
 
-/// An encode buffer of `CAPACITY` bytes for each lane of a registration.
+/// An encode buffer of `CAPACITY` bytes for each worker of a registration.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Encode<const CAPACITY: usize>;
@@ -69,7 +69,7 @@ pub struct Encode<const CAPACITY: usize>;
     message = "`{Self}` asks for more room than the reply publisher can carry (`{Room}`)",
     label = "this `encode_capacity` is past the reply publisher's payload room",
     note = "a publisher that keeps its payload (`Take`) is handed a buffer of the payload room, \
-            so a lane's extra room would go unused: name a count within it, or use a publisher \
+            so a worker's extra room would go unused: name a count within it, or use a publisher \
             that reads the bytes (`Lend`)"
 )]
 pub trait Within<Room> {}
@@ -105,13 +105,13 @@ const _: () = assert!(
     "the sizes `within_payload_room` lists end at the payload room"
 );
 
-/// What the lanes of a registration encode their replies into.
+/// What the workers of a registration encode their replies into.
 #[doc(hidden)]
 pub trait EncodeSize {
-    /// The buffer one lane owns.
+    /// The buffer one worker owns.
     type Room: EncodeRoom;
 
-    /// A new, empty buffer for one lane.
+    /// A new, empty buffer for one worker.
     fn room() -> Self::Room;
 }
 
@@ -147,22 +147,22 @@ pub struct NoRoom;
 /// One delivery at a time.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct OneLane;
+pub struct OneWorker;
 
 /// `WORKERS` deliveries at once, each to the next free worker.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Pool<const WORKERS: usize>;
 
-/// `LANES` sequential lanes, a delivery's lane chosen by its partition key.
+/// `WORKERS` sequential workers, a delivery's worker chosen by its partition key.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Keyed<const LANES: usize>;
+pub struct Keyed<const WORKERS: usize>;
 
-/// How a plan's lanes run the opened route.
+/// How a plan's workers run the opened route.
 #[doc(hidden)]
-pub trait Lanes {
-    /// Runs the route on these lanes until `signal` stops it.
+pub trait WorkerSet {
+    /// Runs the route on these workers until `signal` stops it.
     fn run<Sub, Body, Cx, State, Signal, Host, Park, Enc>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
@@ -182,7 +182,7 @@ pub trait Lanes {
 }
 
 #[cfg(ruststream_alloc)]
-impl Lanes for OneLane {
+impl WorkerSet for OneWorker {
     fn run<Sub, Body, Cx, State, Signal, Host, Park, Enc>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
@@ -205,7 +205,7 @@ impl Lanes for OneLane {
 }
 
 #[cfg(not(ruststream_alloc))]
-impl Lanes for OneLane {
+impl WorkerSet for OneWorker {
     async fn run<Sub, Body, Cx, State, Signal, Host, Park, Enc>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
@@ -222,14 +222,15 @@ impl Lanes for OneLane {
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
-        // The lane's own continuation slot, beside its deliveries.
-        let lane = LaneHost::new(host);
-        lane.around(route.run_sequential(signal, state, &lane, lane.parks(parked), Enc::room()))
+        // The worker's own continuation slot, beside its deliveries.
+        let worker = WorkerHost::new(host);
+        worker
+            .around(route.run_sequential(signal, state, &worker, worker.parks(parked), Enc::room()))
             .await;
     }
 }
 
-impl<const WORKERS: usize> Lanes for Pool<WORKERS> {
+impl<const WORKERS: usize> WorkerSet for Pool<WORKERS> {
     fn run<Sub, Body, Cx, State, Signal, Host, Park, Enc>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
@@ -247,11 +248,11 @@ impl<const WORKERS: usize> Lanes for Pool<WORKERS> {
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
-        run_lanes::<WORKERS, _, _, _, _, _, _, _, Enc>(route, signal, state, host, false, parked)
+        run_workers::<WORKERS, _, _, _, _, _, _, _, Enc>(route, signal, state, host, false, parked)
     }
 }
 
-impl<const LANES: usize> Lanes for Keyed<LANES> {
+impl<const WORKERS: usize> WorkerSet for Keyed<WORKERS> {
     fn run<Sub, Body, Cx, State, Signal, Host, Park, Enc>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
@@ -269,11 +270,11 @@ impl<const LANES: usize> Lanes for Keyed<LANES> {
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
-        run_lanes::<LANES, _, _, _, _, _, _, _, Enc>(route, signal, state, host, true, parked)
+        run_workers::<WORKERS, _, _, _, _, _, _, _, Enc>(route, signal, state, host, true, parked)
     }
 }
 
-impl<L: Lanes, Enc: EncodeSize> OneTaskDispatch for EmbeddedPlan<L, NoRoom, Enc> {
+impl<L: WorkerSet, Enc: EncodeSize> OneTaskDispatch for EmbeddedPlan<L, NoRoom, Enc> {
     type Copies = NoCopies;
 
     async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
@@ -292,13 +293,13 @@ impl<L: Lanes, Enc: EncodeSize> OneTaskDispatch for EmbeddedPlan<L, NoRoom, Enc>
         Host: Detach,
         Path: PrepareCopy<Cx>,
     {
-        self.lanes
+        self.workers
             .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, host, parked)
             .await;
     }
 }
 
-impl<L: Lanes, Enc: EncodeSize, const CAPACITY: usize> OneTaskDispatch
+impl<L: WorkerSet, Enc: EncodeSize, const CAPACITY: usize> OneTaskDispatch
     for EmbeddedPlan<L, Room<CAPACITY>, Enc>
 {
     type Copies = KeepCopies;
@@ -320,34 +321,34 @@ impl<L: Lanes, Enc: EncodeSize, const CAPACITY: usize> OneTaskDispatch
         Path: PrepareCopy<Cx>,
     {
         let Some(path) = path else {
-            self.lanes
+            self.workers
                 .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, host, parked)
                 .await;
             return;
         };
         // The registration's own store: its copies wait in its records, and its driver
-        // publishes the last of them after the lanes have stopped.
+        // publishes the last of them after the workers have stopped.
         let store = CopyStore::<Path, CAPACITY>::new(path, &route.name).input(route.input);
-        let lanes = async {
+        let workers = async {
             let keeping = Keeping(host, &store);
-            // The store's driver waits on timers of its own beside the lanes, so the join above
-            // must not skip this registration while the lanes are idle: the flag stays clear.
-            self.lanes
+            // The store's driver waits on timers of its own beside the workers, so the join above
+            // must not skip this registration while the workers are idle: the flag stays clear.
+            self.workers
                 .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, &keeping, ())
                 .await;
             store.close();
         };
-        join(lanes, store.drive(host)).await;
+        join(workers, store.drive(host)).await;
     }
 }
 
 /// Runs the route's loop and its `COUNT` workers, joined.
 ///
 /// The loop pulls a delivery and hands it to a worker over the worker's one-slot channel: the
-/// next free worker in a pool, the lane its partition key hashes to when `keyed` (a delivery
-/// with no key takes the lanes in turn). A pool's loop takes a free worker before it pulls, so
+/// next free worker in a pool, the worker its partition key hashes to when `keyed` (a delivery
+/// with no key takes the workers in turn). A pool's loop takes a free worker before it pulls, so
 /// a delivery waits in the subscription rather than in a channel.
-async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host, Park, Enc>(
+async fn run_workers<const COUNT: usize, Sub, Body, Cx, State, Signal, Host, Park, Enc>(
     route: OneTaskRoute<Sub, Body, Cx>,
     signal: Signal,
     state: &AppState<State>,
@@ -436,16 +437,16 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host, Park,
             let Either::Left(next) = next else { break };
             match next {
                 Some(Ok(msg)) => {
-                    let lane = held.take().unwrap_or_else(|| {
+                    let worker = held.take().unwrap_or_else(|| {
                         msg.partition_key().map_or_else(
                             || {
                                 rotation = (rotation + 1) % COUNT;
                                 rotation
                             },
-                            lane_of::<COUNT>,
+                            key_index::<COUNT>,
                         )
                     });
-                    mailboxes[lane].send(Some(msg)).await;
+                    mailboxes[worker].send(Some(msg)).await;
                 }
                 Some(Err(err)) => {
                     error!(
@@ -461,7 +462,7 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host, Park,
                 }
             }
         }
-        // Each worker finishes the delivery it holds, then reads the end of its lane.
+        // Each worker finishes the delivery it holds, then reads the end of its worker.
         for mailbox in &mailboxes {
             mailbox.send(None).await;
         }
@@ -503,7 +504,7 @@ struct Shared<'a, Body, Cx, State, Signal, Host> {
     failure: &'a DispatchFailure<Signal>,
 }
 
-/// One worker: dispatches what its lane hands it until the lane ends, and reports itself free
+/// One worker: dispatches what its worker hands it until the worker ends, and reports itself free
 /// after each delivery when it is a pool's.
 async fn work<Message, Body, Cx, State, Signal, Host, Enc, const COUNT: usize>(
     mailbox: &Mailbox<Message>,
@@ -525,21 +526,22 @@ async fn work<Message, Body, Cx, State, Signal, Host, Enc, const COUNT: usize>(
     // The worker's own continuation slot: a delivery whose continuation finds it busy waits here.
     #[cfg(not(ruststream_alloc))]
     {
-        let lane = LaneHost::new(shared.host);
+        let worker = WorkerHost::new(shared.host);
         // A worker whose continuation still runs stays awake: the continuation's timer wakes the
         // app task, and a parked worker would not be polled to drive it.
-        lane.around(deliveries::<_, _, _, _, _, _, _, Enc, COUNT>(
-            mailbox,
-            free,
-            shared,
-            &lane,
-            || lane.is_busy(),
-        ))
-        .await;
+        worker
+            .around(deliveries::<_, _, _, _, _, _, _, Enc, COUNT>(
+                mailbox,
+                free,
+                shared,
+                &worker,
+                || worker.is_busy(),
+            ))
+            .await;
     }
 }
 
-/// The worker's deliveries, dispatched on `host` until its lane ends.
+/// The worker's deliveries, dispatched on `host` until its worker ends.
 async fn deliveries<Message, Body, Cx, State, Signal, Host, Lent, Enc, const COUNT: usize>(
     mailbox: &Mailbox<Message>,
     free: Option<(&Channel<NoopRawMutex, usize, COUNT>, usize)>,
@@ -579,19 +581,19 @@ async fn deliveries<Message, Body, Cx, State, Signal, Host, Lent, Enc, const COU
     }
 }
 
-/// The lane a partition key hashes to: 32-bit FNV-1a over the key's bytes, one xor and one
+/// The worker a partition key hashes to: 32-bit FNV-1a over the key's bytes, one xor and one
 /// multiply per byte, with no state and no allocation.
-fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
+fn key_index<const WORKERS: usize>(key: &[u8]) -> usize {
     let mut hasher = FnvHasher::default();
     hasher.write(key);
     // A u32 fits a usize on every target the runner builds for.
-    hasher.finish32() as usize % LANES
+    hasher.finish32() as usize % WORKERS
 }
 
 /// The mount steps of the embedded runner, on a local router's last registration.
 ///
 /// Each count is a constant of the registration's type: a pool of `N` workers, `N` keyed
-/// lanes, room for `CAP` delayed retries. A step names the registration just added (the
+/// workers, room for `CAP` delayed retries. A step names the registration just added (the
 /// preceding `include`), and the steps compose in any order.
 ///
 /// # Examples
@@ -666,7 +668,7 @@ fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
 /// # let _ = app(LocalMemoryBroker::new());
 /// ```
 ///
-/// for keyed lanes:
+/// for keyed workers:
 ///
 /// ```compile_fail
 /// # use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
@@ -710,21 +712,21 @@ fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
 /// # let _ = app(LocalMemoryBroker::new());
 /// ```
 pub trait MountSteps: Sized {
-    /// The router once the registration runs on `Next` lanes.
+    /// The router once the registration runs on `Next` workers.
     #[doc(hidden)]
-    type WithLanes<Next>;
+    type WithWorkers<Next>;
     /// The router once the registration keeps room for `CAP` delayed retries.
     #[doc(hidden)]
     type WithCapacity<const CAP: usize>;
-    /// The router once the registration's lanes encode into `N` bytes.
+    /// The router once the registration's workers encode into `N` bytes.
     #[doc(hidden)]
     type WithEncode<const N: usize>;
     /// The room the registration keeps so far.
     #[doc(hidden)]
     type Room;
-    /// Runs the registration on `lanes`.
+    /// Runs the registration on `workers`.
     #[doc(hidden)]
-    fn lanes<Next>(self, lanes: Next) -> Self::WithLanes<Next>;
+    fn run_on<Next>(self, workers: Next) -> Self::WithWorkers<Next>;
 
     /// Keeps room for `CAP` copies of `retry_after`. A delivery that asks for one more finds the
     /// store full: that is a failed publish like any other, with its own error
@@ -748,12 +750,12 @@ pub trait MountSteps: Sized {
     ///
     fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP>;
 
-    /// Gives each lane of the registration `N` bytes to encode a reply into, 256 by default.
+    /// Gives each worker of the registration `N` bytes to encode a reply into, 256 by default.
     ///
     /// A reply that does not fit is refused with `CodecFailure::BufferFull`, the way any publish
     /// the transport cannot take is: the delivery is acknowledged and the reply reaches the
-    /// handler's `.error` continuation. A lane owns its buffer for as long as it runs, so the
-    /// registration's footprint grows by `N` bytes per lane.
+    /// handler's `.error` continuation. A worker owns its buffer for as long as it runs, so the
+    /// registration's footprint grows by `N` bytes per worker.
     fn encode_capacity<const N: usize>(self) -> Self::WithEncode<N>
     where
         Encode<N>: Within<Self::ReplyRoom>;
@@ -763,63 +765,63 @@ pub trait MountSteps: Sized {
     type ReplyRoom;
 
     /// Runs up to `N` deliveries of the registration at once, each on the next free worker.
-    fn pool<const N: usize>(self) -> Self::WithLanes<Pool<N>> {
+    fn pool<const N: usize>(self) -> Self::WithWorkers<Pool<N>> {
         const {
             assert!(
                 N > 0,
                 "a pool runs at least one worker: give `pool` a count above zero"
             );
         }
-        self.lanes(Pool)
+        self.run_on(Pool)
     }
 
-    /// Runs the registration on `N` sequential lanes, a delivery's lane chosen by its partition
+    /// Runs the registration on `N` sequential workers, a delivery's worker chosen by its partition
     /// key, so the deliveries of one key stay in order.
     ///
-    /// A delivery without a key takes the lanes in turn. The key is hashed with 32-bit FNV-1a:
+    /// A delivery without a key takes the workers in turn. The key is hashed with 32-bit FNV-1a:
     /// one xor and one multiply per byte.
-    fn keyed<const N: usize>(self) -> Self::WithLanes<Keyed<N>> {
+    fn keyed<const N: usize>(self) -> Self::WithWorkers<Keyed<N>> {
         const {
             assert!(
                 N > 0,
-                "keyed dispatch runs at least one lane: give `keyed` a count above zero"
+                "keyed dispatch runs at least one worker: give `keyed` a count above zero"
             );
         }
-        self.lanes(Keyed)
+        self.run_on(Keyed)
     }
 }
 
 /// The plan a registration has so far, as the embedded runner's steps read it.
 #[doc(hidden)]
 pub trait SoFar {
-    /// Its lanes.
-    type Lanes;
+    /// Its workers.
+    type WorkerSet;
     /// Its room for delayed retries.
     type Room;
     /// Its encode buffer.
     type Encoding;
 
-    /// Its lanes, for a step that keeps them.
-    fn into_lanes(self) -> Self::Lanes;
+    /// Its workers, for a step that keeps them.
+    fn into_workers(self) -> Self::WorkerSet;
 }
 
 impl SoFar for () {
-    type Lanes = OneLane;
+    type WorkerSet = OneWorker;
     type Room = NoRoom;
     type Encoding = Encode<DEFAULT_ENCODE_CAPACITY>;
 
-    fn into_lanes(self) -> OneLane {
-        OneLane
+    fn into_workers(self) -> OneWorker {
+        OneWorker
     }
 }
 
 impl<L, R, E> SoFar for EmbeddedPlan<L, R, E> {
-    type Lanes = L;
+    type WorkerSet = L;
     type Room = R;
     type Encoding = E;
 
-    fn into_lanes(self) -> L {
-        self.lanes
+    fn into_workers(self) -> L {
+        self.workers
     }
 }
 
@@ -831,7 +833,7 @@ where
 {
     type ReplyRoom = <Head::Route as ReplyRoom<B>>::Room;
 
-    type WithLanes<Next> = Router<
+    type WithWorkers<Next> = Router<
         B,
         (
             Dispatched<
@@ -850,7 +852,7 @@ where
             Dispatched<
                 Head::Route,
                 EmbeddedPlan<
-                    <Head::Plan as SoFar>::Lanes,
+                    <Head::Plan as SoFar>::WorkerSet,
                     Room<CAP>,
                     <Head::Plan as SoFar>::Encoding,
                 >,
@@ -866,7 +868,11 @@ where
         (
             Dispatched<
                 Head::Route,
-                EmbeddedPlan<<Head::Plan as SoFar>::Lanes, <Head::Plan as SoFar>::Room, Encode<N>>,
+                EmbeddedPlan<
+                    <Head::Plan as SoFar>::WorkerSet,
+                    <Head::Plan as SoFar>::Room,
+                    Encode<N>,
+                >,
             >,
             Routes,
         ),
@@ -876,9 +882,9 @@ where
     >;
     type Room = <Head::Plan as SoFar>::Room;
 
-    fn lanes<Next>(self, lanes: Next) -> Self::WithLanes<Next> {
+    fn run_on<Next>(self, workers: Next) -> Self::WithWorkers<Next> {
         self.replan(|_| EmbeddedPlan {
-            lanes,
+            workers,
             room: PhantomData,
         })
     }
@@ -891,7 +897,7 @@ where
             );
         }
         self.replan(|plan: Head::Plan| EmbeddedPlan {
-            lanes: plan.into_lanes(),
+            workers: plan.into_workers(),
             room: PhantomData,
         })
     }
@@ -903,11 +909,11 @@ where
         const {
             assert!(
                 N > 0,
-                "a lane encodes into at least one byte: give `encode_capacity` a count above zero"
+                "a worker encodes into at least one byte: give `encode_capacity` a count above zero"
             );
         }
         self.replan(|plan: Head::Plan| EmbeddedPlan {
-            lanes: plan.into_lanes(),
+            workers: plan.into_workers(),
             room: PhantomData,
         })
     }
@@ -919,15 +925,15 @@ impl<Mount, R, Def, Attach, Last> MountSteps for RouterWith<Mount, R, Def, Attac
 where
     Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared + MountSteps>,
 {
-    type WithLanes<Next> = <Attach::Out as MountSteps>::WithLanes<Next>;
+    type WithWorkers<Next> = <Attach::Out as MountSteps>::WithWorkers<Next>;
     type WithCapacity<const CAP: usize> = <Attach::Out as MountSteps>::WithCapacity<CAP>;
     type WithEncode<const N: usize> = <Attach::Out as MountSteps>::WithEncode<N>;
     type Room = <Attach::Out as MountSteps>::Room;
 
     type ReplyRoom = <Attach::Out as MountSteps>::ReplyRoom;
 
-    fn lanes<Next>(self, lanes: Next) -> Self::WithLanes<Next> {
-        self.build().lanes(lanes)
+    fn run_on<Next>(self, workers: Next) -> Self::WithWorkers<Next> {
+        self.build().run_on(workers)
     }
 
     fn encode_capacity<const N: usize>(self) -> Self::WithEncode<N>

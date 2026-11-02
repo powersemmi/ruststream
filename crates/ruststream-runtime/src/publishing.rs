@@ -569,7 +569,7 @@ where
                     HandlerOutcome::ack().and_after_boxed(follow)
                 });
             }
-            // Without a heap the failure waits in the delivery's own buffer, and the lane runs
+            // Without a heap the failure waits in the delivery's own buffer, and the worker runs
             // the `.error` closure on it once the delivery is settled.
             #[cfg(not(ruststream_alloc))]
             {

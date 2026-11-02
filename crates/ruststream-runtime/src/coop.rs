@@ -55,8 +55,8 @@ pin_project! {
     /// when its probe says more may be waiting.
     ///
     /// A yield returns `Pending` without polling the stream, so the stream registers no waker. An
-    /// app skips a lane whose probe says nothing is ready, so a yield past the last delivery would
-    /// leave the lane parked with no waker for the next one. The bound yields only while the probe
+    /// app skips a worker whose probe says nothing is ready, so a yield past the last delivery would
+    /// leave the worker parked with no waker for the next one. The bound yields only while the probe
     /// says more may be waiting; otherwise it polls the stream, which parks with its waker.
     pub(crate) struct Bounded<Inner, Probe> {
         #[pin]

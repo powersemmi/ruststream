@@ -19,7 +19,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use pin_project_lite::pin_project;
 
-/// What a feeder hands one worker: the next delivery, or `None` once the lane has ended.
+/// What a feeder hands one worker: the next delivery, or `None` once the worker has ended.
 pub(crate) struct Mailbox<Message> {
     slot: Channel<NoopRawMutex, Option<Message>, 1>,
     /// Set while the worker waits on an empty slot; cleared when the feeder fills it.
@@ -108,7 +108,7 @@ mod tests {
 
     use super::{Mailbox, join_workers};
 
-    /// A worker that counts how often it is polled and reads its mailbox until the lane ends.
+    /// A worker that counts how often it is polled and reads its mailbox until the worker ends.
     async fn counted(mailbox: &Mailbox<u32>, polls: &Cell<u32>) {
         let mut next = pin!(async { while mailbox.receive(|| false).await.is_some() {} });
         poll_fn(|cx| {

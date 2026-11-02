@@ -35,7 +35,7 @@
     allow(clippy::result_large_err, clippy::large_enum_variant)
 )]
 // Without the `tokio` feature a continuation carries no `Send`, so the futures of the Tokio
-// runner's lane are not `Send` either; the lint would flag every one of them.
+// runner's worker are not `Send` either; the lint would flag every one of them.
 #![cfg_attr(not(feature = "tokio"), allow(clippy::future_not_send))]
 
 // The harness (`testing`) keeps its bookkeeping in `std` collections and shared pointers: it is

@@ -51,10 +51,10 @@ use crate::{
 /// `.transform(..)` steps composed on top. It is [`PublishIdentity`] - nothing in the way, the
 /// bare leaf call - until a mount site names either.
 ///
-/// Autoderef carries a method call, not a trait bound: a helper written as `fn f<L: Lanes>(l:
+/// Autoderef carries a method call, not a trait bound: a helper written as `fn f<L: Routes>(l:
 /// &L)` rejects the entry a body holds. A broker crate that wants such helpers - or bodies
 /// generic over its capability - adds one blanket impl next to its trait,
-/// `impl<M, W: Lanes, E, Pipe, Body> Lanes for Slot<M, W, E, Pipe, Body>`, delegating through
+/// `impl<M, W: Routes, E, Pipe, Body> Routes for Slot<M, W, E, Pipe, Body>`, delegating through
 /// this `Deref`.
 ///
 /// `Body` is the entry's declared message set, `()` (any dictionary type) unless the

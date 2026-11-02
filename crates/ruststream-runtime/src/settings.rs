@@ -689,7 +689,7 @@ pub trait SubscriberSettings<Mk = AsDeclared>: IntoDeclared<Mk> {
             .apply_workers(Workers::pool(count))
     }
 
-    /// Runs `count` sequential lanes keyed by the message's partition key, preserving per-key
+    /// Runs `count` sequential workers keyed by the message's partition key, preserving per-key
     /// ordering. The mount-site spelling of `workers(n, by_key)`.
     fn workers_by_key(
         self,
@@ -718,7 +718,7 @@ pub trait SubscriberSettings<Mk = AsDeclared>: IntoDeclared<Mk> {
             .apply_workers(Workers::threads(count))
     }
 
-    /// Runs `count` dedicated threads as sequential lanes keyed by the message's partition key,
+    /// Runs `count` dedicated threads; a delivery goes to the thread its partition key hashes to,
     /// preserving per-key ordering. The mount-site spelling of `threads(n, by_key)`.
     fn threads_by_key(
         self,
@@ -951,7 +951,7 @@ mod tests {
     }
 
     #[test]
-    fn keyed_lanes_are_the_same_slot_as_the_pool() {
+    fn keyed_workers_are_the_same_slot_as_the_pool() {
         let built = Stub.name("orders").workers_by_key(nonzero!(2));
         assert_eq!(built.workers, Workers::keyed(nonzero!(2)));
     }

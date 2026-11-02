@@ -383,7 +383,7 @@ fn an_idle_keyed_hinted_subscription_is_not_polled_while_its_neighbour_works()
 
 /// An idle subscription's frame is resumed on a wake only when its probe says something may be
 /// ready: the join's gate asks its own probe on each wake, and the subscription's loop, which
-/// holds the others (its own, and the cooperative bound's where the lane has one), is not resumed
+/// holds the others (its own, and the cooperative bound's where the worker has one), is not resumed
 /// to ask them.
 fn assert_idle_frame_is_not_resumed(asked: &[u32], probes: usize) {
     assert_eq!(asked.len(), probes, "the probes taken: {asked:?}");

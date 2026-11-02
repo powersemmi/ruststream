@@ -315,7 +315,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// The functional-path counterpart of the macro's `workers(..)` clause: [`Workers::pool`]
     /// processes up to `n` deliveries of this subscriber concurrently, [`Workers::keyed`]
-    /// dispatches over per-key sequential lanes. On an `include`d definition this overrides the
+    /// dispatches over per-key sequential workers. On an `include`d definition this overrides the
     /// attribute's `workers(..)` clause and the chained
     /// [`workers`](crate::SubscriberSettings::workers) setting alike.
     ///
@@ -339,7 +339,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// }
     ///
     /// fn jobs() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
-    ///     // Four lanes; the jobs of one key stay in order on one lane.
+    ///     // Four workers; the jobs of one key stay in order on one worker.
     ///     Router::new()
     ///         .include(work)
     ///         .workers(Workers::keyed(nonzero!(4)))
@@ -457,7 +457,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// Sets the concurrency policy of the batch registration just added (the preceding batch
     /// `include` call), replacing its default.
     ///
-    /// [`Workers::pool`] keeps up to `n` batches in flight at once. Keyed lanes order single
+    /// [`Workers::pool`] keeps up to `n` batches in flight at once. Keyed workers order single
     /// messages per key and do not apply to batches: a [`Workers::keyed`] policy here behaves
     /// like a plain pool of the same size.
     #[must_use]

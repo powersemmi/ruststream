@@ -89,7 +89,7 @@ async fn fan_out(order: &Order) -> HandlerOutcome {
 // --8<-- [end:workers]
 
 // --8<-- [start:workers_by_key]
-/// 16 lanes keyed by the message's partition key: per-key order is preserved.
+/// 16 workers keyed by the message's partition key: per-key order is preserved.
 #[subscriber("orders", workers(16, by_key))]
 async fn per_customer(order: &Order) -> HandlerOutcome {
     println!("processing order {}", order.id);

@@ -39,7 +39,7 @@ fn registering_past_the_fixed_table_is_refused_and_keeps_what_was_registered() {
 }
 
 #[test]
-fn the_failure_of_a_delivery_outlives_its_context_for_the_lane_to_react_to() {
+fn the_failure_of_a_delivery_outlives_its_context_for_the_worker_to_react_to() {
     static SEEN: AtomicUsize = AtomicUsize::new(0);
     let state = ();
     let delivery = Delivery::empty();

@@ -316,7 +316,7 @@ fn workers_step(args: &SubscriberArgs, handler: &Ident, shape: Shape) -> syn::Re
         if shape == Shape::Batch {
             return Err(Error::new(
                 marker.span(),
-                "by_key lanes order single messages per key; they do not apply to a batch \
+                "by_key workers order single messages per key; they do not apply to a batch \
                  handler",
             ));
         }
@@ -535,14 +535,14 @@ mod tests {
     }
 
     #[test]
-    fn keyed_lanes_do_not_apply_to_a_batch() {
+    fn keyed_workers_do_not_apply_to_a_batch() {
         let args: SubscriberArgs =
             syn::parse2(quote!("orders", workers(4, by_key))).expect("the arguments parse");
         let handler = Ident::new("on_orders", Span::call_site());
 
         assert_eq!(
             refusal(workers_step(&args, &handler, Shape::Batch)),
-            "by_key lanes order single messages per key; they do not apply to a batch handler"
+            "by_key workers order single messages per key; they do not apply to a batch handler"
         );
     }
 

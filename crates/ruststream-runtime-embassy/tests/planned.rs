@@ -297,7 +297,7 @@ fn check_the_outcomes(outcomes: &Outcomes) {
         [b"a".to_vec(), b"b".to_vec()],
         "the replies of both pings, one work period in"
     );
-    passed("two keyed lanes run a raw reply handler's deliveries at once");
+    passed("two keyed workers run a raw reply handler's deliveries at once");
     assert_eq!(SAMPLING.peak(), 2, "samples in flight at once");
     assert_eq!(
         *sampled,

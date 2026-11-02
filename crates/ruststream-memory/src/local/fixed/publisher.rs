@@ -114,7 +114,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize> Pu
     for LocalMemoryPublisher<MESSAGES, PAYLOAD, SUBSCRIPTIONS>
 {
     // The bus copies the payload into the subscription's own room, so the publish only reads it:
-    // a reply is encoded in the lane's buffer, whatever room the mount gave it.
+    // a reply is encoded in the worker's buffer, whatever room the mount gave it.
     type Payload = Lend;
     type Error = LocalMemoryError;
     // The bus has no protocol field a message can differ in.

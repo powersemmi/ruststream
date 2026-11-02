@@ -546,7 +546,7 @@ impl<Payload: AsRef<[u8]>> OutgoingMessage<'_, Payload> {
 ///
 /// - without [`redelivery_count`](Self::redelivery_count), a `max_attempts(..)` cap reads
 ///   the `RETRY_COUNT_HEADER` header;
-/// - without [`partition_key`](Self::partition_key), keyed worker lanes hand messages out
+/// - without [`partition_key`](Self::partition_key), keyed workers hand messages out
 ///   round-robin;
 /// - without [`decode_error`](Self::decode_error), every delivery reads as whole.
 ///
@@ -563,7 +563,7 @@ pub trait IncomingMessage {
     ///
     /// Defaulted to `None` so existing implementations keep compiling. Brokers whose messages
     /// implement the [`Partitioned`](crate::Partitioned) capability override this to return the
-    /// same key, which lets the runtime preserve per-key ordering in keyed worker lanes
+    /// same key, which lets the runtime preserve per-key ordering in keyed workers
     /// (`workers(n, by_key)`) without a `Partitioned` bound on every dispatch path.
     fn partition_key(&self) -> Option<&[u8]> {
         None

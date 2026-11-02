@@ -1,9 +1,9 @@
 //! The failure plane of a build without `alloc`.
 //!
-//! A failed publish leaves its message in the lane's [`FailureSlot`], and the handler's `.error`
+//! A failed publish leaves its message in the worker's [`FailureSlot`], and the handler's `.error`
 //! closure reads it there: the closure takes `&Failures`, a view of the slot's fixed buffer, so
 //! the failures are stored once and the closure's own room stays that of any continuation.
-//! The lane awaits [`FailureSlot::react`] after the delivery is settled and before it takes the
+//! The worker awaits [`FailureSlot::react`] after the delivery is settled and before it takes the
 //! next one.
 
 use core::{fmt, iter};
@@ -19,7 +19,7 @@ use crate::inline::{InlineFuture, Room};
 use crate::lifecycle::BoxError;
 
 /// The failures an `.error` closure reads: one for a single delivery, every failed element for a
-/// uniform batch, in the batch's order. A view of the lane's fixed buffer.
+/// uniform batch, in the batch's order. A view of the worker's fixed buffer.
 pub type Failures = VecView<Failed>;
 
 /// The room of an `.error` closure, in bytes. A closure whose captures do not fit is a compile
@@ -91,10 +91,10 @@ impl fmt::Debug for ErrorHook {
     }
 }
 
-/// The lane's fixed buffer of failures, and the reaction waiting to read them.
+/// The worker's fixed buffer of failures, and the reaction waiting to read them.
 ///
 /// `ELEMENTS` is the most failures one reaction reads: 1 for a single delivery, the mount's batch
-/// size for a batch. The lane owns it for the duration of a delivery.
+/// size for a batch. The worker owns it for the duration of a delivery.
 #[doc(hidden)]
 pub struct FailureSlot<const ELEMENTS: usize = 1> {
     failures: Vec<Failed, ELEMENTS>,
@@ -223,7 +223,7 @@ pub fn publish_done(reaction: Option<Reaction>) -> Option<Continuation> {
 }
 
 /// What happens to a copy or reply whose publish failed: the handler's `.error` closure reads the
-/// failure from `slot`, which the lane awaits with [`FailureSlot::react`], or, with none, a
+/// failure from `slot`, which the worker awaits with [`FailureSlot::react`], or, with none, a
 /// warning says the message is lost.
 ///
 /// `message` builds the failed message, and is called only when there is a closure to hand it to.
