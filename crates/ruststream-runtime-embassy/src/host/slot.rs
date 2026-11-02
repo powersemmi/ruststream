@@ -195,7 +195,10 @@ impl<'host, Inner> WorkerHost<'host, Inner> {
     ///
     /// Not an `async fn`: the combinators hold the worker's future without a frame of their own, so
     /// the app's future nests no deeper for the slot than for the join.
-    pub(crate) fn around(&self, worker: impl Future<Output = ()>) -> impl Future<Output = ((), ())> {
+    pub(crate) fn around(
+        &self,
+        worker: impl Future<Output = ()>,
+    ) -> impl Future<Output = ((), ())> {
         self.around_then(worker, || {})
     }
 
@@ -342,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lane_host_keeps_a_slot_of_its_own() {
+    fn a_worker_host_keeps_a_slot_of_its_own() {
         static RAN: AtomicU32 = AtomicU32::new(0);
         let app = Detached::new();
         let worker = WorkerHost::new(&app);

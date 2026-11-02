@@ -16,7 +16,7 @@ help: the following other types implement trait `ruststream_runtime_embassy::bat
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `typenum::Equal`
    = note: required for `ruststream::runtime::Room<2>` to implement `ruststream_runtime_embassy::batch_plan::Holds<ruststream_runtime::batch::store::BatchSize<4>>`
 note: required by a bound in `retry_capacity`
-  --> crates/ruststream-runtime-embassy/src/lanes.rs
+  --> crates/ruststream-runtime-embassy/src/workers.rs
    |
    |     fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP>
    |        -------------- required by a bound in this associated function

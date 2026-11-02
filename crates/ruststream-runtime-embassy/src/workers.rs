@@ -55,7 +55,8 @@ type Shape<Capacity, Encoding, Size> = PhantomData<(Capacity, Encoding, fn() -> 
 /// retry copies, [`NoRoom`] for none.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct EmbeddedPlan<WorkerSet, Capacity, Encoding = Encode<DEFAULT_ENCODE_CAPACITY>, Size = ()> {
+pub struct EmbeddedPlan<WorkerSet, Capacity, Encoding = Encode<DEFAULT_ENCODE_CAPACITY>, Size = ()>
+{
     workers: WorkerSet,
     room: Shape<Capacity, Encoding, Size>,
 }
@@ -240,7 +241,8 @@ impl WorkerSet for OneWorker {
     {
         // The worker's own continuation slot, beside its deliveries.
         let worker = WorkerHost::new(host);
-        worker.around(route.run_sequential(signal, state, &worker, worker.parks(parked), Enc::room()))
+        worker
+            .around(route.run_sequential(signal, state, &worker, worker.parks(parked), Enc::room()))
             .await;
     }
 }
@@ -546,14 +548,15 @@ async fn work<Message, Body, Cx, State, Signal, Host, Enc, const COUNT: usize>(
         let worker = WorkerHost::new(shared.host);
         // A worker whose continuation still runs stays awake: the continuation's timer wakes the
         // app task, and a parked worker would not be polled to drive it.
-        worker.around(deliveries::<_, _, _, _, _, _, _, Enc, COUNT>(
-            mailbox,
-            free,
-            shared,
-            &worker,
-            || worker.is_busy(),
-        ))
-        .await;
+        worker
+            .around(deliveries::<_, _, _, _, _, _, _, Enc, COUNT>(
+                mailbox,
+                free,
+                shared,
+                &worker,
+                || worker.is_busy(),
+            ))
+            .await;
     }
 }
 

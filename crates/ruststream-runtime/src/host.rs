@@ -544,7 +544,7 @@ pub trait KeptCopies {
     #[cfg(not(ruststream_alloc))]
     type Fan: Gathers;
 
-    /// The store's fan, for the lane to hand a uniform outcome's `.error` to; `None` for a store
+    /// The store's fan, for the worker to hand a uniform outcome's `.error` to; `None` for a store
     /// of single deliveries.
     #[cfg(not(ruststream_alloc))]
     fn fan(&self) -> Option<&Self::Fan>;

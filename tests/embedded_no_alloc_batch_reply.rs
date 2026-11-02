@@ -107,7 +107,7 @@ async fn on_lossy(asks: &[Ask], ctx: &mut Context<'_, (), Lost>) -> Outcomes<Ver
     asks.iter().map(|ask| Verdict { id: ask.id }).collect()
 }
 
-/// Three hundred bytes, past the room a lane encodes a reply into by default.
+/// Three hundred bytes, past the room a worker encodes a reply into by default.
 const LONG: &str = match from_utf8(&[b'x'; 300]) {
     Ok(long) => long,
     Err(_) => panic!("ascii"),

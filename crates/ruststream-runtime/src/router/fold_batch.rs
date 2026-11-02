@@ -45,7 +45,7 @@ use super::routes_publish::BatchPublishingRoute;
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a dispatch plan of this runner for a batch",
-    note = "a batch mount runs on one lane: `pool` and `keyed` apply to single deliveries"
+    note = "a batch mount runs on one worker: `pool` and `keyed` apply to single deliveries"
 )]
 pub trait OneTaskBatchDispatch {
     /// What the plan keeps of its retry copies: [`NoCopies`], or
@@ -114,7 +114,7 @@ impl<Sub, Body, Cx> OneTaskBatchRoute<Sub, Body, Cx> {
         Lent: SendHost<Cx>,
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
-        // A batch subscriber declares no probe: its lane is polled on every wake, so the bound
+        // A batch subscriber declares no probe: its worker is polled on every wake, so the bound
         // always yields.
         let mut stream = pin!(Bounded::new(
             self.subscriber.batches(self.batch_size),

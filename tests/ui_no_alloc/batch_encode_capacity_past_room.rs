@@ -57,7 +57,7 @@ async fn answer(readings: &[Reading]) -> Outcomes<Answer, 3> {
         .collect()
 }
 
-// The reply publisher keeps its payload, so the lane's room past 256 bytes would go unused.
+// The reply publisher keeps its payload, so the worker's room past 256 bytes would go unused.
 fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.with_codec(PostcardCodec)

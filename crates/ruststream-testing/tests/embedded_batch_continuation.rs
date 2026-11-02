@@ -138,7 +138,7 @@ fn an_element_continuation_runs_in_the_order_of_the_batch_and_none_is_dropped()
         let (tb, ran) = start().await?;
         publish_batch(&tb, "each", [b"a", b"b", b"c"]).await?;
 
-        // The lane holds one continuation at a time, so each element waits its turn.
+        // The worker holds one continuation at a time, so each element waits its turn.
         tb.advance(Duration::from_secs(3)).await?;
         assert_eq!(*ran.lock().expect("no panic"), ["a", "b", "c"]);
         tb.shutdown().await?;

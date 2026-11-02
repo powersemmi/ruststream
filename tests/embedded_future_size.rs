@@ -73,7 +73,7 @@ fn errored_app_of_16(bus: Bus) -> EmbeddedApp<impl Mounts> {
 
 /// What the app of one batch route with a store and a uniform `.error` may take, for batches of
 /// 4 and of 16, in bytes of a 64-bit host: the fan the mount holds, the failure buffer of its
-/// lane and the store's records come on top of the plain route's room.
+/// worker and the store's records come on top of the plain route's room.
 const ERRORED_BUDGETS: [usize; 2] = [48 * 1024, 72 * 1024];
 
 #[test]

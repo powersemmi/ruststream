@@ -1,4 +1,4 @@
-//! The plan of a batch registration on the embedded runner: one lane, and the store its elements'
+//! The plan of a batch registration on the embedded runner: one worker, and the store its elements'
 //! retry copies wait in.
 //!
 //! A batch mount takes the steps of a single-message one that apply to it: `.retry_capacity::<CAP>()`
@@ -26,8 +26,8 @@ use typenum::{Equal, Greater};
 use crate::copies::CopyStore;
 use crate::hooks::AppState;
 #[cfg(not(ruststream_alloc))]
-use crate::host::LaneHost;
-use crate::lanes::{EmbeddedPlan, EncodeSize, NoRoom, OneLane, Room};
+use crate::host::WorkerHost;
+use crate::workers::{EmbeddedPlan, EncodeSize, NoRoom, OneWorker, Room};
 
 /// Whether a store of `Self` records holds the retries of a batch of `Size`. Machinery; never
 /// named directly.
@@ -87,11 +87,11 @@ impl<const SIZE: usize> FanSize for BatchSize<SIZE> {
     }
 }
 
-impl<Enc: EncodeSize, Size> OneTaskBatchDispatch for EmbeddedPlan<OneLane, NoRoom, Enc, Size> {
+impl<Enc: EncodeSize, Size> OneTaskBatchDispatch for EmbeddedPlan<OneWorker, NoRoom, Enc, Size> {
     type Copies = NoCopies;
 
     #[cfg(ruststream_alloc)]
-    // Not an `async fn`: a frame of its own would sit between the caller and the lane for
+    // Not an `async fn`: a frame of its own would sit between the caller and the worker for
     // nothing.
     fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
@@ -112,7 +112,7 @@ impl<Enc: EncodeSize, Size> OneTaskBatchDispatch for EmbeddedPlan<OneLane, NoRoo
         route.run_batches(signal, state, host, Enc::room())
     }
 
-    // The lane's own continuation slot lives in this frame, beside the loop.
+    // The worker's own continuation slot lives in this frame, beside the loop.
     #[cfg(not(ruststream_alloc))]
     async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
@@ -129,14 +129,15 @@ impl<Enc: EncodeSize, Size> OneTaskBatchDispatch for EmbeddedPlan<OneLane, NoRoo
         Host: Detach,
         Path: PrepareCopy<Cx> + MaybeSendSync,
     {
-        let lane = LaneHost::new(host);
-        lane.around(route.run_batches(signal, state, &lane, Enc::room()))
+        let worker = WorkerHost::new(host);
+        worker
+            .around(route.run_batches(signal, state, &worker, Enc::room()))
             .await;
     }
 }
 
 impl<Enc: EncodeSize, const CAPACITY: usize, Size: FanSize> OneTaskBatchDispatch
-    for EmbeddedPlan<OneLane, Room<CAPACITY>, Enc, Size>
+    for EmbeddedPlan<OneWorker, Room<CAPACITY>, Enc, Size>
 {
     type Copies = KeepCopies;
 
@@ -156,17 +157,17 @@ impl<Enc: EncodeSize, const CAPACITY: usize, Size: FanSize> OneTaskBatchDispatch
         Path: PrepareCopy<Cx> + MaybeSendSync,
     {
         let Some(path) = path else {
-            // A registration the broker gave no copy path keeps nothing: the plain lane.
+            // A registration the broker gave no copy path keeps nothing: the plain worker.
             self.without_room()
                 .run(route, None::<Path>, signal, state, host)
                 .await;
             return;
         };
         // The registration's own store: its copies wait in its records, and its driver
-        // publishes the last of them after the batch loop has stopped. The loop, the lane's slot
+        // publishes the last of them after the batch loop has stopped. The loop, the worker's slot
         // and the driver are joined in this frame, so none of them adds a frame of its own.
         let store = CopyStore::<Path, CAPACITY>::new(path, &route.name).input(route.input);
-        // The fan of the mount's uniform outcomes: the lane and the store report to it.
+        // The fan of the mount's uniform outcomes: the worker and the store report to it.
         #[cfg(not(ruststream_alloc))]
         let store = store.with_fan(Size::fan());
         let keeping = Keeping(host, &store);
@@ -180,11 +181,14 @@ impl<Enc: EncodeSize, const CAPACITY: usize, Size: FanSize> OneTaskBatchDispatch
         .await;
         #[cfg(not(ruststream_alloc))]
         {
-            let lane = LaneHost::new(&keeping);
+            let worker = WorkerHost::new(&keeping);
             join(
-                lane.around_then(route.run_batches(signal, state, &lane, Enc::room()), || {
-                    store.close();
-                }),
+                worker.around_then(
+                    route.run_batches(signal, state, &worker, Enc::room()),
+                    || {
+                        store.close();
+                    },
+                ),
                 store.drive(host),
             )
             .await;
