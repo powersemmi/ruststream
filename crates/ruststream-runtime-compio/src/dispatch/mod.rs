@@ -331,13 +331,13 @@ mod tests {
 
     #[test]
     fn a_stream_that_waited_starts_its_run_again() {
-        let polls = Rc::new(Cell::new(0));
+        let polls = Rc::new(Cell::new(0_u32));
         // Ready except every hundredth poll: no run reaches the bound.
         let items = poll_fn({
             let polls = Rc::clone(&polls);
             move |_cx| {
                 polls.set(polls.get() + 1);
-                if polls.get() % 100 == 0 {
+                if polls.get().is_multiple_of(100) {
                     Poll::Pending
                 } else {
                     Poll::Ready(Some(7))
