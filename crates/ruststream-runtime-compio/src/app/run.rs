@@ -6,6 +6,8 @@
 use std::convert::Infallible;
 use std::fmt;
 use std::future::pending;
+#[cfg(not(feature = "testing"))]
+use std::marker::PhantomData;
 use std::pin::pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -496,12 +498,12 @@ impl<State> Wiring<State> {
 
 /// How the brokers connect and the state is made.
 #[cfg(not(feature = "testing"))]
-pub(super) struct Wiring<State>(std::marker::PhantomData<fn() -> State>);
+pub(super) struct Wiring<State>(PhantomData<fn() -> State>);
 
 #[cfg(not(feature = "testing"))]
 impl<State> Wiring<State> {
     pub(super) const fn production() -> Self {
-        Self(std::marker::PhantomData)
+        Self(PhantomData)
     }
 }
 
