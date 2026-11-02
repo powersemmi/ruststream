@@ -10,7 +10,7 @@ import TabItem from '@theme/TabItem';
 # Compio runtime
 
 A service runs on compio with one single-threaded runtime per core.
-On Linux the runtimes use `io_uring`, and elsewhere the platform's own completion or polling driver.
+On Linux the runtimes use `io_uring`, and a host that refuses a ring (a container profile that blocks it, an old kernel, no memory for it) is served by the polling driver. Elsewhere the platform's own completion or polling driver is used.
 [`#[ruststream::app(runtime = compio, cores = N)]`](./app-macro.md) turns the builder function into the service's `main`, which starts the cores and runs the app on them.
 The handlers are the ones a tokio service runs, written with `#[subscriber]`.
 
@@ -85,9 +85,9 @@ Retries, batch deadlines and `retry_after` ride the same clock.
 ## Shutdown and health
 
 `SIGINT` and `SIGTERM` end the run.
-The app stops receiving, lets the handlers in flight finish, runs the shutdown hooks and shuts every broker down.
+The app stops receiving, lets the handlers in flight finish, runs the shutdown hooks and shuts every broker down once the lanes of every core are gone.
 [`shutdown_timeout`](api:ruststream::runtime::compio::RustStream::shutdown_timeout) bounds the wait for handlers still running.
-A core that fails or panics stops the others, and `run` returns the failure of the lowest core.
+A core that fails or panics stops the others, and `run` returns the failure of the lowest core. A lane that panics outside its handler stops the service the way a handler that panics does.
 
 [`RustStream::run_until`](api:ruststream::runtime::compio::RustStream::run_until) ends the run on a future of the caller's instead of a signal.
 [`RustStream::start`](api:ruststream::runtime::compio::RustStream::start) starts the app on the current runtime and returns a [`RunningApp`](api:ruststream::runtime::compio::RunningApp), whose `health()` is a [`HealthProbe`](api:ruststream::runtime::compio::HealthProbe) a sibling task reads.

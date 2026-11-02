@@ -10,7 +10,7 @@ description: "TestApp runs a compio service on the test's own compio runtime, wi
 The test hands it the production app, unchanged, and drives it with the calls a tokio test makes: [`broker`](./driving/broker.md), [`settle`](./driving/settle.md), [`advance`](./driving/advance.md) and `shutdown`.
 The test is a plain `#[test]` that blocks on one future of a `compio::runtime::Runtime`.
 
-The harness runs the app as the one core of the test's runtime: it drives every subscription and worker there and does not reproduce the cores, the pinning or the hand-off between cores.
+The harness runs the app as the one core of the test's runtime: it drives every subscription and worker there, a `threads(n)` mount as `n` workers of it, and does not reproduce the cores, the pinning or the hand-off between cores.
 `Core::current()` is core 0 of 1 in a test.
 
 One `TestApp` runs at a time on a thread, because the clock it holds is one per thread.
