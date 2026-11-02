@@ -19,6 +19,7 @@ use ruststream_runtime::{
 };
 
 pub(crate) use crate::detach::{Hosted, on_thread};
+use crate::follow::spawn_followed;
 use crate::shutdown::Shutdown;
 use crate::{BatchSubscriber, IncomingMessage, Subscriber};
 pub(crate) use threads::StartThreadError;
@@ -43,7 +44,7 @@ where
     St: Send + Sync + 'static,
 {
     let consuming = shutdown.consuming();
-    tokio::spawn(run_sequential(
+    spawn_followed(run_sequential(
         subscriber,
         handler,
         shutdown,
@@ -159,7 +160,7 @@ where
         },
     )?;
     let consuming = shutdown.consuming();
-    Ok(tokio::spawn(async move {
+    Ok(spawn_followed(async move {
         let _consuming = consuming;
         threads
             .feed(
@@ -235,7 +236,7 @@ where
         failure,
     };
     let consuming = shutdown.consuming();
-    Ok(tokio::spawn(async move {
+    Ok(spawn_followed(async move {
         let _consuming = consuming;
         if workers.is_sequential() {
             batch_loop(subscriber, &shared, &shutdown, batch_size).await;
@@ -383,7 +384,7 @@ where
         }
     })?;
     let consuming = shutdown.consuming();
-    Ok(tokio::spawn(async move {
+    Ok(spawn_followed(async move {
         let _consuming = consuming;
         threads
             .feed(

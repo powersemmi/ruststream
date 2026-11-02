@@ -283,3 +283,9 @@ required-features = ["embassy", "json"]
 name = "tokio_quiescence"
 path = "tests/tokio_quiescence.rs"
 required-features = ["tokio", "json"]
+
+# The tokio `TestApp` ends a wait on a task that keeps itself runnable, on the paused clock.
+[[test]]
+name = "tokio_busy"
+path = "tests/tokio_busy.rs"
+required-features = ["tokio", "json"]

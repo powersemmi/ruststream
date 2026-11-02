@@ -14,7 +14,7 @@ use ruststream_runtime::codec::{Codec, DefaultCodec};
 use ruststream_runtime::message_of;
 use ruststream_runtime::{HeadersUnset, MessageBody, PublishBuilder, PublishSink, UnnamedCodec};
 use ruststream_runtime::{SinkOutcome, SinkRefusal};
-use ruststream_runtime_tokio::Shutdown;
+use ruststream_runtime_tokio::{Quiescence, Shutdown};
 use send_wrapper::SendWrapper;
 use tokio::runtime::{Handle, RuntimeFlavor};
 use tokio::task::block_in_place;
@@ -43,6 +43,7 @@ pub(super) struct Harness<'a> {
     pub(super) shutdown: &'a Shutdown,
     pub(super) mode: &'a Mode,
     pub(super) brokers: &'a [BrokerEntry],
+    pub(super) quiescence: &'a Quiescence,
 }
 
 /// Where a handle's injections go.
@@ -171,7 +172,7 @@ impl PublishSink for InjectSink<'_> {
             .await;
         harness
             .mode
-            .settle(harness.coordinator, harness.brokers)
+            .settle(harness.coordinator, harness.brokers, harness.quiescence)
             .await
             .map_err(Into::into)
     }
@@ -259,7 +260,8 @@ impl BrokerHandle<'_> {
     ///
     /// Returns [`TestError::ShutDown`] if the service has been torn down, [`TestError::Encode`]
     /// if the value does not encode, [`TestError::Publish`] if a live broker refuses the message,
-    /// or [`TestError::NotQuiescent`] / [`TestError::NotSettled`] if the reaction does not settle.
+    /// or [`TestError::NotQuiescent`] / [`TestError::KeptRunning`] / [`TestError::NotSettled`] if the
+    /// reaction does not settle.
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
     pub async fn publish<T: serde::Serialize + Sync>(
         &self,

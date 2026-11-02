@@ -18,6 +18,7 @@ use ruststream_runtime::testing::{
     LivePublish, PublishedAssertions, TestError, TestableRegistration, live_publish,
 };
 
+use super::busy::until_idle;
 use super::{BrokerEntry, Mode, TestApp};
 use crate::handle::{BrokerHandle, Harness, InjectSink, Target, Transport};
 use ruststream_runtime::testing::Within;
@@ -164,6 +165,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
                 shutdown: &self.shutdown,
                 mode: &self.mode,
                 brokers: &self.entries,
+                quiescence: &self.quiescence,
             },
             scope_id,
             transport,
@@ -261,10 +263,13 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// # Errors
     ///
     /// Returns [`TestError::NotQuiescent`] if an in-process reaction does not settle within the
-    /// step budget, or [`TestError::NotSettled`] naming the subscription a live reaction left
-    /// unsettled at the deadline.
+    /// step budget, [`TestError::KeptRunning`] if a task of the app keeps itself runnable so that
+    /// it never goes idle, or [`TestError::NotSettled`] naming the subscription a live reaction
+    /// left unsettled at the deadline.
     pub async fn settle(&self) -> Result<(), TestError> {
-        self.mode.settle(&self.coordinator, &self.entries).await
+        self.mode
+            .settle(&self.coordinator, &self.entries, &self.quiescence)
+            .await
     }
 
     /// Lets `by` pass, fires every `nack_after` / `retry_after` redelivery now due, and drives the
@@ -282,8 +287,9 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// # Errors
     ///
     /// Returns [`TestError::NotQuiescent`] if an in-process reaction does not settle within the
-    /// step budget, or [`TestError::NotSettled`] naming the subscription a live reaction left
-    /// unsettled at the deadline.
+    /// step budget, [`TestError::KeptRunning`] if a task of the app keeps itself runnable so that
+    /// it never goes idle, or [`TestError::NotSettled`] naming the subscription a live reaction
+    /// left unsettled at the deadline.
     pub async fn advance(&self, by: Duration) -> Result<(), TestError> {
         match self.mode {
             Mode::InProcess => time::advance(by).await,
@@ -302,9 +308,19 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// A settlement registers its continuations - the outcome's `and_after` and the context's
     /// `after(..)` / `after_settle(..)` hooks alike - before it releases the delivery, so an
     /// injection that has returned has already put its continuations here for this to find.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a continuation keeps itself runnable, so that it never finishes.
     pub async fn drain(&self) {
-        while !self.continuations.is_empty() {
-            task::yield_now().await;
+        let drained = until_idle(&self.quiescence, async {
+            while !self.continuations.is_empty() {
+                task::yield_now().await;
+            }
+        })
+        .await;
+        if let Err(kept_running) = drained {
+            panic!("{kept_running}");
         }
     }
 
