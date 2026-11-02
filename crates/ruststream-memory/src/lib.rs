@@ -61,7 +61,6 @@ use std::{
 };
 
 #[cfg(feature = "std")]
-use bytes::Bytes;
 #[cfg(feature = "std")]
 use ruststream_core::{BytesMut, HeaderMap, OutgoingMessage, PublishMessageError};
 #[cfg(feature = "testing")]
@@ -77,7 +76,7 @@ type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 #[cfg(feature = "std")]
 struct Unsent {
     error: MemoryError,
-    payload: Bytes,
+    payload: BytesMut,
     headers: HeaderMap,
 }
 
@@ -103,14 +102,9 @@ impl Unsent {
             payload,
             headers,
         } = self;
-        // The publish froze the buffer it was handed and the bus refused before sharing it, so
-        // the block is still unique and the buffer comes back without a copy.
-        let buffer = payload
-            .try_into_mut()
-            .unwrap_or_else(|shared| BytesMut::from(shared.as_ref()));
         PublishMessageError::with_message(
             map(error),
-            OutgoingMessage::with_payload(name, buffer).with_headers(headers),
+            OutgoingMessage::with_payload(name, payload).with_headers(headers),
         )
     }
 }
@@ -126,7 +120,7 @@ impl Unsent {
 #[cfg(feature = "std")]
 struct MemoryOutbound {
     name: String,
-    payload: Bytes,
+    payload: BytesMut,
     headers: HeaderMap,
 }
 
@@ -134,11 +128,11 @@ struct MemoryOutbound {
 impl From<OutgoingMessage<'_, BytesMut>> for MemoryOutbound {
     fn from(msg: OutgoingMessage<'_, BytesMut>) -> Self {
         // The publish hands over both the buffer it produced and the map it filled, so the bus
-        // keeps them as they stand; the freeze is the one block shared ownership costs.
+        // keeps them as they stand.
         let (name, payload, headers) = msg.into_parts();
         Self {
             name: name.to_owned(),
-            payload: payload.freeze(),
+            payload,
             headers,
         }
     }
@@ -155,7 +149,7 @@ impl From<OutgoingMessage<'_, BytesMut>> for MemoryOutbound {
 #[cfg(feature = "std")]
 struct DeliveryInner {
     name: Arc<str>,
-    payload: Bytes,
+    payload: BytesMut,
     headers: HeaderMap,
 }
 
@@ -314,9 +308,19 @@ impl MemoryState {
     /// that is an error (the `Subscribe` path) or a silent no-registration (the infallible
     /// inherent constructor).
     fn register(&self, name: &str, tx: Sender) -> Result<(), MemoryError> {
+        self.register_shared(Arc::from(name), tx)
+    }
+
+    /// [`register`](Self::register) for a name the caller already holds counted, which becomes the
+    /// registry key without a copy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::ShutDown`] against a shut-down bus.
+    fn register_shared(&self, name: Arc<str>, tx: Sender) -> Result<(), MemoryError> {
         match &mut *self.lock_bus() {
             Bus::Live(registry) => {
-                registry.names.entry(Arc::from(name)).or_default().push(tx);
+                registry.names.entry(name).or_default().push(tx);
                 Ok(())
             }
             Bus::ShutDown(_) => Err(MemoryError::ShutDown),
@@ -424,7 +428,7 @@ impl MemoryState {
     /// nothing is recorded in the published log.
     // significant_drop_tightening misfires here: both guards drop at the end of the minimal
     // block right after their last use.
-    fn fanout(&self, name: &str, payload: Bytes, headers: HeaderMap) -> Result<(), MemoryError> {
+    fn fanout(&self, name: &str, payload: BytesMut, headers: HeaderMap) -> Result<(), MemoryError> {
         self.fanout_unsent(name, payload, headers)
             .map_err(|unsent| unsent.error)
     }
@@ -442,7 +446,7 @@ impl MemoryState {
     fn fanout_unsent(
         &self,
         name: &str,
-        payload: Bytes,
+        payload: BytesMut,
         headers: HeaderMap,
     ) -> Result<(), Box<Unsent>> {
         {
@@ -529,7 +533,7 @@ impl MemoryState {
         registry: &Registry,
         log: Option<&mut LogState>,
         name: &str,
-        payload: Bytes,
+        payload: BytesMut,
         headers: HeaderMap,
     ) {
         let registered = registry.names.get_key_value(name);

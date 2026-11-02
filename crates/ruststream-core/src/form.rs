@@ -30,6 +30,8 @@ fn kept<'a>(name: OutgoingName<'a>, slot: &'a mut Option<OutgoingName<'static>>)
 }
 
 impl PayloadForm for Lend {
+    const LENDS: bool = true;
+
     type Form<'a> = &'a [u8];
 
     // The codec writes into the publish path's own buffer, so the path carries it.
@@ -126,6 +128,8 @@ impl PayloadForm for Lend {
 }
 
 impl PayloadForm for Take {
+    const LENDS: bool = false;
+
     type Form<'a> = BytesMut;
 
     // The codec produces the buffer the transport keeps, so there is nothing to write into: a

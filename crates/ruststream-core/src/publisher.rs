@@ -67,6 +67,14 @@ use crate::{ConnectedBroker, HeaderMap, MaybeSend, MaybeSendSync, OutgoingMessag
 /// }
 /// ```
 pub trait PayloadForm: sealed::Sealed {
+    /// Whether a publish in this form writes into a scratch buffer the framework lends: `true`
+    /// for [`Lend`], `false` for [`Take`], whose buffer is the one the codec produces and the
+    /// transport keeps.
+    ///
+    /// A constant, so a publish path decides at compile time whether it needs a scratch at all.
+    #[doc(hidden)]
+    const LENDS: bool;
+
     /// The payload as this form carries it: `&'a [u8]` for [`Lend`], [`BytesMut`] for [`Take`].
     ///
     /// The bounds are what every publish position needs of it: the bytes are readable, the

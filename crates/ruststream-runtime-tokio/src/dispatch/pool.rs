@@ -35,15 +35,15 @@ pub(super) struct Shared<Body, State, Cx, Retry> {
 }
 
 /// How a worker says it is free for the next delivery: its index, sent back to the loop.
-struct Idle {
-    index: usize,
-    loop_side: mpsc::Sender<usize>,
+pub(super) struct Idle {
+    pub(super) index: usize,
+    pub(super) loop_side: mpsc::Sender<usize>,
 }
 
 /// A pool worker's report that it ended mid-delivery: its index once more, so a worker that
 /// panicked outside the handler's future is found by the next delivery the loop hands it,
 /// rather than never picked again. A worker that leaves its loop disarms it first.
-struct Farewell(Option<Idle>);
+pub(super) struct Farewell(pub(super) Option<Idle>);
 
 impl Drop for Farewell {
     fn drop(&mut self) {
@@ -57,12 +57,12 @@ impl Drop for Farewell {
 
 /// The workers a loop started. Dropping it aborts them: a loop aborted by the shutdown timeout
 /// takes its workers down with it, including those it was joining when the timeout hit.
-struct Crew(Vec<JoinHandle<()>>);
+pub(super) struct Crew(pub(super) Vec<JoinHandle<()>>);
 
 impl Crew {
     /// Waits for every worker to end, logging the ones that failed. The handles stay in the crew
     /// until it drops, so a loop aborted mid-join still aborts the workers it had not joined.
-    async fn join(&mut self) {
+    pub(super) async fn join(&mut self) {
         for worker in &mut self.0 {
             log_worker_exit(worker.await);
         }

@@ -9,8 +9,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-#[cfg(feature = "testing")]
-use bytes::Bytes;
 use futures::future::lazy;
 #[cfg(doc)]
 use ruststream_core::IncomingMessage;
@@ -586,7 +584,7 @@ impl<Log: LogMode> TestableBroker for ConnectedMemoryBroker<Log> {
         // Injecting into a shut-down bus is a harness bug (both run_suite and TestApp drive
         // the bus strictly before shutdown), so fail loudly instead of losing the message.
         self.state
-            .fanout(name, Bytes::copy_from_slice(payload), headers)
+            .fanout(name, BytesMut::from(payload), headers)
             .expect("inject on a shut-down broker: drive the harness before shutdown");
     }
 
@@ -799,7 +797,7 @@ impl Publisher for MemoryPublisher {
         let (name, payload, headers) = msg.into_parts();
         ready(
             self.state
-                .fanout_unsent(name, payload.freeze(), headers)
+                .fanout_unsent(name, payload, headers)
                 .map_err(|unsent| (*unsent).returned(name)),
         )
     }

@@ -66,6 +66,8 @@ tokio = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
+# Counts this thread's allocations, so a test reads what a publish costs.
+allocation-counter = "0.8.1"
 # Drives the local broker's examples and tests: a device's executor polls the same futures.
 embassy-futures.workspace = true
 futures = { workspace = true, features = ["std"] }

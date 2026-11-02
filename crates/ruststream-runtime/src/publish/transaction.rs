@@ -4,12 +4,12 @@ use core::fmt;
 use core::marker::PhantomData;
 use ruststream_core::MaybeSync;
 
-use bytes::BytesMut;
 use ruststream_core::KeptPayload;
 use serde::Serialize;
 use thiserror::Error;
 use tracing::warn;
 
+use super::scratch::Scratch;
 use super::{HeadersUnset, MessageBody, PublishBuilder, PublishCodec, SinkRefusal, message_of};
 use crate::codec::{CodecError, Encoding};
 use crate::publish_failure::FailedMessage;
@@ -141,7 +141,7 @@ where
     ) -> Result<(), TransactionPublishError<P::Error>> {
         // The scope's own buffer for this publish: a transaction that reads the payload is lent
         // it, one that buffers the message is handed the codec's and never touches this.
-        let mut buf = BytesMut::new();
+        let mut buf = Scratch::of::<P::Payload>();
         let slot = <P::Payload as PayloadForm>::encode_slot(&mut buf);
         let payload =
             <P::Payload as PayloadForm>::encoded(&Encoding::new(self.enc.codec(), value), slot)
@@ -313,7 +313,7 @@ where
     {
         // As on the borrowed scope: the buffer is this publish's own, and only a transaction
         // that lends the payload writes into it.
-        let mut buf = BytesMut::new();
+        let mut buf = Scratch::of::<Txn::Payload>();
         let slot = <Txn::Payload as PayloadForm>::encode_slot(&mut buf);
         let payload =
             <Txn::Payload as PayloadForm>::encoded(&Encoding::new(self.enc.codec(), value), slot)
@@ -387,12 +387,12 @@ pub enum TransactionPublishError<E> {
 /// The error of a refused transactional publish, with the message as it was to be sent.
 ///
 /// `buf` is the scope's buffer for this publish: bytes a lending transaction was shown sit there.
-fn refused<E>(refusal: SinkRefusal<E>, buf: &mut BytesMut) -> TransactionPublishError<E> {
+fn refused<E>(refusal: SinkRefusal<E>, buf: &mut Scratch) -> TransactionPublishError<E> {
     let (source, unsent) = refusal.into_parts();
     let message = unsent.map(|(destination, payload, headers)| {
         let payload = match payload {
             KeptPayload::Owned(bytes) => bytes,
-            KeptPayload::Lent { .. } => buf.split().freeze(),
+            KeptPayload::Lent { .. } => buf.split_off_frozen(),
         };
         FailedMessage::new(&destination, Some(payload), headers)
     });

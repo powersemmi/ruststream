@@ -28,6 +28,7 @@ ruststream-core = { workspace = true, features = ["std"] }
 ruststream-runtime = { workspace = true, features = ["tokio"] }
 bytes = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["std", "async-await", "executor"] }
+crossbeam-queue.workspace = true
 rtrb.workspace = true
 thiserror = { workspace = true, features = ["std"] }
 tokio.workspace = true
