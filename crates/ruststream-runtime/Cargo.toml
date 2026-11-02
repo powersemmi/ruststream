@@ -74,8 +74,9 @@ log = ["ruststream-core/log"]
 defmt = ["ruststream-core/defmt"]
 # The app's runtime as a handler reaches it (`MainRuntime`), for the runner built on Tokio.
 tokio = ["std", "dep:tokio", "ruststream-core/send"]
-# The items the compio runner shares with the other runners.
-compio = ["std"]
+# The items the compio runner shares with the other runners. A delivery may be handed to another
+# core, so the contract's bounds are the ones a multi-thread runner asks for, as under `tokio`.
+compio = ["std", "ruststream-core/send"]
 poll-diagnostics = ["std", "dep:quanta"]
 
 [dependencies]

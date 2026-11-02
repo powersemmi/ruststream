@@ -83,6 +83,8 @@ mod batch_publishing;
 mod context;
 mod coop;
 mod copied;
+#[cfg(feature = "compio")]
+mod core_ctx;
 mod dispatch;
 // Boxed futures per layer: the stack serves the heap variant.
 #[cfg(ruststream_alloc)]
@@ -164,6 +166,8 @@ pub use batch::{
 #[cfg(not(ruststream_alloc))]
 pub use batch::{BatchSize, FitsBatch, Outcomes};
 pub use context::{After, AfterError, AfterThen, Context};
+#[cfg(feature = "compio")]
+pub use core_ctx::{Core, CoreGuard};
 #[cfg(ruststream_alloc)]
 pub use described::Described;
 #[cfg(feature = "std")]

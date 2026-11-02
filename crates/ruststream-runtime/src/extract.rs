@@ -22,6 +22,8 @@ use serde::de::DeserializeOwned;
 use crate::ContextField;
 
 use super::context::Context;
+#[cfg(feature = "compio")]
+use super::core_ctx::Core;
 use super::failure::FailurePolicy;
 use super::handler::HandlerOutcome;
 #[cfg(feature = "tokio")]
@@ -243,7 +245,7 @@ pub struct Ctx<K: CtxKey>(pub K::Value);
 /// A key the [`Ctx`] extractor takes: every [`ContextField`], which reads the broker's
 /// per-delivery context, and
 /// [`MainRuntime`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.MainRuntime.html),
-/// which binds the app's runtime.
+/// which binds the app's runtime, and `Core`, which binds the core of the compio runner.
 ///
 /// Sealed: a new key implements [`ContextField`].
 ///
@@ -285,8 +287,15 @@ impl CtxKey for MainRuntime {
     type Value = Self;
 }
 
+#[cfg(feature = "compio")]
+impl CtxKey for Core {
+    type Value = Self;
+}
+
 mod sealed {
     use super::ContextField;
+    #[cfg(feature = "compio")]
+    use super::Core;
     #[cfg(feature = "tokio")]
     use super::MainRuntime;
 
@@ -296,6 +305,9 @@ mod sealed {
 
     #[cfg(feature = "tokio")]
     impl Sealed for MainRuntime {}
+
+    #[cfg(feature = "compio")]
+    impl Sealed for Core {}
 }
 
 impl<K: CtxKey> fmt::Debug for Ctx<K>
@@ -334,6 +346,22 @@ where
     ) -> impl Future<Output = Result<Self, Infallible>> + MaybeSend {
         let value = ctx.main_runtime().clone();
         async move { Ok(Self(value)) }
+    }
+}
+
+/// The core the handler runs on: read where the handler runs, not where the delivery arrived.
+#[cfg(feature = "compio")]
+impl<C, S> FromContext<C, S> for Ctx<Core>
+where
+    C: MaybeSend,
+    S: MaybeSync,
+{
+    type Rejection = Infallible;
+    fn from_context(
+        _ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<Self, Infallible>> + MaybeSend {
+        let core = Core::current();
+        async move { Ok(Self(core)) }
     }
 }
 
@@ -526,5 +554,24 @@ mod tests {
     fn a_context_field_parameter_shows_its_value_when_debugged() {
         // The extractor is what a handler sees, so its Debug has to reach the value itself.
         assert_eq!(format!("{:?}", Ctx::<Offset>(42)), "Ctx(42)");
+    }
+
+    #[cfg(feature = "compio")]
+    #[tokio::test]
+    async fn the_core_extractor_binds_the_core_the_thread_is() {
+        use core::num::NonZeroUsize;
+
+        use super::super::core_ctx::Core;
+
+        let _core = Core::new(2, NonZeroUsize::new(4).expect("four is not zero")).enter();
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = headers_with("7");
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+
+        let Ctx(core) = <Ctx<Core> as FromContext<(), ()>>::from_context(&mut ctx)
+            .await
+            .expect("the core extractor never rejects");
+        assert_eq!((core.index(), core.count().get()), (2, 4));
     }
 }
