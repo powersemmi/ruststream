@@ -20,6 +20,7 @@ use tracing::{debug, info, warn};
 #[cfg(feature = "testing")]
 use crate::ConnectedLifecycle;
 use crate::bindable::Bound;
+use crate::cores::build_runtime;
 use crate::dispatch::{Fabric, Layout};
 use crate::time;
 use crate::{
@@ -119,22 +120,27 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase>
         let released = Stop::default();
         let job = Mutex::new(Some((self, shutdown, layout)));
 
-        let ended = cores.run(&stop, async |core, stop| {
-            if core.is_main() {
-                let (app, shutdown, layout) = job
-                    .lock()
-                    .ok()
-                    .and_then(|mut job| job.take())
-                    .expect("core 0 runs once");
-                let _release = Release(released.clone());
-                let outcome = app.drive(shutdown, layout, stop, fabric.clone()).await;
-                Ok::<_, Infallible>(Some(outcome))
-            } else {
-                serve_core(&fabric, core.index(), &stop, timeout).await;
-                released.cancelled().await;
-                Ok(None)
-            }
-        });
+        let ended = cores.run_with(
+            &stop,
+            Some(&released),
+            &build_runtime,
+            async |core, stop| {
+                if core.is_main() {
+                    let (app, shutdown, layout) = job
+                        .lock()
+                        .ok()
+                        .and_then(|mut job| job.take())
+                        .expect("core 0 runs once");
+                    let _release = Release(released.clone());
+                    let outcome = app.drive(shutdown, layout, stop, fabric.clone()).await;
+                    Ok::<_, Infallible>(Some(outcome))
+                } else {
+                    serve_core(&fabric, core.index(), &stop, timeout).await;
+                    released.cancelled().await;
+                    Ok(None)
+                }
+            },
+        );
         match ended {
             Ok(outcomes) => outcomes.into_iter().flatten().next().unwrap_or(Ok(())),
             Err(failure) => Err(RustStreamError::Cores(failure)),

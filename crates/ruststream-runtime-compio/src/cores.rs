@@ -9,7 +9,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::pin::pin;
 use std::thread::{self, ScopedJoinHandle};
 
-use compio::runtime::RuntimeBuilder;
+use compio::runtime::{Runtime, RuntimeBuilder};
 use compio::signal::ctrl_c;
 #[cfg(unix)]
 use compio::signal::unix::signal as unix_signal;
@@ -201,6 +201,27 @@ impl Cores {
         Out: Send,
         Failure: Into<BoxError>,
     {
+        self.run_with(stop, None, &build_runtime, make)
+    }
+
+    /// [`run`](Self::run) with the way a core's runtime is built named, and a signal raised the
+    /// moment core 0 is over however it ended, a failure to build its runtime included.
+    ///
+    /// The signal is for the cores that keep their runtimes until core 0's teardown is done: core
+    /// 0's own future cannot raise it when the future never starts.
+    pub(crate) fn run_with<Build, Make, Out, Failure>(
+        self,
+        stop: &Stop,
+        core_zero_over: Option<&Stop>,
+        build: &Build,
+        make: Make,
+    ) -> Result<Vec<Out>, CoresError>
+    where
+        Build: Fn(usize, Option<usize>) -> io::Result<Runtime> + Sync,
+        Make: AsyncFn(Core, Stop) -> Result<Out, Failure> + Sync,
+        Out: Send,
+        Failure: Into<BoxError>,
+    {
         let count = self.count.get();
         let pinning = if self.pinned {
             let allowed: Option<Vec<usize>> =
@@ -229,6 +250,7 @@ impl Cores {
                             Core::new(index, self.count),
                             pinning,
                             &core_stop,
+                            build,
                             make,
                             false,
                         )
@@ -250,10 +272,20 @@ impl Cores {
             }
 
             let main = catch_unwind(AssertUnwindSafe(|| {
-                run_core(Core::new(0, self.count), pinning, stop, make, self.signals)
+                run_core(
+                    Core::new(0, self.count),
+                    pinning,
+                    stop,
+                    build,
+                    make,
+                    self.signals,
+                )
             }));
             // Whatever core 0 did, the others must be told to end before they are joined.
             stop.cancel();
+            if let Some(over) = core_zero_over {
+                over.cancel();
+            }
 
             let mut ordered: Vec<Result<Out, CoresError>> = Vec::with_capacity(count);
             match main {
@@ -292,24 +324,31 @@ fn collect<Out>(ordered: Vec<Result<Out, CoresError>>) -> Result<Vec<Out>, Cores
     first.map_or(Ok(outputs), Err)
 }
 
+/// The runtime of a core, pinned to `cpu` where there is one.
+pub(crate) fn build_runtime(_core: usize, cpu: Option<usize>) -> io::Result<Runtime> {
+    let mut builder = RuntimeBuilder::new();
+    if let Some(cpu) = cpu {
+        builder.thread_affinity(HashSet::from([cpu]));
+    }
+    builder.build()
+}
+
 /// One core: its runtime, pinned and made current, running the core's future to its end.
-fn run_core<Make, Out, Failure>(
+fn run_core<Build, Make, Out, Failure>(
     core: Core,
     pinning: &Pinning,
     stop: &Stop,
+    build: &Build,
     make: &Make,
     signals: bool,
 ) -> Result<Out, CoresError>
 where
+    Build: Fn(usize, Option<usize>) -> io::Result<Runtime>,
     Make: AsyncFn(Core, Stop) -> Result<Out, Failure>,
     Failure: Into<BoxError>,
 {
     let index = core.index();
-    let mut builder = RuntimeBuilder::new();
-    if let Some(cpu) = pinning.cpus[index] {
-        builder.thread_affinity(HashSet::from([cpu]));
-    }
-    let runtime = builder.build().map_err(|source| {
+    let runtime = build(index, pinning.cpus[index]).map_err(|source| {
         stop.fail(
             "cores",
             &format!("core {index}: the runtime could not be built"),
@@ -368,13 +407,20 @@ async fn raise_on_signal(stop: Stop) {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+    use std::num::NonZeroUsize;
+    use std::sync::mpsc;
+    use std::thread;
     use std::time::Duration;
 
     use compio::driver::{DriverType, ProactorBuilder};
     use compio::runtime::RuntimeBuilder;
     use compio::time::sleep;
 
-    use super::Pinning;
+    use ruststream_runtime::ShutdownWait;
+
+    use super::{CoresError, Pinning, build_runtime};
+    use crate::{Cores, Stop};
 
     // A host that refuses an io_uring (a container profile that blocks it, a kernel without it,
     // no memory for the ring) is served by the polling driver, so the driver must be compiled in.
@@ -389,6 +435,39 @@ mod tests {
             .expect("the runtime builds");
         assert_eq!(runtime.driver_type(), DriverType::Poll);
         runtime.block_on(async { sleep(Duration::from_millis(1)).await });
+    }
+
+    // The cores that keep their runtimes until core 0's teardown wait for a signal of core 0; when
+    // core 0 never starts, the launcher raises it, or they would wait for ever.
+    #[test]
+    fn cores_waiting_on_core_zero_end_when_its_runtime_cannot_be_built() {
+        let (done, ended) = mpsc::channel();
+        thread::spawn(move || {
+            let stop = Stop::default();
+            let released = Stop::default();
+            let failing = |core: usize, cpu: Option<usize>| {
+                if core == 0 {
+                    Err(io::Error::from(io::ErrorKind::OutOfMemory))
+                } else {
+                    build_runtime(core, cpu)
+                }
+            };
+            let result = Cores::new(NonZeroUsize::new(3).expect("three"))
+                .unpinned()
+                .without_signals()
+                .run_with(&stop, Some(&released), &failing, async |core, stop| {
+                    if !core.is_main() {
+                        stop.cancelled().await;
+                        released.cancelled().await;
+                    }
+                    Ok::<_, io::Error>(())
+                });
+            done.send(result).expect("the test listens");
+        });
+        let result = ended
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the launcher returned");
+        assert!(matches!(result, Err(CoresError::Runtime { core: 0, .. })));
     }
 
     #[test]
