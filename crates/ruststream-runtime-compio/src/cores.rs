@@ -453,16 +453,18 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    #[cfg(target_os = "linux")]
     use compio::driver::ProactorBuilder;
+    #[cfg(target_os = "linux")]
     use compio::runtime::RuntimeBuilder;
+    #[cfg(target_os = "linux")]
     use compio::time::sleep;
 
     use ruststream_runtime::ShutdownWait;
 
-    use super::{
-        CoresError, DriverType, Pinning, REQUIRE_IO_URING, build_runtime, require_current_driver,
-        require_driver,
-    };
+    use super::{CoresError, Pinning, build_runtime};
+    #[cfg(target_os = "linux")]
+    use super::{DriverType, REQUIRE_IO_URING, require_current_driver, require_driver};
     use crate::{Cores, Stop};
 
     // A host that refuses an io_uring (a container profile that blocks it, a kernel without it,

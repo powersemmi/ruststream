@@ -1,6 +1,7 @@
 //! `Cores::run`: the number of cores, what each one sees, and how the first failure ends them all.
 
 use std::convert::Infallible;
+#[cfg(target_os = "linux")]
 use std::fs;
 use std::io;
 use std::num::NonZeroUsize;
@@ -23,10 +24,12 @@ struct Seen {
     count: usize,
     current: Core,
     thread: ThreadId,
+    #[cfg(target_os = "linux")]
     pinned_to: Option<String>,
 }
 
 /// The CPUs this thread may run on, where the platform says.
+#[cfg(target_os = "linux")]
 fn allowed_cpus() -> Option<String> {
     let status = fs::read_to_string("/proc/thread-self/status").ok()?;
     status
@@ -47,6 +50,7 @@ fn report_all(launcher: Cores) -> Vec<Seen> {
                     count: core.count().get(),
                     current: Core::current(),
                     thread: thread::current().id(),
+                    #[cfg(target_os = "linux")]
                     pinned_to: allowed_cpus(),
                 })
                 .expect("the collector listens");
