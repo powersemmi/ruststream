@@ -11,6 +11,8 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::mem;
 use core::num::NonZeroUsize;
+#[cfg(feature = "testing")]
+use ruststream_core::__alloc::bytes::Bytes;
 use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync};
 
 use ruststream_core::diag::{error, warn};
@@ -122,7 +124,7 @@ where
         self.recorded
             .iter()
             .map(|value| Delivered {
-                raw: bytes::Bytes::new(),
+                raw: Bytes::new(),
                 value: Some(value.clone()),
                 settle: None,
             })

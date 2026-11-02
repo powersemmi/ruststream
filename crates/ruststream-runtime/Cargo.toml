@@ -20,27 +20,15 @@ default = ["std"]
 # The delivery body itself: routing, dispatch, publishing and settlement keep headers, payloads,
 # names and boxed errors on the heap. A `no_std` build with an allocator turns on this feature
 # alone; without it the crate holds the traits a runner implements.
-alloc = [
-    "ruststream-core/alloc",
-    "ruststream-core/tracing",
-    "dep:tracing",
-    "dep:spin",
-    "dep:bytes",
-    "dep:bytes-utils",
-    "futures/alloc",
-    "serde/alloc",
-]
+alloc = ["ruststream-core/alloc", "serde/alloc"]
 # The standard library's side of the body and of its dependencies: the panic policy's catching
 # part, the mutex-backed broker wrapper, and every feature below that reaches the standard library.
 std = [
     "alloc",
     "ruststream-core/std",
-    "bytes/std",
-    "bytes-utils/std",
     "futures/std",
     "serde/std",
     "thiserror/std",
-    "tracing?/std",
 ]
 # The codecs. Their writer follows the target: `std::io::Write` wherever the standard library
 # exists, whatever the features. On a bare-metal target CBOR writes through its own writer trait,
@@ -67,8 +55,6 @@ otel = ["std", "dep:opentelemetry"]
 # The in-process dispatch the test harness drives, and the broker contract of that harness.
 testing = [
     "dep:assert_no_alloc",
-    "dep:bytes",
-    "bytes/std",
     "futures/std",
     "dep:inventory",
     "dep:send_wrapper",
@@ -90,18 +76,15 @@ poll-diagnostics = ["std", "dep:quanta"]
 [dependencies]
 assert_no_alloc = { version = "1.1.2", optional = true }
 ruststream-core.workspace = true
-bytes = { workspace = true, optional = true }
-bytes-utils = { workspace = true, optional = true }
 futures = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
-tracing = { workspace = true, features = ["attributes"], optional = true }
 # The handle of the app's runtime under the `tokio` feature, and the harness's coordinator under
 # `testing`; the delivery body itself names no runtime. Only `rt`: the body spawns nothing.
 send_wrapper = { version = "0.6", optional = true }
 # The lock of a value the elements of a batch share, where the core's `send` feature is on and
 # `std` (and its mutex) is off.
-spin = { version = "0.10", optional = true, default-features = false, features = ["mutex", "spin_mutex"] }
+spin = { version = "0.10", default-features = false, features = ["mutex", "spin_mutex"] }
 tokio = { version = "1.44", optional = true, default-features = false, features = ["rt"] }
 tokio-util = { workspace = true, optional = true }
 quanta = { workspace = true, optional = true }
@@ -134,6 +117,8 @@ ciborium-io = { version = "0.2.1", optional = true, default-features = false }
 serde-json-slice = { version = "0.1.0", optional = true, default-features = false }
 
 [dev-dependencies]
+# The doc examples log through it.
+tracing.workspace = true
 # Counts this thread's allocations, so a test reads what a batch costs.
 allocation-counter = "0.8.1"
 serde = { version = "1", features = ["derive"] }

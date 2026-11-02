@@ -10,9 +10,9 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 
 use assert_no_alloc::permit_alloc;
-use bytes::Bytes;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use ruststream_core::__alloc::bytes::Bytes;
 use ruststream_core::{Broker, Headers, OutgoingMessage, RawMessage};
 use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, TestableBroker};
 

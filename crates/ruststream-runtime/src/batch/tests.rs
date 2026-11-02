@@ -7,7 +7,6 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 use std::sync::{Mutex, OnceLock};
 
-use bytes::Bytes;
 use futures::StreamExt;
 use tokio::{task, time};
 use tokio_util::task::TaskTracker;

@@ -5,7 +5,7 @@ use core::fmt;
 use core::future::ready;
 
 #[cfg(feature = "testing")]
-use bytes::Bytes;
+use ruststream_core::__alloc::bytes::Bytes;
 #[cfg(feature = "testing")]
 use ruststream_core::RawMessage;
 use ruststream_core::{

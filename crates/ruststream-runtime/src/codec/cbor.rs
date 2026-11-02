@@ -1,7 +1,7 @@
 //! CBOR codec backed by [`ciborium`].
 
 use alloc::boxed::Box;
-use bytes::BytesMut;
+use ruststream_core::__alloc::bytes::BytesMut;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::codec::{BufWriter, Codec, CodecError, ENCODE_CAPACITY};

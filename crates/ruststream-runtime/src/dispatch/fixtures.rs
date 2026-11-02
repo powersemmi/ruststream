@@ -5,7 +5,7 @@ use core::future::ready;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::io;
 
-use bytes::Bytes;
+use ruststream_core::__alloc::bytes::Bytes;
 
 use crate::{AckError, HeaderSet, IncomingMessage, Lend, OutgoingMessage, Publisher, Settle};
 use ruststream_core::{PublishMessageError, PublishOutcome};

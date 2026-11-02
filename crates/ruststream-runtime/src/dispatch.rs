@@ -16,6 +16,8 @@ use core::convert::Infallible;
 use core::panic::AssertUnwindSafe;
 use core::pin::Pin;
 use core::task::{Context as TaskContext, Poll};
+#[cfg(feature = "testing")]
+use ruststream_core::__alloc::bytes::Bytes;
 use ruststream_core::{MaybeSendSync, ReadyHint};
 
 #[cfg(any(feature = "std", feature = "testing"))]
@@ -622,7 +624,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
             // The record is the harness's own bookkeeping, not the delivery's cost.
             due_calls = harness_section(|| {
                 let deliveries = vec![Delivered {
-                    raw: bytes::Bytes::copy_from_slice(msg.payload()),
+                    raw: Bytes::copy_from_slice(msg.payload()),
                     value: ctx.take_carried(),
                     settle,
                 }];

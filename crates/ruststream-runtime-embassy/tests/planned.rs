@@ -17,7 +17,6 @@ use core::pin::pin;
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
 
-use bytes::BytesMut;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
@@ -31,6 +30,7 @@ use ruststream::{
     Broker, Deserialized, OutSlot, Outgoing, OutgoingMessage, Publisher, Serialized, Settle,
     Subscriber, SubscriptionSource, subscriber,
 };
+use ruststream_core::__alloc::bytes::BytesMut;
 use serde::Serialize;
 use static_cell::StaticCell;
 

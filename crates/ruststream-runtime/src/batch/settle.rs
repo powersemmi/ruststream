@@ -1,9 +1,9 @@
 //! Settling a dispatched batch: the handler's [`BatchResult`] applied to each delivery behind it,
 //! and what the harness records of the batch on the way.
 
-#[cfg(feature = "testing")]
-use bytes::Bytes;
 use core::mem;
+#[cfg(feature = "testing")]
+use ruststream_core::__alloc::bytes::Bytes;
 
 use ruststream_core::MaybeSendSync;
 use ruststream_core::diag::error;

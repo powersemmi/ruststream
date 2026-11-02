@@ -11,7 +11,7 @@ use alloc::borrow::{Cow, ToOwned};
 #[cfg(ruststream_alloc)]
 use alloc::string::String;
 #[cfg(ruststream_alloc)]
-use bytes::Bytes;
+use ruststream_core::__alloc::bytes::Bytes;
 
 #[cfg(not(ruststream_alloc))]
 use ruststream_core::PayloadBuf;

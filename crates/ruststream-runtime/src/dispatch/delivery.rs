@@ -282,7 +282,7 @@ mod tests {
     use alloc::format;
     use core::future::ready;
 
-    use bytes::BytesMut;
+    use ruststream_core::__alloc::bytes::BytesMut;
 
     use super::super::fixtures::{PlainMessage, Settlement};
     use super::super::{HeadersOnDemand, dispatch};

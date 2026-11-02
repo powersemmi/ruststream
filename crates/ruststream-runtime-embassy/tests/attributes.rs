@@ -16,7 +16,6 @@ use core::pin::pin;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::rc::Rc;
 
-use bytes::BytesMut;
 use embassy_executor::{Executor, SpawnError, Spawner};
 use embassy_futures::yield_now;
 use futures::{FutureExt, StreamExt};
@@ -32,6 +31,7 @@ use ruststream::{
     Broker, Deserialized, OutSlot, Outgoing, OutgoingMessage, Publisher, Serialized, Subscriber,
     SubscriptionSource, subscriber,
 };
+use ruststream_core::__alloc::bytes::BytesMut;
 use serde::Serialize;
 use static_cell::StaticCell;
 

@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 use core::any;
 use ruststream_core::MaybeSendSync;
 
-use bytes::Bytes;
+use ruststream_core::__alloc::bytes::Bytes;
 
 use crate::HandlerOutcome;
 use crate::codec::ActiveCodec as Codec;

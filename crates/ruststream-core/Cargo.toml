@@ -22,7 +22,19 @@ all-features = true
 default = ["std"]
 # The contract itself: its headers, payloads, names and errors live on the heap, so every trait and
 # message type needs it. A `no_std` build with an allocator turns on this feature alone.
-alloc = ["dep:bytes", "dep:bytes-utils", "serde/alloc"]
+#
+# It also brings the heap dependencies the rest of the family needs in its heap variant (`bytes`,
+# `bytes-utils`, `tracing`, `futures` with its own `alloc`) and hands them to
+# the other crates through a hidden module, so a crate that turns this feature on is enough: the
+# family's other crates need no feature of their own to follow it.
+alloc = [
+    "dep:bytes",
+    "dep:bytes-utils",
+    "serde/alloc",
+    "tracing",
+    "dep:futures",
+    "futures/alloc",
+]
 # The standard library's side of the dependencies, and the broker wrapper `Bindable`, whose slot is
 # a `std` mutex.
 std = [
@@ -32,6 +44,8 @@ std = [
     "serde/std",
     "thiserror/std",
     "serde_json?/std",
+    "tracing?/std",
+    "futures?/std",
 ]
 # Where the framework's diagnostics go. A build with `tracing` reports through it and no other sink;
 # the others serve a build without `alloc`: `log` for a host or a board with a logger, `defmt` for a
@@ -54,6 +68,7 @@ testing = ["dep:tokio", "dep:bytes", "dep:bytes-utils", "bytes/std", "bytes-util
 [dependencies]
 bytes = { workspace = true, optional = true }
 bytes-utils = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
 futures-core.workspace = true
 heapless.workspace = true
 serde.workspace = true

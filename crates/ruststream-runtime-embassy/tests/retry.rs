@@ -13,13 +13,13 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
 use std::alloc::System;
 
-use bytes::BytesMut;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER};
 use ruststream::{Broker, Deserialized, HeaderMap, OutgoingMessage, Publisher, Str, subscriber};
+use ruststream_core::__alloc::bytes::BytesMut;
 use static_cell::StaticCell;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 

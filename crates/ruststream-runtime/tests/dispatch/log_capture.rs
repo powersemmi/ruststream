@@ -19,8 +19,8 @@ use std::cell::RefCell;
 use std::io;
 use std::sync::{Arc, Mutex, Once, PoisonError};
 
-use tracing::Level;
-use tracing::subscriber::set_global_default;
+use ruststream_core::__alloc::tracing::Level;
+use ruststream_core::__alloc::tracing::subscriber::set_global_default;
 use tracing_subscriber::fmt::MakeWriter;
 
 /// The lines every thread wrote since the subscriber was installed.

@@ -18,9 +18,9 @@ use core::pin::Pin;
 use core::task::{Poll, Waker};
 use core::time::Duration;
 
-#[cfg(ruststream_alloc)]
-use bytes::Bytes;
 use embassy_sync::blocking_mutex::Mutex;
+#[cfg(ruststream_alloc)]
+use ruststream_core::__alloc::bytes::Bytes;
 #[cfg(not(ruststream_alloc))]
 use ruststream_core::{BufferFull, Cause};
 use ruststream_core::{Headers, PayloadBuf, Settle};
@@ -728,6 +728,7 @@ mod tests {
 
     use super::CopyStore;
     use crate::clock::Schedule;
+    use ruststream_core::__alloc::bytes::Bytes;
 
     /// A clock the test moves by hand, counting how often its timers are polled and its time
     /// is read.
@@ -1075,7 +1076,7 @@ mod tests {
         assert!(store.take_record().is_some());
         assert!(store.take_record().is_none(), "every record is taken");
         let reaction = embassy_futures::block_on(store.full(
-            Some(bytes::Bytes::from_static(b"a")),
+            Some(Bytes::from_static(b"a")),
             HeaderMap::new(),
             Some(Reaction::new(
                 ErrorHook::new(async move |failures: Failures| {

@@ -766,7 +766,7 @@ impl Coordinator {
 mod tests {
     use alloc::boxed::Box;
     use alloc::format;
-    use bytes::Bytes;
+    use ruststream_core::__alloc::bytes::Bytes;
     use std::thread;
 
     use super::*;

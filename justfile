@@ -68,6 +68,15 @@ check:
     # crate may) takes the `Send` bounds in every boxed future of the runtime as well.
     cargo check -p ruststream-runtime --features ruststream-core/send
     cargo check -p ruststream-runtime --no-default-features --features alloc,ruststream-core/send
+    # The contract's `alloc` is a variant any crate of the graph may turn on (a broker, a helper),
+    # so every crate of the family must build with it on and its own `alloc` off.
+    cargo check -p ruststream-runtime --no-default-features --features ruststream-core/alloc
+    cargo check -p ruststream-memory --no-default-features --features embassy,ruststream-core/alloc
+    cargo check -p ruststream-testing --no-default-features --features embassy,ruststream-core/alloc
+    cargo check -p ruststream-runtime-embassy --no-default-features --features ruststream-core/alloc
+    cargo check -p ruststream-conformance --no-default-features --features ruststream-core/alloc
+    cargo check -p ruststream --no-default-features \
+        --features embassy,macros,memory,ruststream-core/alloc
     # The firmware facade with no serde codec: an embedded handler's `Out` slot mounts, and only
     # an encoding publish asks for a codec.
     cargo check -p ruststream --no-default-features --features embassy,macros,memory --tests
@@ -88,6 +97,12 @@ check:
         --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --features alloc,json \
         --target thumbv7em-none-eabihf
+    # The same on a Cortex-M4F: a firmware whose dependency needs a heap has an allocator, so the
+    # embassy set builds with the contract's `alloc` on and the framework's own off.
+    RUSTFLAGS="" cargo build -p ruststream-runtime-embassy --no-default-features \
+        --features ruststream-core/alloc --target thumbv7em-none-eabihf
+    RUSTFLAGS="" cargo build -p ruststream --no-default-features \
+        --features embassy,macros,memory,ruststream-core/alloc --target thumbv7em-none-eabihf
     # The delivery body without `alloc`, and the crate that runs its own unit tests, are held to the
     # same lints.
     cargo clippy -p ruststream-runtime --no-default-features --lib -- -D warnings

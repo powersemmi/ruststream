@@ -23,13 +23,11 @@ use core::convert::Infallible;
 use std::sync::Mutex;
 
 #[cfg(feature = "json")]
-use tracing::field::Field;
+use ruststream_core::__alloc::tracing::field::{Field, Visit};
 #[cfg(feature = "json")]
-use tracing::field::Visit;
+use ruststream_core::__alloc::tracing::subscriber::{self, DefaultGuard};
 #[cfg(feature = "json")]
-use tracing::subscriber;
-#[cfg(feature = "json")]
-use tracing::subscriber::DefaultGuard;
+use ruststream_core::__alloc::tracing::{Event, Subscriber};
 
 use super::*;
 use crate::HeaderSet;
@@ -156,8 +154,8 @@ fn capture_events() -> (Arc<Mutex<Vec<String>>>, DefaultGuard) {
 
     struct Capture(Arc<Mutex<Vec<String>>>);
 
-    impl<S: tracing::Subscriber> Layer<S> for Capture {
-        fn on_event(&self, event: &tracing::Event<'_>, _ctx: LayerContext<'_, S>) {
+    impl<S: Subscriber> Layer<S> for Capture {
+        fn on_event(&self, event: &Event<'_>, _ctx: LayerContext<'_, S>) {
             struct Grab(Vec<String>);
             impl Visit for Grab {
                 fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {

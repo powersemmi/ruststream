@@ -1,8 +1,8 @@
 //! `MessagePack` codec backed by [`rmp_serde`].
 
 use alloc::boxed::Box;
-use bytes::BytesMut;
 use rmp_serde::encode;
+use ruststream_core::__alloc::bytes::BytesMut;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::codec::{BufWriter, Codec, CodecError, ENCODE_CAPACITY};

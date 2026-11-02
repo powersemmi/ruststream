@@ -34,21 +34,21 @@ use tokio::time::timeout;
 mod local;
 mod local_readiness;
 mod routing;
-#[cfg(ruststream_alloc)]
+#[cfg(ruststream_send_family)]
 mod send;
 
-#[cfg(ruststream_alloc)]
+#[cfg(ruststream_send_family)]
 pub use super::retry::redelivery_address;
 pub use local::{local_lifecycle, local_refused_publish_returns_message, run_local_suite};
 pub use local_readiness::local_readiness;
-#[cfg(all(ruststream_alloc, feature = "asyncapi"))]
+#[cfg(all(ruststream_send_family, feature = "asyncapi"))]
 pub use send::describes_without_credentials;
-#[cfg(ruststream_alloc)]
+#[cfg(ruststream_send_family)]
 pub(crate) use send::on_foreign_runtime;
-#[cfg(ruststream_alloc)]
+#[cfg(ruststream_send_family)]
 pub use send::{InProcessBroker, lifecycle, run_suite};
 
-#[cfg(ruststream_alloc)]
+#[cfg(ruststream_send_family)]
 pub(crate) use routing::unknown_backlog;
 
 /// A message to `name` carrying `payload`, in the form the publisher `P` takes it.

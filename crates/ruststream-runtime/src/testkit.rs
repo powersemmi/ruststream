@@ -121,9 +121,9 @@ pub(crate) mod log_capture {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, Once};
 
-    use tracing::field::{Field, Visit};
-    use tracing::subscriber::DefaultGuard;
-    use tracing::{Subscriber, subscriber};
+    use ruststream_core::__alloc::tracing::field::{Field, Visit};
+    use ruststream_core::__alloc::tracing::subscriber::DefaultGuard;
+    use ruststream_core::__alloc::tracing::{Event, Subscriber, subscriber};
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::{Context, SubscriberExt as _};
 
@@ -156,7 +156,7 @@ pub(crate) mod log_capture {
     struct Capture(Events);
 
     impl<S: Subscriber> Layer<S> for Capture {
-        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+        fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
             let mut grab = FieldGrab::default();
             event.record(&mut grab);
             self.0.lock().unwrap().push(grab.0);

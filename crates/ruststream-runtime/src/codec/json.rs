@@ -1,7 +1,7 @@
 //! JSON codec backed by [`serde_json`], with `serde-json-slice` writing on a bare-metal target.
 
 use alloc::boxed::Box;
-use bytes::BytesMut;
+use ruststream_core::__alloc::bytes::BytesMut;
 use serde::{Serialize, de::DeserializeOwned};
 
 #[cfg(not(target_os = "none"))]

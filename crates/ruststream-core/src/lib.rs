@@ -46,6 +46,8 @@ extern crate alloc;
 #[cfg(any(feature = "std", feature = "testing", test))]
 extern crate std;
 
+#[doc(hidden)]
+pub mod __alloc;
 #[cfg(feature = "std")]
 pub mod bindable;
 #[cfg(feature = "asyncapi")]

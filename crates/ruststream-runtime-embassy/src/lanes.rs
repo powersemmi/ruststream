@@ -21,13 +21,13 @@ use ruststream_core::{Broker, Unbounded};
 #[cfg(not(ruststream_alloc))]
 use ruststream_core::{Capped, PAYLOAD_CAPACITY};
 
-#[cfg(ruststream_alloc)]
-use bytes::BytesMut;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use futures::Stream;
 use futures::future::{Either, join, select};
 use hash32::{FnvHasher, Hasher as _};
+#[cfg(ruststream_alloc)]
+use ruststream_core::__alloc::bytes::BytesMut;
 #[cfg(not(ruststream_alloc))]
 use ruststream_core::FixedBuf;
 use ruststream_core::diag::error;

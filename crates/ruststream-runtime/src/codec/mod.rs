@@ -112,7 +112,7 @@ use std::io;
 use core::convert::Infallible;
 
 #[cfg(ruststream_alloc)]
-use bytes::BytesMut;
+use ruststream_core::__alloc::bytes::BytesMut;
 use serde::Serialize;
 #[cfg(ruststream_alloc)]
 use serde::de::DeserializeOwned;

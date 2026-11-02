@@ -300,6 +300,12 @@ jobs:
             --features cbor,embassy,macros,memory --target thumbv7em-none-eabihf
           cargo build --locked -p ruststream --no-default-features \
             --features json,embassy,macros,memory --target thumbv7em-none-eabihf
+          # A dependency of the firmware turns the contract's `alloc` on: the embassy set builds
+          # with the framework's own `alloc` off.
+          cargo build --locked -p ruststream-runtime-embassy --no-default-features \
+            --features ruststream-core/alloc --target thumbv7em-none-eabihf
+          cargo build --locked -p ruststream --no-default-features \
+            --features embassy,macros,memory,ruststream-core/alloc --target thumbv7em-none-eabihf
           # The diagnostics of a build without `alloc`: defmt, defmt with log, and defmt on the
           # target that has no atomics `tracing` could use.
           cargo build --locked -p ruststream --no-default-features \

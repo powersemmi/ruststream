@@ -247,14 +247,14 @@ where
 /// Bundled, opinionated middleware layers ready to drop into a handler stack.
 #[cfg(ruststream_alloc)]
 pub mod layers {
+    use ruststream_core::__alloc::tracing::{Instrument as _, debug, info, trace_span, warn};
     use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
-    use tracing::{debug, info, instrument, warn};
 
     use super::super::handler::HandlerResult;
     use super::{BlanketLayer, Context, Handler, HandlerOutcome, Layer};
 
-    /// Logs every delivery and its outcome via [`tracing`]. Default level is `INFO` for the
-    /// outcome and `DEBUG` for arrival.
+    /// Logs every delivery and its outcome via [`tracing`](https://docs.rs/tracing). Default
+    /// level is `INFO` for the outcome and `DEBUG` for arrival.
     #[derive(Debug, Clone, Default)]
     pub struct TracingLayer {
         target: Option<&'static str>,
@@ -307,14 +307,14 @@ pub mod layers {
         S: MaybeSendSync,
         H: Handler<M, C, S>,
     {
-        #[instrument(level = "trace", skip(self, msg, ctx), fields(target = self.target))]
         fn handle(
             &self,
             msg: &M,
             ctx: &mut Context<'_, C, S>,
         ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
-            // An `async move` block, so `instrument` enters its span around the whole future.
-            async move { traced(move || self.inner.handle(msg, ctx)).await }
+            // The span is entered around the whole future, not only its construction.
+            let span = trace_span!("handle", target = self.target);
+            async move { traced(move || self.inner.handle(msg, ctx)).await }.instrument(span)
         }
     }
 

@@ -11,8 +11,8 @@ use core::pin::Pin;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::task::{Context as TaskContext, Poll};
 
-use bytes::BytesMut;
 use futures::{Stream, stream};
+use ruststream_core::__alloc::bytes::BytesMut;
 use tokio_util::task::TaskTracker;
 
 use super::{Delivery, DispatchFailure, run_batch};

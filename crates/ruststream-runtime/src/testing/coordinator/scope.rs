@@ -15,8 +15,8 @@ use ruststream_core::MaybeSendSync;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-use bytes::Bytes;
 use pin_project_lite::pin_project;
+use ruststream_core::__alloc::bytes::Bytes;
 use tokio::task::futures::TaskLocalFuture;
 
 use crate::HandlerResult;

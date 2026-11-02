@@ -12,8 +12,8 @@ use std::{
     time::Duration,
 };
 
-use bytes::Bytes;
 use futures::{Stream, stream};
+use ruststream_core::__alloc::bytes::Bytes;
 use ruststream_core::{
     AckError, AddressedCopies, FromName, HeaderMap, IncomingMessage, MaybeSend, RawMessage,
     RedeliveryAddress, RedeliveryAddressed, Settle, Subscribe, Subscriber, SubscriptionSource,

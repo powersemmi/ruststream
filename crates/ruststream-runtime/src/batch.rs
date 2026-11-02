@@ -18,6 +18,8 @@ use alloc::string::String;
 #[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
 use core::{any, fmt, marker::PhantomData, mem, num::NonZeroUsize};
+#[cfg(any(feature = "testing", all(test, feature = "json")))]
+use ruststream_core::__alloc::bytes::Bytes;
 use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync, MaybeSync};
 #[cfg(feature = "otel")]
 use std::slice;
@@ -426,7 +428,7 @@ where
     fn unsettled(&mut self) -> BatchVec<Delivered> {
         self.iter()
             .map(|msg| Delivered {
-                raw: bytes::Bytes::copy_from_slice(msg.payload()),
+                raw: Bytes::copy_from_slice(msg.payload()),
                 value: None,
                 settle: None,
             })

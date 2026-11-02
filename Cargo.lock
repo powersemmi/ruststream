@@ -1755,8 +1755,6 @@ version = "0.8.0"
 dependencies = [
  "allocation-counter",
  "assert_no_alloc",
- "bytes",
- "bytes-utils",
  "critical-section",
  "embassy-futures",
  "embassy-sync",
@@ -1812,8 +1810,6 @@ version = "0.8.0"
 dependencies = [
  "allocation-counter",
  "assert_no_alloc",
- "bytes",
- "bytes-utils",
  "ciborium",
  "ciborium-io",
  "dyn-utils",
@@ -1849,7 +1845,6 @@ version = "0.8.0"
 dependencies = [
  "allocation-counter",
  "assert_no_alloc",
- "bytes",
  "critical-section",
  "embassy-executor",
  "embassy-futures",
