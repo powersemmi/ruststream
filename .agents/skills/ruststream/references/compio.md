@@ -14,7 +14,7 @@ without `cores` it runs on every core the process may use. Component pages:
   cores; `threads(n)` holds `n` cores of its own from core 1 up. `by_key` keeps a key on one lane.
 - The `compio` feature turns `send` on: handler state and the future of a body are `Send`, as on
   tokio. A body holding an `Rc` across an `.await` fails at `include`.
-- `ruststream::runtime::compio::Core::current()` tells a handler which core it runs on.
+- `Ctx(core): Ctx<Core>` (`ruststream::runtime::compio::Core`) tells a handler which core it runs on; `Core::current()` does the same outside a handler signature.
   `ruststream::runtime::compio::time::sleep` sleeps on the app's clock.
 - `RustStream::run`, `run_until` and `start` run it; the attribute's `main` understands `run` and
   `asyncapi gen`. `ruststream::asyncapi::build_spec` takes a compio app.

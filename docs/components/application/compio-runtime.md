@@ -24,7 +24,7 @@ The feature is `compio`. The runner builds on compio 0.20.0-beta.1 and moves to 
 ## Example
 
 The service confirms every order with four workers and audits it on core 0.
-A handler reads the core it runs on with `Core::current()`; the confirmation carries it.
+A handler reads the core it runs on with the `Ctx<Core>` extractor (`Core::current()` in the manual form); the confirmation carries it.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">

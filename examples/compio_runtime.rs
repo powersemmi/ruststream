@@ -10,16 +10,17 @@ use serde::{Deserialize, Serialize};
 
 // --8<-- [start:app]
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
+use ruststream::runtime::Ctx;
 use ruststream::runtime::HandlerOutcome;
 use ruststream::runtime::compio::{App, AppInfo, Core, RustStream};
 use ruststream::{Outgoing, subscriber};
 
 /// Up to four orders are confirmed at once, on the cores the app places the workers on.
 #[subscriber(LocalMemorySource::new("orders"), workers(4), reply)]
-async fn confirm(order: &Order) -> Confirmation {
+async fn confirm(order: &Order, Ctx(core): Ctx<Core>) -> Confirmation {
     Confirmation {
         id: order.id,
-        core: Core::current().index(),
+        core: core.index(),
     }
 }
 

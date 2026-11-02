@@ -18,8 +18,7 @@ use crate::parse::{
 
 use params::{
     BodyDecl, OutParam, Shape, collect_extractors, ctx_extractor_key, from_headers_ty,
-    is_context_param, is_main_runtime_key, message_param, split_outs, state_type,
-    subst_elided_lifetime,
+    is_context_param, is_runner_key, message_param, split_outs, state_type, subst_elided_lifetime,
 };
 
 pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
@@ -95,7 +94,7 @@ fn inferred_context_type(func: &ItemFn) -> TokenStream2 {
     for arg in func.sig.inputs.iter().skip(1) {
         if let FnArg::Typed(PatType { ty, .. }) = arg
             && let Some(key) = ctx_extractor_key(ty)
-            && !is_main_runtime_key(key)
+            && !is_runner_key(key)
         {
             return quote!(<#key as ::ruststream::ContextField>::Context);
         }

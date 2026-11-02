@@ -110,9 +110,10 @@ fn message_pair_args(ty: &Type) -> Option<(&Type, &Type)> {
     Some((headers, payload))
 }
 
-/// Whether a `Ctx` key is the app runtime's handle, by the last segment of its path.
-pub(super) fn is_main_runtime_key(key: &Type) -> bool {
-    matches!(key, Type::Path(path) if path.path.segments.last().is_some_and(|segment| segment.ident == "MainRuntime"))
+/// Whether a `Ctx` key is a runner's own handle (the tokio app runtime, the compio core), not a
+/// field of the delivery context, by the last segment of its path.
+pub(super) fn is_runner_key(key: &Type) -> bool {
+    matches!(key, Type::Path(path) if path.path.segments.last().is_some_and(|segment| segment.ident == "MainRuntime" || segment.ident == "Core"))
 }
 
 /// The key type `K` of a `Ctx<K>`-shaped parameter type, when the type has that shape.
