@@ -4,13 +4,13 @@ error[E0277]: `Settings` is not a tokio app
 11 |     run_main(|| Settings)
    |     ^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
    |
-help: the trait `App` is not implemented for `Settings`
+help: the trait `ruststream::prelude::App` is not implemented for `Settings`
   --> tests/ui/run_main_takes_a_tokio_app.rs:8:1
    |
  8 | struct Settings;
    | ^^^^^^^^^^^^^^^
    = note: an EmbeddedApp runs on embassy: await `EmbeddedApp::run(&CONTROL)` in an embassy task; the CLI, MainRuntime, metrics and OTel run on the tokio runtime
-help: the trait `App` is implemented for `RustStream<Layers, State, Pipeline, Phase>`
+help: the trait `ruststream::prelude::App` is implemented for `ruststream::RustStream<Layers, State, Pipeline, Phase>`
   --> crates/ruststream-runtime-tokio/src/app/app_trait.rs
    |
    | / impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
