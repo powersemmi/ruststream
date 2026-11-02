@@ -5,10 +5,11 @@
 #![allow(clippy::future_not_send)]
 
 use std::error::Error;
-use std::future;
+use std::future::{self, poll_fn};
 use std::str::from_utf8;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::Poll;
 use std::time::Duration;
 
 use compio::runtime::Runtime;
@@ -62,6 +63,24 @@ async fn stuck(note: &Note<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
+/// Keeps its own task runnable and never finishes: a loop that yields to the others forever.
+#[subscriber(LocalMemorySource::new("spins"))]
+async fn spin(note: &Note<'_>) -> HandlerOutcome {
+    let _ = note.0;
+    loop {
+        let mut yielded = false;
+        poll_fn(|cx| {
+            if yielded {
+                return Poll::Ready(());
+            }
+            yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        })
+        .await;
+    }
+}
+
 /// Publishes the next hop until the count it carries reaches zero.
 #[subscriber(LocalMemorySource::new("chain"))]
 async fn hop(note: &Note<'_>, Out(next): Out<impl Publisher, Next>) -> HandlerOutcome {
@@ -85,6 +104,7 @@ fn app() -> RustStream {
     RustStream::new(AppInfo::new("quiescence", "0.1.0")).with_broker(Bus::new(), |b| {
         b.include(nap)
             .include(stuck)
+            .include(spin)
             .include(hop)
             .out(Next, LocalMemoryPublish)
     })
@@ -188,6 +208,58 @@ fn a_call_hook_runs_before_the_publish_that_caused_the_call_returns() -> Result<
             .await?;
         assert_eq!(hooked.load(Ordering::SeqCst), 1);
         tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_handler_that_keeps_itself_runnable_is_not_quiescent_and_the_shutdown_timeout_ends_it()
+-> Result<(), Box<dyn Error>> {
+    Runtime::new()?.block_on(async {
+        let tb = TestApp::start(app().shutdown_timeout(NAP)).await?;
+        let published = tb
+            .broker::<Bus>()
+            .message(&Sent(b"z".to_vec()))
+            .to("spins")
+            .publish()
+            .await;
+        assert!(
+            matches!(
+                published,
+                Err(PublishError::Publish {
+                    source: TestError::NotQuiescent { .. },
+                    ..
+                })
+            ),
+            "the publish returned {published:?}"
+        );
+        let settled = tb.settle().await;
+        assert!(
+            matches!(settled, Err(TestError::NotQuiescent { .. })),
+            "settle returned {settled:?}"
+        );
+        // The handler never lets go, so only the shutdown timeout on the app's clock ends it.
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_handler_that_keeps_itself_runnable_without_a_shutdown_timeout_is_not_quiescent()
+-> Result<(), Box<dyn Error>> {
+    Runtime::new()?.block_on(async {
+        let tb = TestApp::start(app()).await?;
+        let _ = tb
+            .broker::<Bus>()
+            .message(&Sent(b"z".to_vec()))
+            .to("spins")
+            .publish()
+            .await;
+        let stopped = tb.shutdown().await;
+        assert!(
+            matches!(stopped, Err(TestError::NotQuiescent { .. })),
+            "shutdown returned {stopped:?}"
+        );
         Ok(())
     })
 }

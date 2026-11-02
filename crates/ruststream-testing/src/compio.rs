@@ -35,6 +35,11 @@ pub use handle::{BrokerHandle, InjectSink};
 /// quiescence: a guard against a handler that requeues forever.
 const MAX_STEPS: usize = 10_000;
 
+/// The most turns the harness gives the app in a row while a task of it stays runnable: a guard
+/// against a task that keeps waking itself, such as a loop around `yield_now`. A reaction that
+/// converges ends long before it, and the cost of reaching it is a few milliseconds.
+const MAX_ROUNDS: usize = 50_000;
+
 /// A test harness around a compio service's production app.
 ///
 /// Takes the app `main` builds, unchanged. [`start`](Self::start) connects each of its brokers
@@ -189,7 +194,9 @@ impl TestApp {
     ///
     /// # Errors
     ///
-    /// Returns [`TestError::NotQuiescent`] if the app keeps producing work.
+    /// Returns [`TestError::NotQuiescent`] if the app keeps producing work, or a task of it keeps
+    /// itself runnable (a loop around `yield_now`), and [`TestError::Stalled`] if a delivery waits
+    /// on something nothing wakes.
     pub async fn settle(&self) -> Result<(), TestError> {
         settled(&self.coordinator, &self.quiescence.reader()).await
     }
@@ -212,7 +219,10 @@ impl TestApp {
     /// # Errors
     ///
     /// Returns [`TestError::Failed`] with the runner's error if the app stopped on a failure
-    /// before or during the shutdown, or a broker failed to shut down.
+    /// before or during the shutdown, or a broker failed to shut down, and
+    /// [`TestError::NotQuiescent`] if a task keeps itself runnable and the app has no shutdown
+    /// timeout to end it. A shutdown timeout fires on the virtual clock even then, and aborts the
+    /// task as it does in production.
     pub async fn shutdown(self) -> Result<(), TestError> {
         let Self {
             running,
@@ -292,6 +302,7 @@ pub(crate) async fn settled(
     // The step budget counts from here; `drive` begins it again only when it is made anew.
     coordinator.begin_step();
     let mut drive: Option<Pin<Box<_>>> = None;
+    let mut rounds = 0_usize;
     let settled = loop {
         yield_now().await;
         run_hooks(coordinator);
@@ -312,6 +323,12 @@ pub(crate) async fn settled(
             drive = None;
         }
         if runnable.count() > 0 {
+            rounds += 1;
+            if rounds >= MAX_ROUNDS {
+                break Err(TestError::NotQuiescent {
+                    processed: MAX_STEPS,
+                });
+            }
             continue;
         }
         break if nothing_in_flight || armed_timers() > 0 {
@@ -327,9 +344,14 @@ pub(crate) async fn settled(
 /// Runs `work` to its end, moving the clock from one armed deadline to the next while the app is
 /// idle: what the app holds that waits on the clock runs to its end.
 ///
+/// A task that keeps itself runnable does not stop the clock: after [`MAX_ROUNDS`] turns the app
+/// counts as idle to the clock, the way a busy handler does not stop time under a real runtime, so
+/// a shutdown timeout fires and aborts it.
+///
 /// # Errors
 ///
-/// [`TestError::Stalled`] if `work` waits and nothing is runnable or armed on the clock.
+/// [`TestError::Stalled`] if `work` waits and nothing is runnable or armed on the clock, and
+/// [`TestError::NotQuiescent`] if a task stays runnable and no deadline is armed to end it.
 async fn driven<Work: Future>(
     work: Work,
     coordinator: &Coordinator,
@@ -341,9 +363,15 @@ async fn driven<Work: Future>(
         let idle = pin!(idle(coordinator, runnable));
         match future::select(work.as_mut(), idle).await {
             Either::Left((done, _)) => return Ok(done),
-            Either::Right(((), _)) => {
+            Either::Right((busy, _)) => {
                 if !clock.advance_to_next() {
-                    return Err(TestError::Stalled);
+                    return Err(if busy {
+                        TestError::NotQuiescent {
+                            processed: MAX_STEPS,
+                        }
+                    } else {
+                        TestError::Stalled
+                    });
                 }
             }
         }
@@ -358,15 +386,17 @@ fn run_hooks(coordinator: &Coordinator) {
     }
 }
 
-/// Resolves once no task of the app's runtime is runnable, after the harness has yielded to them.
-async fn idle(coordinator: &Coordinator, runnable: &Runnable) {
-    loop {
+/// Resolves once no task of the app's runtime is runnable, after the harness has yielded to them,
+/// with `false`; or with `true` once a task has stayed runnable for [`MAX_ROUNDS`] turns.
+async fn idle(coordinator: &Coordinator, runnable: &Runnable) -> bool {
+    for _round in 0..MAX_ROUNDS {
         yield_now().await;
         run_hooks(coordinator);
         if runnable.count() == 0 {
-            return;
+            return false;
         }
     }
+    true
 }
 
 /// The harness's error for an app that stopped while it started.
