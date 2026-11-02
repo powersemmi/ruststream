@@ -114,6 +114,13 @@ name = "embedded_batch_retry"
 path = "tests/embedded_batch_retry.rs"
 required-features = ["embassy", "json"]
 
+# The reply buffer a batch handler's mount names while it keeps no room for retries, through the
+# embedded `TestApp`.
+[[test]]
+name = "embedded_batch_encode"
+path = "tests/embedded_batch_encode.rs"
+required-features = ["embassy", "json"]
+
 # The destination a batch handler's mount names for its retry copies, through the embedded
 # `TestApp`.
 [[test]]
