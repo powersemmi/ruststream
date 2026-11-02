@@ -4,6 +4,7 @@
 //! This half starts the workers, one job each through the [`Fabric`], and runs the subscription's
 //! loop on core 0, reading the stream through the rings' feed.
 
+use std::any::type_name;
 use std::fmt::Display;
 use std::sync::Arc;
 
@@ -19,18 +20,22 @@ use ruststream_runtime::{
 };
 use tracing::error;
 
-use super::{Budget, Fabric, Hosted, Shared, StartWorkerError, spawn_dispatch};
+use super::{Budget, DispatchUnit, Fabric, Hosted, Shared, StartUnitError, spawn_dispatch};
 use crate::spawn::spawn;
 use crate::{Stop, yield_now};
 
 /// The workers a loop started, each reporting when its work has ended.
-pub(super) struct Crew(Vec<oneshot::Receiver<()>>);
+pub(super) struct Crew {
+    ended: Vec<oneshot::Receiver<()>>,
+    unit: DispatchUnit,
+}
 
 impl Crew {
-    pub(super) async fn join(&mut self) {
-        for ended in &mut self.0 {
+    pub(super) async fn join(&mut self, subscription: &str, message: &str) {
+        let word = self.unit.word();
+        for ended in &mut self.ended {
             if ended.await.is_err() {
-                error!(target: "ruststream::dispatch", "a worker ended abnormally");
+                error!(target: "ruststream::dispatch", subscription, message, "a {word} ended abnormally");
             }
         }
     }
@@ -44,10 +49,11 @@ impl Crew {
 pub(super) fn start_workers<Item, Each, Handle>(
     fabric: &Fabric,
     subscription: &str,
+    unit: DispatchUnit,
     cores: &[usize],
     keyed: bool,
     each: Each,
-) -> Result<(Feed<Item>, Crew), StartWorkerError>
+) -> Result<(Feed<Item>, Crew), StartUnitError>
 where
     Item: Send + 'static,
     Each: Fn() -> Handle + Send + Clone + 'static,
@@ -61,7 +67,7 @@ where
         crew.push(reported);
         let each = each.clone();
         let alive = fabric.worker_guard();
-        fabric.run_on(core, subscription, move || {
+        fabric.run_on(core, subscription, unit, move || {
             spawn(async move {
                 let _alive = alive;
                 // Built on the core and never leaving it.
@@ -80,7 +86,7 @@ where
             })
         })
     })?;
-    Ok((feed, Crew(crew)))
+    Ok((feed, Crew { ended: crew, unit }))
 }
 
 /// Spawns a task that drives `subscriber` through `handler` with `workers.count()` workers.
@@ -95,7 +101,7 @@ where
 ///
 /// # Errors
 ///
-/// [`StartWorkerError`] when a core a worker was to start on has ended.
+/// [`StartUnitError`] when a core a worker was to start on has ended.
 // The parts are independent and each spawn site passes its own; bundling them into a struct
 // would hide that.
 #[allow(clippy::too_many_arguments)]
@@ -110,7 +116,7 @@ pub fn spawn_dispatch_workers<S, H, C, St, Retry>(
     workers: Workers,
     fabric: &Fabric,
     cores: &[usize],
-) -> Result<JoinHandle<()>, StartWorkerError>
+) -> Result<JoinHandle<()>, StartUnitError>
 where
     Retry: RetryCopies<C> + 'static,
     S: Subscriber + 'static,
@@ -136,6 +142,7 @@ where
     let (feed, crew) = start_workers(
         fabric,
         &shared.name,
+        DispatchUnit::of(workers.placement()),
         &cores[..workers.count().get()],
         workers.by_key(),
         move || {
@@ -199,5 +206,5 @@ pub(super) async fn read_then_join<Item, Items, Failure>(
     let mut feed = LetGo(feed);
     feed.0.read(stream, name, stop, key).await;
     feed.0.let_go();
-    crew.join().await;
+    crew.join(name, type_name::<Item>()).await;
 }

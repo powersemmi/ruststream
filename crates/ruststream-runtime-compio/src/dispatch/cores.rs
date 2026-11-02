@@ -119,13 +119,45 @@ impl Layout {
     }
 }
 
+/// What a mount calls the unit of its concurrency: a `workers(n)` mount runs workers, a
+/// `threads(n)` mount runs threads. Startup and teardown messages name the unit the mount declared.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DispatchUnit {
+    /// The unit of `workers(n)` and `by_key`.
+    Worker,
+    /// The unit of `threads(n)`.
+    Thread,
+}
+
+impl DispatchUnit {
+    /// The word the mount uses for its unit, as startup and teardown messages spell it.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Worker => "worker",
+            Self::Thread => "thread",
+        }
+    }
+
+    /// The unit of a mount with this placement.
+    #[must_use]
+    pub const fn of(placement: Placement) -> Self {
+        match placement {
+            Placement::Threads => Self::Thread,
+            _ => Self::Worker,
+        }
+    }
+}
+
 /// The core a worker was to start on is gone: its mailbox is closed.
 #[derive(Debug, Error)]
 #[error(
-    "subscription `{subscription}` could not start a worker on core {core}: the core has ended"
+    "subscription `{subscription}` could not start a {} on core {core}: the core has ended",
+    .unit.word()
 )]
-pub struct StartWorkerError {
+pub struct StartUnitError {
     subscription: String,
+    unit: DispatchUnit,
     core: usize,
 }
 
@@ -136,6 +168,7 @@ type Job = Box<dyn FnOnce() -> JoinHandle<()> + Send>;
 /// that spawns it.
 struct Mail {
     subscription: Box<str>,
+    unit: DispatchUnit,
     job: Job,
 }
 
@@ -238,23 +271,26 @@ impl Fabric {
     ///
     /// # Errors
     ///
-    /// [`StartWorkerError`] where the core's [`serve`](Self::serve) has ended, or never ran.
+    /// [`StartUnitError`] where the core's [`serve`](Self::serve) has ended, or never ran.
     pub fn run_on<Start>(
         &self,
         core: usize,
         subscription: &str,
+        unit: DispatchUnit,
         job: Start,
-    ) -> Result<(), StartWorkerError>
+    ) -> Result<(), StartUnitError>
     where
         Start: FnOnce() -> JoinHandle<()> + Send + 'static,
     {
         self.senders[core]
             .unbounded_send(Mail {
                 subscription: subscription.into(),
+                unit,
                 job: Box::new(job),
             })
-            .map_err(|_| StartWorkerError {
+            .map_err(|_| StartUnitError {
                 subscription: subscription.to_owned(),
+                unit,
                 core,
             })
     }
@@ -281,12 +317,13 @@ impl Fabric {
             return;
         };
         let mut workers = FuturesUnordered::new();
-        let ended = |subscription: &str, outcome: Result<(), JoinError>| {
+        let ended = |subscription: &str, unit: DispatchUnit, outcome: Result<(), JoinError>| {
             if outcome.is_err() {
-                error!(target: "ruststream::dispatch", core, subscription, "a worker panicked");
+                let word = unit.word();
+                error!(target: "ruststream::dispatch", core, subscription, "a {word} panicked");
                 // A worker that is gone leaves the subscription on fewer workers than it asked for,
                 // so the service fails like it does for a handler that panics.
-                stop.fail(subscription, &format!("a worker panicked on core {core}"));
+                stop.fail(subscription, &format!("a {word} panicked on core {core}"));
             }
         };
         {
@@ -298,8 +335,8 @@ impl Fabric {
                         Some(mail) => workers.push(watch(mail)),
                         None => break,
                     },
-                    (subscription, outcome) = workers.select_next_some() => {
-                        ended(&subscription, outcome);
+                    (subscription, unit, outcome) = workers.select_next_some() => {
+                        ended(&subscription, unit, outcome);
                     }
                     () = cancelled => break,
                 }
@@ -311,19 +348,23 @@ impl Fabric {
         while let Some(mail) = inbox.next().await {
             workers.push(watch(mail));
         }
-        while let Some((subscription, outcome)) = workers.next().await {
-            ended(&subscription, outcome);
+        while let Some((subscription, unit, outcome)) = workers.next().await {
+            ended(&subscription, unit, outcome);
         }
     }
 }
 
 /// Starts the worker of `mail` on this core and resolves with how it ended, named by its
 /// subscription.
-fn watch(mail: Mail) -> impl Future<Output = (Box<str>, Result<(), JoinError>)> {
-    let Mail { subscription, job } = mail;
+fn watch(mail: Mail) -> impl Future<Output = (Box<str>, DispatchUnit, Result<(), JoinError>)> {
+    let Mail {
+        subscription,
+        unit,
+        job,
+    } = mail;
     // Spawned now, not when the result is first polled: the worker's ring is waiting for it.
     let worker = job();
-    async move { (subscription, worker.await) }
+    async move { (subscription, unit, worker.await) }
 }
 
 #[cfg(test)]
@@ -334,6 +375,28 @@ mod tests {
 
     fn n(count: usize) -> NonZeroUsize {
         NonZeroUsize::new(count).expect("a count")
+    }
+
+    #[test]
+    fn a_core_that_has_ended_refuses_a_unit_in_the_word_of_its_mount() {
+        let fabric = Fabric::open(2);
+        fabric.close_unserved();
+        for (unit, word) in [
+            (DispatchUnit::Worker, "worker"),
+            (DispatchUnit::Thread, "thread"),
+        ] {
+            let refused = fabric
+                .run_on(1, "orders", unit, || {
+                    unreachable!("no core serves this mailbox")
+                })
+                .expect_err("the mailbox is closed");
+            assert!(
+                refused
+                    .to_string()
+                    .contains(&format!("could not start a {word} on core 1")),
+                "got {refused}"
+            );
+        }
     }
 
     #[test]

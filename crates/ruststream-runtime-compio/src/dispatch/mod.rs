@@ -31,7 +31,7 @@ use crate::spawn::spawn;
 use crate::{Stop, Tasks};
 
 pub use batch::spawn_batch_dispatch;
-pub use cores::{Fabric, Layout, LayoutError, Mount, StartWorkerError, WorkerGuard};
+pub use cores::{DispatchUnit, Fabric, Layout, LayoutError, Mount, StartUnitError, WorkerGuard};
 pub use workers::spawn_dispatch_workers;
 
 /// What one subscription's loop dispatches under.

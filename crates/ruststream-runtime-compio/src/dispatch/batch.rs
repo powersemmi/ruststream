@@ -17,7 +17,7 @@ use tracing::error;
 
 use super::slots::{Filled, Stock};
 use super::workers::{read_then_join, start_workers};
-use super::{Fabric, Hosted, Shared, StartWorkerError};
+use super::{DispatchUnit, Fabric, Hosted, Shared, StartUnitError};
 use crate::spawn::spawn;
 use crate::{Stop, yield_now};
 
@@ -32,7 +32,7 @@ use crate::{Stop, yield_now};
 ///
 /// # Errors
 ///
-/// [`StartWorkerError`] when a core a worker was to start on has ended.
+/// [`StartUnitError`] when a core a worker was to start on has ended.
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 pub fn spawn_batch_dispatch<S, H, C, St, Retry>(
     subscriber: S,
@@ -46,7 +46,7 @@ pub fn spawn_batch_dispatch<S, H, C, St, Retry>(
     batch_size: NonZeroUsize,
     fabric: &Fabric,
     cores: &[usize],
-) -> Result<JoinHandle<()>, StartWorkerError>
+) -> Result<JoinHandle<()>, StartUnitError>
 where
     Retry: RetryCopies<C> + 'static,
     S: BatchSubscriber + 'static,
@@ -76,29 +76,36 @@ where
     let stock = Stock::<S::Batch>::new(most);
     let for_workers = Arc::clone(&shared);
     let returns = Arc::clone(&stock);
-    let (feed, crew) = start_workers(fabric, &shared.name, &cores[..count], false, move || {
-        let shared = Arc::clone(&for_workers);
-        let stock = Arc::clone(&returns);
-        let mut taken = <H as BatchHandler<S::Batch, C, St>>::taken(batch_size);
-        let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
-        let mut encode = BytesMut::new();
-        async move |mut slot: S::Batch| {
-            run_batch::<_, _, C, _, _, _>(
-                &shared.handler,
-                &mut slot,
-                &mut taken,
-                &mut scratch,
-                &mut encode,
-                &shared.name,
-                &shared.state,
-                &shared.hosted.delivery,
-                &shared.hosted.host,
-                &shared.failure,
-            )
-            .await;
-            stock.give(slot);
-        }
-    })?;
+    let (feed, crew) = start_workers(
+        fabric,
+        &shared.name,
+        DispatchUnit::of(workers.placement()),
+        &cores[..count],
+        false,
+        move || {
+            let shared = Arc::clone(&for_workers);
+            let stock = Arc::clone(&returns);
+            let mut taken = <H as BatchHandler<S::Batch, C, St>>::taken(batch_size);
+            let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
+            let mut encode = BytesMut::new();
+            async move |mut slot: S::Batch| {
+                run_batch::<_, _, C, _, _, _>(
+                    &shared.handler,
+                    &mut slot,
+                    &mut taken,
+                    &mut scratch,
+                    &mut encode,
+                    &shared.name,
+                    &shared.state,
+                    &shared.hosted.delivery,
+                    &shared.hosted.host,
+                    &shared.failure,
+                )
+                .await;
+                stock.give(slot);
+            }
+        },
+    )?;
     let mut subscriber = subscriber;
     Ok(spawn(async move {
         read_then_join(

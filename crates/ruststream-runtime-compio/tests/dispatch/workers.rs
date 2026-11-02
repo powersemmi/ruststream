@@ -9,7 +9,7 @@ use event_listener::Event;
 use futures::StreamExt;
 use futures::channel::mpsc;
 use ruststream_runtime::{ShutdownWait, Workers};
-use ruststream_runtime_compio::dispatch::{Layout, Mount, spawn_dispatch_workers};
+use ruststream_runtime_compio::dispatch::{DispatchUnit, Layout, Mount, spawn_dispatch_workers};
 
 use crate::support::{
     Msg, Reporting, channel, collect, failure, hosted, nonzero, on_cores, reporting,
@@ -135,7 +135,7 @@ fn threads_two_on_three_cores_run_on_cores_one_and_two_only() {
         for core in 0..3 {
             let here = here.clone();
             fabric
-                .run_on(core, "probe", move || {
+                .run_on(core, "probe", DispatchUnit::Worker, move || {
                     spawn(async move {
                         let _ = here.unbounded_send((core, thread::current().id()));
                     })
@@ -161,13 +161,13 @@ fn threads_two_on_three_cores_run_on_cores_one_and_two_only() {
     }
 }
 
-#[test]
-fn a_worker_that_panics_fails_the_app_while_it_runs() {
-    let reason = on_cores(3, async |fabric, stop, _tasks| {
+/// Runs `unit` on core 1 with a body that panics outside any handler, and returns the failure.
+fn failure_of_a_panicking(unit: DispatchUnit) -> String {
+    let reason = on_cores(3, async move |fabric, stop, _tasks| {
         fabric
-            .run_on(1, "orders", || {
+            .run_on(1, "orders", unit, || {
                 spawn(async {
-                    panic!("a worker outside the handler");
+                    panic!("a unit outside the handler");
                 })
             })
             .expect("core 1 serves");
@@ -175,10 +175,23 @@ fn a_worker_that_panics_fails_the_app_while_it_runs() {
         stop.cancelled().await;
         stop.failure()
     });
+    reason.expect("the panic is the failure")
+}
 
-    let reason = reason.expect("the worker's panic is the failure");
+#[test]
+fn a_worker_that_panics_fails_the_app_while_it_runs() {
+    let reason = failure_of_a_panicking(DispatchUnit::Worker);
     assert!(
-        reason.contains("orders") && reason.contains("core 1"),
+        reason.contains("orders") && reason.contains("a worker panicked on core 1"),
+        "got {reason}"
+    );
+}
+
+#[test]
+fn a_thread_that_panics_fails_the_app_while_it_runs() {
+    let reason = failure_of_a_panicking(DispatchUnit::Thread);
+    assert!(
+        reason.contains("orders") && reason.contains("a thread panicked on core 1"),
         "got {reason}"
     );
 }
