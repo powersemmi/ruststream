@@ -938,6 +938,13 @@ name = "local_family"
 path = "tests/local_family.rs"
 required-features = ["memory", "testing"]
 
+# A firmware facade with no serde codec: a handler's `Out` slot mounts and publishes the types that
+# carry their own bytes.
+[[test]]
+name = "local_codec_free"
+path = "tests/local_codec_free.rs"
+required-features = ["memory", "macros", "embassy"]
+
 # The tests of the examples, one module per example: a binary of its own, so it compiles beside
 # the suite instead of after it.
 [[test]]

@@ -103,6 +103,28 @@ impl<M, W, E, Pipe, Body> fmt::Debug for Slot<M, W, E, Pipe, Body> {
 // publish path and keep its test-capture attribution; calls reaching the live value through
 // this `Deref` leave through the unwrapped value and bypass both, like a settled owned
 // transaction's buffer.
+/// What a slot's codec position must be for the slot to publish: a codec where the build has one,
+/// and the bare position otherwise.
+///
+/// A build with no codec feature mounts a slot over [`UnnamedCodec`](crate::UnnamedCodec), which
+/// publishes the types that carry their own bytes; a value that needs encoding names the missing
+/// codec where it is published. The codec requirement sits on that operation and not on the slot.
+/// Machinery; never named in user code.
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+#[doc(hidden)]
+pub trait SlotEncoding: Codec {}
+
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+impl<Enc: Codec> SlotEncoding for Enc {}
+
+/// See the codec form: without a codec feature the position is only a value to carry.
+#[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
+#[doc(hidden)]
+pub trait SlotEncoding: Clone {}
+
+#[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
+impl<Enc: Clone> SlotEncoding for Enc {}
+
 impl<M, W, E, Pipe, Body> Deref for Slot<M, W, E, Pipe, Body> {
     type Target = W;
 
@@ -121,7 +143,7 @@ where
 {
 }
 
-impl<M: OutSlot, W: Publisher, E: Codec + MaybeSendSync, Pipe: OutPipeline<W>, Body>
+impl<M: OutSlot, W: Publisher, E: SlotEncoding + MaybeSendSync, Pipe: OutPipeline<W>, Body>
     Slot<M, W, E, Pipe, Body>
 {
     /// Starts a typed publish through the slot, on the message type's own wire

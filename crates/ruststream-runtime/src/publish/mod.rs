@@ -11,9 +11,9 @@ use alloc::boxed::Box;
 use core::pin::Pin;
 
 use crate::lifecycle::BoxError;
-use ruststream_core::IfSend;
 pub use crate::outgoing::{Outgoing, OutgoingName};
 pub use crate::wire::{Serialized, WireBytes};
+use ruststream_core::IfSend;
 
 // The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
 // The static pipeline returns unboxed RPITIT futures; only the opt-in runtime-composed list

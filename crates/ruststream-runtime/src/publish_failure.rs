@@ -27,11 +27,11 @@ use tracing::warn;
 use crate::handler::{Continuation, ContinuationFuture, MaybeSend};
 use crate::lifecycle::BoxError;
 use crate::publish::SinkRefusal;
-use ruststream_core::IfSend;
 use crate::{
     CallerName, HeaderMap, MessageHeaders, MessageWire, NoHeaders, Outgoing, OutgoingDestination,
     OutgoingFor, PayloadForm, PublishMessageError, Serialized, SerializedWire, WireBytes,
 };
+use ruststream_core::IfSend;
 use ruststream_core::KeptPayload;
 
 /// The error of sending on a [`FailedMessage`] whose bytes are gone: the publisher that refused
@@ -613,7 +613,9 @@ struct Lock<Value>(IfSend<Exclusive<Value>, RefCell<Value>>);
 
 impl<Value> Lock<Value> {
     fn new(value: Value) -> Self {
-        Self(<IfSend<Exclusive<Value>, RefCell<Value>> as Guarded<Value>>::guard(value))
+        Self(<IfSend<Exclusive<Value>, RefCell<Value>> as Guarded<
+            Value,
+        >>::guard(value))
     }
 
     fn with<Out>(&self, change: impl FnOnce(&mut Value) -> Out) -> Out {

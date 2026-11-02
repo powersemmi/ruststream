@@ -18,7 +18,7 @@ use crate::{
 };
 
 use super::arena::Outs;
-use super::entry::Slot;
+use super::entry::{Slot, SlotEncoding};
 
 /// An arena entry of either runner, as a runtime-neutral body holds it: a window onto the live
 /// value the slot's policy paired.
@@ -51,7 +51,7 @@ pub trait SlotPublish<M, Body = ()>:
     + Publisher<Options = <<Self as SlotEntry<M, Body>>::Wire as Publisher>::Options>
 {
     /// The codec typed publishes through the slot encode with.
-    type Enc: Codec;
+    type Enc: SlotEncoding;
     /// The sink a publish through the slot travels.
     type Sink<'a>: PublishSink<Options = <Self::Wire as Publisher>::Options>
     where
@@ -71,7 +71,7 @@ impl<M, W, E, Pipe, Body> SlotPublish<M, Body> for Slot<M, W, E, Pipe, Body>
 where
     M: OutSlot,
     W: Publisher,
-    E: Codec + MaybeSendSync,
+    E: SlotEncoding + MaybeSendSync,
     Pipe: OutPipeline<W>,
 {
     type Enc = E;
