@@ -51,8 +51,8 @@ fn deliveries_are_handled_in_stream_order_on_core_zero() {
 
 #[test]
 fn a_task_of_the_core_runs_between_deliveries_of_a_handler_that_never_waits() {
-    // The backlog is ready at once; without the yield after each delivery, the spawned task would
-    // run only after all of it.
+    // The backlog is ready at once; without the yield after a run of deliveries, the spawned task
+    // would run only after all of it.
     let ran_after = on_cores(1, async |_fabric, stop, tasks| {
         let (feed, subscriber) = channel();
         for position in 0..200 {
@@ -99,8 +99,9 @@ fn a_task_of_the_core_runs_between_deliveries_of_a_handler_that_never_waits() {
             .await
             .expect("the task ran")
     });
+    // A loop hands the core a turn after 128 deliveries in a row, the budget tokio gives a task.
     assert!(
-        ran_after < 10,
+        ran_after <= 128,
         "the spawned task ran only after {ran_after} deliveries"
     );
 }

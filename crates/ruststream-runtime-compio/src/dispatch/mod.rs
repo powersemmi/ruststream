@@ -82,11 +82,13 @@ pub(crate) struct Shared<Body, State, Cx, Retry> {
     pub(crate) failure: DispatchFailure<Stop>,
 }
 
-/// A subscriber whose stream hands the core a turn after each delivery.
+/// A subscriber whose stream hands the core a turn after a run of [`YIELD_AFTER`] deliveries that
+/// never waited.
 ///
 /// compio has no budget of its own: a loop whose handler never waits would keep the core inside
 /// one poll, and the continuations, hooks and retry timers on that core would wait for the whole
-/// burst. The yield comes before the next poll of the stream, after the delivery was settled.
+/// burst. The yield comes before the next poll of the stream, after the delivery was settled; a
+/// yield per delivery would cost an executor turn per message.
 pub(crate) struct Yielding<Inner>(pub(crate) Inner);
 
 impl<Inner> Yielding<Inner> {
@@ -114,9 +116,13 @@ impl<Inner: Subscriber> Subscriber for Yielding<Inner> {
     }
 }
 
+/// How many deliveries in a row a subscription takes before it hands the core a turn: the budget
+/// tokio gives a task, and the bound of the embedded runner.
+const YIELD_AFTER: u32 = 128;
+
 pin_project! {
-    /// A stream that returns `Pending` once after each ready item, having woken its task, when its
-    /// probe says more may be waiting.
+    /// A stream that returns `Pending` once after [`YIELD_AFTER`] ready items in a row, having
+    /// woken its task, when its probe says more may be waiting.
     ///
     /// A yield returns `Pending` without polling the stream, so the stream registers no waker, and
     /// a loop skips a subscription whose probe says nothing is ready. A yield past the last
@@ -126,7 +132,7 @@ pin_project! {
     struct YieldingStream<Items, Probe> {
         #[pin]
         inner: Items,
-        owed: bool,
+        ready: u32,
         probe: Probe,
     }
 }
@@ -135,7 +141,7 @@ impl<Items, Probe> YieldingStream<Items, Probe> {
     const fn new(inner: Items, probe: Probe) -> Self {
         Self {
             inner,
-            owed: false,
+            ready: 0,
             probe,
         }
     }
@@ -147,8 +153,8 @@ impl<Items: Stream, Probe: ReadyHint> Stream for YieldingStream<Items, Probe> {
     #[inline]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
-        if *this.owed {
-            *this.owed = false;
+        if *this.ready >= YIELD_AFTER {
+            *this.ready = 0;
             if this.probe.may_be_ready() {
                 // Woken before it parks: the task is polled again once the core's other tasks
                 // have had a turn.
@@ -157,7 +163,11 @@ impl<Items: Stream, Probe: ReadyHint> Stream for YieldingStream<Items, Probe> {
             }
         }
         let polled = this.inner.poll_next(cx);
-        *this.owed = matches!(polled, Poll::Ready(Some(_)));
+        if matches!(polled, Poll::Ready(Some(_))) {
+            *this.ready += 1;
+        } else {
+            *this.ready = 0;
+        }
         polled
     }
 }
@@ -212,7 +222,7 @@ mod tests {
     use futures::stream::poll_fn;
     use ruststream_core::ReadyHint;
 
-    use super::YieldingStream;
+    use super::{YIELD_AFTER, YieldingStream};
 
     /// A probe with a fixed answer.
     struct Probe(bool);
@@ -233,59 +243,97 @@ mod tests {
         }
     }
 
-    /// A stream with one item, then pending; counts its polls.
-    fn one_item(polls: Rc<Cell<u32>>) -> impl Stream<Item = u8> {
-        poll_fn(move |_cx| {
-            polls.set(polls.get() + 1);
-            if polls.get() == 1 {
-                Poll::Ready(Some(7))
-            } else {
-                Poll::Pending
-            }
-        })
-    }
-
     #[test]
-    fn after_the_last_delivery_the_stream_is_polled_and_parks_with_its_waker() {
+    fn after_a_run_the_stream_is_polled_when_the_probe_says_nothing_waits() {
         let polls = Rc::new(Cell::new(0));
         let mut stream = pin!(YieldingStream::new(
-            one_item(Rc::clone(&polls)),
+            always_ready(Rc::clone(&polls)),
             Probe(false)
         ));
         let woken = Arc::new(Woken::default());
         let waker = Waker::from(Arc::clone(&woken));
         let mut cx = Context::from_waker(&waker);
 
-        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Ready(Some(7)));
-        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Pending);
+        for _ in 0..=YIELD_AFTER {
+            assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Ready(Some(7)));
+        }
         assert_eq!(
             polls.get(),
-            2,
-            "the stream registered for the next delivery"
+            YIELD_AFTER + 1,
+            "the poll after the run reached the stream, which registers for the next delivery"
         );
         assert!(!woken.0.load(Ordering::SeqCst), "no yield was taken");
     }
 
+    /// A stream that is always ready; counts its polls.
+    fn always_ready(polls: Rc<Cell<u32>>) -> impl Stream<Item = u8> {
+        poll_fn(move |_cx| {
+            polls.set(polls.get() + 1);
+            Poll::Ready(Some(7))
+        })
+    }
+
     #[test]
-    fn while_more_may_be_waiting_the_stream_yields_once_after_a_delivery() {
+    fn while_more_may_be_waiting_the_stream_yields_once_after_a_run_of_deliveries() {
         let polls = Rc::new(Cell::new(0));
         let mut stream = pin!(YieldingStream::new(
-            one_item(Rc::clone(&polls)),
+            always_ready(Rc::clone(&polls)),
             Probe(true)
         ));
         let woken = Arc::new(Woken::default());
         let waker = Waker::from(Arc::clone(&woken));
         let mut cx = Context::from_waker(&waker);
 
-        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Ready(Some(7)));
-        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Pending);
-        assert_eq!(polls.get(), 1, "the yield did not poll the stream");
-        assert!(woken.0.load(Ordering::SeqCst), "the yield woke its task");
+        for _ in 0..YIELD_AFTER {
+            assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Ready(Some(7)));
+        }
+        assert!(!woken.0.load(Ordering::SeqCst), "no yield inside the run");
         assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Pending);
         assert_eq!(
             polls.get(),
-            2,
+            YIELD_AFTER,
+            "the yield did not poll the stream"
+        );
+        assert!(woken.0.load(Ordering::SeqCst), "the yield woke its task");
+        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Ready(Some(7)));
+        assert_eq!(
+            polls.get(),
+            YIELD_AFTER + 1,
             "the poll after the yield reached the stream"
+        );
+    }
+
+    #[test]
+    fn a_stream_that_waited_starts_its_run_again() {
+        let polls = Rc::new(Cell::new(0));
+        // Ready except every hundredth poll: no run reaches the bound.
+        let items = poll_fn({
+            let polls = Rc::clone(&polls);
+            move |_cx| {
+                polls.set(polls.get() + 1);
+                if polls.get() % 100 == 0 {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Some(7))
+                }
+            }
+        });
+        let mut stream = pin!(YieldingStream::new(items, Probe(true)));
+        let woken = Arc::new(Woken::default());
+        let waker = Waker::from(Arc::clone(&woken));
+        let mut cx = Context::from_waker(&waker);
+
+        for _ in 0..3 * YIELD_AFTER {
+            let _ = stream.as_mut().poll_next(&mut cx);
+        }
+        assert!(
+            !woken.0.load(Ordering::SeqCst),
+            "no run was long enough to yield"
+        );
+        assert_eq!(
+            polls.get(),
+            3 * YIELD_AFTER,
+            "every poll reached the stream"
         );
     }
 }

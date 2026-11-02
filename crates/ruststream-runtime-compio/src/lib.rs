@@ -8,7 +8,7 @@
 //! - [`Tasks`]: where the work a delivery leaves behind runs, and the wait for it to end.
 //! - [`RustStream`]: the app builder, with the tokio runner's names, and the run that starts the
 //!   cores: [`run`](RustStream::run), [`run_until`](RustStream::run_until), [`start`](RustStream::start).
-//! - [`yield_now`]: the cooperative yield after each delivery.
+//! - [`yield_now`]: the cooperative yield of a delivery loop.
 
 // The contract and the shared body, under the names the runner's modules reach them by
 // (`crate::Broker`, `crate::Router`, ...).
