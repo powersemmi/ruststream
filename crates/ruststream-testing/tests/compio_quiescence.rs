@@ -213,7 +213,7 @@ fn a_call_hook_runs_before_the_publish_that_caused_the_call_returns() -> Result<
 }
 
 #[test]
-fn a_handler_that_keeps_itself_runnable_is_not_quiescent_and_the_shutdown_timeout_ends_it()
+fn a_handler_that_keeps_itself_runnable_is_reported_and_the_shutdown_timeout_ends_it()
 -> Result<(), Box<dyn Error>> {
     Runtime::new()?.block_on(async {
         let tb = TestApp::start(app().shutdown_timeout(NAP)).await?;
@@ -227,7 +227,7 @@ fn a_handler_that_keeps_itself_runnable_is_not_quiescent_and_the_shutdown_timeou
             matches!(
                 published,
                 Err(PublishError::Publish {
-                    source: TestError::NotQuiescent { .. },
+                    source: TestError::KeptRunning { turns: 50_000 },
                     ..
                 })
             ),
@@ -235,7 +235,7 @@ fn a_handler_that_keeps_itself_runnable_is_not_quiescent_and_the_shutdown_timeou
         );
         let settled = tb.settle().await;
         assert!(
-            matches!(settled, Err(TestError::NotQuiescent { .. })),
+            matches!(settled, Err(TestError::KeptRunning { turns: 50_000 })),
             "settle returned {settled:?}"
         );
         // The handler never lets go, so only the shutdown timeout on the app's clock ends it.
@@ -245,7 +245,7 @@ fn a_handler_that_keeps_itself_runnable_is_not_quiescent_and_the_shutdown_timeou
 }
 
 #[test]
-fn a_handler_that_keeps_itself_runnable_without_a_shutdown_timeout_is_not_quiescent()
+fn a_handler_that_keeps_itself_runnable_without_a_shutdown_timeout_fails_the_shutdown()
 -> Result<(), Box<dyn Error>> {
     Runtime::new()?.block_on(async {
         let tb = TestApp::start(app()).await?;
@@ -257,7 +257,7 @@ fn a_handler_that_keeps_itself_runnable_without_a_shutdown_timeout_is_not_quiesc
             .await;
         let stopped = tb.shutdown().await;
         assert!(
-            matches!(stopped, Err(TestError::NotQuiescent { .. })),
+            matches!(stopped, Err(TestError::KeptRunning { turns: 50_000 })),
             "shutdown returned {stopped:?}"
         );
         Ok(())

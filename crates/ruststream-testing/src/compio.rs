@@ -194,9 +194,9 @@ impl TestApp {
     ///
     /// # Errors
     ///
-    /// Returns [`TestError::NotQuiescent`] if the app keeps producing work, or a task of it keeps
-    /// itself runnable (a loop around `yield_now`), and [`TestError::Stalled`] if a delivery waits
-    /// on something nothing wakes.
+    /// Returns [`TestError::NotQuiescent`] if the app keeps producing work,
+    /// [`TestError::KeptRunning`] if a task of it keeps itself runnable (a loop around
+    /// `yield_now`), and [`TestError::Stalled`] if a delivery waits on something nothing wakes.
     pub async fn settle(&self) -> Result<(), TestError> {
         settled(&self.coordinator, &self.quiescence.reader()).await
     }
@@ -220,7 +220,7 @@ impl TestApp {
     ///
     /// Returns [`TestError::Failed`] with the runner's error if the app stopped on a failure
     /// before or during the shutdown, or a broker failed to shut down, and
-    /// [`TestError::NotQuiescent`] if a task keeps itself runnable and the app has no shutdown
+    /// [`TestError::KeptRunning`] if a task keeps itself runnable and the app has no shutdown
     /// timeout to end it. A shutdown timeout fires on the virtual clock even then, and aborts the
     /// task as it does in production.
     pub async fn shutdown(self) -> Result<(), TestError> {
@@ -310,7 +310,7 @@ pub(crate) async fn settled(
         // report the same exhaustion, with however many deliveries ran in this turn on top.
         if coordinator.exhausted() {
             break Err(TestError::NotQuiescent {
-                processed: MAX_STEPS,
+                processed: coordinator.step_processed(),
             });
         }
         let drive_now = drive.get_or_insert_with(|| Box::pin(coordinator.drive()));
@@ -325,9 +325,7 @@ pub(crate) async fn settled(
         if runnable.count() > 0 {
             rounds += 1;
             if rounds >= MAX_ROUNDS {
-                break Err(TestError::NotQuiescent {
-                    processed: MAX_STEPS,
-                });
+                break Err(TestError::KeptRunning { turns: MAX_ROUNDS });
             }
             continue;
         }
@@ -351,7 +349,7 @@ pub(crate) async fn settled(
 /// # Errors
 ///
 /// [`TestError::Stalled`] if `work` waits and nothing is runnable or armed on the clock, and
-/// [`TestError::NotQuiescent`] if a task stays runnable and no deadline is armed to end it.
+/// [`TestError::KeptRunning`] if a task stays runnable and no deadline is armed to end it.
 async fn driven<Work: Future>(
     work: Work,
     coordinator: &Coordinator,
@@ -366,9 +364,7 @@ async fn driven<Work: Future>(
             Either::Right((busy, _)) => {
                 if !clock.advance_to_next() {
                     return Err(if busy {
-                        TestError::NotQuiescent {
-                            processed: MAX_STEPS,
-                        }
+                        TestError::KeptRunning { turns: MAX_ROUNDS }
                     } else {
                         TestError::Stalled
                     });
