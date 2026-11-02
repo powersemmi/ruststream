@@ -12,7 +12,6 @@ mod scenarios {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use core::time::Duration;
 
-    use bytes::BytesMut;
     use embassy_executor::{Executor, Spawner};
     use embassy_futures::yield_now;
     use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
@@ -23,6 +22,7 @@ mod scenarios {
         Broker, Deserialized, OutSlot, Outgoing, OutgoingMessage, Publisher, Serialized, nonzero,
         subscriber,
     };
+    use ruststream_core::__alloc::bytes::BytesMut;
     use serde::{Deserialize, Serialize};
     use static_cell::StaticCell;
 
