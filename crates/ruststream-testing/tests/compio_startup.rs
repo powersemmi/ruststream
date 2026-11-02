@@ -5,9 +5,12 @@
 
 use std::error::Error;
 use std::fmt;
+use std::time::Duration;
 
 use compio::runtime::Runtime;
+use compio::time::timeout;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
+use ruststream::runtime::compio::time::sleep;
 use ruststream::runtime::compio::{AppInfo, RustStream};
 use ruststream::runtime::{HandlerOutcome, PublishError};
 use ruststream::testing::TestError;
@@ -92,6 +95,49 @@ fn a_failing_on_startup_is_a_test_error() -> Result<(), Box<dyn Error>> {
     });
     assert!(
         matches!(started, Err(TestError::Startup(_))),
+        "the start returned {started:?}",
+    );
+    Ok(())
+}
+
+/// How long a startup hook sleeps on the app's clock.
+const WARM_UP: Duration = Duration::from_secs(3600);
+
+/// How long the test gives a start before it calls it hung, on compio's own clock.
+const PATIENCE: Duration = Duration::from_secs(2);
+
+#[test]
+fn a_startup_that_sleeps_on_the_apps_clock_does_not_hang_the_start() -> Result<(), Box<dyn Error>> {
+    Runtime::new()?.block_on(async {
+        let app = RustStream::new(AppInfo::new("commands", "0.1.0"))
+            .on_startup(async move |(): ()| {
+                sleep(WARM_UP).await;
+                Ok::<_, NoConfig>(())
+            })
+            .with_broker(Bus::new(), |b| b);
+        let tb = timeout(PATIENCE, TestApp::start(app))
+            .await
+            .map_err(|_| "the start waited on a clock nobody moved")??;
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_startup_that_sleeps_and_then_fails_is_a_test_error() -> Result<(), Box<dyn Error>> {
+    let started = Runtime::new()?.block_on(async {
+        let app = RustStream::new(AppInfo::new("commands", "0.1.0"))
+            .on_startup(async move |(): ()| {
+                sleep(WARM_UP).await;
+                Err::<(), _>(NoConfig)
+            })
+            .with_broker(Bus::new(), |b| b);
+        timeout(PATIENCE, TestApp::start(app))
+            .await
+            .map(|started| started.map(|_| ()))
+    });
+    assert!(
+        matches!(started, Ok(Err(TestError::Startup(_)))),
         "the start returned {started:?}",
     );
     Ok(())

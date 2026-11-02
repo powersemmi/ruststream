@@ -45,7 +45,7 @@ const MAX_STEPS: usize = 10_000;
 ///
 /// The harness holds the runner's virtual clock from `start` until it is dropped: the app's
 /// retries, batch deadlines and `ruststream::time::sleep` wait until [`advance`](Self::advance)
-/// moves the clock. Work that waits on compio's own timers or on I/O is not advanced: with nothing
+/// moves the clock; a startup hook that sleeps on it is released by the harness itself. Work that waits on compio's own timers or on I/O is not advanced: with nothing
 /// else to run and no timer of the clock armed, `settle` returns [`TestError::Stalled`]. One
 /// `TestApp` runs at a time on a thread.
 ///
@@ -169,7 +169,12 @@ impl TestApp {
         let clock = VirtualClock::take();
         let coordinator = Coordinator::in_place(MAX_STEPS);
         let start = InProcessStart::new(coordinator.clone(), registration_of, state);
-        let running = app.start_in_process(start).await.map_err(startup_error)?;
+        // A hook of the startup that sleeps on the app's clock, or the unwind of a failed startup,
+        // is released by the clock the way the shutdown's work is.
+        let runnable = quiescence.reader();
+        let running = driven(app.start_in_process(start), &coordinator, &runnable, &clock)
+            .await?
+            .map_err(startup_error)?;
         Ok(Self {
             running,
             coordinator,
@@ -215,23 +220,13 @@ impl TestApp {
             clock,
             quiescence,
         } = self;
-        let stopped = {
-            let runnable = quiescence.reader();
-            let mut shutdown = pin!(running.shutdown());
-            // Work the app holds that waits on the clock runs to its end: the clock moves from
-            // one armed deadline to the next until the app has stopped.
-            loop {
-                let idle = pin!(idle(&coordinator, &runnable));
-                match future::select(shutdown.as_mut(), idle).await {
-                    Either::Left((stopped, _)) => break stopped,
-                    Either::Right(((), _)) => {
-                        if !clock.advance_to_next() {
-                            return Err(TestError::Stalled);
-                        }
-                    }
-                }
-            }
-        };
+        let stopped = driven(
+            running.shutdown(),
+            &coordinator,
+            &quiescence.reader(),
+            &clock,
+        )
+        .await?;
         drop(clock);
         coordinator.hooks().raise_failure();
         stopped.map_err(|err| TestError::Failed(Box::new(err)))
@@ -327,6 +322,32 @@ pub(crate) async fn settled(
     };
     coordinator.hooks().raise_failure();
     settled
+}
+
+/// Runs `work` to its end, moving the clock from one armed deadline to the next while the app is
+/// idle: what the app holds that waits on the clock runs to its end.
+///
+/// # Errors
+///
+/// [`TestError::Stalled`] if `work` waits and nothing is runnable or armed on the clock.
+async fn driven<Work: Future>(
+    work: Work,
+    coordinator: &Coordinator,
+    runnable: &Runnable,
+    clock: &VirtualClock,
+) -> Result<Work::Output, TestError> {
+    let mut work = pin!(work);
+    loop {
+        let idle = pin!(idle(coordinator, runnable));
+        match future::select(work.as_mut(), idle).await {
+            Either::Left((done, _)) => return Ok(done),
+            Either::Right(((), _)) => {
+                if !clock.advance_to_next() {
+                    return Err(TestError::Stalled);
+                }
+            }
+        }
+    }
 }
 
 /// Starts, as tasks the harness follows, the hooks the dispatches handed over: a dispatch waits for
