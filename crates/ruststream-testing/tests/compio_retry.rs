@@ -27,6 +27,7 @@ struct Job<'a>(&'a [u8]);
 #[derive(Outgoing, Serialized)]
 struct Sent(&'static [u8]);
 
+// --8<-- [start:service]
 /// Asks for a retry later on a first delivery, and acknowledges the copy that carries its retry
 /// count.
 #[subscriber(LocalMemorySource::new("jobs"))]
@@ -43,7 +44,9 @@ fn app() -> RustStream {
         b.include(on_job).out_retry(LocalMemoryPublish)
     })
 }
+// --8<-- [end:service]
 
+// --8<-- [start:advance]
 #[test]
 fn a_retry_is_redelivered_only_once_its_delay_has_passed() -> Result<(), Box<dyn Error>> {
     Runtime::new()?.block_on(async {
@@ -72,3 +75,4 @@ fn a_retry_is_redelivered_only_once_its_delay_has_passed() -> Result<(), Box<dyn
         Ok(())
     })
 }
+// --8<-- [end:advance]

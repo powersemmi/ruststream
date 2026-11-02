@@ -27,6 +27,7 @@ struct Sent(&'static [u8]);
 #[outgoing(name = "display")]
 struct Shown(Vec<u8>);
 
+// --8<-- [start:service]
 /// The alarm a full tank raises.
 #[derive(Outgoing, Serialized)]
 #[outgoing(name = "alarms")]
@@ -60,7 +61,9 @@ fn app() -> RustStream {
             .out(Alarms, LocalMemoryPublish)
     })
 }
+// --8<-- [end:service]
 
+// --8<-- [start:published]
 #[test]
 fn a_reply_reaches_its_destination() -> Result<(), Box<dyn Error>> {
     Runtime::new()?.block_on(async {
@@ -79,7 +82,9 @@ fn a_reply_reaches_its_destination() -> Result<(), Box<dyn Error>> {
         Ok(())
     })
 }
+// --8<-- [end:published]
 
+// --8<-- [start:out]
 #[test]
 fn a_slot_publish_is_read_back_through_the_slot() -> Result<(), Box<dyn Error>> {
     Runtime::new()?.block_on(async {
@@ -95,3 +100,4 @@ fn a_slot_publish_is_read_back_through_the_slot() -> Result<(), Box<dyn Error>> 
         Ok(())
     })
 }
+// --8<-- [end:out]

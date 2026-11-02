@@ -24,6 +24,7 @@ struct Reading<'a>(&'a [u8]);
 #[outgoing(name = "readings")]
 struct Sent(&'static [u8]);
 
+// --8<-- [start:service]
 /// Acknowledges every reading.
 #[subscriber(LocalMemorySource::new("readings"))]
 async fn on_reading(reading: &Reading<'_>) -> HandlerOutcome {
@@ -35,7 +36,9 @@ fn app() -> RustStream {
     RustStream::new(AppInfo::new("readings", "0.1.0"))
         .with_broker(Bus::new(), |b| b.include(on_reading))
 }
+// --8<-- [end:service]
 
+// --8<-- [start:test]
 #[test]
 fn a_published_reading_is_handled_and_acknowledged() -> Result<(), Box<dyn Error>> {
     Runtime::new()?.block_on(async {
@@ -51,6 +54,7 @@ fn a_published_reading_is_handled_and_acknowledged() -> Result<(), Box<dyn Error
         Ok(())
     })
 }
+// --8<-- [end:test]
 
 #[test]
 fn readings_one_after_the_other_are_all_handled() -> Result<(), Box<dyn Error>> {

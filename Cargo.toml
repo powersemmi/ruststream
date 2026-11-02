@@ -445,6 +445,15 @@ name = "subscribers"
 required-features = ["macros", "memory", "json", "tokio"]
 
 [[example]]
+name = "compio_runtime"
+required-features = ["compio", "testing", "macros", "memory", "json"]
+
+[[example]]
+name = "manual_compio_runtime"
+path = "examples/manual/compio_runtime.rs"
+required-features = ["compio", "testing", "memory", "json"]
+
+[[example]]
 name = "memory_broker"
 required-features = ["testing", "macros", "memory", "json"]
 
@@ -1331,6 +1340,8 @@ required-features = ["memory", "json", "macros", "tokio"]
 
 [dev-dependencies]
 futures = "0.3"
+# The runtime a compio example's test runs its `TestApp` on.
+compio.workspace = true
 # The thread-mode executor of the `std` platform, which the app attribute's task runs on in the
 # embedded batch gate. It does not turn `alloc` on.
 embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
