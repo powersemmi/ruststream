@@ -166,6 +166,9 @@ pub use batch::{BatchSize, FitsBatch, Outcomes};
 pub use context::{After, AfterError, AfterThen, Context};
 #[cfg(ruststream_alloc)]
 pub use described::Described;
+#[cfg(feature = "std")]
+#[doc(hidden)]
+pub use dispatch::rings::{Feed, Lane, RING, lane_of, open as open_rings};
 #[doc(hidden)]
 pub use dispatch::{
     Delivery, EncodeRoom, Gated, HeadersAtOnce, HeadersOnDemand, LendHeaders, Lent, Parks,

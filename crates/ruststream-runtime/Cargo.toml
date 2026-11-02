@@ -29,6 +29,7 @@ std = [
     "futures/std",
     "serde/std",
     "thiserror/std",
+    "dep:rtrb",
 ]
 # The codecs. Their writer follows the target: `std::io::Write` wherever the standard library
 # exists, whatever the features. On a bare-metal target CBOR writes through its own writer trait,
@@ -89,6 +90,8 @@ send_wrapper = { version = "0.6", optional = true }
 tokio = { version = "1.44", optional = true, default-features = false, features = ["rt"] }
 tokio-util = { workspace = true, optional = true }
 quanta = { workspace = true, optional = true }
+# The rings a `threads(n)` subscription hands its deliveries over through.
+rtrb = { workspace = true, optional = true }
 # Both without their default `heapless` types: the codecs hand over `&mut [u8]` and `&[u8]` and
 # nothing else, so neither needs a collection.
 postcard = { version = "1.1.3", optional = true, default-features = false }
