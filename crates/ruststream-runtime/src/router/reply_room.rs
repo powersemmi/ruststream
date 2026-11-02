@@ -7,9 +7,9 @@ use ruststream_core::Capped;
 use ruststream_core::{PayloadForm, Unbounded};
 
 use super::fold_retry::OneTaskRetriedRoute;
-use super::routes::{DeclaredRoute, SubscribeRoute};
-use super::routes_inject::InjectRoute;
-use super::routes_publish::{PublishingRoute, RawReplyRoute};
+use super::routes::{BatchRoute, DeclaredRoute, SubscribeRoute};
+use super::routes_inject::{BatchInjectRoute, InjectRoute};
+use super::routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 use crate::publish::{RawReplyWiring, ReplyWiring};
 use crate::{Broker, Connected, PublishPolicy, Publisher};
 
@@ -27,14 +27,40 @@ impl<B: Broker, Source, Handler, Cx> ReplyRoom<B> for SubscribeRoute<Source, Han
     type Room = Unbounded;
 }
 
+impl<B: Broker, Source, Handler, Cx, Size> ReplyRoom<B> for BatchRoute<Source, Handler, Cx, Size> {
+    type Room = Unbounded;
+}
+
 impl<B: Broker, Source, Def, DecodeCodec, Extra> ReplyRoom<B>
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 {
     type Room = Unbounded;
 }
 
+impl<B: Broker, Source, Def, DecodeCodec, Extra, Size> ReplyRoom<B>
+    for BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size>
+{
+    type Room = Unbounded;
+}
+
 impl<B, Source, Def, DecodeCodec, Policy, Enc, PL, BL, Tx, Extra> ReplyRoom<B>
     for PublishingRoute<Source, Def, DecodeCodec, ReplyWiring<Policy, Enc, PL, BL, Tx>, Extra>
+where
+    B: Broker,
+    Policy: PublishPolicy<Connected<B>, Live: Publisher>,
+{
+    type Room = <<Policy::Live as Publisher>::Payload as PayloadForm>::Room;
+}
+
+impl<B, Source, Def, DecodeCodec, Policy, Enc, PL, BL, Tx, Extra, Size> ReplyRoom<B>
+    for BatchPublishingRoute<
+        Source,
+        Def,
+        DecodeCodec,
+        ReplyWiring<Policy, Enc, PL, BL, Tx>,
+        Extra,
+        Size,
+    >
 where
     B: Broker,
     Policy: PublishPolicy<Connected<B>, Live: Publisher>,

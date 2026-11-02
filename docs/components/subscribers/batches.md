@@ -48,7 +48,7 @@ One outcome settles the whole batch.
 A single `HandlerOutcome` for the whole batch takes a one-shot `.error`: it runs once, with a `Failures` holding every element whose copy failed, in the batch's order.
 The `and_after` beside it runs once, after the batch, when at least one copy was published.
 A `Vec<HandlerOutcome>` gives each element its own one-shot `.error`.
-A batch route of the embedded runner publishes no copy, so there the `.error` never runs; an outcome that asks for a retry or a dead-letter copy logs a warning naming the subscription.
+On the embedded runtime the same holds: a batch mount takes `.retry_capacity::<CAP>()`, `.max_attempts(n).dead_letter(..)` and `.out_retry(..)`, and [its page](../application/embedded-runtime.md#batches) shows each of them.
 
 ## One outcome per element
 

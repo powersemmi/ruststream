@@ -18,7 +18,7 @@ use crate::{Broker, Connected, DefaultPublish, LocalSourceMessage, SubscriptionS
 use super::builder::Router;
 use super::builders::{RouterCommit, RouterPublishing, RouterWith};
 use super::local::LocalPipeline;
-use super::mount::{DefaultReply, PublishMount, RawReplyMount, RouterMount};
+use super::mount::{BatchPublishMount, DefaultReply, PublishMount, RawReplyMount, RouterMount};
 use super::{PublishingRouter, RawReplyRouter, forms};
 
 /// What a reply definition's single-delivery input decodes with when it mounts on a local router
@@ -58,6 +58,7 @@ macro_rules! local_reply_form {
 local_reply_form! {
     forms::Publishing => PublishMount,
     forms::RawReply => RawReplyMount,
+    forms::BatchPublishing => BatchPublishMount,
 }
 
 /// Implements the named-policy commit of a reply form on a local router: the route the

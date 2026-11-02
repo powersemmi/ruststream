@@ -8,7 +8,9 @@
 #![cfg(not(feature = "testing"))]
 
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
-use ruststream::runtime::{Control, EmbeddedApp, HandlerOutcome, Mounts, SubscriberSettings};
+use ruststream::runtime::{
+    Control, EmbeddedApp, Failures, HandlerOutcome, MountSteps, Mounts, SubscriberSettings,
+};
 use ruststream::{Deserialized, subscriber};
 
 /// The board's bus: each subscription holds four messages.
@@ -44,4 +46,43 @@ const BATCH_ROUTE_BUDGET: usize = 32 * 1024;
 fn a_batch_route_takes_room_for_its_batch_and_not_for_copies_of_its_settling() {
     let batch = size_of_returned(&|bus, control| batch_app(bus).run(control));
     assert!(batch <= BATCH_ROUTE_BUDGET, "{batch} bytes");
+}
+
+/// Retries the batch, and reads the copies the store could not publish.
+#[subscriber(LocalMemorySource::new("errored"))]
+async fn on_errored(jobs: &[Job<'_>]) -> HandlerOutcome {
+    let _ = jobs.len();
+    HandlerOutcome::retry_after(core::time::Duration::from_secs(1)).error(
+        async move |failures: &Failures| {
+            let _ = failures.len();
+        },
+    )
+}
+
+fn errored_app_of_4(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_errored.batch::<4>()).retry_capacity::<4>()
+    })
+}
+
+fn errored_app_of_16(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_errored.batch::<16>()).retry_capacity::<16>()
+    })
+}
+
+/// What the app of one batch route with a store and a uniform `.error` may take, for batches of
+/// 4 and of 16, in bytes of a 64-bit host: the fan the mount holds, the failure buffer of its
+/// lane and the store's records come on top of the plain route's room.
+const ERRORED_BUDGETS: [usize; 2] = [48 * 1024, 72 * 1024];
+
+#[test]
+fn a_batch_route_with_a_store_and_an_error_takes_room_for_its_fan() {
+    let four = size_of_returned(&|bus, control| errored_app_of_4(bus).run(control));
+    let sixteen = size_of_returned(&|bus, control| errored_app_of_16(bus).run(control));
+    assert!(four <= ERRORED_BUDGETS[0], "{four} bytes for a batch of 4");
+    assert!(
+        sixteen <= ERRORED_BUDGETS[1],
+        "{sixteen} bytes for a batch of 16"
+    );
 }

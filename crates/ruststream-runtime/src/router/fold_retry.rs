@@ -29,14 +29,18 @@ use crate::{
 
 use super::builder::{AttachRetry, Router};
 use super::fold::OpenLayered;
+use super::fold_batch::{
+    OneTaskBatchDispatch, OpenBatchRoute, OpenedBatchDispatch, SequentialBatchPlan,
+};
 use super::fold_plan::{
-    Dispatched, OneTaskDispatch, OneTaskPlanned, OpenOneTaskRoute, OpenedDispatch, SequentialPlan,
+    BatchWidth, Dispatched, OneTaskDispatch, OneTaskPlanned, OpenOneTaskRoute, OpenedDispatch,
+    SequentialPlan,
 };
 use super::local::LocalPipeline;
-use super::routes::SubscribeRoute;
+use super::routes::{BatchRoute, SubscribeRoute};
 use super::routes::{DeclaredRoute, RetryDestinationsDeclared, RouteMetadata};
-use super::routes_inject::InjectRoute;
-use super::routes_publish::{PublishingRoute, RawReplyRoute};
+use super::routes_inject::{BatchInjectRoute, InjectRoute};
+use super::routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 
 /// The subscription descriptor of a registration on a local chain, read while the chain is still
 /// being written, before any state type is known. Machinery; never named directly.
@@ -57,11 +61,16 @@ macro_rules! route_source {
 
 route_source!(
     [S, H, Cx] SubscribeRoute<S, H, Cx> => S,
+    [S, H, Cx, Size] BatchRoute<S, H, Cx, Size> => S,
+    [Source, Def, DecodeCodec, Wiring, Extra, Size]
+        BatchPublishingRoute<Source, Def, DecodeCodec, Wiring, Extra, Size> => Source,
     [Source, Def, DecodeCodec, Wiring, Extra]
         PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra> => Source,
     [Source, Def, DecodeCodec, Wiring, Extra]
         RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra> => Source,
     [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra> => Source,
+    [Source, Def, DecodeCodec, Extra, Size]
+        BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size> => Source,
 );
 
 impl<Route: OneTaskRouteSource, Dead> OneTaskRouteSource for DeclaredRoute<Route, Dead> {
@@ -153,6 +162,13 @@ where
     }
 }
 
+// The position changes how the copies leave, not how many elements a batch holds.
+impl<Route: BatchWidth, Policy, Stack, Settled> BatchWidth
+    for OneTaskRetriedRoute<Route, Policy, Stack, Settled>
+{
+    type Size = Route::Size;
+}
+
 // The registration that bound the position said where its copies go.
 impl<Route, Policy, Stack> RetryDestinationsDeclared
     for OneTaskRetriedRoute<Route, Policy, Stack, DestinationDeclared>
@@ -179,69 +195,224 @@ impl<Route: OneTaskPlanned, Policy, Stack, Settled> OneTaskPlanned
     }
 }
 
+// One impl per route type, not one over every route: a batch registration is opened by its own
+// impls, and with a single impl that matches both the compiler cannot tell the two apart.
+//
 // Without a plan the copies have nowhere to wait: the registration opens under the plain plan,
 // whose store is none, and the bound on its copies names the step to add.
-impl<B, State, Route, Policy, Stack, Settled> OpenLayered<B, State>
-    for OneTaskRetriedRoute<Route, Policy, Stack, Settled>
-where
-    B: Broker,
-    State: MaybeSendSync + 'static,
-    Route: OpenOneTaskRoute<B, State>,
-    <Route::Sub as Subscriber>::Message: 'static,
-    Route::Body: 'static,
-    NoCopies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>
-        + AppliesDeclaration<Route::Declaration>,
-{
-    type Opened<Layers: BlanketLayer + Clone> = OpenedDispatch<
-        Route::Sub,
-        Route::Body,
-        Route::Cx,
-        Layers,
-        SequentialPlan,
-        <NoCopies as PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>::Path,
-    >;
+macro_rules! open_retried {
+    ($([$($param:ident),+] $route:ty),+ $(,)?) => {$(
+        impl<B, State, Policy, Stack, Settled, $($param),+> OpenLayered<B, State>
+            for OneTaskRetriedRoute<$route, Policy, Stack, Settled>
+        where
+            B: Broker,
+            State: MaybeSendSync + 'static,
+            $route: OpenOneTaskRoute<B, State>,
+            <<$route as OpenOneTaskRoute<B, State>>::Sub as Subscriber>::Message: 'static,
+            <$route as OpenOneTaskRoute<B, State>>::Body: 'static,
+            NoCopies: PairSlot<
+                    B,
+                    <$route as OpenOneTaskRoute<B, State>>::Source,
+                    Policy,
+                    Stack,
+                    <$route as OpenOneTaskRoute<B, State>>::Cx,
+                > + AppliesDeclaration<<$route as OpenOneTaskRoute<B, State>>::Declaration>,
+        {
+            type Opened<Layers: BlanketLayer + Clone> = OpenedDispatch<
+                <$route as OpenOneTaskRoute<B, State>>::Sub,
+                <$route as OpenOneTaskRoute<B, State>>::Body,
+                <$route as OpenOneTaskRoute<B, State>>::Cx,
+                Layers,
+                SequentialPlan,
+                <NoCopies as PairSlot<
+                    B,
+                    <$route as OpenOneTaskRoute<B, State>>::Source,
+                    Policy,
+                    Stack,
+                    <$route as OpenOneTaskRoute<B, State>>::Cx,
+                >>::Path,
+            >;
 
-    fn open_layered<Layers: BlanketLayer + Clone>(
-        self,
-        connected: &Connected<B>,
-        layers: &Layers,
-        scope: &ScopeDelivery,
-    ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
-        open_retried(self, SequentialPlan, connected, layers, scope)
-    }
+            fn open_layered<Layers: BlanketLayer + Clone>(
+                self,
+                connected: &Connected<B>,
+                layers: &Layers,
+                scope: &ScopeDelivery,
+            ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
+                open_retried(self, SequentialPlan, connected, layers, scope)
+            }
+        }
+
+        impl<B, State, Policy, Stack, Settled, Plan, $($param),+> OpenLayered<B, State>
+            for Dispatched<OneTaskRetriedRoute<$route, Policy, Stack, Settled>, Plan>
+        where
+            B: Broker,
+            State: MaybeSendSync + 'static,
+            $route: OpenOneTaskRoute<B, State>,
+            <<$route as OpenOneTaskRoute<B, State>>::Sub as Subscriber>::Message: 'static,
+            <$route as OpenOneTaskRoute<B, State>>::Body: 'static,
+            Plan: OneTaskDispatch<
+                Copies: PairSlot<
+                        B,
+                        <$route as OpenOneTaskRoute<B, State>>::Source,
+                        Policy,
+                        Stack,
+                        <$route as OpenOneTaskRoute<B, State>>::Cx,
+                    > + AppliesDeclaration<<$route as OpenOneTaskRoute<B, State>>::Declaration>,
+            >,
+        {
+            type Opened<Layers: BlanketLayer + Clone> = OpenedDispatch<
+                <$route as OpenOneTaskRoute<B, State>>::Sub,
+                <$route as OpenOneTaskRoute<B, State>>::Body,
+                <$route as OpenOneTaskRoute<B, State>>::Cx,
+                Layers,
+                Plan,
+                <Plan::Copies as PairSlot<
+                    B,
+                    <$route as OpenOneTaskRoute<B, State>>::Source,
+                    Policy,
+                    Stack,
+                    <$route as OpenOneTaskRoute<B, State>>::Cx,
+                >>::Path,
+            >;
+
+            fn open_layered<Layers: BlanketLayer + Clone>(
+                self,
+                connected: &Connected<B>,
+                layers: &Layers,
+                scope: &ScopeDelivery,
+            ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
+                open_retried(self.route, self.plan, connected, layers, scope)
+            }
+        }
+    )+};
 }
 
-impl<B, State, Route, Policy, Stack, Settled, Plan> OpenLayered<B, State>
-    for Dispatched<OneTaskRetriedRoute<Route, Policy, Stack, Settled>, Plan>
-where
-    B: Broker,
-    State: MaybeSendSync + 'static,
-    Route: OpenOneTaskRoute<B, State>,
-    <Route::Sub as Subscriber>::Message: 'static,
-    Route::Body: 'static,
-    Plan: OneTaskDispatch<
-        Copies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>
-                    + AppliesDeclaration<Route::Declaration>,
-    >,
-{
-    type Opened<Layers: BlanketLayer + Clone> = OpenedDispatch<
-        Route::Sub,
-        Route::Body,
-        Route::Cx,
-        Layers,
-        Plan,
-        <Plan::Copies as PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>::Path,
-    >;
+open_retried!(
+    [S, H, Cx] SubscribeRoute<S, H, Cx>,
+    [Source, Def, DecodeCodec, Wiring, Extra]
+        PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>,
+    [Source, Def, DecodeCodec, Wiring, Extra]
+        RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>,
+    [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra>,
+    [S, H, Cx, Dead] DeclaredRoute<SubscribeRoute<S, H, Cx>, Dead>,
+    [Source, Def, DecodeCodec, Wiring, Extra, Dead]
+        DeclaredRoute<PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>, Dead>,
+    [Source, Def, DecodeCodec, Wiring, Extra, Dead]
+        DeclaredRoute<RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>, Dead>,
+    [Source, Def, DecodeCodec, Extra, Dead]
+        DeclaredRoute<InjectRoute<Source, Def, DecodeCodec, Extra>, Dead>,
+);
 
-    fn open_layered<Layers: BlanketLayer + Clone>(
-        self,
-        connected: &Connected<B>,
-        layers: &Layers,
-        scope: &ScopeDelivery,
-    ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
-        open_retried(self.route, self.plan, connected, layers, scope)
-    }
+// The batch twin of the impls above.
+macro_rules! open_batch_retried {
+    ($([$($param:ident),+] $route:ty),+ $(,)?) => {$(
+        impl<B, State, Policy, Stack, Settled, $($param),+> OpenLayered<B, State>
+            for OneTaskRetriedRoute<$route, Policy, Stack, Settled>
+        where
+            B: Broker,
+            State: MaybeSendSync + 'static,
+            $route: OpenBatchRoute<B, State>,
+            NoCopies: PairSlot<
+                    B,
+                    <$route as OpenBatchRoute<B, State>>::Source,
+                    Policy,
+                    Stack,
+                    <$route as OpenBatchRoute<B, State>>::Cx,
+                > + AppliesDeclaration<<$route as OpenBatchRoute<B, State>>::Declaration>,
+            <NoCopies as PairSlot<
+                B,
+                <$route as OpenBatchRoute<B, State>>::Source,
+                Policy,
+                Stack,
+                <$route as OpenBatchRoute<B, State>>::Cx,
+            >>::Path: MaybeSendSync,
+        {
+            type Opened<Layers: BlanketLayer + Clone> = OpenedBatchDispatch<
+                <$route as OpenBatchRoute<B, State>>::Sub,
+                <$route as OpenBatchRoute<B, State>>::Body,
+                <$route as OpenBatchRoute<B, State>>::Cx,
+                SequentialBatchPlan,
+                <NoCopies as PairSlot<
+                    B,
+                    <$route as OpenBatchRoute<B, State>>::Source,
+                    Policy,
+                    Stack,
+                    <$route as OpenBatchRoute<B, State>>::Cx,
+                >>::Path,
+            >;
+
+            fn open_layered<Layers: BlanketLayer + Clone>(
+                self,
+                connected: &Connected<B>,
+                _layers: &Layers,
+                scope: &ScopeDelivery,
+            ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
+                open_retried_batch(self, SequentialBatchPlan, connected, scope)
+            }
+        }
+
+        impl<B, State, Policy, Stack, Settled, Plan, $($param),+> OpenLayered<B, State>
+            for Dispatched<OneTaskRetriedRoute<$route, Policy, Stack, Settled>, Plan>
+        where
+            B: Broker,
+            State: MaybeSendSync + 'static,
+            $route: OpenBatchRoute<B, State>,
+            Plan: OneTaskBatchDispatch<
+                Copies: PairSlot<
+                        B,
+                        <$route as OpenBatchRoute<B, State>>::Source,
+                        Policy,
+                        Stack,
+                        <$route as OpenBatchRoute<B, State>>::Cx,
+                    > + AppliesDeclaration<<$route as OpenBatchRoute<B, State>>::Declaration>,
+            >,
+            <Plan::Copies as PairSlot<
+                B,
+                <$route as OpenBatchRoute<B, State>>::Source,
+                Policy,
+                Stack,
+                <$route as OpenBatchRoute<B, State>>::Cx,
+            >>::Path: MaybeSendSync,
+        {
+            type Opened<Layers: BlanketLayer + Clone> = OpenedBatchDispatch<
+                <$route as OpenBatchRoute<B, State>>::Sub,
+                <$route as OpenBatchRoute<B, State>>::Body,
+                <$route as OpenBatchRoute<B, State>>::Cx,
+                Plan,
+                <Plan::Copies as PairSlot<
+                    B,
+                    <$route as OpenBatchRoute<B, State>>::Source,
+                    Policy,
+                    Stack,
+                    <$route as OpenBatchRoute<B, State>>::Cx,
+                >>::Path,
+            >;
+
+            fn open_layered<Layers: BlanketLayer + Clone>(
+                self,
+                connected: &Connected<B>,
+                _layers: &Layers,
+                scope: &ScopeDelivery,
+            ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
+                open_retried_batch(self.route, self.plan, connected, scope)
+            }
+        }
+    )+};
 }
+
+open_batch_retried!(
+    [Source, Handler, Cx, Size] BatchRoute<Source, Handler, Cx, Size>,
+    [Source, Handler, Cx, Size, Dead] DeclaredRoute<BatchRoute<Source, Handler, Cx, Size>, Dead>,
+    [Source, Def, DecodeCodec, Wiring, Extra, Size]
+        BatchPublishingRoute<Source, Def, DecodeCodec, Wiring, Extra, Size>,
+    [Source, Def, DecodeCodec, Wiring, Extra, Size, Dead]
+        DeclaredRoute<BatchPublishingRoute<Source, Def, DecodeCodec, Wiring, Extra, Size>, Dead>,
+    [Source, Def, DecodeCodec, Extra, Size]
+        BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size>,
+    [Source, Def, DecodeCodec, Extra, Size, Dead]
+        DeclaredRoute<BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size>, Dead>,
+);
 
 /// Opens a registration that bound the position under `plan`: the copy path paired from the
 /// mount site's policy, then the subscription.
@@ -290,6 +461,52 @@ where
             .open_route(connected, scope, RetryDeclaration::new())
             .await?,
         layers: layers.clone(),
+        plan,
+        path,
+    })
+}
+
+/// Opens a batch registration that bound the position under `plan`: the copy path paired from
+/// the mount site's policy, then the subscription.
+///
+/// # Errors
+///
+/// The broker's refusal to pair the policy, to say the address, or to subscribe.
+#[allow(clippy::type_complexity)] // the opened parts, named once here
+async fn open_retried_batch<B, State, Route, Policy, Stack, Settled, Plan>(
+    retried: OneTaskRetriedRoute<Route, Policy, Stack, Settled>,
+    plan: Plan,
+    connected: &Connected<B>,
+    scope: &ScopeDelivery,
+) -> Result<
+    OpenedBatchDispatch<
+        Route::Sub,
+        Route::Body,
+        Route::Cx,
+        Plan,
+        <Plan::Copies as PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>::Path,
+    >,
+    BoxError,
+>
+where
+    B: Broker,
+    State: MaybeSendSync + 'static,
+    Route: OpenBatchRoute<B, State>,
+    Plan: OneTaskBatchDispatch<Copies: PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>,
+{
+    let OneTaskRetriedRoute { route, slot, .. } = retried;
+    // Paired before the subscription opens, so a policy the broker refuses fails the startup
+    // before any delivery arrives.
+    let path = <Plan::Copies as PairSlot<B, Route::Source, Policy, Stack, Route::Cx>>::pair_slot(
+        slot,
+        route.source(),
+        connected,
+    )
+    .await?;
+    Ok(OpenedBatchDispatch {
+        route: route
+            .open_route(connected, scope, RetryDeclaration::new())
+            .await?,
         plan,
         path,
     })

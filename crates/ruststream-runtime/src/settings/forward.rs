@@ -22,12 +22,9 @@ use crate::ConnectedBroker;
 
 use super::SubscriberBuilder;
 use crate::batch::BatchDef;
-#[cfg(ruststream_alloc)]
-use crate::batch::BatchResult;
-#[cfg(ruststream_alloc)]
+use crate::batch::{BatchResult, BatchVec};
 use crate::batch_inject::BatchInjectCall;
 use crate::batch_inject::BatchInjectDef;
-#[cfg(ruststream_alloc)]
 use crate::batch_publishing::BatchPublishingCall;
 use crate::batch_publishing::BatchPublishingDef;
 use crate::context::Context;
@@ -236,7 +233,6 @@ where
     forward_outgoing!(BatchInjectDef);
 }
 
-#[cfg(ruststream_alloc)]
 impl<Def, Src, State, DC, S> BatchInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectCall<S>,
@@ -279,8 +275,6 @@ where
     }
 }
 
-// The heap form of a batch's replies; the fixed form belongs to the batch handlers.
-#[cfg(ruststream_alloc)]
 impl<Def, Src, State, DC, S> BatchPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingCall<S>,
@@ -293,8 +287,8 @@ where
         batch: &[<<Def as BatchPublishingDef>::Input as InputKind>::Owned],
         injections: &<Def as BatchPublishingDef>::Injections,
         ctx: &mut Context<'_, <Def as BatchPublishingDef>::Context, S>,
-    ) -> impl Future<Output = Result<Vec<<Def as BatchPublishingDef>::Reply>, BatchResult>> + MaybeSend
-    {
+    ) -> impl Future<Output = Result<BatchVec<<Def as BatchPublishingDef>::Reply>, BatchResult>>
+    + MaybeSend {
         self.def.call(batch, injections, ctx)
     }
 }

@@ -55,14 +55,14 @@ use super::{
 
 /// A publish pipeline whose runner mounts the slot form `Form`: every pipeline of the
 /// multi-thread runner mounts all of them, while the embedded runner's pipeline mounts the plain
-/// single-message `Out` form alone, so the others are refused with a message naming the form.
+/// `Out` forms of a single message and of a batch, so the forms that reply are refused with a
+/// message naming the form.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "a handler of the form `{Form}` is not available on the embassy runtime",
     label = "this handler takes `Out` slots in a form the embassy runtime does not mount",
-    note = "on the embassy runtime a batch handler takes no `Out` parameter (publish from a handler \
-            that takes one message at a time), and a handler with an `Out` parameter does not \
-            reply (publish the reply through a slot of its own)"
+    note = "on the embassy runtime a handler with an `Out` parameter does not reply (publish the \
+            reply through a slot of its own)"
 )]
 pub trait SlotsOn<Form> {}
 
@@ -221,7 +221,7 @@ macro_rules! impl_inject_out_commit {
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
-            RoutePipe: Clone,
+            RoutePipe: PublishPipeline + Clone,
             $(
                 $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec, Codec: Codec>,

@@ -65,13 +65,15 @@ A single `HandlerOutcome` returned for the whole batch runs its `.error` once, w
 The list is allocated only when a copy fails; on the embedded runtime without `alloc` it sits in a fixed buffer of the subscription instead.
 The [`and_after`](./and-after.md) beside a uniform outcome runs once, after the batch, when at least one copy was published; when every copy fails it does not run.
 Both continuations run beside each other, so neither waits for the other.
-A batch route of the embedded runner publishes no copy, so there the `.error` of a batch outcome never runs; an outcome that asks for a retry or a dead-letter copy logs a warning naming the subscription.
+On the embedded runtime a single outcome for a batch gathers the failures of its elements in one place for the mount, so a second batch outcome with an `.error` waits until the first has run its closure; with `retry_after` the wait lasts the delay of the first batch's copies.
+Outcomes without an `.error`, one outcome per element, and copies that go out at once do not wait.
 
 ### From the context
 
 The context form covers a delivery whose handler returns no outcome of its own, and the reply of `out_reply`:
 [`ctx.after(outcome).error(..)`](api:ruststream::runtime::After::error) names the settlement it stands behind, as [`then`](./hooks.md) does.
 A batch handler that returns replies registers it the same way; when the replies of a batch fail to publish, the continuation receives every reply of the batch.
+On the embedded runtime a reply that is refused is lost with the replies behind it in the batch, and the continuation receives those; there are at most as many as the mount's batch size.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">

@@ -10,9 +10,12 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use core::array;
 use core::cell::RefCell;
-use core::future::poll_fn;
 #[cfg(ruststream_alloc)]
+use core::convert::Infallible;
+use core::future::poll_fn;
 use core::future::ready;
+#[cfg(ruststream_alloc)]
+use core::marker::PhantomData;
 use core::mem;
 use core::pin::Pin;
 use core::task::{Poll, Waker};
@@ -22,22 +25,46 @@ use embassy_sync::blocking_mutex::Mutex;
 #[cfg(ruststream_alloc)]
 use ruststream_core::__alloc::bytes::Bytes;
 #[cfg(not(ruststream_alloc))]
+use futures::future::Either;
+#[cfg(ruststream_alloc)]
+use ruststream_core::MaybeSendSync;
+#[cfg(not(ruststream_alloc))]
 use ruststream_core::{BufferFull, Cause};
 use ruststream_core::{Headers, PayloadBuf, Settle};
 #[cfg(not(ruststream_alloc))]
 use ruststream_runtime::BoxError;
-#[cfg(not(ruststream_alloc))]
-use ruststream_runtime::FailureSlot;
 #[cfg(ruststream_alloc)]
 use ruststream_runtime::NoFreeRecordError;
 use ruststream_runtime::{
     Clock, Continuation, CopyPublisher, Detach, FailedMessage, KeptCopies, KeptDelivery,
     PrepareCopy, PrepareKept, Reaction, Refusal, publish_done, publish_lost,
 };
+#[cfg(not(ruststream_alloc))]
+use ruststream_runtime::{FailureSlot, Gathers as Fanned, NoFan};
 
 use crate::clock::{EmbassyClock, Schedule};
 use crate::flag::Flag;
 use crate::frames::FrameLock;
+
+/// What gathers the outcomes of the batches a store's copies belong to. Only a build without
+/// `alloc` has one: with `alloc` a uniform outcome shares its `.error` between the copies itself.
+#[cfg(ruststream_alloc)]
+pub(crate) trait Fanned: MaybeSendSync {}
+
+#[cfg(ruststream_alloc)]
+impl<Anything: MaybeSendSync> Fanned for Anything {}
+
+/// What a store holds of its gatherer: the gatherer itself where the build has one.
+#[cfg(not(ruststream_alloc))]
+type Gatherer<Fan> = Option<Fan>;
+
+/// See the build without `alloc`: only the type is kept.
+#[cfg(ruststream_alloc)]
+type Gatherer<Fan> = PhantomData<fn() -> Fan>;
+
+/// The gatherer of a store that serves single deliveries.
+#[cfg(ruststream_alloc)]
+pub(crate) type NoFan = Infallible;
 
 /// A copy's destination when it is not the subscription: owned with `alloc`, in a fixed room
 /// without. The names that reach a store are held whole by the mount (a literal) or built at
@@ -137,7 +164,12 @@ struct Record<At, Options> {
 /// A copy the broker refuses is lost, and its record is free again at once: the failure goes to
 /// the handler's `.error` continuation, or to a warning without one. The store's size and the
 /// broker's capacity are the service's to size for its load.
-pub(crate) struct CopyStore<Path: CopyPublisher, const CAP: usize, Timers: Clock = EmbassyClock> {
+pub(crate) struct CopyStore<
+    Path: CopyPublisher,
+    const CAP: usize,
+    Timers: Clock = EmbassyClock,
+    Fan = NoFan,
+> {
     path: Path,
     /// The subscription the copies are of, for diagnostics.
     subscription: Subscription,
@@ -151,6 +183,9 @@ pub(crate) struct CopyStore<Path: CopyPublisher, const CAP: usize, Timers: Clock
     /// The name of the type the handler receives, which a lost copy's diagnostic calls its
     /// message.
     input: &'static str,
+    /// Where the elements of a batch's uniform outcome report: the mount's fan, for a batch
+    /// mount without `alloc`.
+    fan: Gatherer<Fan>,
 }
 
 impl<Path: CopyPublisher, const CAP: usize> CopyStore<Path, CAP> {
@@ -167,7 +202,9 @@ impl<Path: CopyPublisher, const CAP: usize> CopyStore<Path, CAP> {
     }
 }
 
-impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CAP, Timers> {
+impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
+    CopyStore<Path, CAP, Timers, Fan>
+{
     /// A store on `clock`.
     pub(crate) fn on_clock(path: Path, subscription: Subscription, clock: Timers) -> Self {
         Self {
@@ -179,6 +216,26 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             waker: Mutex::new(RefCell::new(None)),
             clock,
             input: "message",
+            fan: Gatherer::default(),
+        }
+    }
+
+    /// Gathers the uniform outcomes of the batches this store's copies belong to in `fan`.
+    #[cfg(not(ruststream_alloc))]
+    pub(crate) fn with_fan<Gatherer: Fanned>(
+        self,
+        fan: Gatherer,
+    ) -> CopyStore<Path, CAP, Timers, Gatherer> {
+        CopyStore {
+            path: self.path,
+            subscription: self.subscription,
+            records: self.records,
+            armed: self.armed,
+            closed: self.closed,
+            waker: self.waker,
+            clock: self.clock,
+            input: self.input,
+            fan: Some(fan),
         }
     }
 
@@ -339,7 +396,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
             }
         };
         #[cfg(not(ruststream_alloc))]
-        let (follow, mut failed) = {
+        let (follow, mut failed, part) = {
             let mut failed = FailureSlot::<1>::new();
             let sent = if oversize {
                 Err(Refusal::new(BufferFull))
@@ -348,9 +405,24 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
                     .publish_copy(target, &payload, headers, options.as_ref())
                     .await
             };
-            let follow = match sent {
-                Ok(()) => publish_done(reaction),
-                Err(refusal) => {
+            // A copy of a batch's uniform outcome reports to the mount's fan instead.
+            let own_part = reaction.as_ref().and_then(Reaction::part_index);
+            let mut part = None;
+            let follow = match (sent, own_part) {
+                (Ok(()), Some(index)) => {
+                    part = Some((index, Ok(())));
+                    None
+                }
+                (Err(refusal), Some(index)) => {
+                    // The record is reused, so a lending publisher's bytes are copied.
+                    part = Some((
+                        index,
+                        Err(refusal.into_message(target, |_, _| payload.clone())),
+                    ));
+                    None
+                }
+                (Ok(()), None) => publish_done(reaction),
+                (Err(refusal), None) => {
                     // The record is reused, so a lending publisher's bytes are copied.
                     self.lost(
                         reaction,
@@ -362,12 +434,32 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
                     None
                 }
             };
-            (follow, failed)
+            (follow, failed, part)
         };
         self.give_back(record, payload, destination);
         #[cfg(not(ruststream_alloc))]
-        failed.react().await;
+        {
+            failed.react().await;
+            if let Some((index, outcome)) = part {
+                return self.report(index, outcome).await;
+            }
+        }
         follow
+    }
+
+    /// Reports the copy of the batch element at `index` to the mount's fan, which hands back what
+    /// the report of the last element runs.
+    // Not an `async fn`: a frame of its own would sit between the copy and the fan for nothing.
+    #[cfg(not(ruststream_alloc))]
+    fn report(
+        &self,
+        index: usize,
+        outcome: Result<(), (BoxError, FailedMessage)>,
+    ) -> impl Future<Output = Option<Continuation>> {
+        self.fan.as_ref().map_or_else(
+            || Either::Right(ready(None)),
+            |fan| Either::Left(fan.report(index, outcome)),
+        )
     }
 
     /// Whether the record's bytes did not fit, cleared for the next copy.
@@ -470,10 +562,18 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
     }
 }
 
-impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
-    for CopyStore<Path, CAP, Timers>
+impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned> KeptCopies
+    for CopyStore<Path, CAP, Timers, Fan>
 {
     type Spilled = Spilled<Path::Options>;
+
+    #[cfg(not(ruststream_alloc))]
+    type Fan = Fan;
+
+    #[cfg(not(ruststream_alloc))]
+    fn fan(&self) -> Option<&Fan> {
+        self.fan.as_ref()
+    }
 
     fn take_record(&self) -> Option<usize> {
         self.records.lock(|records| {
@@ -523,9 +623,14 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
             }
             #[cfg(not(ruststream_alloc))]
             {
-                match sent {
-                    Ok(()) => publish_done(reaction),
-                    Err(refusal) => {
+                match (sent, reaction.as_ref().and_then(Reaction::part_index)) {
+                    (Ok(()), Some(index)) => self.report(index, Ok(())).await,
+                    (Err(refusal), Some(index)) => {
+                        let lost = refusal.into_message(target, |_, _| payload.clone());
+                        self.report(index, Err(lost)).await
+                    }
+                    (Ok(()), None) => publish_done(reaction),
+                    (Err(refusal), None) => {
                         let mut failed = FailureSlot::<1>::new();
                         self.lost(
                             reaction,
@@ -571,6 +676,13 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
                 "no free record in the store of retry copies",
                 i32::try_from(CAP).unwrap_or(i32::MAX),
             );
+            // An element of a batch's uniform outcome reports to the mount's fan.
+            if let Some(index) = reaction.as_ref().and_then(Reaction::part_index) {
+                let message = FailedMessage::new(target, payload, headers);
+                return self
+                    .report(index, Err((BoxError::from(cause), message)))
+                    .await;
+            }
             publish_lost(
                 reaction,
                 &self.subscription,
@@ -647,8 +759,8 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
     }
 }
 
-impl<Cx, Path: PrepareCopy<Cx>, const CAP: usize, Timers: Schedule> PrepareKept<Cx>
-    for CopyStore<Path, CAP, Timers>
+impl<Cx, Path: PrepareCopy<Cx>, const CAP: usize, Timers: Schedule, Fan: Fanned> PrepareKept<Cx>
+    for CopyStore<Path, CAP, Timers, Fan>
 {
     fn prepare<M: Settle>(
         &self,

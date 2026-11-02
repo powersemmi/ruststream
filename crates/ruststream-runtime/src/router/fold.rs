@@ -15,32 +15,30 @@
 #![allow(clippy::future_not_send)]
 
 use core::cell::Cell;
-use core::future::{poll_fn, ready};
+use core::future::ready;
 use core::num::NonZeroUsize;
-use core::pin::{Pin, pin};
+use core::pin::Pin;
 use core::task::{Context, Poll};
-use ruststream_core::{BatchSlot, BatchStream, MaybeSendSync};
+use ruststream_core::MaybeSendSync;
 
 use futures::future::MaybeDone;
 use pin_project_lite::pin_project;
-use ruststream_core::diag::error;
 use ruststream_core::{EncodeBuf, PayloadBuf};
 
-use crate::RetryDeclaration;
-use crate::batch::{BatchHandler, DeserializedBatch};
-use crate::coop::{Bounded, Cooperative, YIELD_AFTER};
-use crate::dispatch::{Delivery, Gated, HeadersAtOnce, Turn, run_batch, run_sequential};
+use crate::batch::BatchHandler;
+use crate::coop::Cooperative;
+use crate::dispatch::{Delivery, Gated, HeadersAtOnce, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::Handler;
 use crate::host::{Detach, Halt, SendHost, ShutdownWait};
 use crate::lifecycle::BoxError;
 use crate::middleware::{BlanketLayer, Stack};
-use crate::redelivery::{ScopeDelivery, open_local_subscription};
-use crate::shared::{StateRef, SubscriptionName, borrowed, handle_of};
-use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber, SubscriptionSource};
+use crate::redelivery::ScopeDelivery;
+use crate::shared::{StateRef, SubscriptionName, handle_of};
+use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber};
 
 use super::builder::Router;
-use super::routes::BatchRoute;
+use super::fold_batch::OneTaskBatchRoute;
 
 /// A finished router's routes, opened against the connected broker into one list.
 ///
@@ -49,8 +47,8 @@ use super::routes::BatchRoute;
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a route this runner opens",
-    note = "a runner that hosts the app in one task opens plain single-message registrations \
-            (`include(def)` of a definition without a reply, an `Out` slot or a batch)"
+    note = "a runner that hosts the app in one task opens the `include(def)` of a single-message \
+            or batch handler that replies or takes `Out` slots (not both at once)"
 )]
 pub trait OpenRoutes<B: Broker, State = ()> {
     /// The opened list: every subscription with its handler, ready to run.
@@ -116,8 +114,8 @@ pub trait RunRoutes<State> {
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a route this runner opens",
-    note = "a runner that hosts the app in one task opens plain single-message registrations \
-            (`include(def)` of a definition without a reply, an `Out` slot or a batch)"
+    note = "a runner that hosts the app in one task opens the `include(def)` of a single-message \
+            or batch handler that replies or takes `Out` slots (not both at once)"
 )]
 pub trait OpenLayered<B: Broker, State> {
     /// The opened registrations, each holding the layer stack it runs under.
@@ -430,55 +428,20 @@ where
     }
 }
 
-/// One opened batch subscription: the subscriber, the batch handler it dispatches to, the size
-/// its batches open at, and what each batch runs under.
+/// One opened batch subscription with no plan: the parts the plain batch loop runs.
 ///
 /// A router's layers wrap single-message handlers only, as on the multi-thread runner: a batch
 /// handler runs as the registration built it.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct OpenedBatchRoute<Sub, Body, Cx> {
-    subscriber: Sub,
-    handler: Body,
-    name: SubscriptionName,
-    batch_size: NonZeroUsize,
-    delivery: Delivery<Cx>,
-    policies: FailurePolicies,
+    route: OneTaskBatchRoute<Sub, Body, Cx>,
 }
 
-impl<B, State, Source, M, F, Inner, Cx> OpenLayered<B, State>
-    for BatchRoute<Source, DeserializedBatch<M, F, Inner>, Cx>
-where
-    B: Broker,
-    Source: SubscriptionSource<Connected<B>>,
-    Source::Subscriber: BatchSubscriber<Message = M>,
-    DeserializedBatch<M, F, Inner>:
-        RunsBatches<<Source::Subscriber as BatchSubscriber>::Batch, Cx, State>,
-{
-    type Opened<Layers: BlanketLayer + Clone> =
-        OpenedBatchRoute<Source::Subscriber, DeserializedBatch<M, F, Inner>, Cx>;
-
-    async fn open_layered<Layers: BlanketLayer + Clone>(
-        self,
-        connected: &Connected<B>,
-        _layers: &Layers,
-        scope: &ScopeDelivery,
-    ) -> Result<Self::Opened<Layers>, BoxError> {
-        let (name, subscriber, delivery) = open_local_subscription::<B, _, _>(
-            self.source,
-            connected,
-            scope,
-            RetryDeclaration::new(),
-        )
-        .await?;
-        Ok(OpenedBatchRoute {
-            subscriber,
-            handler: self.handler,
-            name,
-            batch_size: self.batch_size,
-            delivery,
-            policies: self.policies,
-        })
+impl<Sub, Body, Cx> OpenedBatchRoute<Sub, Body, Cx> {
+    /// An opened subscription, ready to run.
+    pub(super) const fn new(route: OneTaskBatchRoute<Sub, Body, Cx>) -> Self {
+        Self { route }
     }
 }
 
@@ -489,76 +452,21 @@ where
 {
     type Parks = ();
 
-    async fn run_parked<Signal, Host>(
-        mut self,
+    // Not an `async fn`: a frame of its own would sit between the caller and the loop for
+    // nothing.
+    fn run_parked<Signal, Host>(
+        self,
         _parks: &(),
         signal: Signal,
         state: StateRef<'_, State>,
         host: &Host,
-    ) where
+    ) -> impl Future<Output = ()>
+    where
         Signal: ShutdownWait + Halt + Clone,
         Host: Detach,
     {
-        let failure = DispatchFailure::new(self.policies, signal.clone());
-        // A batch subscriber declares no probe: its worker is polled on every wake, so the bound
-        // always yields.
-        let mut stream = pin!(Bounded::new(
-            self.subscriber.batches(self.batch_size),
-            YIELD_AFTER,
-            ()
-        ));
-        let mut cancelled = pin!(signal.cancelled());
-        // One slot, one taken batch, one decode buffer and one encode buffer for the whole loop,
-        // as on the multi-thread runner's sequential batch loop.
-        let mut slot = <Sub::Batch as BatchSlot>::with_capacity(self.batch_size);
-        let mut taken = <Body as RunsBatches<Sub::Batch, Cx, State>>::taken(self.batch_size);
-        let mut scratch = Body::Scratch::default();
-        let mut encode = PayloadBuf::new();
-        loop {
-            if signal.is_cancelled() {
-                break;
-            }
-            // The stream first, the token only where the stream has nothing.
-            let pulled = poll_fn(|cx| match stream.as_mut().poll_fill(cx, &mut slot) {
-                Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
-                Poll::Ready(None) => Poll::Ready(Turn::Ended),
-                Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
-            })
-            .await;
-            match pulled {
-                Turn::Delivery(Ok(())) => {
-                    self.handler
-                        .run_one(
-                            &mut slot,
-                            &mut taken,
-                            &mut scratch,
-                            &mut encode,
-                            &self.name,
-                            borrowed(state),
-                            &self.delivery,
-                            host,
-                            &failure,
-                        )
-                        .await;
-                }
-                Turn::Delivery(Err(err)) => {
-                    // A failed fill leaves the slot empty; draining it keeps that true of a
-                    // broker that left a message behind.
-                    slot.drain().for_each(drop);
-                    error!(
-                        target: "ruststream::dispatch",
-                        subscription = %self.name,
-                        error = %err,
-                        "subscriber stream error",
-                    );
-                }
-                Turn::Ended => {
-                    signal.stream_ended(&self.name);
-                    break;
-                }
-                Turn::Shutdown => break,
-            }
-        }
+        self.route
+            .run_batches(signal, state, host, PayloadBuf::new())
     }
 }
 

@@ -206,13 +206,17 @@ test-no-alloc:
     fi
     cargo test --no-default-features --features embassy,memory,macros,testing --test embedded_no_alloc
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_out
+    cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch
+    cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch_input
+    cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch_reply
+    cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch_out
     cargo test --no-default-features --features embassy,memory,macros,testing,log --test embedded_diagnostics
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_name
     # The device service the embedded runtime page teaches, under the failing allocator.
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test doc_device
     # The device build's own futures, without the harness that wraps them in the test above.
     cargo test --no-default-features --features embassy,memory,macros --test embedded_future_size
-    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features embassy,memory,macros,testing --test ui_no_alloc
+    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test ui_no_alloc
     cargo test --manifest-path crates/ruststream-memory-noalloc/Cargo.toml --features testing
     # The runtime's own unit tests of the variant: its dev-dependencies turn `alloc` on, so the
     # sources build as a crate of their own that has none.

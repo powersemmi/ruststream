@@ -15,52 +15,34 @@ use alloc::borrow::ToOwned;
 use alloc::string::String;
 #[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
-#[cfg(ruststream_alloc)]
+use core::marker::PhantomData;
 use core::num::NonZeroUsize;
-#[cfg(ruststream_alloc)]
 use core::{any, fmt};
-use ruststream_core::MaybeSendSync;
-#[cfg(ruststream_alloc)]
-use ruststream_core::{BatchSlot, MaybeSend};
-
-#[cfg(ruststream_alloc)]
-use crate::batch::{BatchVec, Gather};
-#[cfg(ruststream_alloc)]
-use crate::copied::empty_payload;
-#[cfg(ruststream_alloc)]
-use ruststream_core::PayloadBuf;
-#[cfg(ruststream_alloc)]
 use ruststream_core::diag::warn;
-#[cfg(ruststream_alloc)]
+use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync, PayloadBuf};
 use serde::Serialize;
 
-#[cfg(all(feature = "testing", ruststream_alloc))]
+use crate::batch::{BatchVec, Gather};
+use crate::copied::{CopiedPayload, empty_payload};
+#[cfg(feature = "testing")]
 use crate::testing::coordinator::{Origin, publishing_to};
-#[cfg(ruststream_alloc)]
 use crate::{BuildBatchContext, PayloadForm, Settle};
 
-#[cfg(ruststream_alloc)]
 use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
-#[cfg(ruststream_alloc)]
 use super::context::Context;
 use super::dispatch::Workers;
-use super::failure::FailurePolicies;
-#[cfg(ruststream_alloc)]
-use super::failure::FailurePolicy;
-#[cfg(ruststream_alloc)]
-use super::handler::{HandlerOutcome, HandlerResult};
-#[cfg(ruststream_alloc)]
+use super::failure::{FailurePolicies, FailurePolicy};
+use super::handler::{Continuation, HandlerOutcome, HandlerResult};
 use super::host::SendHost;
-#[cfg(ruststream_alloc)]
-use super::input::DecodeWith;
-use super::input::InputKind;
+use super::input::{DecodeWith, InputKind};
 #[cfg(ruststream_alloc)]
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
-#[cfg(ruststream_alloc)]
-use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
-#[cfg(ruststream_alloc)]
-use super::publish_failure::publish_done;
-#[cfg(ruststream_alloc)]
+use super::publish::{
+    BatchRefusal, PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher,
+};
+#[cfg(not(ruststream_alloc))]
+use super::publish_failure::FailureSlot;
+use super::publish_failure::{Reaction, publish_done};
 use super::publishing::{EncodeReply, lent_bytes};
 
 /// A batch subscriber definition that produces replies to publish.
@@ -166,7 +148,6 @@ pub trait BatchPublishingDef: MaybeSendSync {
 /// (mounts on any app), while one that reads it via [`Context::state`](super::Context::state)
 /// implements this only for its declared `S` - the state match is checked at compile time without
 /// pinning a single `State` on the def.
-#[cfg(ruststream_alloc)]
 pub(crate) trait BatchPublishingCall<S>: BatchPublishingDef {
     /// Runs the handler body on one decoded batch.
     ///
@@ -202,15 +183,100 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
     meta
 }
 
+/// Where a batch handler keeps the replies of one batch that did not go out, until the `.error`
+/// closure the context registered has read them. Implemented for the size a mount names: `()` with
+/// `alloc`, where the replies wait in a `Vec`, and `BatchSize<N>` without it, where they wait in
+/// a buffer of `N` that the call owns. Machinery; never named directly.
+#[doc(hidden)]
+pub trait ReplyLoss {
+    /// What one batch's call holds.
+    type Held: MaybeSend;
+
+    /// The room of a call with nothing lost.
+    fn held() -> Self::Held;
+
+    /// Hands the replies the refusal lost to the `.error` closure of `reaction`: at once, as the
+    /// continuation to run after the batch is acknowledged, or into `held`, for [`react`](Self::react)
+    /// to run it once the batch is settled.
+    fn lose<Reply>(
+        held: &mut Self::Held,
+        reaction: Reaction,
+        refusal: BatchRefusal,
+        name: &str,
+        replies: &[Reply],
+        encode: impl Fn(&Reply) -> CopiedPayload,
+        lent: impl FnOnce(usize, usize) -> CopiedPayload,
+    ) -> Option<Continuation>;
+
+    /// Runs the reaction `held` waits with, once the batch is settled.
+    fn react(held: &mut Self::Held) -> impl Future<Output = ()> + MaybeSend;
+}
+
+#[cfg(ruststream_alloc)]
+impl ReplyLoss for () {
+    type Held = ();
+
+    fn held() {}
+
+    fn lose<Reply>(
+        (): &mut (),
+        reaction: Reaction,
+        refusal: BatchRefusal,
+        name: &str,
+        replies: &[Reply],
+        encode: impl Fn(&Reply) -> CopiedPayload,
+        lent: impl FnOnce(usize, usize) -> CopiedPayload,
+    ) -> Option<Continuation> {
+        let (err, lost) = refusal.into_lost(name, replies, encode, lent);
+        Some(reaction.failed_all(err, lost))
+    }
+
+    fn react((): &mut ()) -> impl Future<Output = ()> + MaybeSend {
+        use core::future::ready;
+
+        ready(())
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<const ELEMENTS: usize> ReplyLoss for crate::BatchSize<ELEMENTS> {
+    type Held = FailureSlot<ELEMENTS>;
+
+    fn held() -> FailureSlot<ELEMENTS> {
+        FailureSlot::new()
+    }
+
+    fn lose<Reply>(
+        held: &mut FailureSlot<ELEMENTS>,
+        reaction: Reaction,
+        refusal: BatchRefusal,
+        name: &str,
+        replies: &[Reply],
+        encode: impl Fn(&Reply) -> CopiedPayload,
+        lent: impl FnOnce(usize, usize) -> CopiedPayload,
+    ) -> Option<Continuation> {
+        reaction.failed_all(
+            refusal.into_failed::<_, ELEMENTS>(name, replies, encode, lent),
+            held,
+        );
+        None
+    }
+
+    fn react(held: &mut FailureSlot<ELEMENTS>) -> impl Future<Output = ()> + MaybeSend {
+        held.react()
+    }
+}
+
 /// The `BatchHandler` built from a [`BatchPublishingDef`]: decode the batch, run the handler,
 /// publish the replies through the [`ReplyPublisher`], then ack the batch.
 ///
-/// Elements that fail to decode are nacked individually and never reach the handler. A failed
-/// reply publish (or a failed transaction) retries the whole batch instead of losing replies;
-/// with a plain publisher a mid-batch failure can therefore re-publish the earlier replies on
-/// redelivery (at-least-once), while a `.transactional()` wiring never leaves them half-visible.
-#[cfg(ruststream_alloc)]
-pub(crate) struct BatchPublishingHandler<D: BatchPublishingDef, C, R, PP = PublishIdentity> {
+/// Elements that fail to decode are nacked individually and never reach the handler. A reply the
+/// publisher refuses does not retry the batch: the handler already did its work, so the batch is
+/// acknowledged, and the replies from the refused one on are lost and told to the `.error`
+/// closure the context registered (with none, a warning names them). With a plain publisher
+/// the earlier replies stay published; a `.transactional()` wiring never leaves them half-visible.
+#[doc(hidden)]
+pub struct BatchPublishingHandler<D: BatchPublishingDef, C, R, PP = PublishIdentity, Size = ()> {
     pub(crate) def: D,
     pub(crate) codec: C,
     pub(crate) publisher: R,
@@ -220,19 +286,21 @@ pub(crate) struct BatchPublishingHandler<D: BatchPublishingDef, C, R, PP = Publi
     /// The broker the reply publisher was paired against, which its replies go to.
     #[cfg(feature = "testing")]
     pub(crate) origin: Origin,
+    /// The size the mount named, as the type that sizes what a batch loses.
+    pub(crate) size: PhantomData<fn() -> Size>,
 }
 
-#[cfg(ruststream_alloc)]
-impl<D: BatchPublishingDef, C, R, PP> fmt::Debug for BatchPublishingHandler<D, C, R, PP> {
+impl<D: BatchPublishingDef, C, R, PP, Size> fmt::Debug
+    for BatchPublishingHandler<D, C, R, PP, Size>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BatchPublishingHandler")
             .finish_non_exhaustive()
     }
 }
 
-#[cfg(ruststream_alloc)]
-impl<Batch, M, D, C, R, PP, S> BatchHandler<Batch, D::Context, S>
-    for BatchPublishingHandler<D, C, R, PP>
+impl<Batch, M, D, C, R, PP, S, Size> BatchHandler<Batch, D::Context, S>
+    for BatchPublishingHandler<D, C, R, PP, Size>
 where
     Batch: BatchSlot<Message = M>,
     M: Settle,
@@ -245,6 +313,7 @@ where
     R: ReplyPublisher<D::Context>,
     PP: PublishPipeline,
     S: MaybeSendSync,
+    Size: ReplyLoss,
 {
     type Scratch = BatchVec<<D::Input as InputKind>::Owned>;
     type Taken = BatchVec<M>;
@@ -277,6 +346,8 @@ where
         if batch.is_empty() {
             return;
         }
+        // The replies a refused publish lost wait here until the batch is settled.
+        let mut lost = Size::held();
         // The batch the broker delivered is the batch the handler answers for, whole: the size it
         // was built at is the registration's own, so there is nothing left to split here.
         let mut result = match self.def.call(values, &self.injections, ctx).await {
@@ -306,13 +377,15 @@ where
                         // The `.error` the context registered is told of every reply.
                         (Err(refusal), Some(reaction)) => {
                             let codec = self.publisher.reply_codec();
-                            let (err, lost) = refusal.into_lost(
+                            Size::lose(
+                                &mut lost,
+                                reaction,
+                                refusal,
                                 name,
                                 &replies,
                                 |reply| reply.encoded_with(codec),
                                 |addr, len| lent_bytes(encode, addr, len, empty_payload),
-                            );
-                            Some(reaction.failed_all(err, lost))
+                            )
                         }
                         (Err(refusal), None) => {
                             let err = refusal.into_error();
@@ -336,6 +409,7 @@ where
         };
         values.clear();
         settle_batch(batch, &mut result, subscription, ctx.delivery(), host).await;
+        Size::react(&mut lost).await;
     }
 }
 

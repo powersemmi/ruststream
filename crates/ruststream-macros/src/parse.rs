@@ -507,6 +507,31 @@ pub(crate) fn vec_element(ty: &Type) -> Option<&Type> {
     Some(elem)
 }
 
+/// If `ty` is syntactically `Outcomes<Reply, N>` (under any path prefix), returns the reply type:
+/// the batch of replies a build without `alloc` holds in `N` fixed places.
+pub(crate) fn outcomes_element(ty: &Type) -> Option<&Type> {
+    let Type::Path(TypePath {
+        qself: None, path, ..
+    }) = ty
+    else {
+        return None;
+    };
+    let last = path.segments.last()?;
+    if last.ident != "Outcomes" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    let mut args = args.args.iter();
+    let (Some(syn::GenericArgument::Type(elem)), Some(_size), None) =
+        (args.next(), args.next(), args.next())
+    else {
+        return None;
+    };
+    Some(elem)
+}
+
 fn unsupported_source(expr: &Expr) -> Error {
     Error::new_spanned(
         expr,
@@ -716,6 +741,24 @@ mod tests {
         ];
         for ty in plain {
             assert!(vec_element(&ty).is_none(), "no batch of replies");
+        }
+    }
+
+    #[test]
+    fn an_outcomes_of_replies_is_a_batch_of_replies_of_a_build_without_alloc() {
+        let batch: Type = parse_quote!(Outcomes<Receipt, 3>);
+        assert!(outcomes_element(&batch).is_some());
+        let named: Type = parse_quote!(ruststream::runtime::Outcomes<Receipt, N>);
+        assert!(outcomes_element(&named).is_some());
+
+        let plain: [Type; 4] = [
+            parse_quote!(Vec<Receipt>),
+            parse_quote!(Outcomes),
+            parse_quote!(Outcomes<3>),
+            parse_quote!(&'static [Receipt]),
+        ];
+        for ty in plain {
+            assert!(outcomes_element(&ty).is_none(), "no batch of replies");
         }
     }
 

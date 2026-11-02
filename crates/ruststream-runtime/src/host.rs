@@ -23,6 +23,8 @@ use crate::handler::Continuation;
 #[cfg(not(ruststream_alloc))]
 use crate::inline::Continuation;
 use crate::publish_failure::Reaction;
+#[cfg(not(ruststream_alloc))]
+use crate::publish_failure::{Gathers, NoFan};
 #[cfg(ruststream_alloc)]
 use crate::redelivery::RetryRoute;
 use crate::redelivery::{NoRetry, RetryCopies};
@@ -537,6 +539,16 @@ pub trait KeptCopies {
     /// the copy is made of until [`send_spilled`](Self::send_spilled) publishes it.
     type Spilled: MaybeSend;
 
+    /// Where the elements of a batch's uniform outcome report: [`NoFan`](crate::NoFan) for a
+    /// store of single deliveries.
+    #[cfg(not(ruststream_alloc))]
+    type Fan: Gathers;
+
+    /// The store's fan, for the lane to hand a uniform outcome's `.error` to; `None` for a store
+    /// of single deliveries.
+    #[cfg(not(ruststream_alloc))]
+    fn fan(&self) -> Option<&Self::Fan>;
+
     /// Takes a free record for one copy; `None` when every record holds one.
     fn take_record(&self) -> Option<usize>;
 
@@ -637,6 +649,14 @@ pub enum NoKept {}
 #[allow(clippy::uninhabited_references, clippy::unused_async_trait_impl)]
 impl KeptCopies for NoKept {
     type Spilled = Infallible;
+
+    #[cfg(not(ruststream_alloc))]
+    type Fan = NoFan;
+
+    #[cfg(not(ruststream_alloc))]
+    fn fan(&self) -> Option<&NoFan> {
+        match *self {}
+    }
 
     fn take_record(&self) -> Option<usize> {
         match *self {}

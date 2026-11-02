@@ -30,6 +30,7 @@ thiserror = { version = "2", default-features = false }
 tracing = { version = "0.1.29", default-features = false }
 pin-project-lite = "0.2"
 hash32 = { version = "1.0", default-features = false }
+typenum = { version = "1.20", features = ["const-generics"] }
 
 [dev-dependencies]
 embassy-executor = { version = "0.10", features = ["platform-std", "executor-thread"] }

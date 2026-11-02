@@ -28,12 +28,16 @@ use crate::Str;
 #[cfg(ruststream_alloc)]
 use crate::handler::Continuation;
 use crate::handler::HandlerResult;
+#[cfg(not(ruststream_alloc))]
+use crate::host::KeptCopies;
 use crate::host::{HostDetach, PrepareKept, detach_continuation};
 #[cfg(ruststream_alloc)]
 use crate::publish::PublishContext;
 use crate::publish_failure::Reaction;
 #[cfg(ruststream_alloc)]
 use crate::publish_failure::publish_done;
+#[cfg(not(ruststream_alloc))]
+use crate::publish_failure::{Gathers, Unpublished};
 #[cfg(ruststream_alloc)]
 use crate::publish_failure::{Refusal, publish_lost};
 use crate::redelivery::RetryCopies;
@@ -145,8 +149,24 @@ pub(crate) async fn settle_reacting<M, C, Host>(
     }
     // No publish took the reaction: the delivery settled without the runtime publishing a copy,
     // so what the handler registered beside `.error` runs now.
+    #[cfg(ruststream_alloc)]
     if let Some(then) = reaction.and_then(Reaction::into_then) {
         detach_continuation!(host, then);
+    }
+    #[cfg(not(ruststream_alloc))]
+    match reaction.map(Reaction::into_unpublished) {
+        Some(Unpublished::Then(Some(then))) => detach_continuation!(host, then),
+        Some(Unpublished::Part(index)) => {
+            // Tells the fan of the batch outcome that this element made no publish, and runs what
+            // the report of the last element hands back. In place, not a layer of its own: the
+            // chain of futures of a registration is as deep as the recursion limit allows.
+            if let Some(fan) = host.kept().and_then(KeptCopies::fan)
+                && let Some(follow) = fan.report(index, Ok(())).await
+            {
+                detach_continuation!(host, follow);
+            }
+        }
+        Some(Unpublished::Then(None)) | None => {}
     }
 }
 
@@ -616,9 +636,13 @@ where
 /// # Errors
 ///
 /// Returns the [`AckError`] from the rejection.
-async fn reject_spent<M: Settle>(slot: &mut Slot<M>, name: &str) -> Result<(), AckError> {
+// Not an `async fn`: a frame of its own would sit between the caller and the nack for nothing.
+fn reject_spent<M: Settle>(
+    slot: &mut Slot<M>,
+    name: &str,
+) -> impl Future<Output = Result<(), AckError>> {
     warn_at_cap(name, attempt_of(slot.get()), None);
-    slot.take().nack(false).await
+    slot.take().nack(false)
 }
 
 /// Says once per exhausted delivery where it went, because that is the point at which a message

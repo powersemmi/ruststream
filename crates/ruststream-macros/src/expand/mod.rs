@@ -12,8 +12,8 @@ use syn::{Error, Expr, FnArg, Ident, ItemFn, Pat, PatType, ReturnType, Type};
 
 use crate::parse;
 use crate::parse::{
-    FailurePolicyArg, SubscriberArgs, WorkersArg, doc_description, position_type, source_tokens,
-    vec_element,
+    FailurePolicyArg, SubscriberArgs, WorkersArg, doc_description, outcomes_element, position_type,
+    source_tokens, vec_element,
 };
 
 use params::{
@@ -473,6 +473,17 @@ fn batch_reply_body<'a>(
         }
     };
     if let Some(ok_ty) = parse::publish_result_reply(declared_ty) {
+        if let Some(elem) = outcomes_element(ok_ty) {
+            // The body's type is pinned to the declared one first: the conversion has several
+            // impls, so the tail of the body cannot infer through it alone.
+            return Ok((
+                elem,
+                quote! {{
+                    let __rs_replies: #declared_ty = (async move #block).await;
+                    __rs_replies.map(::core::convert::Into::into)
+                }},
+            ));
+        }
         let Some(elem) = vec_element(ok_ty) else {
             return Err(Error::new_spanned(
                 ok_ty,
@@ -480,6 +491,14 @@ fn batch_reply_body<'a>(
             ));
         };
         Ok((elem, quote!((async move #block).await)))
+    } else if let Some(elem) = outcomes_element(declared_ty) {
+        Ok((
+            elem,
+            quote! {{
+                let __rs_replies: #declared_ty = (async move #block).await;
+                ::core::result::Result::Ok(::core::convert::Into::into(__rs_replies))
+            }},
+        ))
     } else {
         let Some(elem) = vec_element(declared_ty) else {
             return Err(Error::new_spanned(
@@ -576,6 +595,25 @@ mod tests {
             refusal(batch_reply_body(&one, &one.block)),
             "a batch publishing handler replies with a Vec: Result<Vec<Reply>, HandlerOutcome>"
         );
+    }
+
+    #[test]
+    fn a_batch_publishing_handler_of_a_build_without_alloc_returns_outcomes_of_replies() {
+        let plain: ItemFn = parse_quote!(
+            async fn on_orders(orders: &[Order]) -> Outcomes<Receipt, 3> {}
+        );
+        let fallible: ItemFn = parse_quote!(
+            async fn on_orders(orders: &[Order]) -> Result<Outcomes<Receipt, 3>, HandlerOutcome> {}
+        );
+
+        for func in [&plain, &fallible] {
+            let (elem, body) = batch_reply_body(func, &func.block).expect("a batch of replies");
+            assert_eq!(quote!(#elem).to_string(), "Receipt");
+            assert!(
+                body.to_string().contains("Into :: into"),
+                "the replies convert to the runtime's storage: {body}"
+            );
+        }
     }
 
     #[test]

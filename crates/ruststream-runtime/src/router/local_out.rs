@@ -1,52 +1,72 @@
-//! A local router's mount for the `Out` form, and the commit its chain resolves through: the
-//! [`form_out`](super::form_out) form for a chain started with [`Router::local`].
+//! A local router's mounts for the `Out` forms of a single message and of a batch, and the commits
+//! their chains resolve through: the [`form_out`](super::form_out) forms for a chain started with
+//! [`Router::local`].
 //!
 //! The chain is the same `RouterWith`, so `.out(marker, policy)` and `.codec(..)` read as they do
 //! on the multi-thread runner; each slot pairs against a broker of the local family into a
 //! [`Slot`](crate::Slot) when the subscription opens.
 
+use ruststream_core::MaybeSend;
+
+use crate::batch_inject::BatchInjectDef;
 use crate::inject::InjectDef;
-use crate::input::Materialize;
+use crate::input::{DecodeWith, Materialize};
 #[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
 use crate::publish::UnnamedCodec;
 use crate::publish::{LowerOutTransforms, NarrowToUse, SlotStackUse};
-use crate::settings::{DefMountCodec, MountsWith};
+use crate::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::slot::{
     BindSlots, HasSlots, InitSlots, IntoSlotSource, NoReply, OutAttachment, OutSlot, SlotCodec,
     SlotPolicy, WithSource,
 };
-use crate::{Broker, Connected, LocalSourceMessage, PublishPolicy, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, Connected, LocalSourceMessage, PublishPolicy, SourceSubscriber,
+    SubscriptionSource,
+};
 
 use super::builder::Router;
 use super::builders::{RouterCommit, RouterOut, RouterWith};
 use super::local::LocalPipeline;
-use super::mount::{InjectMount, MountCodec, RouterMount};
-use super::{InjectedRouter, forms};
+use super::mount::{BatchInjectMount, InjectMount, MountCodec, RouterMount};
+use super::{BatchInjectedRouter, InjectedRouter, forms};
 
-impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
-    RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def> for forms::Out
-where
-    B: Broker + 'static,
-    Def: HasSlots,
-    Def::Markers: InitSlots,
-{
-    type Out = RouterOut<
-        InjectMount,
-        Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>,
-        Def,
-        <<Def as HasSlots>::Markers as InitSlots>::Init,
-    >;
+/// Implements [`RouterMount`] for a slot form on a local router: the chain starts with every
+/// position unbound and no reply position, since a handler on the embedded runner that takes `Out`
+/// slots does not reply.
+macro_rules! local_out_form {
+    ($($form:ty => $mount:ty),+ $(,)?) => {$(
+        impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
+            RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
+            for $form
+        where
+            B: Broker + 'static,
+            Def: HasSlots,
+            Def::Markers: InitSlots,
+        {
+            type Out = RouterOut<
+                $mount,
+                Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>,
+                Def,
+                <<Def as HasSlots>::Markers as InitSlots>::Init,
+            >;
 
-    fn begin(
-        def: Def,
-        router: Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>,
-    ) -> Self::Out {
-        RouterWith::new(
-            def,
-            (NoReply, <<Def as HasSlots>::Markers as InitSlots>::init()),
-            router,
-        )
-    }
+            fn begin(
+                def: Def,
+                router: Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>,
+            ) -> Self::Out {
+                RouterWith::new(
+                    def,
+                    (NoReply, <<Def as HasSlots>::Markers as InitSlots>::init()),
+                    router,
+                )
+            }
+        }
+    )+};
+}
+
+local_out_form! {
+    forms::Out => InjectMount,
+    forms::BatchOut => BatchInjectMount,
 }
 
 /// The codec a local chain's slots encode with when none names its own: the surface's own, the
@@ -170,6 +190,74 @@ macro_rules! local_inject_out_commit {
                 )+));
                 let source = def.source();
                 router.mount_inject(source, def, decode, extra)
+            }
+        }
+
+        #[diagnostic::do_not_recommend]
+        impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def, Bound, Extra,
+             $($marker, $attach, $layers, $enc),+>
+            RouterCommit<
+                BatchInjectMount,
+                Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>,
+                Def,
+            >
+            for (NoReply, ($(WithSource<OutAttachment<$marker, $attach, $layers, $enc>>,)+))
+        where
+            B: Broker + 'static,
+            RouteCodec: SlotSurface,
+            Pipe: Clone,
+            $(
+                $marker: OutSlot,
+                $enc: SlotCodec<RouteCodec::Codec>,
+                $attach: PublishPolicy<Connected<B>>,
+                $layers: LowerOutTransforms<LocalPipeline<Pipe>>
+                    + SlotStackUse<SlotLive<$attach, B>>,
+                <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
+            )+
+            Def: BindSlots<
+                Connected<B>,
+                ($(local_slot_source!(
+                    $attach, $layers, $enc, RouteCodec::Codec, LocalPipeline<Pipe>
+                ),)+),
+                Bound = Bound,
+                Extra = Extra,
+            >,
+            Def: MountsWith<<Bound as BatchInjectDef>::Input, RouteCodec, Connected<B>>,
+            Bound: BatchInjectDef + BatchSized + 'static,
+            Bound::Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+            SourceSubscriber<B, Bound::Source>: BatchSubscriber + MaybeSend + 'static,
+            Bound::Input:
+                DecodeWith<BoundDecoder<Def, <Bound as BatchInjectDef>::Input, RouteCodec, B>>,
+        {
+            type Out = BatchInjectedRouter<
+                B,
+                Bound::Source,
+                Bound,
+                BoundDecoder<Def, <Bound as BatchInjectDef>::Input, RouteCodec, B>,
+                Extra,
+                RouteCodec,
+                RouteLayers,
+                LocalPipeline<Pipe>,
+                Routes,
+            >;
+
+            fn commit(
+                self,
+                def: Def,
+                router: Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>,
+            ) -> Self::Out {
+                #[allow(non_snake_case)]
+                let (_no_reply, ($($attach,)+)) = self;
+                // As the single-message commit: the surface's codec for the slots, the
+                // definition's override for the decode.
+                let codec = router.codec.slot_codec();
+                let pipeline = router.pipeline.clone();
+                let decode = def.mounted_codec(&router.codec);
+                let (def, extra) = def.bind(($(
+                    $attach.into_source().wire(codec.clone(), pipeline.clone()),
+                )+));
+                let source = def.source();
+                router.mount_batch_inject(source, def, decode, extra)
             }
         }
     )+};

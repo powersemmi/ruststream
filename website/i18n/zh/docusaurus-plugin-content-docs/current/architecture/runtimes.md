@@ -70,7 +70,7 @@ embassy 运行器有两种构建形态，一次构建只含其中一种。
 | 后续任务（`and_after`、`.then`、`.error`） | 放在堆上 | 放在 128 字节的空间里；更大的捕获无法编译 |
 | `.error` 读取的失败信息 | 按值传入 | 从订阅的固定缓冲区借用 |
 | `ctx.after(..)` | 登记 | 返回 `Result`，因为一次投递只有四个登记名额 |
-| 批 | 结果的 `Vec` | 最多 16 条，在挂载处用 `.batch::<N>()` 指定 |
+| 批 | 结果的 `Vec` | 最多 16 条，在挂载处用 `.batch::<N>()` 指定；结果放在 `Outcomes<HandlerOutcome, N>` 中，重试、回复和 `Out` 槽位的行为与有 `alloc` 时一致 |
 | 本地总线 | `LocalMemoryBroker::new()` | 由开发板声明为 `static` 的 `LocalMemoryBus` |
 | 应用选定的日志器 | `TracingLogger`、`LogLogger` 或 `DefmtLogger` | `LogLogger` 或 `DefmtLogger`，取决于启用了哪个 feature |
 

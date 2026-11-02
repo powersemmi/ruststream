@@ -70,7 +70,7 @@ What differs is the form of the parts whose size the heap would decide:
 | Continuation (`and_after`, `.then`, `.error`) | boxed | held in a room of 128 bytes; a larger capture does not compile |
 | Failures that `.error` reads | passed by value | borrowed from the subscription's fixed buffer |
 | `ctx.after(..)` | registers | returns a `Result`, because a delivery holds four registrations |
-| Batch | `Vec` of outcomes | a size up to 16, named at the mount with `.batch::<N>()` |
+| Batch | `Vec` of outcomes | a size up to 16, named at the mount with `.batch::<N>()`; the outcomes are `Outcomes<HandlerOutcome, N>`, and retries, replies and `Out` slots work as with `alloc` |
 | Local bus | `LocalMemoryBroker::new()` | a `LocalMemoryBus` that the board declares as a `static` |
 | Logger the app selects | `TracingLogger`, `LogLogger` or `DefmtLogger` | `LogLogger` or `DefmtLogger`, whichever the build enables |
 

@@ -8,6 +8,7 @@
 
 use std::error::Error;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 use std::time::Duration;
 
 use assert_no_alloc::AllocDisabler;
@@ -173,6 +174,72 @@ fn framing_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
 }
 // --8<-- [end:batch-each]
 
+// --8<-- [start:batch-retry]
+/// A reading that may be a spike.
+#[derive(Serialize, Deserialize, Outgoing)]
+#[outgoing(name = "sensors/spikes")]
+struct Spike {
+    sensor: u8,
+    millivolts: u16,
+}
+
+/// Asks for the whole burst again in a minute when the display is busy.
+#[subscriber(LocalMemorySource::new("sensors/spikes"))]
+async fn on_spikes(readings: &[Spike]) -> Outcomes<HandlerOutcome, 4> {
+    readings
+        .iter()
+        .map(|reading| {
+            if reading.millivolts > 3000 {
+                HandlerOutcome::retry_after(Duration::from_secs(60))
+            } else {
+                HandlerOutcome::ack()
+            }
+        })
+        .collect()
+}
+
+fn spiking_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        // Room for the four delayed copies a full batch can ask for.
+        b.with_codec(PostcardCodec)
+            .include(on_spikes.batch::<4>())
+            .retry_capacity::<4>()
+    })
+}
+// --8<-- [end:batch-retry]
+
+// --8<-- [start:batch-reply]
+/// A reading of the burst.
+#[derive(Serialize, Deserialize, Outgoing)]
+#[outgoing(name = "sensors/batch")]
+struct Sample {
+    sensor: u8,
+    millivolts: u16,
+}
+
+/// Reports every reading of the batch, one report for each.
+#[subscriber(LocalMemorySource::new("sensors/batch"), reply)]
+async fn on_readings(readings: &[Sample]) -> Outcomes<Report, 4> {
+    readings
+        .iter()
+        .map(|reading| Report {
+            sensor: reading.sensor,
+            celsius: i16::try_from((i32::from(reading.millivolts) - 500) / 10).unwrap_or(i16::MAX),
+        })
+        .collect()
+}
+
+fn reporting_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.with_codec(PostcardCodec)
+            .include(on_report)
+            .include(on_readings.batch::<4>())
+            .out_reply(LocalMemoryPublish)
+            .codec(PostcardCodec)
+    })
+}
+// --8<-- [end:batch-reply]
+
 /// A frame the test publishes to the per-frame subscription.
 #[derive(Outgoing, Serialized)]
 #[outgoing(name = "sensors/frames")]
@@ -258,6 +325,71 @@ fn a_burst_arrives_as_a_batch() -> Result<(), Box<dyn Error>> {
         tb.broker::<Bus>().message(&Burst(b"21")).publish().await?;
         tb.broker::<Bus>()
             .subscriber("sensors/burst")
+            .assert_called_once();
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+/// The stack a batch scenario is held to: the build without optimisation lays every frame of the
+/// settling out in full.
+const STACK: usize = 8 * 1024 * 1024;
+
+/// Runs a scenario on a thread of the stack [`STACK`].
+fn on_big_stack(
+    scenario: impl AsyncFnOnce() -> Result<(), Box<dyn Error>> + Send + 'static,
+) -> Result<(), Box<dyn Error>> {
+    thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(move || block_on(scenario()).map_err(|err| err.to_string()))?
+        .join()
+        .map_err(|_| "the batch scenario panicked")??;
+    Ok(())
+}
+
+/// The bus of the batch retry scenario.
+static SPIKES_BUS: LocalMemoryBus<4> = LocalMemoryBus::new();
+
+/// The bus of the batch reply scenario.
+static BATCH_BUS: LocalMemoryBus<4> = LocalMemoryBus::new();
+
+#[test]
+fn a_batch_retries_its_elements() -> Result<(), Box<dyn Error>> {
+    on_big_stack(async || {
+        let tb = TestApp::start(spiking_app(Bus::new(&SPIKES_BUS))).await?;
+        let spike = Spike {
+            sensor: 1,
+            millivolts: 3300,
+        };
+        tb.broker::<Bus>()
+            .message(&spike)
+            .with_codec(PostcardCodec)
+            .publish()
+            .await?;
+        tb.advance(Duration::from_secs(60)).await?;
+        tb.broker::<Bus>()
+            .subscriber("sensors/spikes")
+            .assert_called(2);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_batch_replies_to_each_reading() -> Result<(), Box<dyn Error>> {
+    on_big_stack(async || {
+        let tb = TestApp::start(reporting_app(Bus::new(&BATCH_BUS))).await?;
+        let reading = Sample {
+            sensor: 1,
+            millivolts: 700,
+        };
+        tb.broker::<Bus>()
+            .message(&reading)
+            .with_codec(PostcardCodec)
+            .publish()
+            .await?;
+        tb.broker::<Bus>()
+            .subscriber("reports")
             .assert_called_once();
         tb.shutdown().await?;
         Ok(())

@@ -116,6 +116,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
             workers,
             batch_size,
             _context: PhantomData,
+            _size: PhantomData,
         })
     }
 
@@ -153,6 +154,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
             workers,
             batch_size,
             _context: PhantomData,
+            _size: PhantomData,
         })
     }
 
@@ -190,6 +192,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
             workers,
             batch_size,
             _context: PhantomData,
+            _size: PhantomData,
         })
     }
 
@@ -283,6 +286,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
             policies,
             workers,
             batch_size,
+            _size: PhantomData,
         })
     }
 
@@ -347,6 +351,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
             policies,
             workers,
             batch_size,
+            _size: PhantomData,
         })
     }
 

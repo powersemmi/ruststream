@@ -35,6 +35,7 @@ embassy-time.workspace = true
 # The channels and wakers the runner keeps, all without a heap.
 embassy-sync.workspace = true
 heapless.workspace = true
+typenum.workspace = true
 futures.workspace = true
 thiserror.workspace = true
 embassy-futures.workspace = true
@@ -106,6 +107,13 @@ harness = false
 [[test]]
 name = "routes"
 path = "tests/routes.rs"
+harness = false
+
+# Batch routes written with the attributes, built without a `recursion_limit`: a binary of its
+# own, as above.
+[[test]]
+name = "batch_routes"
+path = "tests/batch_routes.rs"
 harness = false
 
 # `retry_after` with copies kept in a store of the mount site's capacity, on the mock clock: a

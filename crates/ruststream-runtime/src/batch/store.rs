@@ -74,10 +74,10 @@ impl<T> Gather<T> for heapless::Vec<T, BATCH_CAPACITY> {
     }
 }
 
-/// What a batch handler returns for its elements without `alloc`: one entry per element of the
-/// slice it was given, at most `N`.
+/// What a batch handler returns for its elements without `alloc`: one entry per element, at most `N`.
 ///
-/// With `alloc` the same position is a `Vec`; the macros name the right type for the build.
+/// The entries are outcomes (`Outcomes<HandlerOutcome, N>`), or the replies of a handler mounted
+/// with `reply` (`Outcomes<Reply, N>`). With `alloc` the same position is a `Vec`.
 #[cfg(not(ruststream_alloc))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcomes<T = HandlerOutcome, const N: usize = BATCH_CAPACITY>(heapless::Vec<T, N>);
@@ -155,6 +155,16 @@ impl<T, const N: usize> FromIterator<T> for Outcomes<T, N> {
     }
 }
 
+/// A batch handler that returns its replies hands them to the runtime in its own storage, in the
+/// order of the batch.
+#[cfg(not(ruststream_alloc))]
+impl<T, const N: usize> From<Outcomes<T, N>> for BatchVec<T> {
+    fn from(replies: Outcomes<T, N>) -> Self {
+        // Never full before the last entry: `Outcomes` holds at most `BATCH_CAPACITY`.
+        replies.into_iter().collect()
+    }
+}
+
 /// A batch handler that returns its entries settles each element by its own.
 #[cfg(not(ruststream_alloc))]
 impl<const N: usize> IntoBatchResult for Outcomes<HandlerOutcome, N> {
@@ -213,7 +223,7 @@ pub type BatchOutcomes<T = HandlerOutcome> = Outcomes<T, BATCH_CAPACITY>;
 #[cfg(not(ruststream_alloc))]
 mod fixed_tests {
     use super::Outcomes;
-    use crate::batch::{BatchResult, IntoBatchResult};
+    use crate::batch::{BatchResult, BatchVec, IntoBatchResult};
     use crate::handler::HandlerOutcome;
 
     #[test]
@@ -234,5 +244,14 @@ mod fixed_tests {
         assert_eq!(entries.len(), 4);
         assert!(entries[0].is_ack());
         assert!(!entries[1].is_ack());
+    }
+
+    #[test]
+    fn the_replies_of_a_batch_keep_their_order_in_the_runtimes_storage() {
+        let replies: Outcomes<u8, 3> = [7, 8, 9].into_iter().collect();
+
+        let stored: BatchVec<u8> = replies.into();
+
+        assert_eq!(stored.as_slice(), [7, 8, 9]);
     }
 }

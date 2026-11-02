@@ -101,6 +101,7 @@ async fn a_batch_reply_answers_for_the_whole_delivered_batch() {
         decode: FailurePolicy::Drop,
         #[cfg(feature = "testing")]
         origin: Origin::default(),
+        size: PhantomData::<fn()>,
     };
 
     publish_numbers(&broker, "orders", &[1, 2, 3]).await;
@@ -145,6 +146,7 @@ async fn handler_error_publishes_nothing_and_settles_the_batch() {
         decode: FailurePolicy::Drop,
         #[cfg(feature = "testing")]
         origin: Origin::default(),
+        size: PhantomData::<fn()>,
     };
 
     publish_numbers(&broker, "orders", &[1, 2]).await;
@@ -201,6 +203,7 @@ fn handler_debug_hides_the_wiring() {
         decode: FailurePolicy::Drop,
         #[cfg(feature = "testing")]
         origin: Origin::default(),
+        size: PhantomData::<fn()>,
     };
     assert_eq!(format!("{handler:?}"), "BatchPublishingHandler { .. }");
 }
@@ -224,6 +227,7 @@ async fn a_fully_undecodable_batch_never_reaches_the_handler() {
         decode: FailurePolicy::Drop,
         #[cfg(feature = "testing")]
         origin: Origin::default(),
+        size: PhantomData::<fn()>,
     };
 
     publish_payloads(&broker, "orders", &[b"not json", b"also not json"]).await;
@@ -302,6 +306,7 @@ async fn a_failed_reply_publish_acks_the_whole_batch() {
         decode: FailurePolicy::Drop,
         #[cfg(feature = "testing")]
         origin: Origin::default(),
+        size: PhantomData::<fn()>,
     };
 
     publish_numbers(&broker, "orders", &[1, 2]).await;
@@ -345,6 +350,7 @@ async fn a_failed_reply_publish_is_logged_with_its_reply_channel() {
         decode: FailurePolicy::Drop,
         #[cfg(feature = "testing")]
         origin: Origin::default(),
+        size: PhantomData::<fn()>,
     };
 
     publish_numbers(&broker, "orders", &[1]).await;

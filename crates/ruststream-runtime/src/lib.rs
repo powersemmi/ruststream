@@ -213,7 +213,7 @@ pub use inline::{CONTINUATION_ROOM, Continuation, InlineFuture, Room};
 #[cfg(feature = "tokio")]
 pub use main_runtime::MainRuntime;
 #[cfg(not(ruststream_alloc))]
-pub use publish_failure::FailureSlot;
+pub use publish_failure::{BatchFan, FailureSlot, Gathers, NoFan};
 #[doc(hidden)]
 pub use publish_failure::{ErrorHook, Reaction, Refusal, publish_done, publish_lost};
 pub use publish_failure::{
@@ -346,8 +346,10 @@ pub use router::{
 };
 #[doc(hidden)]
 pub use router::{
-    Dispatched, OneTaskDispatch, OneTaskPlanned, OneTaskRetriedRoute, OneTaskRoute,
-    OneTaskRouteSource, OpenedDispatch, ReplyRoom, SequentialPlan, UnboundRetry,
+    BatchWidth, Dispatched, OneTaskBatchDispatch, OneTaskBatchRoute, OneTaskDispatch,
+    OneTaskPlanned, OneTaskRetriedRoute, OneTaskRoute, OneTaskRouteSource, OpenBatchRoute,
+    OpenedBatchDispatch, OpenedDispatch, ReplyRoom, SequentialBatchPlan, SequentialPlan,
+    UnboundRetry,
 };
 pub use router::{
     IncludeDef, LocalPipeline, MapPublisher, MountChain, Router, RouterOut, RouterPublishing,

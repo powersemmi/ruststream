@@ -36,6 +36,7 @@
 extern crate alloc;
 
 mod app;
+mod batch_plan;
 mod bindable;
 mod clock;
 mod control;
@@ -53,6 +54,8 @@ mod workers;
 #[doc(hidden)]
 pub use app::AppBrokers;
 pub use app::{EmbeddedApp, Mounts, Parts, RunError, Scope};
+#[doc(hidden)]
+pub use batch_plan::{Enough, Holds};
 #[cfg(not(ruststream_alloc))]
 pub use bindable::BindCell;
 pub use bindable::{Bindable, Bound};
