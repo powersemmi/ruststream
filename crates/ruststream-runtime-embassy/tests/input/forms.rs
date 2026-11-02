@@ -20,8 +20,8 @@ use futures::{FutureExt, StreamExt};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Message, Mounts};
 use ruststream::{
-    Broker, HeaderMap, InMessages, IncomingMessage, LocalPublisher, LocalSubscriber, MessageInfo,
-    Outgoing, OutgoingMessage, SubscriptionSource, subscriber,
+    Broker, HeaderMap, InMessages, IncomingMessage, MessageInfo, Outgoing, OutgoingMessage,
+    Publisher, Subscriber, SubscriptionSource, subscriber,
 };
 use serde::{Deserialize, Serialize};
 use static_cell::StaticCell;
@@ -180,7 +180,7 @@ async fn publish(bus: &Bus, subject: &'static str, json: &str) {
 }
 
 /// The next message `subscriber` holds, if it holds one now: its payload and its `order` header.
-fn next<Sub: LocalSubscriber>(subscriber: &mut Sub) -> Option<(String, Option<Vec<u8>>)> {
+fn next<Sub: Subscriber>(subscriber: &mut Sub) -> Option<(String, Option<Vec<u8>>)> {
     pin!(subscriber.stream())
         .next()
         .now_or_never()

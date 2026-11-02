@@ -11,6 +11,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::any;
+use ruststream_core::MaybeSendSync;
 
 use bytes::Bytes;
 
@@ -656,7 +657,7 @@ impl SubscriberAssertions<'_> {
     /// ```
     pub fn on_call<Hook>(self, hook: Hook)
     where
-        Hook: AsyncFn(SubscriberAssertions<'_>) + Send + Sync + 'static,
+        Hook: AsyncFn(SubscriberAssertions<'_>) + MaybeSendSync + 'static,
     {
         self.coordinator
             .hooks()

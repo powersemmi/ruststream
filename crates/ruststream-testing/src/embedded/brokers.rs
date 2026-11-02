@@ -49,7 +49,7 @@ impl<'a> TestBrokers<'a> {
     ///
     /// ```
     /// use ruststream::memory::local::prelude::{
-    ///     BytesMut, LocalMemoryBroker, LocalMemoryPublisher, LocalMemorySource, LocalPublisher,
+    ///     BytesMut, LocalMemoryBroker, LocalMemoryPublisher, LocalMemorySource, Publisher,
     ///     OutgoingMessage,
     /// };
     /// use ruststream::runtime::{Context, EmbeddedApp, HandlerOutcome, Mounts};

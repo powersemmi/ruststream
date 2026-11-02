@@ -12,13 +12,14 @@ use alloc::vec::Vec;
 use core::any::type_name;
 use core::fmt;
 use core::num::NonZeroUsize;
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use serde::Serialize;
 
 use crate::codec::Codec;
 use crate::{
     BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, PublishPolicy, Publisher,
-    SendSource, Settle, SubscriptionSource,
+    Settle, SubscriptionSource,
 };
 
 use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
@@ -214,31 +215,31 @@ where
     B: Broker + 'static,
     // The subscription side: the source opens against the connected form, and the definition's
     // handler runs over the messages it yields.
-    Source: SendSource<Connected<B>> + Send + 'static,
+    Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     RetryPipeline: Clone,
-    Source::Subscriber: Sync + Send + 'static,
+    Source::Subscriber: MaybeSendSync + 'static,
     SourceMessage<B, Source>: Settle + 'static,
-    State: Send + Sync + 'static,
+    State: MaybeSendSync + 'static,
     Def: PublishingCall<State> + 'static,
     Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
-    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
-    Def::Reply: EncodeReply + Send + Sync + 'static,
-    Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
+    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + MaybeSendSync + 'static,
+    Def::Reply: EncodeReply + MaybeSendSync + 'static,
+    Def::Context: BuildContext<SourceMessage<B, Source>> + MaybeSendSync + 'static,
     // `Materialize` above carries whatever the input asks of the codec, and a byte input asks
     // for nothing - so this route mounts with `()` in a build with no codec feature.
-    DecodeCodec: Send + Sync + 'static,
-    Extra: Send + Sync + 'static,
+    DecodeCodec: MaybeSendSync + 'static,
+    Extra: MaybeSendSync + 'static,
     // The reply side: a policy paired at startup into an encoded typed stack. Naming the live
     // form structurally is what lets the route stay independent of the app's publish pipeline,
     // which it learns only here.
     ReplySource: PublishPolicy<Connected<B>, Live = TypedPublisher<Leaf, ReplyCodec, Transforms>>
-        + Send
+        + MaybeSend
         + 'static,
     Leaf: Publisher + 'static,
-    ReplyCodec: Codec + Send + Sync + 'static,
-    Transforms: PublishTransform<ForReply<Def::Context>, Leaf::Options> + Send + Sync + 'static,
+    ReplyCodec: Codec + MaybeSendSync + 'static,
+    Transforms: PublishTransform<ForReply<Def::Context>, Leaf::Options> + MaybeSendSync + 'static,
 {
     type Context = Def::Context;
     type Copies = Source::Copies;
@@ -251,8 +252,8 @@ where
         sink: &mut Sink,
         setup: RetrySetup<B, Def::Context, Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
         Slot: RetrySlot<B, Def::Context, Source::Copies, RetryPipeline>,
     {
@@ -331,25 +332,25 @@ impl<B, Source, Def, DecodeCodec, ReplySource, Extra, State, Live, RetryPipeline
     for RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>
 where
     B: Broker + 'static,
-    Source: SendSource<Connected<B>> + Send + 'static,
+    Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     RetryPipeline: Clone,
-    Source::Subscriber: Sync + Send + 'static,
+    Source::Subscriber: MaybeSendSync + 'static,
     SourceMessage<B, Source>: Settle + 'static,
-    State: Send + Sync + 'static,
+    State: MaybeSendSync + 'static,
     Def: PublishingCall<State> + 'static,
     Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
-    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
-    Def::Reply: Serialized + Send + Sync + 'static,
-    Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
+    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + MaybeSendSync + 'static,
+    Def::Reply: Serialized + MaybeSendSync + 'static,
+    Def::Context: BuildContext<SourceMessage<B, Source>> + MaybeSendSync + 'static,
     // `Materialize` above carries whatever the input asks of the codec, and a byte input asks
     // for nothing - so this route mounts with `()` in a build with no codec feature.
-    DecodeCodec: Send + Sync + 'static,
-    Extra: Send + Sync + 'static,
+    DecodeCodec: MaybeSendSync + 'static,
+    Extra: MaybeSendSync + 'static,
     // The reply side: the policy pairs into a bare publisher, and the reply bytes go out as-is.
-    ReplySource: PublishPolicy<Connected<B>, Live = Live> + Send + 'static,
-    Live: Publisher + Send + Sync + 'static,
+    ReplySource: PublishPolicy<Connected<B>, Live = Live> + MaybeSend + 'static,
+    Live: Publisher + MaybeSendSync + 'static,
 {
     type Context = Def::Context;
     type Copies = Source::Copies;
@@ -362,8 +363,8 @@ where
         sink: &mut Sink,
         setup: RetrySetup<B, Def::Context, Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
         Slot: RetrySlot<B, Def::Context, Source::Copies, RetryPipeline>,
     {
@@ -438,23 +439,23 @@ impl<B, Source, Def, DecodeCodec, ReplySource, Extra, BatchReply, State, RetryPi
 where
     B: Broker + 'static,
     // The subscription side: batches open against the connected form.
-    Source: SendSource<Connected<B>> + Send + 'static,
+    Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
     Source::Copies:
         CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
     RetryPipeline: Clone,
-    Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
+    Source::Subscriber: BatchSubscriber + MaybeSendSync + 'static,
     SourceMessage<B, Source>: Settle + 'static,
-    State: Send + Sync + 'static,
+    State: MaybeSendSync + 'static,
     Def: BatchPublishingCall<State> + 'static,
     Def::Input: DecodeWith<DecodeCodec>,
-    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
-    Def::Reply: Serialize + Send + Sync + 'static,
-    Def::Context: BuildBatchContext<SourceMessage<B, Source>> + Send + Sync + 'static,
-    DecodeCodec: Send + Sync + 'static,
-    Extra: Send + Sync + 'static,
+    Def::Injections: FromStartup<B, Source::Subscriber, Extra> + MaybeSendSync + 'static,
+    Def::Reply: Serialize + MaybeSendSync + 'static,
+    Def::Context: BuildBatchContext<SourceMessage<B, Source>> + MaybeSendSync + 'static,
+    DecodeCodec: MaybeSendSync + 'static,
+    Extra: MaybeSendSync + 'static,
     // The reply side: the source pairs at startup into a batch reply wiring (plain or
     // transactional) that reads the batch's context while publishing each reply.
-    ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
+    ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + MaybeSend + 'static,
     BatchReply: ReplyPublisher<Def::Context> + 'static,
 {
     type Context = Def::Context;
@@ -468,8 +469,8 @@ where
         sink: &mut Sink,
         setup: RetrySetup<B, Def::Context, Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
         Slot: RetrySlot<B, Def::Context, Source::Copies, RetryPipeline>,
     {

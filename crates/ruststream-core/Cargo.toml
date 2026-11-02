@@ -30,6 +30,10 @@ std = [
     "thiserror/std",
     "serde_json?/std",
 ]
+# `Send` (and `Sync`) on the futures and the implementors of the contract traits, for a runtime that
+# moves work between threads. Without it the same traits ask nothing of the sort, and an embedded
+# runtime implements them with types that hold `Rc` or `RefCell`.
+send = []
 # `SecurityScheme::oauth2` and `SecurityScheme::custom` take a JSON value.
 json = ["alloc", "dep:serde_json", "serde_json/alloc"]
 # The `*_bindings` methods of the contract and the binding types they return.

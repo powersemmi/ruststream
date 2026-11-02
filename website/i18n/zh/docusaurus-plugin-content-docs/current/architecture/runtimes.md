@@ -33,6 +33,13 @@ tokio 运行器在每个 `.await` 处可能把处理器移到另一个线程，�
 embassy 运行器在同一个任务里轮询所有处理器，对 future 没有要求，所以同一个函数体可以在那里挂载。
 确认之后运行的后续任务（`and_after` 和上下文钩子）遵循同样的规则：启用 tokio 时它的 future 必须是 `Send`，只启用 embassy 时则没有这个要求，因此设备上的后续任务可以通过本地总线发布。
 
+## 两种运行器共用一套 trait
+
+一个 broker 只实现一个 `Publisher`、一个 `Settle` 和一组能力 trait，两种运行器都使用它们。
+这些 trait 的 future 和父 trait 在启用 `tokio` 时要求 `Send`（以及 `Sync`），只启用 `embassy` 时没有这些要求，所以设备上的 broker 与服务器上的 broker 实现的是同样的 trait。
+broker 的选项步骤以 `PublishSink<Options = ..>` 为界，在任一运行器上都生效。
+同时启用两个 feature 的构建采用更严格的约束：持有 `Rc` 的 broker 类型无法与 tokio 一起编译，系列自带的本地内存总线在这种情况下改用线程安全的指针共享状态。
+
 ## 各运行器提供的能力
 
 tokio 运行器提供 `workers(n)`、`threads(n)`、信号处理、指标、OpenTelemetry 和 CLI。

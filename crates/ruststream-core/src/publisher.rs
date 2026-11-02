@@ -13,7 +13,7 @@ use crate::bindings::Bindings;
 use crate::codec::CodecError;
 use crate::outgoing::{Outgoing, OutgoingName};
 use crate::wire::Serialized;
-use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
+use crate::{ConnectedBroker, HeaderMap, MaybeSend, MaybeSendSync, OutgoingMessage};
 
 /// How a transport consumes the payload of a publish: [`Lend`] where it reads the bytes,
 /// [`Take`] where its client keeps them.
@@ -633,354 +633,338 @@ mod sealed {
     impl Sealed for super::Take {}
 }
 
-crate::__contract_twin! {
-    send {
-        /// A producer that sends messages into the broker.
-        ///
-        /// `Publisher` is `Send + Sync` so a single instance can be shared across tasks, and
-        /// `Clone` so a handler can move its `Out` publisher into a continuation such as
-        /// `.error(..)`. A clone is another handle on the same connection: expensive shared state
-        /// (connection pool, batch buffers) lives behind an [`Arc`].
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use ruststream::{OutgoingMessage, PublishMessageError, Publisher};
-        ///
-        /// async fn emit<P: Publisher>(publisher: &P) -> Result<(), P::Error> {
-        ///     // Bytes the caller holds, in whichever form this publisher declared.
-        ///     let msg = OutgoingMessage::new("orders.created", b"{}".as_slice());
-        ///     // The refusal carries the unsent message; this caller only needs the error.
-        ///     publisher
-        ///         .publish(msg, None)
-        ///         .await
-        ///         .map_err(PublishMessageError::into_error)
-        /// }
-        /// ```
-        ///
-        /// [`Arc`]: std::sync::Arc
-        #[diagnostic::on_unimplemented(
-            message = "`{Self}` is not a publisher",
-            note = "for an `Out<impl Publisher, _>` slot, the type comes from the policy attached \
+/// A producer that sends messages into the broker.
+///
+/// `Publisher` is `Send + Sync` so a single instance can be shared across tasks, and
+/// `Clone` so a handler can move its `Out` publisher into a continuation such as
+/// `.error(..)`. A clone is another handle on the same connection: expensive shared state
+/// (connection pool, batch buffers) lives behind an [`Arc`].
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{OutgoingMessage, PublishMessageError, Publisher};
+///
+/// async fn emit<P: Publisher>(publisher: &P) -> Result<(), P::Error> {
+///     // Bytes the caller holds, in whichever form this publisher declared.
+///     let msg = OutgoingMessage::new("orders.created", b"{}".as_slice());
+///     // The refusal carries the unsent message; this caller only needs the error.
+///     publisher
+///         .publish(msg, None)
+///         .await
+///         .map_err(PublishMessageError::into_error)
+/// }
+/// ```
+///
+/// [`Arc`]: std::sync::Arc
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a publisher",
+    note = "for an `Out<impl Publisher, _>` slot, the type comes from the policy attached \
                     at the include site: attach one whose live form publishes"
-        )]
-        pub trait Publisher: Send + Sync + Clone
+)]
+pub trait Publisher: MaybeSendSync + Clone {
+    /// How this transport consumes the payload: [`Lend`] where it reads the bytes and keeps
+    /// nothing, [`Take`] where its client keeps them.
+    ///
+    /// The declaration decides what [`publish`] receives - `&[u8]` under `Lend`, a
+    /// [`BytesMut`] of its own under `Take` - and what the framework does with its own buffers
+    /// above it: a lending publisher inside a dispatch loop is lent the one encode buffer that
+    /// loop reuses, so a reply through it allocates nothing per message, while a taking one is
+    /// handed a fresh buffer it may keep. Declare `Lend` unless the client keeps the bytes past
+    /// the call.
+    ///
+    /// [`publish`]: Self::publish
+    type Payload: PayloadForm;
+
+    /// The error type returned by [`publish`].
+    ///
+    /// [`publish`]: Self::publish
+    type Error: StdError + Send + Sync + 'static;
+
+    /// The broker's per-message settings: a `QoS`, a priority, an ordering key, whatever this
+    /// transport lets one message differ from the next in.
+    ///
+    /// Every field is optional, because a publish carries only what its call site adjusted: the
+    /// rest keeps what the [`PublishPolicy`] fixed when it paired this publisher. A broker with
+    /// no per-message setting writes `type Options = ();`.
+    ///
+    /// The type is the broker's own, and so are the builder steps that fill it: a broker ships
+    /// an extension trait over
+    /// [`PublishBuilder`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.PublishBuilder.html)
+    /// bounded on this type, so its steps appear on a builder over its own publisher and
+    /// nowhere else.
+    ///
+    /// `Clone` and `'static` are what the test harness needs: it copies the options of each
+    /// publish the runtime makes and hands them back to the test as this type
+    /// (`with_options(..)` on `tb.out::<Marker>()` or on a broker's `published(..)`, under the
+    /// `testing` feature). Deriving `Debug` and `PartialEq` as well lets a service's test
+    /// assert on the value `publish` received rather than on the protocol field it became.
+    ///
+    /// A setting takes one shape: a field here, a default on the policy, and a step on the
+    /// publish builder, shipped from the broker's prelude. The step writes through
+    /// [`PublishBuilder::options_mut`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.PublishBuilder.html#method.options_mut),
+    /// so nothing wraps the publisher and the publish still goes through the mount site's
+    /// entry, with its codec and transforms. A send in a trait of the broker's own would pass
+    /// outside the slot view a test asserts on, and a setting carried as a header would be
+    /// bytes `publish` parses back. A value the transport cannot honour fails the publish; it
+    /// never falls back to the default silently.
+    ///
+    /// # Examples
+    ///
+    /// A priority the policy defaults and a call site adjusts:
+    ///
+    /// ```
+    /// # mod demo {
+    /// use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublish, MemoryPublisher};
+    /// use ruststream::runtime::{PublishBuilder, PublishExt, PublishSink};
+    /// use ruststream::{
+    ///     PublishOutcome,
+    ///     BytesMut, OutgoingMessage, Outgoing, PairError, PublishPolicy, Publisher, Serialized,
+    ///     Take,
+    /// };
+    ///
+    /// /// Every field optional: what a call leaves unset keeps what the policy fixed.
+    /// #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    /// pub struct PriorityOptions {
+    ///     priority: Option<u8>,
+    /// }
+    ///
+    /// /// The policy: constructible anywhere, and the place the default is configured.
+    /// #[derive(Debug, Clone, Copy, Default)]
+    /// pub struct PriorityPublish {
+    ///     priority: u8,
+    /// }
+    ///
+    /// /// The live publisher: the connection and the default the policy carried.
+    /// #[derive(Clone)]
+    /// pub struct PriorityPublisher {
+    ///     inner: MemoryPublisher,
+    ///     default_priority: u8,
+    /// }
+    ///
+    /// impl PublishPolicy<ConnectedMemoryBroker> for PriorityPublish {
+    ///     type Live = PriorityPublisher;
+    ///
+    ///     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
+    ///         let inner = MemoryPublish.pair(connected).await?;
+    ///         Ok(PriorityPublisher { inner, default_priority: self.priority })
+    ///     }
+    /// }
+    ///
+    /// impl Publisher for PriorityPublisher {
+    ///     type Payload = Take;
+    ///     type Error = MemoryError;
+    ///     type Options = PriorityOptions;
+    ///
+    ///     async fn publish<'msg>(
+    ///         &self,
+    ///         msg: OutgoingMessage<'msg, BytesMut>,
+    ///         options: Option<&Self::Options>,
+    ///     ) -> PublishOutcome<'msg, Self::Error, Take> {
+    ///         let priority = options
+    ///             .and_then(|options| options.priority)
+    ///             .unwrap_or(self.default_priority);
+    ///         // A real client takes `priority` as the protocol field it is; the in-memory bus
+    ///         // has none, so this one passes the message on unchanged.
+    ///         let _ = priority;
+    ///         self.inner.publish(msg, None).await
+    ///     }
+    /// }
+    ///
+    /// /// The step a service imports from the broker's prelude. The bound on the sink's options
+    /// /// keeps it off a builder over any other broker's publisher.
+    /// pub trait PriorityStep {
+    ///     /// Sends this one message at `priority`.
+    ///     #[must_use]
+    ///     fn priority(self, priority: u8) -> Self;
+    /// }
+    ///
+    /// impl<Sink, Body, Enc, Hdrs, Dest> PriorityStep for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
+    /// where
+    ///     Sink: PublishSink<Options = PriorityOptions>,
+    /// {
+    ///     fn priority(mut self, priority: u8) -> Self {
+    ///         self.options_mut().get_or_insert_with(PriorityOptions::default).priority =
+    ///             Some(priority);
+    ///         self
+    ///     }
+    /// }
+    ///
+    /// // Bytes that are already the payload, so this example needs no codec feature.
+    /// #[derive(Outgoing, Serialized)]
+    /// pub struct Alert(Vec<u8>);
+    ///
+    /// pub async fn page(publisher: &PriorityPublisher) -> Result<(), Box<dyn std::error::Error>> {
+    ///     publisher.message(&Alert(b"disk full".to_vec())).to("alerts").priority(9).publish().await?;
+    ///     Ok(())
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    type Options: Clone + Send + Sync + 'static;
+
+    /// Publishes a message to the broker, with the per-message settings the call site adjusted.
+    ///
+    /// This is the contract a broker implements, and the direct call a broker crate used on its
+    /// own - without this one - is written against. Inside a service built on `ruststream` it
+    /// is the layer underneath: what a handler sends goes through the publish builder
+    /// ([`message`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishExt.html#method.message)),
+    /// which resolves the destination, the codec and the headers and assembles the
+    /// [`OutgoingMessage`] itself. Reach for this one where the message is already built: a
+    /// publish transform, a middleware, a post-settle hook.
+    ///
+    /// `options` is `None` on every path with no call site to adjust them - a reply, a deferred
+    /// redelivery - and the policy's own settings apply.
+    ///
+    /// The message arrives by value, and so do its payload and its header map. Read them with
+    /// [`OutgoingMessage::payload`] and [`OutgoingMessage::headers`]; a transport that consumes
+    /// the message takes its parts with [`OutgoingMessage::into_parts`] - the destination, the
+    /// payload and the map in one move, nothing copied.
+    ///
+    /// What the payload is follows [`Payload`](Self::Payload). A [`Lend`] publisher is handed
+    /// `&[u8]` valid for the length of the call: read it, write it into your frame, and hold
+    /// nothing afterwards. A [`Take`] publisher is handed the [`BytesMut`] the framework wrote,
+    /// as it was written, so `Vec::from(payload)` and [`BytesMut::freeze`] turn it into what
+    /// the client speaks with no copy of the body; only a publish lending bytes the framework
+    /// does not own is copied into that buffer.
+    ///
+    /// # Cancel safety
+    ///
+    /// Cancel safety is implementation-defined: most brokers will leave a message in an
+    /// indeterminate state if the future is dropped mid-flight. Implementors must document the
+    /// guarantees their broker provides.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`PublishMessageError`] over [`Self::Error`] when the broker rejects the
+    /// message, the connection is lost, or the operation times out. It carries the message the
+    /// broker did not send: a [`Lend`] publisher always hands it back, and a [`Take`] publisher
+    /// hands it back when its client returns the buffer. A caller keeps it to try another
+    /// destination, as the error of an `Out` publish does for a handler.
+    ///
+    /// A broker author's `publish` that hands the message back:
+    ///
+    /// ```
+    /// use std::io;
+    ///
+    /// use ruststream::{Lend, OutgoingMessage, PublishMessageError, PublishOutcome, Publisher};
+    /// # #[derive(Clone)]
+    /// # struct Socket;
+    /// # impl Socket {
+    /// #     async fn write(&self, _subject: &str, _payload: &[u8]) -> io::Result<()> {
+    /// #         Err(io::Error::other("connection reset"))
+    /// #     }
+    /// # }
+    ///
+    /// #[derive(Clone)]
+    /// struct SocketPublisher {
+    ///     socket: Socket,
+    /// }
+    ///
+    /// impl Publisher for SocketPublisher {
+    ///     type Payload = Lend;
+    ///     type Error = io::Error;
+    ///     type Options = ();
+    ///
+    ///     async fn publish<'msg>(
+    ///         &self,
+    ///         msg: OutgoingMessage<'msg, &'msg [u8]>,
+    ///         _options: Option<&()>,
+    ///     ) -> PublishOutcome<'msg, io::Error, Lend> {
+    ///         let written = self.socket.write(msg.name(), msg.payload()).await;
+    ///         // The socket only read the bytes, so the refused message goes back whole.
+    ///         written.map_err(|error| PublishMessageError::with_message(error, msg))
+    ///     }
+    /// }
+    /// ```
+    fn publish<'msg>(
+        &self,
+        msg: OutgoingFor<'msg, Self::Payload>,
+        options: Option<&Self::Options>,
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> + MaybeSend;
+    /// [`publish`](Self::publish) with the refused message returned owned.
+    ///
+    /// Machinery of the runtime's own publish path: a broker never calls or overrides it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of [`publish`](Self::publish) with the message it did not send.
+    fn publish_kept(
+        &self,
+        msg: OutgoingFor<'_, Self::Payload>,
+        options: Option<&Self::Options>,
+    ) -> impl Future<Output = SinkOutcome<Self::Error>> + MaybeSend {
+        let sent = self.publish(msg, options);
+        async move { sent.await.map_err(SinkRefusal::returned::<Self::Payload>) }
     }
-    local {
-        #[doc = include_str!("local/publisher.md")]
-        #[diagnostic::on_unimplemented(
-            message = "`{Self}` is not a publisher of the local family",
-            note = "a live publisher implements `Publisher`, or `LocalPublisher` when its client \
-                    holds `Rc` or `RefCell`; every `Publisher` is a `LocalPublisher` through the \
-                    blanket impl"
-        )]
-        pub trait LocalPublisher: Clone
-    }
-    blanket { impl<T: Publisher> LocalPublisher for T }
-    forward { <T as Publisher> }
-    docs { Publisher }
-    types {
-        /// How this transport consumes the payload: [`Lend`] where it reads the bytes and keeps
-        /// nothing, [`Take`] where its client keeps them.
-        ///
-        /// The declaration decides what [`publish`] receives - `&[u8]` under `Lend`, a
-        /// [`BytesMut`] of its own under `Take` - and what the framework does with its own buffers
-        /// above it: a lending publisher inside a dispatch loop is lent the one encode buffer that
-        /// loop reuses, so a reply through it allocates nothing per message, while a taking one is
-        /// handed a fresh buffer it may keep. Declare `Lend` unless the client keeps the bytes past
-        /// the call.
-        ///
-        /// [`publish`]: Self::publish
-        type Payload: [PayloadForm];
 
-        /// The error type returned by [`publish`].
-        ///
-        /// [`publish`]: Self::publish
-        type Error: [StdError + Send + Sync + 'static];
-
-        /// The broker's per-message settings: a `QoS`, a priority, an ordering key, whatever this
-        /// transport lets one message differ from the next in.
-        ///
-        /// Every field is optional, because a publish carries only what its call site adjusted: the
-        /// rest keeps what the [`PublishPolicy`] fixed when it paired this publisher. A broker with
-        /// no per-message setting writes `type Options = ();`.
-        ///
-        /// The type is the broker's own, and so are the builder steps that fill it: a broker ships
-        /// an extension trait over
-        /// [`PublishBuilder`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.PublishBuilder.html)
-        /// bounded on this type, so its steps appear on a builder over its own publisher and
-        /// nowhere else.
-        ///
-        /// `Clone` and `'static` are what the test harness needs: it copies the options of each
-        /// publish the runtime makes and hands them back to the test as this type
-        /// (`with_options(..)` on `tb.out::<Marker>()` or on a broker's `published(..)`, under the
-        /// `testing` feature). Deriving `Debug` and `PartialEq` as well lets a service's test
-        /// assert on the value `publish` received rather than on the protocol field it became.
-        ///
-        /// A setting takes one shape: a field here, a default on the policy, and a step on the
-        /// publish builder, shipped from the broker's prelude. The step writes through
-        /// [`PublishBuilder::options_mut`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.PublishBuilder.html#method.options_mut),
-        /// so nothing wraps the publisher and the publish still goes through the mount site's
-        /// entry, with its codec and transforms. A send in a trait of the broker's own would pass
-        /// outside the slot view a test asserts on, and a setting carried as a header would be
-        /// bytes `publish` parses back. A value the transport cannot honour fails the publish; it
-        /// never falls back to the default silently.
-        ///
-        /// # Examples
-        ///
-        /// A priority the policy defaults and a call site adjusts:
-        ///
-        /// ```
-        /// # mod demo {
-        /// use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublish, MemoryPublisher};
-        /// use ruststream::runtime::{PublishBuilder, PublishExt, PublishSink};
-        /// use ruststream::{
-        ///     PublishOutcome,
-        ///     BytesMut, OutgoingMessage, Outgoing, PairError, PublishPolicy, Publisher, Serialized,
-        ///     Take,
-        /// };
-        ///
-        /// /// Every field optional: what a call leaves unset keeps what the policy fixed.
-        /// #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-        /// pub struct PriorityOptions {
-        ///     priority: Option<u8>,
-        /// }
-        ///
-        /// /// The policy: constructible anywhere, and the place the default is configured.
-        /// #[derive(Debug, Clone, Copy, Default)]
-        /// pub struct PriorityPublish {
-        ///     priority: u8,
-        /// }
-        ///
-        /// /// The live publisher: the connection and the default the policy carried.
-        /// #[derive(Clone)]
-        /// pub struct PriorityPublisher {
-        ///     inner: MemoryPublisher,
-        ///     default_priority: u8,
-        /// }
-        ///
-        /// impl PublishPolicy<ConnectedMemoryBroker> for PriorityPublish {
-        ///     type Live = PriorityPublisher;
-        ///
-        ///     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
-        ///         let inner = MemoryPublish.pair(connected).await?;
-        ///         Ok(PriorityPublisher { inner, default_priority: self.priority })
-        ///     }
-        /// }
-        ///
-        /// impl Publisher for PriorityPublisher {
-        ///     type Payload = Take;
-        ///     type Error = MemoryError;
-        ///     type Options = PriorityOptions;
-        ///
-        ///     async fn publish<'msg>(
-        ///         &self,
-        ///         msg: OutgoingMessage<'msg, BytesMut>,
-        ///         options: Option<&Self::Options>,
-        ///     ) -> PublishOutcome<'msg, Self::Error, Take> {
-        ///         let priority = options
-        ///             .and_then(|options| options.priority)
-        ///             .unwrap_or(self.default_priority);
-        ///         // A real client takes `priority` as the protocol field it is; the in-memory bus
-        ///         // has none, so this one passes the message on unchanged.
-        ///         let _ = priority;
-        ///         self.inner.publish(msg, None).await
-        ///     }
-        /// }
-        ///
-        /// /// The step a service imports from the broker's prelude. The bound on the sink's options
-        /// /// keeps it off a builder over any other broker's publisher.
-        /// pub trait PriorityStep {
-        ///     /// Sends this one message at `priority`.
-        ///     #[must_use]
-        ///     fn priority(self, priority: u8) -> Self;
-        /// }
-        ///
-        /// impl<Sink, Body, Enc, Hdrs, Dest> PriorityStep for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
-        /// where
-        ///     Sink: PublishSink<Options = PriorityOptions>,
-        /// {
-        ///     fn priority(mut self, priority: u8) -> Self {
-        ///         self.options_mut().get_or_insert_with(PriorityOptions::default).priority =
-        ///             Some(priority);
-        ///         self
-        ///     }
-        /// }
-        ///
-        /// // Bytes that are already the payload, so this example needs no codec feature.
-        /// #[derive(Outgoing, Serialized)]
-        /// pub struct Alert(Vec<u8>);
-        ///
-        /// pub async fn page(publisher: &PriorityPublisher) -> Result<(), Box<dyn std::error::Error>> {
-        ///     publisher.message(&Alert(b"disk full".to_vec())).to("alerts").priority(9).publish().await?;
-        ///     Ok(())
-        /// }
-        /// # }
-        /// # fn main() {}
-        /// ```
-        type Options: [Clone + Send + Sync + 'static];
-    }
-    fns {
-        /// Publishes a message to the broker, with the per-message settings the call site adjusted.
-        ///
-        /// This is the contract a broker implements, and the direct call a broker crate used on its
-        /// own - without this one - is written against. Inside a service built on `ruststream` it
-        /// is the layer underneath: what a handler sends goes through the publish builder
-        /// ([`message`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishExt.html#method.message)),
-        /// which resolves the destination, the codec and the headers and assembles the
-        /// [`OutgoingMessage`] itself. Reach for this one where the message is already built: a
-        /// publish transform, a middleware, a post-settle hook.
-        ///
-        /// `options` is `None` on every path with no call site to adjust them - a reply, a deferred
-        /// redelivery - and the policy's own settings apply.
-        ///
-        /// The message arrives by value, and so do its payload and its header map. Read them with
-        /// [`OutgoingMessage::payload`] and [`OutgoingMessage::headers`]; a transport that consumes
-        /// the message takes its parts with [`OutgoingMessage::into_parts`] - the destination, the
-        /// payload and the map in one move, nothing copied.
-        ///
-        /// What the payload is follows [`Payload`](Self::Payload). A [`Lend`] publisher is handed
-        /// `&[u8]` valid for the length of the call: read it, write it into your frame, and hold
-        /// nothing afterwards. A [`Take`] publisher is handed the [`BytesMut`] the framework wrote,
-        /// as it was written, so `Vec::from(payload)` and [`BytesMut::freeze`] turn it into what
-        /// the client speaks with no copy of the body; only a publish lending bytes the framework
-        /// does not own is copied into that buffer.
-        ///
-        /// # Cancel safety
-        ///
-        /// Cancel safety is implementation-defined: most brokers will leave a message in an
-        /// indeterminate state if the future is dropped mid-flight. Implementors must document the
-        /// guarantees their broker provides.
-        ///
-        /// # Errors
-        ///
-        /// Returns a [`PublishMessageError`] over [`Self::Error`] when the broker rejects the
-        /// message, the connection is lost, or the operation times out. It carries the message the
-        /// broker did not send: a [`Lend`] publisher always hands it back, and a [`Take`] publisher
-        /// hands it back when its client returns the buffer. A caller keeps it to try another
-        /// destination, as the error of an `Out` publish does for a handler.
-        ///
-        /// A broker author's `publish` that hands the message back:
-        ///
-        /// ```
-        /// use std::io;
-        ///
-        /// use ruststream::{Lend, OutgoingMessage, PublishMessageError, PublishOutcome, Publisher};
-        /// # #[derive(Clone)]
-        /// # struct Socket;
-        /// # impl Socket {
-        /// #     async fn write(&self, _subject: &str, _payload: &[u8]) -> io::Result<()> {
-        /// #         Err(io::Error::other("connection reset"))
-        /// #     }
-        /// # }
-        ///
-        /// #[derive(Clone)]
-        /// struct SocketPublisher {
-        ///     socket: Socket,
-        /// }
-        ///
-        /// impl Publisher for SocketPublisher {
-        ///     type Payload = Lend;
-        ///     type Error = io::Error;
-        ///     type Options = ();
-        ///
-        ///     async fn publish<'msg>(
-        ///         &self,
-        ///         msg: OutgoingMessage<'msg, &'msg [u8]>,
-        ///         _options: Option<&()>,
-        ///     ) -> PublishOutcome<'msg, io::Error, Lend> {
-        ///         let written = self.socket.write(msg.name(), msg.payload()).await;
-        ///         // The socket only read the bytes, so the refused message goes back whole.
-        ///         written.map_err(|error| PublishMessageError::with_message(error, msg))
-        ///     }
-        /// }
-        /// ```
-        fn publish(&self, msg: OutgoingFor<'msg, Self::Payload>, options: Option<&Self::Options>)
-            <'msg>
-            -> [impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> @send { + Send }];
-        /// [`publish`](Self::publish) with the refused message returned owned.
-        ///
-        /// Machinery of the runtime's own publish path: a broker never calls or overrides it.
-        ///
-        /// # Errors
-        ///
-        /// Returns the failure of [`publish`](Self::publish) with the message it did not send.
-        fn publish_kept(&self, msg: OutgoingFor<'_, Self::Payload>, options: Option<&Self::Options>)
-            -> [impl Future<Output = SinkOutcome<Self::Error>> @send { + Send }]
-        {
-            let sent = self.publish(msg, options);
-            async move { sent.await.map_err(SinkRefusal::returned::<Self::Payload>) }
-        }
-
-
-        /// The headers this publisher contributes to every message it sends, underneath whatever
-        /// the message itself names.
-        ///
-        /// `None` by default: a plain broker publisher contributes nothing and the outgoing map
-        /// starts empty. This is the place for a constant of the publisher itself - a tenant, a
-        /// producer name, a schema id every message of this handle carries - laid down first, with
-        /// the message's own headers written over it key by key, so the call site wins over the
-        /// handle.
-        ///
-        /// A delivery setting is not one of those: it belongs to the message, and a broker carries
-        /// it as a field of [`Options`](Self::Options) that the policy defaults and the call site
-        /// adjusts.
-        ///
-        /// Every message the runtime sends through this publisher starts from that base: a publish
-        /// through the builder, and the reply a `reply("dest")` handler returns (whose
-        /// [`PublishTransform`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishTransform.html)
-        /// stack then writes over it, like any other call site). A publish a handler body issues on
-        /// a value it obtained outside the framework is that body's own call and reaches nothing
-        /// here.
-        ///
-        /// The map is borrowed, never rebuilt per publish, so a handle that has one keeps it in its
-        /// own state.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        /// use ruststream::memory::MemoryBroker;
-        /// use ruststream::PublishOutcome;
-        /// use ruststream::runtime::PublishExt;
-        /// use ruststream::{HeaderMap, Outgoing, OutgoingFor, Publisher, Serialized};
-        ///
-        /// // A handle that tags every message it sends, without touching the message itself.
-        /// #[derive(Clone)]
-        /// struct Tenanted<P>(P, HeaderMap);
-        ///
-        /// impl<P: Publisher> Publisher for Tenanted<P> {
-        ///     type Payload = P::Payload;
-        ///     type Error = P::Error;
-        ///     type Options = P::Options;
-        ///
-        ///     async fn publish<'msg>(
-        ///         &self,
-        ///         msg: OutgoingFor<'msg, Self::Payload>,
-        ///         options: Option<&Self::Options>,
-        ///     ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
-        ///         self.0.publish(msg, options).await
-        ///     }
-        ///
-        ///     fn base_headers(&self) -> Option<&HeaderMap> {
-        ///         Some(&self.1)
-        ///     }
-        /// }
-        ///
-        /// // Bytes that are already the payload, so this example needs no codec feature.
-        /// #[derive(Outgoing, Serialized)]
-        /// struct Order(Vec<u8>);
-        ///
-        /// let broker = MemoryBroker::new();
-        /// let base = [("tenant", "acme")].into_iter().collect();
-        /// let publisher = Tenanted(broker.publisher(), base);
-        /// publisher.message(&Order(b"{}".to_vec())).to("orders").publish().await?;
-        /// # Ok(())
-        /// # }
-        /// ```
-        fn base_headers(&self) -> [Option<&HeaderMap>] {
-            None
-        }
+    /// The headers this publisher contributes to every message it sends, underneath whatever
+    /// the message itself names.
+    ///
+    /// `None` by default: a plain broker publisher contributes nothing and the outgoing map
+    /// starts empty. This is the place for a constant of the publisher itself - a tenant, a
+    /// producer name, a schema id every message of this handle carries - laid down first, with
+    /// the message's own headers written over it key by key, so the call site wins over the
+    /// handle.
+    ///
+    /// A delivery setting is not one of those: it belongs to the message, and a broker carries
+    /// it as a field of [`Options`](Self::Options) that the policy defaults and the call site
+    /// adjusts.
+    ///
+    /// Every message the runtime sends through this publisher starts from that base: a publish
+    /// through the builder, and the reply a `reply("dest")` handler returns (whose
+    /// [`PublishTransform`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishTransform.html)
+    /// stack then writes over it, like any other call site). A publish a handler body issues on
+    /// a value it obtained outside the framework is that body's own call and reaches nothing
+    /// here.
+    ///
+    /// The map is borrowed, never rebuilt per publish, so a handle that has one keeps it in its
+    /// own state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::PublishOutcome;
+    /// use ruststream::runtime::PublishExt;
+    /// use ruststream::{HeaderMap, Outgoing, OutgoingFor, Publisher, Serialized};
+    ///
+    /// // A handle that tags every message it sends, without touching the message itself.
+    /// #[derive(Clone)]
+    /// struct Tenanted<P>(P, HeaderMap);
+    ///
+    /// impl<P: Publisher> Publisher for Tenanted<P> {
+    ///     type Payload = P::Payload;
+    ///     type Error = P::Error;
+    ///     type Options = P::Options;
+    ///
+    ///     async fn publish<'msg>(
+    ///         &self,
+    ///         msg: OutgoingFor<'msg, Self::Payload>,
+    ///         options: Option<&Self::Options>,
+    ///     ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
+    ///         self.0.publish(msg, options).await
+    ///     }
+    ///
+    ///     fn base_headers(&self) -> Option<&HeaderMap> {
+    ///         Some(&self.1)
+    ///     }
+    /// }
+    ///
+    /// // Bytes that are already the payload, so this example needs no codec feature.
+    /// #[derive(Outgoing, Serialized)]
+    /// struct Order(Vec<u8>);
+    ///
+    /// let broker = MemoryBroker::new();
+    /// let base = [("tenant", "acme")].into_iter().collect();
+    /// let publisher = Tenanted(broker.publisher(), base);
+    /// publisher.message(&Order(b"{}".to_vec())).to("orders").publish().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn base_headers(&self) -> Option<&HeaderMap> {
+        None
     }
 }
 

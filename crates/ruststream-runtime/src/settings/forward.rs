@@ -11,10 +11,10 @@
 //! Associated types are named through the wrapped definition rather than through `Self`: the
 //! builder implements every definition form, so a bare `Self::Input` would be ambiguous.
 
-use crate::handler::MaybeSend;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use crate::ConnectedBroker;
 
@@ -27,18 +27,18 @@ use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
 use crate::handle::DeclaresReply;
 use crate::handler::HandlerOutcome;
-use crate::inject::{InjectCall, InjectDef, LocalInjectCall};
+use crate::inject::{InjectCall, InjectDef};
 use crate::input::InputKind;
 use crate::metadata::OutgoingMessageMetadata;
-use crate::publishing::{LocalPublishingCall, PublishingCall, PublishingDef};
-use crate::slot::{BindSlots, HasSlots, LocalBindSlots, LocalHasSlots};
+use crate::publishing::{PublishingCall, PublishingDef};
+use crate::slot::{BindSlots, HasSlots};
 use crate::subscriber_def::SubscriberDef;
 
 /// A source descriptor a settings builder hands to every mount: a value it can clone.
 ///
 /// The builder keeps the descriptor and gives each mount its own, so the descriptor is
 /// `Clone`. The bound has a trait of its own so a descriptor without `Clone` is named where the
-/// builder is made (`subscriber(..)`, `local_subscriber(..)`, the attribute). Machinery; never
+/// builder is made (`subscriber(..)`, `subscriber(..)`, the attribute). Machinery; never
 /// named directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
@@ -135,9 +135,9 @@ where
 impl<Def, Src, State, DC> InjectDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: InjectDef,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     type Input = <Def as InjectDef>::Input;
     type Context = <Def as InjectDef>::Context;
@@ -151,9 +151,9 @@ where
 impl<Def, Src, State, DC, S> InjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: InjectCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     fn call(
         &self,
@@ -165,29 +165,12 @@ where
     }
 }
 
-impl<Def, Src, State, DC, S> LocalInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
-where
-    Def: LocalInjectCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
-{
-    fn call_local(
-        &self,
-        input: &<<Def as InjectDef>::Input as InputKind>::Target,
-        injections: &<Def as InjectDef>::Injections,
-        ctx: &mut Context<'_, <Def as InjectDef>::Context, S>,
-    ) -> impl Future<Output = HandlerOutcome> {
-        self.def.call_local(input, injections, ctx)
-    }
-}
-
 impl<Def, Src, State, DC> PublishingDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: PublishingDef,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     type Input = <Def as PublishingDef>::Input;
     type Injections = <Def as PublishingDef>::Injections;
@@ -210,9 +193,9 @@ where
 impl<Def, Src, State, DC, S> PublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: PublishingCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     fn call(
         &self,
@@ -225,29 +208,12 @@ where
     }
 }
 
-impl<Def, Src, State, DC, S> LocalPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
-where
-    Def: LocalPublishingCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
-{
-    fn call_local(
-        &self,
-        input: &<<Def as PublishingDef>::Input as InputKind>::Target,
-        injections: &<Def as PublishingDef>::Injections,
-        ctx: &mut Context<'_, <Def as PublishingDef>::Context, S>,
-    ) -> impl Future<Output = Result<<Def as PublishingDef>::Reply, HandlerOutcome>> {
-        self.def.call_local(input, injections, ctx)
-    }
-}
-
 impl<Def, Src, State, DC> BatchInjectDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectDef,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     type Input = <Def as BatchInjectDef>::Input;
     type Source = Src;
@@ -261,9 +227,9 @@ where
 impl<Def, Src, State, DC, S> BatchInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     fn call(
         &self,
@@ -278,9 +244,9 @@ where
 impl<Def, Src, State, DC> BatchPublishingDef for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingDef,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     type Input = <Def as BatchPublishingDef>::Input;
     type Injections = <Def as BatchPublishingDef>::Injections;
@@ -303,9 +269,9 @@ where
 impl<Def, Src, State, DC, S> BatchPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingCall<S>,
-    Src: Send + Sync,
-    State: Send + Sync,
-    DC: Send + Sync,
+    Src: MaybeSendSync,
+    State: MaybeSendSync,
+    DC: MaybeSendSync,
 {
     fn call(
         &self,
@@ -322,43 +288,11 @@ impl<Def: HasSlots, Src, State, DC> HasSlots for SubscriberBuilder<Def, Src, Sta
     type Markers = Def::Markers;
 }
 
-impl<Def: LocalHasSlots, Src, State, DC> LocalHasSlots for SubscriberBuilder<Def, Src, State, DC> {
-    type Markers = Def::Markers;
-}
-
 // The reply type is the definition's, so a mount chain reads it through the builder the same way
 // it reads every other structural piece.
 impl<Def: DeclaresReply, Src, State, DC> DeclaresReply for SubscriberBuilder<Def, Src, State, DC> {
     type Reply = Def::Reply;
     type Context = Def::Context;
-}
-
-// The local family's binding, forwarded the same way.
-impl<Def, Src, State, DC, C, Sources> LocalBindSlots<C, Sources>
-    for SubscriberBuilder<Def, Src, State, DC>
-where
-    C: ConnectedBroker,
-    Def: LocalBindSlots<C, Sources>,
-{
-    type Bound = SubscriberBuilder<Def::Bound, Src, State, DC>;
-    type Extra = Def::Extra;
-
-    fn bind_local(self, sources: Sources) -> (Self::Bound, Self::Extra) {
-        let (def, source, (workers, failures, batch_size, codec)) = self.into_parts();
-        let (bound, extra) = def.bind_local(sources);
-        (
-            SubscriberBuilder {
-                def: bound,
-                source,
-                workers,
-                failures,
-                batch_size,
-                codec,
-                _state: PhantomData,
-            },
-            extra,
-        )
-    }
 }
 
 // Binding the slots instantiates the publisher-generic definition; the settings and the source

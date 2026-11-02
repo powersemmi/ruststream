@@ -13,7 +13,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -42,7 +42,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -74,7 +74,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -106,7 +106,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -135,6 +135,7 @@ note: required because it's used within this `async` fn body
    |
 42 | #[subscriber("orders")]
    | ^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `impl Future<Output = Result<(), HandlerOutcome>>` to implement `ruststream_core::send::MaybeSend`
    = note: required for `for<'a, 'b, 'c, 'd> fn(BodyTag<settle>, &'a Order, &'b Outs<(Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>,)>, &'c mut ruststream::prelude::Context<'d>) -> impl Future<Output = Result<(), HandlerOutcome>> {settle::<Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>, ()>}` to implement `ruststream_runtime::router::local::BodyFits<PublishIdentity, AsBodyFn<settle, &Order, &Outs<(Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>,)>, &mut ruststream::prelude::Context<'_>>>`
    = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)
 
@@ -154,7 +155,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -186,7 +187,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -218,7 +219,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -254,7 +255,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |
   ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + Send + Sync, Pipe: OutPipeline<W>, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |

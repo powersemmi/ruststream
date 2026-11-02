@@ -12,7 +12,7 @@
 use ruststream::PublishOutcome;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
-use ruststream::runtime::{LocalPublishSink, Outgoing, PublishBuilder};
+use ruststream::runtime::{Outgoing, PublishBuilder, PublishSink};
 use ruststream::{OutgoingMessage, PairError, Take};
 use serde::{Deserialize, Serialize};
 
@@ -99,7 +99,7 @@ trait PriorityPublishSteps {
 impl<Sink, Body, Enc, Hdrs, Dest> PriorityPublishSteps
     for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
 where
-    Sink: LocalPublishSink<Options = PriorityOptions>,
+    Sink: PublishSink<Options = PriorityOptions>,
 {
     fn priority(mut self, priority: u8) -> Self {
         self.options_mut()

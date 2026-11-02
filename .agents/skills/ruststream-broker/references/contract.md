@@ -22,14 +22,13 @@ Each rule names the trait it concerns; the rustdoc of that trait is the referenc
 - What stays a runtime rule is aliasing: publishers handed out earlier and clones of a shareable
   broker must surface an error when used after shutdown, never a silent success against a dead
   connection. `shutdown` never blocks or panics; do all fallible teardown there.
-- The per-message traits promise `Send` futures, because the tokio runtime moves deliveries and
-  their futures across threads; the lifecycle traits (`Broker`, `ConnectedBroker`, `Subscribe`,
-  `SubscriptionSource`, `PublishPolicy`) carry no `Send`. A broker whose client holds `Rc` or
-  `RefCell` implements the lifecycle traits as they are and the per-message `Local*` twins
-  (`LocalSubscriber`, `LocalSettle`, `LocalPublisher`, a local form of each capability): the same
-  items without `Send`. A delivery implements `IncomingMessage` (the accessors) and `Settle` (or
-  `LocalSettle`). A blanket impl makes every Send implementation a local one, so a crate implements
-  and imports one family; with both in scope a method call on its own type is ambiguous (E0034).
+- The per-message traits (`Subscriber`, `Settle`, `Publisher` and the capability traits) are one
+  trait per concept for every runtime. Their futures and supertraits ask for `Send` when `tokio`
+  is on and for nothing on the embedded runner alone; the lifecycle traits (`Broker`,
+  `ConnectedBroker`, `Subscribe`, `SubscriptionSource`, `PublishPolicy`) carry no `Send`. A broker
+  whose client holds `Rc` or `RefCell` implements all of them as they are and serves the embedded
+  runner; a build with both runtime features takes the stricter bound, so it does not compile
+  next to tokio. A delivery implements `IncomingMessage` (the accessors) and `Settle`.
 - Implement `Subscribe` on the **connected** form for the by-name `#[subscriber("topic")]` form,
   and ship a `SubscriptionSource<Connected<B>>` descriptor for broker-specific options (even a
   parameter-less broker ships one). Give the descriptor a constructor and derive `Clone`; add

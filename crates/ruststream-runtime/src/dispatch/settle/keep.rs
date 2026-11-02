@@ -9,7 +9,7 @@ use super::super::{RETRY_COUNT_HEADER, Slot};
 use super::{Target, current_retry_count};
 use crate::host::{HostDetach, KeptDelivery, PrepareKept};
 use crate::publish_failure::Reaction;
-use crate::{AckError, HeaderMap, LocalSettle, Str};
+use crate::{AckError, HeaderMap, Settle, Str};
 
 /// Drops the original delivery and sends a copy of it to `target` through a record of the
 /// host's store: published at once without a delay (or with a zero one), by the store's driver
@@ -45,7 +45,7 @@ pub(super) async fn keep_copy<M, C, Kept, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
+    M: Settle,
     Kept: PrepareKept<C>,
     Host: HostDetach,
 {
@@ -111,7 +111,7 @@ async fn spill_copy<M, C, Kept, Host>(
     build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
-    M: LocalSettle,
+    M: Settle,
     Kept: PrepareKept<C>,
     Host: HostDetach,
 {
@@ -151,7 +151,7 @@ where
 }
 
 /// The delivery's headers with the retry count advanced: what the copy carries.
-fn counted<M: LocalSettle>(msg: &M) -> HeaderMap {
+fn counted<M: Settle>(msg: &M) -> HeaderMap {
     let mut headers = msg.headers().clone();
     let next_count = current_retry_count(&headers) + 1;
     headers.insert(Str::from_static(RETRY_COUNT_HEADER), next_count.to_string());
@@ -160,7 +160,7 @@ fn counted<M: LocalSettle>(msg: &M) -> HeaderMap {
 
 /// Drops the original, as on the erased path: a transport with no settlement has nothing to drop,
 /// and any other settle failure leaves the delivery with the broker.
-async fn drop_original<M: LocalSettle>(slot: &mut Slot<M>) -> Result<(), AckError> {
+async fn drop_original<M: Settle>(slot: &mut Slot<M>) -> Result<(), AckError> {
     match slot.take().nack(false).await {
         Ok(()) | Err(AckError::Unsupported) => Ok(()),
         Err(err) => Err(err),
@@ -172,14 +172,12 @@ async fn drop_original<M: LocalSettle>(slot: &mut Slot<M>) -> Result<(), AckErro
 #[allow(clippy::future_not_send)]
 mod tests {
     use alloc::borrow::ToOwned;
-    use alloc::boxed::Box;
     use alloc::string::String;
     use alloc::sync::Arc;
     use alloc::vec::Vec;
-    use core::cell::{Cell, RefCell};
+    use core::cell::RefCell;
     use core::future::ready;
-    use core::pin::Pin;
-    use core::sync::atomic::{AtomicU8, Ordering};
+    use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
     use core::time::Duration;
     use std::io;
 
@@ -190,12 +188,12 @@ mod tests {
     use crate::dispatch::{Delivery, RETRY_COUNT_HEADER, Slot};
     use crate::handler::Continuation;
     use crate::handler::HandlerResult;
-    use crate::host::{Keeping, KeptCopies, KeptDelivery, LocalDetach, OnOneThread, PrepareKept};
+    use crate::host::{Detach, Keeping, KeptCopies, KeptDelivery, PrepareKept};
     use crate::publish_failure::{
         ErrorHook, FailedMessage, Failures, NoFreeRecordError, Reaction, publish_lost,
     };
     use crate::testkit::log_capture;
-    use crate::{HeaderMap, LocalSettle, RetryDeclaration};
+    use crate::{HeaderMap, RetryDeclaration, Settle};
 
     /// What the store was asked to do, in order.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -333,7 +331,7 @@ mod tests {
 
     // The settlement under test, not the transforms: a record is kept as it was filled.
     impl<Cx> PrepareKept<Cx> for Store {
-        fn prepare<M: LocalSettle>(
+        fn prepare<M: Settle>(
             &self,
             _record: usize,
             _destination: Option<&str>,
@@ -341,7 +339,7 @@ mod tests {
         ) {
         }
 
-        fn spill<M: LocalSettle>(
+        fn spill<M: Settle>(
             &self,
             payload: &[u8],
             headers: HeaderMap,
@@ -359,12 +357,12 @@ mod tests {
     /// The app's host beside the store: the copies never reach it, and it counts the
     /// continuations a failed publish leaves with it.
     struct NoWork {
-        boxed: Cell<usize>,
+        boxed: AtomicUsize,
     }
 
-    impl LocalDetach for NoWork {
-        fn detach_boxed(&self, _work: Pin<Box<dyn Future<Output = ()>>>) {
-            self.boxed.set(self.boxed.get() + 1);
+    impl Detach for NoWork {
+        fn detach_boxed(&self, _work: Continuation) {
+            self.boxed.fetch_add(1, Ordering::SeqCst);
         }
 
         fn detach<Work>(&self, _work: Work)
@@ -411,7 +409,7 @@ mod tests {
             settlement,
         };
         let work = NoWork {
-            boxed: Cell::new(0),
+            boxed: AtomicUsize::new(0),
         };
         settle_reacting(
             &mut Slot::new(msg),
@@ -423,7 +421,10 @@ mod tests {
             unit_cx,
         )
         .await;
-        (settled.load(Ordering::SeqCst), work.boxed.get())
+        (
+            settled.load(Ordering::SeqCst),
+            work.boxed.load(Ordering::SeqCst),
+        )
     }
 
     /// A handler's `.error` continuation, for the tests that only watch whether it is asked.
@@ -684,7 +685,7 @@ mod tests {
     /// A one-thread runner whose copies wait in a store of the mount's own, run with none.
     struct StoreRunner;
 
-    impl LocalDetach for StoreRunner {
+    impl Detach for StoreRunner {
         const STORES_COPIES: bool = true;
 
         fn detach<Work>(&self, _work: Work)
@@ -715,7 +716,7 @@ mod tests {
             HandlerResult::retry_after(LATER),
             "orders",
             &Delivery::empty(),
-            &OnOneThread(&StoreRunner),
+            &StoreRunner,
             unit_cx,
         )
         .await;

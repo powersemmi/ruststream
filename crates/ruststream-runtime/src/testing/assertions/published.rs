@@ -9,6 +9,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::any;
 use core::marker::PhantomData;
+use ruststream_core::MaybeSendSync;
 
 use crate::RawMessage;
 use crate::codec::Codec;
@@ -454,7 +455,7 @@ impl<T: 'static> PublishedAssertions<T> {
     /// ```
     pub fn on_publish<Hook>(self, hook: Hook)
     where
-        Hook: AsyncFn(Self) + Send + Sync + 'static,
+        Hook: AsyncFn(Self) + MaybeSendSync + 'static,
     {
         let Self {
             coordinator,

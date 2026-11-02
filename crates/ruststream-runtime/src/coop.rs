@@ -14,7 +14,7 @@ use core::task::{Context, Poll};
 use futures::Stream;
 use pin_project_lite::pin_project;
 
-use crate::LocalSubscriber;
+use crate::Subscriber;
 
 /// How many consecutive ready items a subscription's stream hands out before it yields once to
 /// the executor.
@@ -24,7 +24,7 @@ pub(crate) const YIELD_AFTER: u32 = 128;
 #[derive(Debug)]
 pub(crate) struct Cooperative<Sub>(pub(crate) Sub);
 
-impl<Sub: LocalSubscriber> LocalSubscriber for Cooperative<Sub> {
+impl<Sub: Subscriber> Subscriber for Cooperative<Sub> {
     type Message = Sub::Message;
     type Error = Sub::Error;
 

@@ -38,7 +38,7 @@ help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, 
    | |     Input: Materialize<DecodeCodec, M>,
    | |            --------------------------- unsatisfied requirement introduced here: `ruststream_runtime::input::Decoded<OrderEvent>: ruststream_runtime::input::Materialize<JsonCodec, MemoryMessage>`
 ...  |
-   | |     St: Send + Sync,
+   | |     St: MaybeSendSync,
    | |     Inner: Handler<Input::Target, Cx, St>,
    | |__________________________________________^
    = note: required for `ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), FnBody<on_event, for<'a, 'b, 'c, 'd> fn(BodyTag<on_event>, &'a OrderEvent, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), ruststream::prelude::HandlerOutcome>> {on_event::<_>}>>>>` to implement `ruststream_runtime::router::routes::MountRoute<ruststream::memory::MemoryBroker, (), PublishIdentity>`

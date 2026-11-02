@@ -4,6 +4,7 @@
 use alloc::vec::Vec;
 #[cfg(feature = "testing")]
 use bytes::Bytes;
+use ruststream_core::MaybeSendSync;
 use tracing::error;
 
 use super::{BatchResult, UniformFan, uniform_batch};
@@ -20,7 +21,7 @@ use crate::testing::coordinator::Delivered;
 use crate::testing::coordinator::PendingRecord;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::RecordedValue;
-use crate::{BuildBatchContext, LocalSettle};
+use crate::{BuildBatchContext, Settle};
 
 /// Settles one element by its own outcome, as a single delivery is settled: an `.error` registered
 /// on the outcome rides the settlement (with the `.and_after` beside it, which then follows the
@@ -66,8 +67,8 @@ pub(super) async fn settle_split_batch<M, C, Host>(
     delivery: &Delivery<C>,
     host: &Host,
 ) where
-    M: LocalSettle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    M: Settle,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     if rejected.is_empty() {
@@ -128,8 +129,8 @@ async fn settle_erroring<M, C, Host>(
     delivery: &Delivery<C>,
     host: &Host,
 ) where
-    M: LocalSettle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    M: Settle,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     let reaction = Some(Reaction::new(error, after));
@@ -156,8 +157,8 @@ pub(crate) async fn settle_batch<M, C, Host>(
     delivery: &Delivery<C>,
     host: &Host,
 ) where
-    M: LocalSettle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    M: Settle,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     settle_lent_batch(
@@ -227,8 +228,8 @@ pub(crate) async fn settle_lent_batch<M, C, Host>(
     host: &Host,
     lent: LentValues,
 ) where
-    M: LocalSettle,
-    C: BuildBatchContext<M> + Send + Sync + 'static,
+    M: Settle,
+    C: BuildBatchContext<M> + MaybeSendSync + 'static,
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     // Every batch form funnels its batch through here, which is the one place that knows both
@@ -310,10 +311,7 @@ struct BatchLog {
 
 #[cfg(feature = "testing")]
 impl BatchLog {
-    fn of<'m, M: LocalSettle + 'm>(
-        accepted: impl IntoIterator<Item = &'m M>,
-        lent: LentValues,
-    ) -> Self {
+    fn of<'m, M: Settle + 'm>(accepted: impl IntoIterator<Item = &'m M>, lent: LentValues) -> Self {
         let mut lent = lent.into_iter();
         Self {
             deliveries: accepted
@@ -330,7 +328,7 @@ impl BatchLog {
     }
 
     /// The log of a split batch: the deliveries the body saw, which are the ones not `rejected`.
-    fn of_accepted<M: LocalSettle>(batch: &[M], rejected: &[(usize, HandlerResult)]) -> Self {
+    fn of_accepted<M: Settle>(batch: &[M], rejected: &[(usize, HandlerResult)]) -> Self {
         Self::of(
             batch
                 .iter()

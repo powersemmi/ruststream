@@ -1,6 +1,6 @@
 //! The local broker, its connected and closed forms, and its publisher.
 
-use alloc::rc::Rc;
+use super::share::{Share, Shared, Sharing};
 use core::fmt;
 use core::future::ready;
 
@@ -10,11 +10,11 @@ use bytes::Bytes;
 use ruststream_core::RawMessage;
 use ruststream_core::{
     AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
-    LocalPublisher, OutgoingMessage, PairError, PublishOutcome, PublishPolicy, ServerSpec,
-    Subscribe, Take,
+    OutgoingMessage, PairError, PublishOutcome, PublishPolicy, Publisher, ServerSpec, Subscribe,
+    Take,
 };
 #[cfg(feature = "testing")]
-use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, LocalTestableBroker};
+use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, TestableBroker};
 use thiserror::Error;
 
 use super::LocalMemorySubscriber;
@@ -69,17 +69,11 @@ use super::bus::Bus;
 /// assert_eq!(celsius, Ok(vec![21]));
 /// ```
 ///
-/// The bus belongs to the task that holds it: it is not `Send`, so it does not move to another
-/// thread.
-///
-/// ```compile_fail,E0277
-/// use ruststream_memory::local::LocalMemoryBroker;
-///
-/// let broker = LocalMemoryBroker::<8>::new();
-/// std::thread::spawn(move || drop(broker));
-/// ```
+/// Without the tokio runner the bus belongs to the task that holds it: it is shared by `Rc`, so
+/// it is not `Send`. Next to the tokio runner it is shared by `Arc` and its state sits behind a
+/// critical section, so it moves between threads.
 pub struct LocalMemoryBroker<const CAP: usize> {
-    bus: Rc<Bus<CAP>>,
+    bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> LocalMemoryBroker<CAP> {
@@ -122,7 +116,7 @@ impl<const CAP: usize> LocalMemoryBroker<CAP> {
             );
         }
         Self {
-            bus: Rc::new(Bus::new()),
+            bus: Sharing::new(Bus::new()),
         }
     }
 }
@@ -136,7 +130,7 @@ impl<const CAP: usize> Default for LocalMemoryBroker<CAP> {
 impl<const CAP: usize> Clone for LocalMemoryBroker<CAP> {
     fn clone(&self) -> Self {
         Self {
-            bus: Rc::clone(&self.bus),
+            bus: Clone::clone(&self.bus),
         }
     }
 }
@@ -200,7 +194,7 @@ impl<const CAP: usize> DescribeServer for LocalMemoryBroker<CAP> {
 /// # Ok::<(), LocalMemoryError>(())
 /// ```
 pub struct ConnectedLocalMemoryBroker<const CAP: usize> {
-    pub(super) bus: Rc<Bus<CAP>>,
+    pub(super) bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
@@ -232,7 +226,7 @@ impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
     #[must_use]
     pub fn publisher(&self) -> LocalMemoryPublisher<CAP> {
         LocalMemoryPublisher {
-            bus: Rc::clone(&self.bus),
+            bus: Clone::clone(&self.bus),
         }
     }
 
@@ -241,7 +235,7 @@ impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
         let subscription = self.bus.subscribe(name)?;
         Ok(LocalMemorySubscriber::new(
             subscription,
-            Rc::clone(&self.bus),
+            Clone::clone(&self.bus),
         ))
     }
 }
@@ -249,7 +243,7 @@ impl<const CAP: usize> ConnectedLocalMemoryBroker<CAP> {
 impl<const CAP: usize> Clone for ConnectedLocalMemoryBroker<CAP> {
     fn clone(&self) -> Self {
         Self {
-            bus: Rc::clone(&self.bus),
+            bus: Clone::clone(&self.bus),
         }
     }
 }
@@ -401,13 +395,13 @@ impl<const CAP: usize> DefaultPublish for ConnectedLocalMemoryBroker<CAP> {
 /// assert_eq!(taken, [true, false]);
 /// ```
 pub struct LocalMemoryPublisher<const CAP: usize> {
-    bus: Rc<Bus<CAP>>,
+    bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> Clone for LocalMemoryPublisher<CAP> {
     fn clone(&self) -> Self {
         Self {
-            bus: Rc::clone(&self.bus),
+            bus: Clone::clone(&self.bus),
         }
     }
 }
@@ -420,7 +414,7 @@ impl<const CAP: usize> fmt::Debug for LocalMemoryPublisher<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalPublisher for LocalMemoryPublisher<CAP> {
+impl<const CAP: usize> Publisher for LocalMemoryPublisher<CAP> {
     // The bus keeps every message until its subscriptions have read it, so the publish takes the
     // buffer rather than borrowing it.
     type Payload = Take;
@@ -492,7 +486,7 @@ impl<const CAP: usize> InProcess for LocalMemoryBroker<CAP> {
 }
 
 #[cfg(feature = "testing")]
-impl<const CAP: usize> LocalTestableBroker for ConnectedLocalMemoryBroker<CAP> {
+impl<const CAP: usize> TestableBroker for ConnectedLocalMemoryBroker<CAP> {
     fn install_coordinator(&self, coordinator: Coordinator) {
         self.bus.harness().install(coordinator);
     }
@@ -528,7 +522,7 @@ mod tests {
 
     use embassy_futures::block_on;
     use futures::{FutureExt, StreamExt};
-    use ruststream_core::{LocalSettle, LocalSubscriber, OutgoingFor, PublishMessageError};
+    use ruststream_core::{OutgoingFor, PublishMessageError, Settle, Subscriber};
 
     use super::*;
     use crate::local::drive::{ended, waiting};

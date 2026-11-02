@@ -7,7 +7,7 @@
 use alloc::borrow::Cow;
 use core::{fmt, future::ready, marker::PhantomData};
 
-use crate::{ConnectedBroker, DeclareRetryError, LocalSeekable, LocalSeeker, Subscribe};
+use crate::{ConnectedBroker, DeclareRetryError, Seekable, Seeker, Subscribe};
 
 use super::{
     AddressedCopies, RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, SubscriptionSource,
@@ -394,10 +394,10 @@ impl<C, S, P> SubscriptionSource<C> for StartAt<S, P>
 where
     C: ConnectedBroker,
     S: SubscriptionSource<C>,
-    S::Subscriber: LocalSeekable,
+    S::Subscriber: Seekable,
     // A rejected reposition surfaces as this source's subscribe error, so the seeker must
     // report the connected broker's error type (broker crates use one error type for both).
-    <S::Subscriber as LocalSeekable>::Seeker: LocalSeeker<Position = P, Error = C::Error>,
+    <S::Subscriber as Seekable>::Seeker: Seeker<Position = P, Error = C::Error>,
 {
     type Subscriber = S::Subscriber;
     type Copies = S::Copies;

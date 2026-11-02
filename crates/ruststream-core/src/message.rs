@@ -7,7 +7,7 @@ use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 
 use crate::codec::CodecError;
-use crate::{AckError, HeaderMap, SerializeHeadersError};
+use crate::{AckError, HeaderMap, MaybeSend, MaybeSendSync, SerializeHeadersError};
 
 /// An owned snapshot of a message as it travels through the framework.
 ///
@@ -685,171 +685,158 @@ pub trait IncomingMessage {
     }
 }
 
-crate::__contract_twin! {
-    send {
-        /// The settlement of a delivery: acknowledge it, or give it back.
-        ///
-        /// A delivery implements [`IncomingMessage`] for what it carries and this trait for what
-        /// the broker does with it once the handler is done. Consumers call either [`ack`] or
-        /// [`nack`] exactly once, and the consuming `self` receiver makes a double settlement a
-        /// compile-time error. A broker whose deliveries are `Send` implements this trait, and
-        /// the tokio runner asks for `Send + Sync` of them where it moves a delivery to a task. A
-        /// broker whose deliveries hold `Rc` or `RefCell` implements [`LocalSettle`], its twin
-        /// without `Send` on the futures; every implementation of this trait is one of the twin
-        /// through a blanket impl.
-        ///
-        /// The two delayed-redelivery methods are optional, and a broker that overrides none of
-        /// them still works with every runtime feature:
-        ///
-        /// - without [`supports_nack_after`](Self::supports_nack_after) and
-        ///   [`nack_after`](Self::nack_after), the runtime runs `retry_after` itself: it drops the
-        ///   delivery and, after the delay, publishes a copy through the registration's retry
-        ///   publisher with an incremented
-        ///   [`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html),
-        ///   to the address the subscription reports
-        ///   ([`RedeliveryAddressed`](crate::RedeliveryAddressed)).
-        ///
-        /// The two are a pair: the runtime asks `supports_nack_after` first, so a `nack_after`
-        /// overridden alone is never called.
-        ///
-        /// A broker may honour a delay with a copy of its own (a wait queue behind a dead-letter
-        /// exchange, a retry topic). It increments `RETRY_COUNT_HEADER` on that copy only where the
-        /// transport counts nothing. Where the transport counts, the copy is a new message counted
-        /// from one again, so a delivery that went round the wait queue reaches the cap as a first
-        /// attempt: that is the behaviour of the broker's delay scheme, documented by its crate,
-        /// with the header left out.
-        ///
-        /// # Cancel safety
-        ///
-        /// Implementations must document whether [`ack`] and [`nack`] are cancel-safe. If a future
-        /// is dropped before completion, the broker may treat the message as still pending, leading
-        /// to redelivery once the visibility timeout expires.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use ruststream::{AckError, HeaderMap, IncomingMessage, Settle};
-        ///
-        /// struct Delivered {
-        ///     payload: Vec<u8>,
-        ///     headers: HeaderMap,
-        /// }
-        ///
-        /// impl IncomingMessage for Delivered {
-        ///     fn payload(&self) -> &[u8] {
-        ///         &self.payload
-        ///     }
-        ///     fn headers(&self) -> &HeaderMap {
-        ///         &self.headers
-        ///     }
-        /// }
-        ///
-        /// impl Settle for Delivered {
-        ///     async fn ack(self) -> Result<(), AckError> {
-        ///         Ok(())
-        ///     }
-        ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
-        ///         Ok(())
-        ///     }
-        /// }
-        /// ```
-        ///
-        /// [`ack`]: Self::ack
-        /// [`nack`]: Self::nack
-        pub trait Settle: IncomingMessage + Send + Sync
+/// The settlement of a delivery: acknowledge it, or give it back.
+///
+/// A delivery implements [`IncomingMessage`] for what it carries and this trait for what
+/// the broker does with it once the handler is done. Consumers call either [`ack`] or
+/// [`nack`] exactly once, and the consuming `self` receiver makes a double settlement a
+/// compile-time error. A delivery is `Send + Sync` with the tokio runner in the build, and
+/// need not be without it, so a broker whose deliveries hold `Rc` or `RefCell` implements this
+/// same trait for the embedded runner.
+///
+/// The two delayed-redelivery methods are optional, and a broker that overrides none of
+/// them still works with every runtime feature:
+///
+/// - without [`supports_nack_after`](Self::supports_nack_after) and
+///   [`nack_after`](Self::nack_after), the runtime runs `retry_after` itself: it drops the
+///   delivery and, after the delay, publishes a copy through the registration's retry
+///   publisher with an incremented
+///   [`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html),
+///   to the address the subscription reports
+///   ([`RedeliveryAddressed`](crate::RedeliveryAddressed)).
+///
+/// The two are a pair: the runtime asks `supports_nack_after` first, so a `nack_after`
+/// overridden alone is never called.
+///
+/// A broker may honour a delay with a copy of its own (a wait queue behind a dead-letter
+/// exchange, a retry topic). It increments `RETRY_COUNT_HEADER` on that copy only where the
+/// transport counts nothing. Where the transport counts, the copy is a new message counted
+/// from one again, so a delivery that went round the wait queue reaches the cap as a first
+/// attempt: that is the behaviour of the broker's delay scheme, documented by its crate,
+/// with the header left out.
+///
+/// # Cancel safety
+///
+/// Implementations must document whether [`ack`] and [`nack`] are cancel-safe. If a future
+/// is dropped before completion, the broker may treat the message as still pending, leading
+/// to redelivery once the visibility timeout expires.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{AckError, HeaderMap, IncomingMessage, Settle};
+///
+/// struct Delivered {
+///     payload: Vec<u8>,
+///     headers: HeaderMap,
+/// }
+///
+/// impl IncomingMessage for Delivered {
+///     fn payload(&self) -> &[u8] {
+///         &self.payload
+///     }
+///     fn headers(&self) -> &HeaderMap {
+///         &self.headers
+///     }
+/// }
+///
+/// impl Settle for Delivered {
+///     async fn ack(self) -> Result<(), AckError> {
+///         Ok(())
+///     }
+///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+///         Ok(())
+///     }
+/// }
+/// ```
+///
+/// [`ack`]: Self::ack
+/// [`nack`]: Self::nack
+pub trait Settle: IncomingMessage + MaybeSendSync {
+    /// Acknowledges successful processing. Consumes the message handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AckError`] when the broker rejects the acknowledgement, the operation times
+    /// out, or acknowledgement is not supported by this transport.
+    fn ack(self) -> impl Future<Output = Result<(), AckError>> + MaybeSend;
+
+    /// Negatively acknowledges the message. When `requeue` is `true` the broker should
+    /// redeliver according to its own retry policy; when `false` it should drop or dead-letter
+    /// the message.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AckError`] under the same conditions as [`ack`].
+    ///
+    /// [`ack`]: Self::ack
+    fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> + MaybeSend;
+
+    /// Reports whether this transport can honor [`nack_after`](Self::nack_after) natively.
+    ///
+    /// Defaulted to `false`: a transport without native delayed redelivery cannot hold a
+    /// message back for `delay` on its own. The runtime reads this BEFORE settling a
+    /// [`retry_after`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.HandlerOutcome.html#method.retry_after)
+    /// outcome: when it returns `true` the runtime calls [`nack_after`](Self::nack_after) and
+    /// trusts the broker timer; when it returns `false` the runtime applies its broker-agnostic
+    /// deferred-republish fallback instead, so the delay is never silently dropped. Brokers
+    /// with native delayed redelivery (`JetStream` `NAK` with delay, a durable delayed queue)
+    /// override this to `true` and override `nack_after`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{AckError, HeaderMap, IncomingMessage, Settle};
+    ///
+    /// struct CoreMessage {
+    ///     payload: Vec<u8>,
+    ///     headers: HeaderMap,
+    /// }
+    ///
+    /// impl IncomingMessage for CoreMessage {
+    ///     fn payload(&self) -> &[u8] {
+    ///         &self.payload
+    ///     }
+    ///     fn headers(&self) -> &HeaderMap {
+    ///         &self.headers
+    ///     }
+    /// }
+    ///
+    /// impl Settle for CoreMessage {
+    ///     async fn ack(self) -> Result<(), AckError> {
+    ///         Ok(())
+    ///     }
+    ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+    ///         Ok(())
+    ///     }
+    ///     // No native delayed redelivery: keep the default, opting into the runtime fallback.
+    /// }
+    /// ```
+    fn supports_nack_after(&self) -> bool {
+        false
     }
-    local {
-        #[doc = include_str!("local/settle.md")]
-        pub trait LocalSettle: IncomingMessage
-    }
-    blanket { impl<T: Settle> LocalSettle for T }
-    forward { <T as Settle> }
-    docs { Settle }
-    fns {
-        /// Acknowledges successful processing. Consumes the message handle.
-        ///
-        /// # Errors
-        ///
-        /// Returns [`AckError`] when the broker rejects the acknowledgement, the operation times
-        /// out, or acknowledgement is not supported by this transport.
-        fn ack(self) -> [impl Future<Output = Result<(), AckError>> @send { + Send }];
 
-        /// Negatively acknowledges the message. When `requeue` is `true` the broker should
-        /// redeliver according to its own retry policy; when `false` it should drop or dead-letter
-        /// the message.
-        ///
-        /// # Errors
-        ///
-        /// Returns [`AckError`] under the same conditions as [`ack`].
-        ///
-        /// [`ack`]: Self::ack
-        fn nack(self, requeue: bool)
-            -> [impl Future<Output = Result<(), AckError>> @send { + Send }];
-
-        /// Reports whether this transport can honor [`nack_after`](Self::nack_after) natively.
-        ///
-        /// Defaulted to `false`: a transport without native delayed redelivery cannot hold a
-        /// message back for `delay` on its own. The runtime reads this BEFORE settling a
-        /// [`retry_after`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.HandlerOutcome.html#method.retry_after)
-        /// outcome: when it returns `true` the runtime calls [`nack_after`](Self::nack_after) and
-        /// trusts the broker timer; when it returns `false` the runtime applies its broker-agnostic
-        /// deferred-republish fallback instead, so the delay is never silently dropped. Brokers
-        /// with native delayed redelivery (`JetStream` `NAK` with delay, a durable delayed queue)
-        /// override this to `true` and override `nack_after`.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use ruststream::{AckError, HeaderMap, IncomingMessage, Settle};
-        ///
-        /// struct CoreMessage {
-        ///     payload: Vec<u8>,
-        ///     headers: HeaderMap,
-        /// }
-        ///
-        /// impl IncomingMessage for CoreMessage {
-        ///     fn payload(&self) -> &[u8] {
-        ///         &self.payload
-        ///     }
-        ///     fn headers(&self) -> &HeaderMap {
-        ///         &self.headers
-        ///     }
-        /// }
-        ///
-        /// impl Settle for CoreMessage {
-        ///     async fn ack(self) -> Result<(), AckError> {
-        ///         Ok(())
-        ///     }
-        ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
-        ///         Ok(())
-        ///     }
-        ///     // No native delayed redelivery: keep the default, opting into the runtime fallback.
-        /// }
-        /// ```
-        fn supports_nack_after(&self) -> [bool] {
-            false
-        }
-
-        /// Negatively acknowledges the message, asking the broker to redeliver it no sooner than
-        /// `delay` from now.
-        ///
-        /// The default returns [`AckError::Unsupported`]: a transport without native delayed
-        /// redelivery cannot honor the delay, and the default reports that honestly rather than
-        /// silently degrading to an immediate `nack(true)`. The runtime never relies on this
-        /// default to honor a delay; it checks [`supports_nack_after`](Self::supports_nack_after)
-        /// first and only calls `nack_after` when that is `true`, otherwise running its own
-        /// deferred-republish fallback. Brokers with native delayed redelivery override both
-        /// methods.
-        ///
-        /// # Errors
-        ///
-        /// Returns [`AckError::Unsupported`] by default. Overrides return [`AckError`] under the
-        /// same conditions as [`nack`](Self::nack).
-        fn nack_after(self, delay: Duration)
-            -> [impl Future<Output = Result<(), AckError>> @send { + Send }] where [Self: Sized] {
-            let _ = delay;
-            future::ready(Err(AckError::Unsupported))
-        }
+    /// Negatively acknowledges the message, asking the broker to redeliver it no sooner than
+    /// `delay` from now.
+    ///
+    /// The default returns [`AckError::Unsupported`]: a transport without native delayed
+    /// redelivery cannot honor the delay, and the default reports that honestly rather than
+    /// silently degrading to an immediate `nack(true)`. The runtime never relies on this
+    /// default to honor a delay; it checks [`supports_nack_after`](Self::supports_nack_after)
+    /// first and only calls `nack_after` when that is `true`, otherwise running its own
+    /// deferred-republish fallback. Brokers with native delayed redelivery override both
+    /// methods.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AckError::Unsupported`] by default. Overrides return [`AckError`] under the
+    /// same conditions as [`nack`](Self::nack).
+    fn nack_after(self, delay: Duration) -> impl Future<Output = Result<(), AckError>> + MaybeSend
+    where
+        Self: Sized,
+    {
+        let _ = delay;
+        future::ready(Err(AckError::Unsupported))
     }
 }
 

@@ -172,6 +172,7 @@ pub use bytes::Bytes;
 pub use bytes_utils::Str;
 
 pub use ruststream_core::HeaderMap;
+pub use ruststream_core::SendBroker;
 pub use ruststream_core::Subscriber;
 pub use ruststream_core::{AckError, DeclareRetryError};
 pub use ruststream_core::{
@@ -196,14 +197,6 @@ pub use ruststream_core::{
 };
 pub use ruststream_core::{DeserializeHeadersError, SerializeHeadersError};
 pub use ruststream_core::{IncomingMessage, OutgoingMessage, RawMessage, Settle};
-pub use ruststream_core::{SendBroker, SendSource, SendSubscribe};
-// The `Local*` twins of the per-message traits, for brokers whose types are not `Send`. The prelude
-// carries the Send family alone: a crate importing both would find every method call on a broker's
-// type ambiguous.
-pub use ruststream_core::{
-    LocalBatchSubscriber, LocalOwnedTransactions, LocalPublisher, LocalRequestReply, LocalSeekable,
-    LocalSeeker, LocalSettle, LocalSubscriber, LocalTransaction, LocalTransactionalPublisher,
-};
 
 pub use ruststream_core::nonzero;
 #[cfg(feature = "tokio")]

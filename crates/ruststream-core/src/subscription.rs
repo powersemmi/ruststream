@@ -17,7 +17,7 @@ use core::fmt;
 use crate::Subscribe;
 #[cfg(feature = "asyncapi")]
 use crate::bindings::Bindings;
-use crate::{ConnectedBroker, DeclareRetryError, LocalSubscriber, Settle, Subscriber};
+use crate::{ConnectedBroker, DeclareRetryError, Subscriber};
 
 mod retry;
 mod sources;
@@ -90,7 +90,7 @@ pub use sources::{FromName, Name, StartAt, Unnamed};
 )]
 pub trait SubscriptionSource<C: ConnectedBroker> {
     /// The subscriber type this source opens.
-    type Subscriber: LocalSubscriber;
+    type Subscriber: Subscriber;
 
     /// Who publishes the copies this subscription's retries are made of, and who names where
     /// they go: [`AddressedCopies`], [`NamedCopies`] or [`BrokerMoves`].
@@ -437,59 +437,6 @@ pub trait RedeliveryAddressed<C: ConnectedBroker>:
         &self,
         connected: &C,
     ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>>;
-}
-
-/// A [`SubscriptionSource`] whose subscriber is a [`Subscriber`]: the form the tokio runner spawns
-/// a subscription loop for.
-///
-/// [`SubscriptionSource::Subscriber`] is a [`LocalSubscriber`], so a source for a broker whose
-/// types are not `Send` implements the trait as it is. The tokio runner moves the subscriber to a
-/// task and asks for this bound where it does; every source whose subscriber is a [`Subscriber`]
-/// implements it, so a broker crate writes nothing for it.
-///
-/// # Examples
-///
-/// ```
-/// use ruststream::{ConnectedBroker, SendSource, Subscriber};
-///
-/// fn subscriber_of<C: ConnectedBroker, S: SendSource<C>>(_source: &S)
-/// where
-///     S::Subscriber: Subscriber,
-/// {
-/// }
-/// ```
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` does not open a subscription the tokio runner can spawn on `{C}`",
-    label = "not a source whose subscriber is a `Subscriber`",
-    note = "the tokio runner moves a subscriber to a task, so the subscriber's futures must be \
-            `Send`: implement `Subscriber` for it",
-    note = "a subscriber that is not `Send` implements `LocalSubscriber` and runs on the \
-            embedded runner"
-)]
-pub trait SendSource<C: ConnectedBroker>:
-    SubscriptionSource<
-        C,
-        Subscriber: LocalSubscriber<Message: Settle>
-                        + Subscriber<
-            Message = <<Self as SubscriptionSource<C>>::Subscriber as LocalSubscriber>::Message,
-            Error = <<Self as SubscriptionSource<C>>::Subscriber as LocalSubscriber>::Error,
-        >,
-    >
-{
-}
-
-impl<C, S> SendSource<C> for S
-where
-    C: ConnectedBroker,
-    S: SubscriptionSource<
-            C,
-            Subscriber: LocalSubscriber<Message: Settle>
-                            + Subscriber<
-                Message = <<S as SubscriptionSource<C>>::Subscriber as LocalSubscriber>::Message,
-                Error = <<S as SubscriptionSource<C>>::Subscriber as LocalSubscriber>::Error,
-            >,
-        >,
-{
 }
 
 /// The name a deferred redelivery of one subscription is published to.

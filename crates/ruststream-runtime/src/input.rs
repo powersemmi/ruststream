@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 use core::any::type_name;
 use core::fmt;
 use core::marker::PhantomData;
+use ruststream_core::{MaybeSendSync, MaybeSync};
 
 use serde::de::DeserializeOwned;
 
@@ -26,7 +27,7 @@ use crate::codec::{Codec, CodecError};
 use crate::handle::{Input, Solo, SoloSet};
 use crate::in_messages::DecodeSet;
 use crate::metadata::IncomingMessageMetadata;
-use crate::{Carries, IncomingMessage, LocalSettle, SendSource, Subscriber};
+use crate::{Carries, IncomingMessage, Settle, Subscriber, SubscriptionSource};
 
 #[cfg(feature = "testing")]
 use super::context::Context;
@@ -43,17 +44,17 @@ pub(crate) const REPORTED: &str = "the broker reports the delivery does not deco
     note = "the input type selects its kind: `Decoded<T>` for a `serde` type, `Provided<F>` for \
             a `Deserialized` one"
 )]
-pub trait InputKind: Send + Sync + 'static {
+pub trait InputKind: MaybeSendSync + 'static {
     /// True on the self-deserializing lane: the input has no serde model, so its missing JSON
     /// Schema is by design rather than a documentation gap.
     const DESERIALIZED: bool = false;
 
     /// One element of a batch of this kind, as the batch adapters hand the slice to the body.
-    type Owned: Send + Sync;
+    type Owned: MaybeSendSync;
 
     /// What the handler borrows: `&T` for a decoded or carried input, `[u8]` behind the reference
     /// for a raw one.
-    type Target: ?Sized + Sync;
+    type Target: ?Sized + MaybeSync;
 
     /// The label `AsyncAPI` metadata uses for this input.
     fn input_label() -> &'static str;
@@ -114,7 +115,7 @@ pub trait Materialize<Decoder, M>: InputKind {
     const FAILURE: &'static str = "codec decode failed";
 
     /// What the adapter holds across the call: the decode product, or a borrow of the delivery.
-    type Held<'m>: Send + Sync
+    type Held<'m>: MaybeSendSync
     where
         M: 'm;
 
@@ -184,7 +185,7 @@ impl<T: DecodeSet<DecodeCodec>, DecodeCodec: Codec> TypedLane<T, DecodeCodec> fo
 /// subscription for a carried kind, whose value comes from the subscription's deliveries.
 pub trait DecodeSite<Codec, Src, Conn> {
     /// What the adapter is built with.
-    type Decoder: Clone + Send + Sync + 'static;
+    type Decoder: Clone + MaybeSendSync + 'static;
 
     /// Builds it from the resolved codec.
     fn decoder(codec: Codec) -> Self::Decoder;
@@ -199,7 +200,7 @@ impl<T> fmt::Debug for Decoded<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> InputKind for Decoded<T> {
+impl<T: MaybeSendSync + 'static> InputKind for Decoded<T> {
     type Owned = T;
     type Target = T;
 
@@ -214,7 +215,7 @@ impl<T: Send + Sync + 'static> InputKind for Decoded<T> {
 impl<DecodeCodec, T> DecodeWith<DecodeCodec> for Decoded<T>
 where
     DecodeCodec: Codec,
-    T: Input + Send + Sync + 'static,
+    T: Input + MaybeSendSync + 'static,
     T::Axis: TypedLane<T, DecodeCodec>,
 {
     const CONTENT_TYPE: Option<&'static str> = Some(DecodeCodec::CONTENT_TYPE);
@@ -231,7 +232,7 @@ where
 impl<DecodeCodec, T, M> Materialize<DecodeCodec, M> for Decoded<T>
 where
     DecodeCodec: Codec,
-    T: Input + Send + Sync + 'static,
+    T: Input + MaybeSendSync + 'static,
     T::Axis: TypedLane<T, DecodeCodec>,
     M: IncomingMessage,
 {
@@ -257,7 +258,7 @@ where
 
 impl<T, Codec, Src, Conn> DecodeSite<Codec, Src, Conn> for Decoded<T>
 where
-    Codec: Clone + Send + Sync + 'static,
+    Codec: Clone + MaybeSendSync + 'static,
 {
     type Decoder = Codec;
 
@@ -279,7 +280,7 @@ impl<F> fmt::Debug for Provided<F> {
     }
 }
 
-impl<F: Send + Sync + 'static> InputKind for Provided<F> {
+impl<F: MaybeSendSync + 'static> InputKind for Provided<F> {
     const DESERIALIZED: bool = true;
 
     type Owned = ();
@@ -290,7 +291,7 @@ impl<F: Send + Sync + 'static> InputKind for Provided<F> {
     }
 }
 
-impl<DecodeCodec, F: Send + Sync + 'static> DecodeWith<DecodeCodec> for Provided<F> {
+impl<DecodeCodec, F: MaybeSendSync + 'static> DecodeWith<DecodeCodec> for Provided<F> {
     fn decode<M: IncomingMessage>(_codec: &DecodeCodec, _msg: &M) -> Result<(), CodecError> {
         Ok(())
     }
@@ -298,8 +299,8 @@ impl<DecodeCodec, F: Send + Sync + 'static> DecodeWith<DecodeCodec> for Provided
 
 impl<DecodeCodec, F, M> Materialize<DecodeCodec, M> for Provided<F>
 where
-    F: Send + Sync + 'static,
-    M: LocalSettle,
+    F: MaybeSendSync + 'static,
+    M: Settle,
 {
     type Held<'m>
         = ()
@@ -317,7 +318,7 @@ where
 
 impl<F, Codec, Src, Conn> DecodeSite<Codec, Src, Conn> for Provided<F>
 where
-    Codec: Clone + Send + Sync + 'static,
+    Codec: Clone + MaybeSendSync + 'static,
 {
     type Decoder = Codec;
 
@@ -339,8 +340,8 @@ impl<H, P> fmt::Debug for DecodedPair<H, P> {
 
 impl<H, P> InputKind for DecodedPair<H, P>
 where
-    H: Send + Sync + 'static,
-    P: Send + Sync + 'static,
+    H: MaybeSendSync + 'static,
+    P: MaybeSendSync + 'static,
 {
     type Owned = Message<H, P>;
     type Target = Message<H, P>;
@@ -371,8 +372,8 @@ where
 
 impl<DecodeCodec: Codec, H, P> DecodeWith<DecodeCodec> for DecodedPair<H, P>
 where
-    H: DeserializeOwned + Send + Sync + 'static,
-    P: DeserializeOwned + Send + Sync + 'static,
+    H: DeserializeOwned + MaybeSendSync + 'static,
+    P: DeserializeOwned + MaybeSendSync + 'static,
 {
     const CONTENT_TYPE: Option<&'static str> = Some(DecodeCodec::CONTENT_TYPE);
 
@@ -384,8 +385,8 @@ where
 impl<DecodeCodec, H, P, M> Materialize<DecodeCodec, M> for DecodedPair<H, P>
 where
     DecodeCodec: Codec,
-    H: DeserializeOwned + Send + Sync + 'static,
-    P: DeserializeOwned + Send + Sync + 'static,
+    H: DeserializeOwned + MaybeSendSync + 'static,
+    P: DeserializeOwned + MaybeSendSync + 'static,
     M: IncomingMessage,
 {
     const CONTENT_TYPE: Option<&'static str> = Some(DecodeCodec::CONTENT_TYPE);
@@ -406,7 +407,7 @@ where
 
 impl<H, P, Codec, Src, Conn> DecodeSite<Codec, Src, Conn> for DecodedPair<H, P>
 where
-    Codec: Clone + Send + Sync + 'static,
+    Codec: Clone + MaybeSendSync + 'static,
 {
     type Decoder = Codec;
 
@@ -429,7 +430,7 @@ impl<T> fmt::Debug for Carried<T> {
     }
 }
 
-impl<T: Clone + Send + Sync + 'static> InputKind for Carried<T> {
+impl<T: Clone + MaybeSendSync + 'static> InputKind for Carried<T> {
     type Owned = T;
     type Target = T;
 
@@ -500,7 +501,7 @@ pub trait SourceCarries<T, Conn> {
 impl<T, Conn, Src> SourceCarries<T, Conn> for Src
 where
     Conn: crate::ConnectedBroker,
-    Src: SendSource<Conn>,
+    Src: SubscriptionSource<Conn>,
     <Src::Subscriber as Subscriber>::Message: Carries<T>,
 {
     type Delivery = <Src::Subscriber as Subscriber>::Message;
@@ -512,7 +513,7 @@ where
 
 impl<T, Src, Conn, M> Materialize<Lend<Src, Conn>, M> for Carried<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + MaybeSendSync + 'static,
     Src: SourceCarries<T, Conn, Delivery = M>,
     M: IncomingMessage,
 {

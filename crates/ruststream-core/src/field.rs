@@ -7,6 +7,8 @@
 //! [`FieldMut`]. Because a key implements [`Field`] only for the sources that actually carry its
 //! field, applying an inapplicable key is a compile error rather than a runtime miss.
 
+use crate::MaybeSend;
+
 /// A compile-time key reading one typed field out of `Src`.
 ///
 /// Implemented by a zero-sized selector type for each source that carries the field. Resolution is
@@ -119,7 +121,7 @@ pub trait ContextField: Default {
     type Context;
 
     /// The owned value the key yields.
-    type Value: Send + 'static;
+    type Value: MaybeSend + 'static;
 
     /// Reads this key's field out of `src`. Named apart from [`Field::get`] so a key
     /// implementing both traits stays unambiguous to call.

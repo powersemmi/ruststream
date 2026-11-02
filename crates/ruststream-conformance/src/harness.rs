@@ -5,7 +5,7 @@
 //! [`run_suite`] against their production broker: each scenario starts from a fresh broker
 //! produced by the caller-supplied factory, connects it through its
 //! [`InProcess`] transition and drives the connected form through the broker's own
-//! [`Subscribe`](ruststream_core::Subscribe) / [`TestableBroker::inject`] surface - no server.
+//! [`Subscribe`] / [`TestableBroker::inject`] surface - no server.
 //!
 //! # Examples
 //!
@@ -31,7 +31,7 @@ use ruststream_core::DescribeServer;
 #[cfg(doc)]
 use ruststream_core::{AckError, IncomingMessage};
 use ruststream_core::{
-    Broker, Connected, LocalSettle, Publisher, SendBroker, SendSource, SendSubscribe, Subscriber,
+    Broker, Connected, Publisher, SendBroker, Settle, Subscribe, Subscriber, SubscriptionSource,
 };
 #[cfg(doc)]
 use ruststream_runtime::testing::Backlog;
@@ -63,7 +63,7 @@ type SubscriberMessage<S> = <S as Subscriber>::Message;
 /// `factory` is invoked once per scenario to obtain a fresh broker, so tests cannot leak state
 /// between each other. It builds the production broker, the one a service builds its app on;
 /// each scenario connects it through its [`InProcess`] transition and drives the connected form
-/// through the broker's own [`Subscribe`](ruststream_core::Subscribe) / [`TestableBroker::inject`] surface.
+/// through the broker's own [`Subscribe`] / [`TestableBroker::inject`] surface.
 ///
 /// This is the routing contract and nothing else. A capability
 /// ([`BatchSubscriber`](ruststream_core::BatchSubscriber),
@@ -121,7 +121,7 @@ type SubscriberMessage<S> = <S as Subscriber>::Message;
 pub async fn run_suite<B, F>(factory: F)
 where
     B: InProcess + SendBroker,
-    B::Connected: SendSubscribe + TestableBroker,
+    B::Connected: Subscribe + TestableBroker,
     F: Fn() -> B,
 {
     let connect = async move |broker: B| {
@@ -210,7 +210,7 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 /// reaches it from.
 ///
 /// The steps are: synchronous construction, then the consuming `connect` producing the typed
-/// connected form, a subscription opened through the broker's own [`SubscriptionSource`](ruststream_core::SubscriptionSource), publishes
+/// connected form, a subscription opened through the broker's own [`SubscriptionSource`], publishes
 /// the subscription receives and settles, then the consuming `shutdown` producing the terminal
 /// witness. Owner-side misuse after shutdown is a compile error under the ladder, so what remains
 /// checkable at runtime is the aliased-handle contract.
@@ -294,7 +294,7 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B + Send + Sync + 'static,
-    Src: SendSource<Connected<B>> + Clone + Send + 'static,
+    Src: SubscriptionSource<Connected<B>> + Clone + Send + 'static,
     Src::Subscriber: Send + 'static,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,
@@ -341,7 +341,7 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 pub fn describes_without_credentials<B, Src>(broker: &B, source: &Src, secret: &str)
 where
     B: DescribeServer,
-    Src: SendSource<Connected<B>>,
+    Src: SubscriptionSource<Connected<B>>,
 {
     assert!(
         !secret.is_empty(),
@@ -418,7 +418,7 @@ where
 pub(crate) async fn expect_next<S, M, E>(stream: &mut S, label: &str) -> M
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
-    M: LocalSettle,
+    M: Settle,
     E: fmt::Debug,
 {
     let item = timeout(DEFAULT_TIMEOUT, stream.next())
@@ -431,7 +431,7 @@ where
 pub(crate) async fn expect_no_more<S, M, E>(stream: &mut S, label: &str)
 where
     S: futures::Stream<Item = Result<M, E>> + Unpin,
-    M: LocalSettle,
+    M: Settle,
     E: fmt::Debug,
 {
     let result = timeout(NEGATIVE_WAIT, stream.next()).await;

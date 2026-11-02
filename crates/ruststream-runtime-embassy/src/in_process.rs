@@ -1,7 +1,7 @@
 //! The app's brokers connected in process, for the test harness: each broker through its
 //! in-process transition, its routes opened under the scope the harness records them in.
 
-// Written over the local twins of the contract, as the production start is.
+// Written over the contract traits, as the production start is.
 #![allow(clippy::future_not_send)]
 
 use alloc::rc::Rc;

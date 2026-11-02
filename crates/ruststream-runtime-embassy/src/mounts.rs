@@ -1,7 +1,7 @@
 //! The app's brokers as a typed list: each broker with the routes its scope returned, connected
 //! and opened in the order they were registered, and shut down in the reverse order.
 
-// Written over the local twins of the contract: the futures hold brokers and subscriptions that
+// Written over the contract traits: the futures hold brokers and subscriptions that
 // are not `Send`, and the app's one task polls them where it was spawned.
 #![allow(clippy::future_not_send)]
 

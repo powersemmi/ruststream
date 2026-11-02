@@ -14,6 +14,7 @@ use alloc::vec::Vec;
 use core::any::type_name;
 use core::fmt;
 use core::hash::Hash;
+use ruststream_core::MaybeSendSync;
 
 use serde::de::DeserializeOwned;
 use thiserror::Error;
@@ -191,9 +192,9 @@ use crate::{IncomingMessage, MessageInfo};
 ///     type Axis = SoloSet<OrderEvent>;
 /// }
 /// ```
-pub trait InMessages: Sized + Send + Sync + 'static {
+pub trait InMessages: Sized + MaybeSendSync + 'static {
     /// The kinds of the set: one unit variant per model, what a discriminator names.
-    type Kind: Copy + Eq + Hash + fmt::Debug + Send + Sync + 'static;
+    type Kind: Copy + Eq + Hash + fmt::Debug + MaybeSendSync + 'static;
 
     /// Decodes one delivery into the variant the set's rule picks.
     ///
@@ -343,7 +344,7 @@ pub trait CodecDiscriminator<Kind, DecodeCodec> {
             the codecs its discriminator implements `CodecDiscriminator` for: mount it in a scope \
             or router whose codec it accepts"
 )]
-pub trait DecodeSet<DecodeCodec>: Sized + Send + Sync + 'static {
+pub trait DecodeSet<DecodeCodec>: Sized + MaybeSendSync + 'static {
     /// Decodes one delivery into the variant the set's rule picks.
     ///
     /// # Errors
@@ -385,7 +386,7 @@ where
             the codec of the mount (`serde::Deserialize`) or constructs itself from the payload \
             bytes (`Deserialized`, owning what it constructs)"
 )]
-pub trait InVariant<Set>: Sized + Send + Sync + 'static {
+pub trait InVariant<Set>: Sized + MaybeSendSync + 'static {
     /// True when the model reads its own bytes ([`Deserialized`]): no codec decodes it, so its
     /// message in the document carries no media type and no schema by design.
     const DESERIALIZED: bool;
@@ -413,7 +414,7 @@ pub trait InVariant<Set>: Sized + Send + Sync + 'static {
 #[diagnostic::do_not_recommend]
 impl<Set, Model> InVariant<Set> for Model
 where
-    Model: MessageInfo + Input + Sized + Send + Sync + 'static,
+    Model: MessageInfo + Input + Sized + MaybeSendSync + 'static,
     Model::Axis: VariantLane<Model>,
 {
     const DESERIALIZED: bool = <Model::Axis as VariantLane<Model>>::DESERIALIZED;

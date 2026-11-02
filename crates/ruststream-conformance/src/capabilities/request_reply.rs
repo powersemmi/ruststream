@@ -14,7 +14,7 @@ use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
     Connected, HeaderMap, IncomingMessage, OutgoingMessage, PublishMessageError, Publisher,
-    RequestReply, SendBroker, SendSource, Settle, Subscriber,
+    RequestReply, SendBroker, Settle, Subscriber, SubscriptionSource,
 };
 
 /// Verifies the [`RequestReply`] contract.
@@ -63,7 +63,7 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
 ) where
     B: SendBroker,
     MkBroker: Fn() -> B,
-    Src: SendSource<Connected<B>> + Send,
+    Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
     Req: RequestReply + 'static,

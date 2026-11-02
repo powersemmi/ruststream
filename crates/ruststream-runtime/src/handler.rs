@@ -6,60 +6,22 @@ use core::{convert::Infallible, fmt, pin::Pin, time::Duration};
 
 use super::context::Context;
 use crate::publish_failure::{ErrorHook, Failures};
+pub(crate) use ruststream_core::{IfSend, MaybeSend, MaybeSendSync};
 
 /// A boxed, owned continuation run after a message is settled: what a [`HandlerOutcome`] hands
 /// the dispatcher, and what the dispatcher hands the runner's host.
 ///
-/// With the runtime crate's `tokio` feature it is `Send`, because the Tokio runner may poll it on
+/// Where the core's `send` feature is on it is `Send`, because a multi-thread runner may poll it on
 /// any worker thread. Without it the box carries no `Send`, so a continuation on a device runner
 /// may hold the local bus's publisher or an `Rc`.
-#[cfg(feature = "tokio")]
 #[doc(hidden)]
-pub type Continuation = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
-
-/// See the `tokio` form: without the feature a continuation is not required to be `Send`.
-#[cfg(not(feature = "tokio"))]
-#[doc(hidden)]
-pub type Continuation = Pin<Box<dyn Future<Output = ()> + 'static>>;
-
-/// `Send` where the runtime crate's `tokio` feature is on, and nothing otherwise.
-///
-/// The Tokio runner's handler traits name it where they need a `Send` future, so a build for the
-/// embedded runtime alone, whose continuations carry no `Send`, uses the same traits.
-#[cfg(feature = "tokio")]
-#[doc(hidden)]
-pub trait MaybeSend: Send {}
-
-#[cfg(feature = "tokio")]
-impl<Value: Send + ?Sized> MaybeSend for Value {}
-
-/// See the `tokio` form: without the feature every type is `MaybeSend`.
-#[cfg(not(feature = "tokio"))]
-#[doc(hidden)]
-pub trait MaybeSend {}
-
-#[cfg(not(feature = "tokio"))]
-impl<Value: ?Sized> MaybeSend for Value {}
-
-/// `Send + Sync` where the runtime crate's `tokio` feature is on, and nothing otherwise: what an
-/// arena entry a body clones into a continuation, and borrows across a publish, must be.
-#[cfg(feature = "tokio")]
-#[doc(hidden)]
-pub trait MaybeSendSync: Send + Sync {}
-
-#[cfg(feature = "tokio")]
-impl<Value: Send + Sync + ?Sized> MaybeSendSync for Value {}
-
-/// See the `tokio` form: without the feature every type is `MaybeSendSync`.
-#[cfg(not(feature = "tokio"))]
-#[doc(hidden)]
-pub trait MaybeSendSync {}
-
-#[cfg(not(feature = "tokio"))]
-impl<Value: ?Sized> MaybeSendSync for Value {}
+pub type Continuation = IfSend<
+    Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
+    Pin<Box<dyn Future<Output = ()> + 'static>>,
+>;
 
 /// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: `Send` where the
-/// runtime crate's `tokio` feature is on.
+/// core's `send` feature is on, any `'static` future otherwise.
 ///
 /// # Examples
 ///
@@ -87,51 +49,14 @@ impl<Value: ?Sized> MaybeSendSync for Value {}
 /// # }
 /// # fn main() {}
 /// ```
-#[cfg(feature = "tokio")]
 #[diagnostic::on_unimplemented(
     message = "the continuation `{Self}` must be `Send` to run on the Tokio runner",
     label = "this continuation holds a value that is not `Send`",
     note = "a continuation runs on a worker thread of the Tokio runner; keep a non-`Send` value out of it, or build for the embedded runtime alone"
 )]
-pub trait ContinuationFuture: Future<Output = ()> + Send + 'static {}
+pub trait ContinuationFuture: Future<Output = ()> + MaybeSend + 'static {}
 
-#[cfg(feature = "tokio")]
-impl<Work: Future<Output = ()> + Send + 'static> ContinuationFuture for Work {}
-
-/// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: any
-/// `'static` future where the runtime crate's `tokio` feature is off.
-///
-/// # Examples
-///
-/// A handler leaves a continuation that publishes a receipt once the ack is through:
-///
-/// ```
-/// # #[cfg(feature = "json")]
-/// # mod demo {
-/// use ruststream::prelude::*;
-/// use serde::Deserialize;
-///
-/// #[derive(Deserialize)]
-/// struct Order {
-///     id: u64,
-/// }
-///
-/// async fn send_receipt(_id: u64) {}
-///
-/// #[subscriber("orders")]
-/// async fn accept(order: &Order) -> HandlerOutcome {
-///     let id = order.id;
-///     // `and_after` takes any `ContinuationFuture`: a plain `async` block is one.
-///     HandlerOutcome::ack().and_after(async move { send_receipt(id).await })
-/// }
-/// # }
-/// # fn main() {}
-/// ```
-#[cfg(not(feature = "tokio"))]
-pub trait ContinuationFuture: Future<Output = ()> + 'static {}
-
-#[cfg(not(feature = "tokio"))]
-impl<Work: Future<Output = ()> + 'static> ContinuationFuture for Work {}
+impl<Work: Future<Output = ()> + MaybeSend + 'static> ContinuationFuture for Work {}
 
 /// The broker status half of a [`HandlerOutcome`].
 ///
@@ -712,7 +637,8 @@ impl<E> IntoOutcome for Result<HandlerOutcome, E> {
 /// The same trait serves both pipeline levels: a raw delivery (`Handler<M>` where
 /// `M: IncomingMessage`) and a decoded value (`Handler<T>`). The input is only ever borrowed, so
 /// it may be unsized (`Handler<[u8]>` for a byte-level handler). Implementations are
-/// `Send + Sync` so a single handler can be shared across many concurrent inputs.
+/// `Send + Sync` next to the Tokio runner, so a single handler can be shared across many
+/// concurrent inputs, and need not be without it.
 ///
 /// # Examples
 ///
@@ -747,7 +673,7 @@ impl<E> IntoOutcome for Result<HandlerOutcome, E> {
             the settlement, or a closure `|msg: &{M}, ctx: &mut Context| async {{ .. }}` whose \
             future does not borrow its arguments"
 )]
-pub trait Handler<M: ?Sized, C = (), S = ()>: Send + Sync {
+pub trait Handler<M: ?Sized, C = (), S = ()>: MaybeSendSync {
     /// Handle one input, with the per-delivery [`Context`] (carrying the broker's typed context
     /// `C` and the shared application state `S`). The returned [`HandlerOutcome`] carries the
     /// status the dispatcher settles by and any post-settle continuation.
@@ -760,8 +686,8 @@ pub trait Handler<M: ?Sized, C = (), S = ()>: Send + Sync {
 
 impl<M: ?Sized, C, S, F, Fut> Handler<M, C, S> for F
 where
-    F: Fn(&M, &mut Context<'_, C, S>) -> Fut + Send + Sync,
-    Fut: Future + Send,
+    F: Fn(&M, &mut Context<'_, C, S>) -> Fut + MaybeSendSync,
+    Fut: Future + MaybeSend,
     Fut::Output: IntoOutcome,
 {
     fn handle(
@@ -786,115 +712,6 @@ where
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
         (**self).handle(msg, ctx)
-    }
-}
-
-/// A handler whose future may stay on the thread that polls it: the local twin of [`Handler`].
-///
-/// The delivery body runs every handler through this trait, so a runner whose executor polls on
-/// one thread (a device's embassy executor, a thread-per-core runtime) hosts handlers that hold
-/// `Rc`s or `RefCell`s across an await. An `Arc` of every [`Handler`] is one through a
-/// forwarding impl: a runner that spawns onto a multi-thread runtime shares its handler in an
-/// `Arc` and bounds on [`Handler`], so the future it spawns is still proven `Send`.
-///
-/// Import it only where a handler is written for such a runner: with both traits in scope, a
-/// call to `handle` on a value that implements both is ambiguous.
-///
-/// # Examples
-///
-/// ```
-/// use std::cell::Cell;
-/// use std::rc::Rc;
-///
-/// use ruststream::runtime::{Context, HandlerOutcome, LocalHandler};
-///
-/// /// Counts the readings a device took, in a cell only its own executor touches.
-/// struct Readings(Rc<Cell<u32>>);
-///
-/// impl LocalHandler<[u8]> for Readings {
-///     async fn handle(&self, reading: &[u8], _ctx: &mut Context<'_>) -> HandlerOutcome {
-///         let taken = Rc::clone(&self.0);
-///         if reading.is_empty() {
-///             return HandlerOutcome::drop();
-///         }
-///         taken.set(taken.get() + 1);
-///         HandlerOutcome::ack()
-///     }
-/// }
-/// ```
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` cannot handle `{M}`",
-    note = "a handler is a named type with an `impl Handler<{M}>` (or, for a runner that polls on \
-            one thread, an `impl LocalHandler<{M}>`) whose `handle` method returns the settlement"
-)]
-pub trait LocalHandler<M: ?Sized, C = (), S = ()> {
-    /// Handle one input, with the per-delivery [`Context`]; see [`Handler::handle`].
-    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = HandlerOutcome>;
-}
-
-// A forwarding call: the future is the `Handler`'s own, so a runner that knows its handler is a
-// `Handler` proves the body's future `Send` through this impl. It is the `Arc` and not every
-// `Handler` that forwards, so an adapter generic over its message implements `LocalHandler`
-// directly without overlapping a `Handler` impl some other crate could write for it.
-impl<M: ?Sized, C, S, H> LocalHandler<M, C, S> for Arc<H>
-where
-    H: Handler<M, C, S>,
-{
-    #[inline]
-    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = HandlerOutcome> {
-        <H as Handler<M, C, S>>::handle(&**self, msg, ctx)
-    }
-}
-
-/// The runner family an adapter calls its inner handler through: [`SendCall`] on a runner that
-/// may move the future across threads, [`LocalCall`] on one that polls it where it started.
-///
-/// One adapter body serves both families: the tokio impls call it with [`SendCall`], so the
-/// future is the `Handler`'s own and provably `Send`, and the local twins with [`LocalCall`].
-pub(crate) trait CallHandler<Inner, M: ?Sized, C, S> {
-    /// Runs `inner` on one input.
-    fn handle(
-        inner: &Inner,
-        msg: &M,
-        ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = HandlerOutcome>;
-}
-
-/// Calls the inner handler as a [`Handler`].
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct SendCall;
-
-/// Calls the inner handler as a [`LocalHandler`].
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct LocalCall;
-
-impl<Inner, M, C, S> CallHandler<Inner, M, C, S> for SendCall
-where
-    Inner: Handler<M, C, S>,
-    M: ?Sized,
-{
-    #[inline]
-    fn handle(
-        inner: &Inner,
-        msg: &M,
-        ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = HandlerOutcome> {
-        Handler::handle(inner, msg, ctx)
-    }
-}
-
-impl<Inner, M, C, S> CallHandler<Inner, M, C, S> for LocalCall
-where
-    Inner: LocalHandler<M, C, S>,
-    M: ?Sized,
-{
-    #[inline]
-    fn handle(
-        inner: &Inner,
-        msg: &M,
-        ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = HandlerOutcome> {
-        LocalHandler::handle(inner, msg, ctx)
     }
 }
 

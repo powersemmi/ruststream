@@ -25,7 +25,9 @@ asyncapi = [
 ]
 
 [dependencies]
-ruststream-core = { workspace = true, features = ["testing"] }
+# The suites drive a broker on a multi-thread runtime and spawn its work there, so the contract
+# traits ask `Send` of what they hand out.
+ruststream-core = { workspace = true, features = ["testing", "send"] }
 ruststream-runtime = { workspace = true, features = ["testing"] }
 ruststream-runtime-tokio = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }

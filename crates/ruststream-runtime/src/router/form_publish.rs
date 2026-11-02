@@ -8,7 +8,8 @@
 
 // The typed default reply needs a default codec to encode with, so those pieces are gated the
 // same way; the byte-reply default publishes bare bytes and needs only `DefaultPublish`.
-use crate::{BatchSubscriber, Broker, Connected, DefaultPublish, SendSource};
+use crate::{BatchSubscriber, Broker, Connected, DefaultPublish, SubscriptionSource};
+use ruststream_core::MaybeSend;
 
 use crate::batch_publishing::BatchPublishingDef;
 use crate::input::{DecodeWith, Materialize};
@@ -82,8 +83,8 @@ where
     Def: PublishingDef
         + MountsWith<<Def as PublishingDef>::Input, RouteCodec, Connected<B>>
         + 'static,
-    Def::Source: SendSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: Send + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+    SourceSubscriber<B, Def::Source>: MaybeSend + 'static,
     Def::Input: Materialize<ReplyDecoder<Def, B, RouteCodec>, SourceMessage<B, Def::Source>>,
     Policy: 'static,
 {
@@ -162,8 +163,8 @@ where
     Def: PublishingDef
         + MountsWith<<Def as PublishingDef>::Input, RouteCodec, Connected<B>>
         + 'static,
-    Def::Source: SendSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: Send + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+    SourceSubscriber<B, Def::Source>: MaybeSend + 'static,
     Def::Input: Materialize<ReplyDecoder<Def, B, RouteCodec>, SourceMessage<B, Def::Source>>,
     Policy: 'static,
 {
@@ -239,8 +240,8 @@ where
         + BatchSized
         + MountsWith<<Def as BatchPublishingDef>::Input, RouteCodec, Connected<B>>
         + 'static,
-    Def::Source: SendSource<Connected<B>> + Send + 'static,
-    SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
+    Def::Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
+    SourceSubscriber<B, Def::Source>: BatchSubscriber + MaybeSend + 'static,
     Def::Input: DecodeWith<BatchReplyDecoder<Def, B, RouteCodec>>,
     Policy: 'static,
 {

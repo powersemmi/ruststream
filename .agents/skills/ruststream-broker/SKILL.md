@@ -106,17 +106,19 @@ async fn lifecycle() {
 }
 ```
 
-### A client whose types are not `Send` implements the local twins of the per-message traits
+### A client whose types are not `Send` serves the embedded runner
 
 A client that holds `Rc` or `RefCell` (a thread-per-core client, an embedded network stack) has
 no `Send` futures to promise. The lifecycle traits (`Broker`, `ConnectedBroker`, `Subscribe`,
 `SubscriptionSource`, `PublishPolicy`) carry no `Send`, so it implements them as they are. The
-per-message traits come in pairs: it implements `LocalSubscriber`, `LocalSettle`, `LocalPublisher`
-and the local form of each capability, and `IncomingMessage` for the accessors of a delivery. Error
-types stay `Send + Sync + 'static`. Every Send implementation is already a local one through a
-blanket impl, so a crate implements one family of the pairs, never both, and imports one: with both
-in scope a method call on its own type is ambiguous (E0034). The tokio runner asks for `Send + Sync`
-where it spawns a subscription loop.
+per-message traits (`Subscriber`, `Settle`, `Publisher` and the capability traits) are one trait
+per concept for every runtime: their futures ask for `Send` when `tokio` is on and for nothing on
+the embedded runner alone, so the same impl serves a device and a server. `IncomingMessage` gives
+the accessors of a delivery. Error types stay `Send + Sync + 'static`. A build with both runtime
+features takes the stricter bound, so a type that holds `Rc` does not compile next to tokio. The
+tokio runner asks for `Send + Sync` where it spawns a subscription loop. The suites of the local family
+(`run_local_suite`, `local_lifecycle`) come with the facade's `conformance` feature, which turns
+tokio on, so they check such a client in a build where its types are `Send`.
 
 ### Report a coordinate, never credentials
 

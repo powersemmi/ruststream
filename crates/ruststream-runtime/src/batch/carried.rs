@@ -6,12 +6,11 @@
 //! body returned. The value at index `i` belongs to the `i`-th delivery; a delivery past the end
 //! of the slice carries no value and settles by the decode-failure policy.
 
-#[cfg(feature = "testing")]
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::any::type_name;
 use core::fmt;
 use core::marker::PhantomData;
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use tracing::{error, warn};
 
@@ -97,8 +96,8 @@ impl<Src, Conn, Batch, T> fmt::Debug for Lent<Src, Conn, Batch, T> {
 impl<Src, Conn, Batch, T, C> TakenBatch<C> for Lent<Src, Conn, Batch, T>
 where
     Src: SourceCarriesBatch<T, Conn, Batch = Batch>,
-    Batch: Send,
-    T: Clone + Send + Sync + 'static,
+    Batch: MaybeSend,
+    T: Clone + MaybeSendSync + 'static,
     C: BuildBatchContext<Batch>,
 {
     fn context(&self) -> Option<C> {
@@ -111,13 +110,13 @@ where
     fn unsettled(&mut self) -> Vec<Delivered> {
         self.recorded = Src::lend(&self.batch)
             .iter()
-            .map(|value| -> RecordedValue { Arc::new(value.clone()) })
+            .map(|value| -> RecordedValue { RecordedValue::of(value) })
             .collect();
         self.recorded
             .iter()
             .map(|value| Delivered {
                 raw: bytes::Bytes::new(),
-                value: Some(Arc::clone(value)),
+                value: Some(value.clone()),
                 settle: None,
             })
             .collect()
@@ -165,12 +164,12 @@ impl<Src, Conn, Batch, M, T, Inner, C, S> BatchHandler<Batch, C, S>
     for CarriedBatch<Src, Conn, T, Inner>
 where
     Src: SourceCarriesBatch<T, Conn, Batch = Batch>,
-    Batch: IntoIterator<Item = M> + Send,
+    Batch: IntoIterator<Item = M> + MaybeSend,
     M: Settle,
-    T: Clone + Send + Sync + 'static,
+    T: Clone + MaybeSendSync + 'static,
     Inner: SliceHandler<T, C, S>,
-    C: BuildBatchContext<Batch> + BuildBatchContext<M> + Send + Sync + 'static,
-    S: Send + Sync,
+    C: BuildBatchContext<Batch> + BuildBatchContext<M> + MaybeSendSync + 'static,
+    S: MaybeSendSync,
 {
     type Scratch = ();
     type Taken = Lent<Src, Conn, Batch, T>;

@@ -134,11 +134,11 @@ pub(crate) type SourceSubscriber<B, S> = <S as SubscriptionSource<Connected<B>>>
 
 /// The message that subscriber yields. See [`SourceSubscriber`].
 #[cfg(feature = "alloc")]
-pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as LocalSubscriber>::Message;
+pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as Subscriber>::Message;
 
 /// The message that subscriber yields on a broker of either family. See [`SourceSubscriber`].
 #[cfg(feature = "alloc")]
-pub(crate) type LocalSourceMessage<B, S> = <SourceSubscriber<B, S> as LocalSubscriber>::Message;
+pub(crate) type LocalSourceMessage<B, S> = <SourceSubscriber<B, S> as Subscriber>::Message;
 
 /// The batch that subscriber yields, where it batches. See [`SourceSubscriber`].
 #[cfg(feature = "alloc")]
@@ -149,9 +149,7 @@ pub(crate) type SourceBatch<B, S> = <SourceSubscriber<B, S> as BatchSubscriber>:
 // reach through this path is re-exported.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use batch::{
-    BatchHandler, LocalBatch, LocalBatchHandler, TakenBatch, batch_verdict, uniform_batch,
-};
+pub use batch::{BatchHandler, TakenBatch, batch_verdict, uniform_batch};
 #[cfg(feature = "alloc")]
 pub use context::{After, AfterError, AfterThen, Context};
 #[cfg(feature = "alloc")]
@@ -174,8 +172,7 @@ pub use failure::{FailurePolicies, FailurePolicy};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use handle::{
-    AnyOutPos, MaybeSendPublisher, MaybeSendSink, SelectEntry, SlotAdmit, SlotEntry, SlotPublish,
-    SlotTransactions,
+    AnyOutPos, MaybeSendSink, SelectEntry, SlotAdmit, SlotEntry, SlotPublish, SlotTransactions,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
@@ -194,29 +191,27 @@ pub use handle::{
 #[cfg(feature = "alloc")]
 pub use handle::{
     BatchDeserialized, BatchSet, Deserialized, Documentable, Documented, EncodedReply, Handle,
-    Input, IntoSource, LocalHandle, LocalOutEntry, LocalSlot, Message, OutEntry, Outs, ReplyShape,
-    Serialized, SerializedReply, Slot, SoloDeserialized, SoloSet, Undocumented, ValueBuilder,
-    Verdict, local_subscriber, subscriber,
+    Input, IntoSource, Message, OutEntry, Outs, ReplyShape, Serialized, SerializedReply, Slot,
+    SoloDeserialized, SoloSet, Undocumented, ValueBuilder, Verdict, subscriber,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use handle::{
-    DeclaresReply, EntryMarkers, LocalEntryMarkers, LocalOutPos, OutPos, RedirectableReply,
-    ReplyDest, ReplyDestination, ReplyFormFor, ReplyHeadersSchema, ReplyRoute, ResolveDestination,
-    SelectSlot, SlotDictionary, UnbuiltDefinition, WireDocs, declared_reply_destination,
-    reply_destination,
+    DeclaresReply, EntryMarkers, OutPos, RedirectableReply, ReplyDest, ReplyDestination,
+    ReplyFormFor, ReplyHeadersSchema, ReplyRoute, ResolveDestination, SelectSlot, SlotDictionary,
+    UnbuiltDefinition, WireDocs, declared_reply_destination, reply_destination,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use handler::IntoOutcome;
 #[cfg(feature = "alloc")]
-pub use handler::{ContinuationFuture, Handler, HandlerOutcome, LocalHandler};
+pub use handler::{ContinuationFuture, Handler, HandlerOutcome};
 pub use host::{Clock, ShutdownWait};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use host::{Copying, SendHost};
 #[doc(hidden)]
-pub use host::{Detach, Halt, HostDetach, LocalDetach, OnOneThread};
+pub use host::{Detach, Halt, HostDetach};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept};
@@ -231,7 +226,7 @@ pub use publish_failure::{
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use slot::{BindSlotsBody, LocalBindSlotsBody};
+pub use slot::BindSlotsBody;
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
@@ -240,9 +235,6 @@ pub use handler::Continuation;
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 #[doc(hidden)]
 pub use handler::HandlerResult;
-#[cfg(feature = "alloc")]
-#[doc(hidden)]
-pub use handler::MaybeSendSync;
 #[cfg(feature = "alloc")]
 pub use in_messages::{
     CodecDiscriminator, DecodeSet, InMessages, InVariant, MessageDeclaration, VariantOf,
@@ -254,6 +246,8 @@ pub use in_messages::{
 };
 #[cfg(feature = "alloc")]
 pub use inject::Out;
+#[doc(hidden)]
+pub use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 // Public and hidden: a hand-written low-level def (`SubscriberDef` / `BatchDef`) names its
 // input kind, and the self-deserializing one is how such a def opts onto the byte transport.
 #[cfg(feature = "std")]
@@ -277,7 +271,7 @@ pub use metadata::{
     OutgoingMessageMetadata,
 };
 #[cfg(feature = "alloc")]
-pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, LocalBlanketLayer, Stack, layers};
+pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 #[cfg(feature = "poll-diagnostics")]
 #[doc(hidden)]
 pub use poll_diagnostics::{BUCKET_BOUNDS_NS, PollStats};
@@ -291,24 +285,24 @@ pub use poll_diagnostics::{PollDiagnostics, PollReport};
 pub use publish::{
     AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, BatchRefusal, CodecSlotOpen,
     DestinationSettled, DestinationUse, Direct, Either, EncodeOutcome, FitsOffer, FitsTaken,
-    InTransaction, LocalOutPipeline, LowerOutTransforms, MapReplyPolicy, NameReplyCodec,
-    NamedDestinationSend, NamesDestination, NamingOffered, NamingUntaken, NarrowToUse,
-    PayloadError, PublishingDirectly, RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy,
-    SinkOutcome, SinkRefusal, SlotStackUse, SlotTransforms, Transactional, TransactionalReply,
-    TypedPublisher, WireBytes, WirePayload,
+    InTransaction, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, NamedDestinationSend,
+    NamesDestination, NamingOffered, NamingUntaken, NarrowToUse, PayloadError, PublishingDirectly,
+    RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy, SinkOutcome, SinkRefusal,
+    SlotStackUse, SlotTransforms, Transactional, TransactionalReply, TypedPublisher, WireBytes,
+    WirePayload,
 };
 #[cfg(feature = "alloc")]
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, ContextKind, EncodedWire, ForBatch, ForReply, ForSlot, HeaderSource, HeadersUnset,
-    LocalPublishSink, MapHeaders, MessageBody, MessageWire, MissingSegment, Names, OutPipeline,
-    Outgoing, OutgoingName, PipelinePublishError, PublishAt, PublishBuilder, PublishCodec,
-    PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt,
-    PublishHeaders, PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink,
-    PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads,
-    ResolvedName, SatisfiesContract, SerializePayloadError, SerializedWire, SlotContext,
-    SuppliedName, TemplateAddress, TransactionPublishError, TransactionScope, TypedHeaders,
-    TypedTransaction, UnnamedCodec, for_batch,
+    MapHeaders, MessageBody, MessageWire, MissingSegment, Names, OutPipeline, Outgoing,
+    OutgoingName, PipelinePublishError, PublishAt, PublishBuilder, PublishCodec, PublishContext,
+    PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt, PublishHeaders,
+    PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink, PublishStack,
+    PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads, ResolvedName,
+    SatisfiesContract, SerializePayloadError, SerializedWire, SlotContext, SuppliedName,
+    TemplateAddress, TransactionPublishError, TransactionScope, TypedHeaders, TypedTransaction,
+    UnnamedCodec, for_batch,
 };
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
 // injects through the same positions as a live publish.
@@ -316,13 +310,13 @@ pub use publish::{
 pub use crate::bindable::{Bindable, Bound, BrokerRegistration};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use inject::{InjectHandler, LocalInject};
+pub use inject::InjectHandler;
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use publish::message_of;
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use publishing::{LocalPublishing, PublishingHandler};
+pub use publishing::PublishingHandler;
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use redelivery::{
@@ -356,8 +350,8 @@ pub use router::{
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use router::{
-    Dispatched, LocalDispatch, LocalPlanned, LocalRetriedRoute, LocalRoute, LocalRouteSource,
-    OpenedDispatch, SequentialPlan, UnboundRetry,
+    Dispatched, OneTaskDispatch, OneTaskPlanned, OneTaskRetriedRoute, OneTaskRoute,
+    OneTaskRouteSource, OpenedDispatch, SequentialPlan, UnboundRetry,
 };
 #[cfg(feature = "alloc")]
 pub use router::{
@@ -384,11 +378,8 @@ pub use slot::{
 };
 #[cfg(feature = "alloc")]
 pub use slot::{
-    BindSlots, ContainsMessage, DefaultSlot, HasSlots, ListOffer, LocalBindSlots, LocalHasSlots,
-    OutMessages, OutSlot, PublishedThrough, Reply, SlotPublisher, Unrestricted,
+    BindSlots, ContainsMessage, DefaultSlot, HasSlots, ListOffer, OutMessages, OutSlot,
+    PublishedThrough, Reply, SlotPublisher, Unrestricted,
 };
-#[cfg(feature = "alloc")]
-#[doc(hidden)]
-pub use typed::LocalTyped;
 #[cfg(feature = "alloc")]
 pub use typed::{Typed, typed};

@@ -9,10 +9,10 @@
 //! each reply independently, while a `.transactional()` one makes the whole batch's replies
 //! visible atomically - the consume-transform-produce pattern.
 
-use crate::handler::MaybeSend;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::{any, fmt};
+use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use bytes::{Bytes, BytesMut};
 use serde::Serialize;
@@ -40,7 +40,7 @@ use super::publishing::{EncodeReply, lent_bytes};
 /// whole decoded batch and returns the replies for it, all-or-nothing. Selective per-element
 /// outcomes are not available here: a handler needing them publishes manually from a plain batch
 /// handler, through a publisher held in the typed application state.
-pub trait BatchPublishingDef: Send + Sync {
+pub trait BatchPublishingDef: MaybeSendSync {
     /// The input kind of one batch element ([`Decoded<T>`](super::Decoded); see
     /// [`BatchDef::Input`](super::BatchDef::Input)). The handler consumes `&[T]`.
     type Input: InputKind;
@@ -201,13 +201,13 @@ where
     M: Settle,
     D: BatchPublishingCall<S>,
     D::Input: DecodeWith<C>,
-    D::Injections: Send + Sync,
-    D::Reply: Serialize + Send + Sync,
-    D::Context: BuildBatchContext<M> + Send + Sync + 'static,
-    C: Send + Sync,
+    D::Injections: MaybeSendSync,
+    D::Reply: Serialize + MaybeSendSync,
+    D::Context: BuildBatchContext<M> + MaybeSendSync + 'static,
+    C: MaybeSendSync,
     R: ReplyPublisher<D::Context>,
     PP: PublishPipeline,
-    S: Send + Sync,
+    S: MaybeSendSync,
 {
     type Scratch = Vec<<D::Input as InputKind>::Owned>;
     type Taken = Vec<M>;

@@ -5,19 +5,17 @@
 //! in the value namespace, which is what `include(handler)` passes. The function's future is
 //! nameable through the `Fn` traits, so the runner that needs it `Send` states that at its mount
 //! site ([`Handle`] for [`FnBody`]), and a runner that polls on one thread asks nothing
-//! ([`LocalHandle`] for [`FnBody`]). The expansion itself is the same for both.
+//! ([`Handle`] for [`FnBody`]). The expansion itself is the same for both.
 
-use crate::handler::MaybeSend;
 use core::marker::PhantomData;
+use ruststream_core::{MaybeSend, MaybeSync};
 
 use super::reply::DeclaresReply;
-use super::{Handle, Input, LocalHandle, Verdict};
+use super::{Handle, Input, Verdict};
 use crate::ConnectedBroker;
 use crate::context::Context;
 use crate::settings::{CapsBatches, Declared};
-use crate::slot::{
-    BindSlots, BindSlotsBody, HasSlots, LocalBindSlots, LocalBindSlotsBody, LocalHasSlots,
-};
+use crate::slot::{BindSlots, BindSlotsBody, HasSlots};
 
 /// The first argument of a `#[subscriber]` body: names the declaration that goes with the body.
 ///
@@ -89,8 +87,8 @@ impl<M, F> FnBody<M, F> {
 impl<M, F, In, R, O, C, S> Handle<In, R, O, C, S> for FnBody<M, F>
 where
     In: ?Sized + Input,
-    F: Send
-        + Sync
+    F: MaybeSend
+        + MaybeSync
         + for<'i, 'o, 'c, 'x> BodyCall<
             M,
             &'i In,
@@ -98,7 +96,8 @@ where
             &'c mut Context<'x, C, S>,
             Out = Verdict<In, R>,
         >,
-    for<'i, 'o, 'c, 'x> <F as BodyCall<M, &'i In, &'o O, &'c mut Context<'x, C, S>>>::Fut: Send,
+    for<'i, 'o, 'c, 'x> <F as BodyCall<M, &'i In, &'o O, &'c mut Context<'x, C, S>>>::Fut:
+        MaybeSend,
 {
     fn handle(
         &self,
@@ -106,27 +105,6 @@ where
         outs: &O,
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = Verdict<In, R>> + MaybeSend {
-        (self.body)(BodyTag::new(), input, outs, ctx)
-    }
-}
-
-impl<M, F, In, R, O, C, S> LocalHandle<In, R, O, C, S> for FnBody<M, F>
-where
-    In: ?Sized + Input,
-    F: for<'i, 'o, 'c, 'x> BodyCall<
-            M,
-            &'i In,
-            &'o O,
-            &'c mut Context<'x, C, S>,
-            Out = Verdict<In, R>,
-        >,
-{
-    fn handle(
-        &self,
-        input: &In,
-        outs: &O,
-        ctx: &mut Context<'_, C, S>,
-    ) -> impl Future<Output = Verdict<In, R>> {
         (self.body)(BodyTag::new(), input, outs, ctx)
     }
 }
@@ -218,10 +196,6 @@ impl<M: HasSlots, F> HasSlots for FnBody<M, F> {
     type Markers = M::Markers;
 }
 
-impl<M: LocalHasSlots, F> LocalHasSlots for FnBody<M, F> {
-    type Markers = M::Markers;
-}
-
 impl<M: CapsBatches, F> CapsBatches for FnBody<M, F> {}
 
 impl<M: DeclaresReply, F> DeclaresReply for FnBody<M, F> {
@@ -239,19 +213,6 @@ where
 
     fn bind(self, sources: Sources) -> (Self::Bound, Self::Extra) {
         M::bind_body(self, sources)
-    }
-}
-
-impl<M, F, C, Sources> LocalBindSlots<C, Sources> for FnBody<M, F>
-where
-    C: ConnectedBroker,
-    M: LocalBindSlotsBody<C, Sources, Self>,
-{
-    type Bound = M::Bound;
-    type Extra = M::Extra;
-
-    fn bind_local(self, sources: Sources) -> (Self::Bound, Self::Extra) {
-        M::bind_local_body(self, sources)
     }
 }
 

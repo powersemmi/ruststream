@@ -7,16 +7,18 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::any::type_name;
+use ruststream_core::MaybeSendSync;
 
 use crate::batch::BatchResult;
 use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::context::Context;
 use crate::handler::HandlerOutcome;
 use crate::metadata::{OutgoingKind, OutgoingMessageMetadata};
-use crate::publishing::{LocalPublishingCall, PublishingCall, PublishingDef};
+use crate::publishing::{PublishingCall, PublishingDef};
 use crate::router::{IncludeDef, forms};
 use crate::{CallerName, FixedName, Name, OutgoingDestination, Unnamed};
 
+use super::Handle;
 use super::axis::{
     Axis, AxisDocs, Batch, BatchPair, BatchSet, BatchedAxis, Deserialized, Input, Message, Solo,
     SoloAxis, SoloCarried, SoloDeserialized, SoloPair, SoloSet,
@@ -28,7 +30,6 @@ use super::value::{
     SerializedReply,
 };
 use super::verdict::{Batched, OneByOne};
-use super::{Handle, LocalHandle};
 // The self-serialized vocabulary lives with the publish builder (the general wire seam serves
 // every typed surface); re-exported here so the reply seam keeps reading as one module.
 pub use crate::publish::Serialized;
@@ -46,10 +47,10 @@ pub use crate::publish::Serialized;
             `Message<Headers, Payload>` pair of them, or a `#[derive(Serialized)]` type (its \
             bytes leave as they are)"
 )]
-pub trait ReplyShape: Send + Sync {
+pub trait ReplyShape: MaybeSendSync {
     /// The published payload type (the pair's body, or the reply itself).
     #[doc(hidden)]
-    type Body: Send + Sync;
+    type Body: MaybeSendSync;
     /// The typed header contract riding the reply (`()` when none does).
     #[doc(hidden)]
     type Headers;
@@ -57,7 +58,7 @@ pub trait ReplyShape: Send + Sync {
     type Wire;
 }
 
-impl<R: serde::Serialize + Send + Sync> ReplyShape for R {
+impl<R: serde::Serialize + MaybeSendSync> ReplyShape for R {
     type Body = R;
     type Headers = ();
     type Wire = EncodedReply;
@@ -65,8 +66,8 @@ impl<R: serde::Serialize + Send + Sync> ReplyShape for R {
 
 impl<H, P> ReplyShape for Message<H, P>
 where
-    H: serde::Serialize + Send + Sync,
-    P: serde::Serialize + Send + Sync,
+    H: serde::Serialize + MaybeSendSync,
+    P: serde::Serialize + MaybeSendSync,
 {
     type Body = P;
     type Headers = H;
@@ -80,7 +81,7 @@ pub trait ReplyHeadersSchema<Doc>: ReplyShape {
     fn headers_schema() -> Option<String>;
 }
 
-impl<R: serde::Serialize + Send + Sync, Doc> ReplyHeadersSchema<Doc> for R {
+impl<R: serde::Serialize + MaybeSendSync, Doc> ReplyHeadersSchema<Doc> for R {
     fn headers_schema() -> Option<String> {
         None
     }
@@ -88,8 +89,8 @@ impl<R: serde::Serialize + Send + Sync, Doc> ReplyHeadersSchema<Doc> for R {
 
 impl<H, P, Doc> ReplyHeadersSchema<Doc> for Message<H, P>
 where
-    H: serde::Serialize + Send + Sync,
-    P: serde::Serialize + Send + Sync,
+    H: serde::Serialize + MaybeSendSync,
+    P: serde::Serialize + MaybeSendSync,
     Doc: DocState<H>,
 {
     fn headers_schema() -> Option<String> {
@@ -273,7 +274,7 @@ where
 /// Where a wired reply goes: the reply type's own declaration, or the mount-site name where the
 /// type declares none.
 #[doc(hidden)]
-pub trait ReplyDest<R>: Send + Sync {
+pub trait ReplyDest<R>: MaybeSendSync {
     /// The subject the reply publishes to.
     fn name(&self) -> &str;
 
@@ -395,9 +396,9 @@ impl<A, R, C, H, Doc, Dest> PublishingDef
 where
     A: SoloAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
-    C: Send + Sync,
-    H: Send + Sync,
-    Doc: AxisDocs<A> + Send + Sync,
+    C: MaybeSendSync,
+    H: MaybeSendSync,
+    Doc: AxisDocs<A> + MaybeSendSync,
     Dest: ReplyDest<R>,
 {
     type Input = A::Kind;
@@ -467,10 +468,10 @@ impl<T, R, C, S, H, Doc, Dest> PublishingCall<S>
     for Sealed<ReplyValue<HandleValue<Solo<T>, R, (), C, H, Doc>, Dest>>
 where
     Self: PublishingDef<Input = <Solo<T> as Axis>::Kind, Injections = (), Reply = R, Context = C>,
-    T: Input<Axis = Solo<T>> + Send + Sync + 'static,
+    T: Input<Axis = Solo<T>> + MaybeSendSync + 'static,
     R: ReplyShape,
-    C: Send + Sync,
-    S: Send + Sync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<T, R, (), C, S>,
 {
     async fn call(
@@ -488,10 +489,10 @@ impl<T, R, C, S, H, Doc, Dest> PublishingCall<S>
 where
     Self:
         PublishingDef<Input = <SoloSet<T> as Axis>::Kind, Injections = (), Reply = R, Context = C>,
-    T: Input<Axis = SoloSet<T>> + Send + Sync + 'static,
+    T: Input<Axis = SoloSet<T>> + MaybeSendSync + 'static,
     R: ReplyShape,
-    C: Send + Sync,
-    S: Send + Sync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<T, R, (), C, S>,
 {
     async fn call(
@@ -513,10 +514,10 @@ where
             Reply = R,
             Context = C,
         >,
-    T: Input<Axis = SoloCarried<T>> + Clone + Send + Sync + 'static,
+    T: Input<Axis = SoloCarried<T>> + Clone + MaybeSendSync + 'static,
     R: ReplyShape,
-    C: Send + Sync,
-    S: Send + Sync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<T, R, (), C, S>,
 {
     async fn call(
@@ -538,11 +539,11 @@ where
             Reply = R,
             Context = C,
         >,
-    F: Deserialized + Send + Sync + 'static,
+    F: Deserialized + MaybeSendSync + 'static,
     for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
     R: ReplyShape,
-    C: Send + Sync,
-    S: Send + Sync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: for<'p> Handle<F::Output<'p>, R, (), C, S>,
 {
     async fn call(
@@ -566,11 +567,11 @@ where
             Context = C,
         >,
     Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
-    Hd: Send + Sync + 'static,
-    P: Send + Sync + 'static,
+    Hd: MaybeSendSync + 'static,
+    P: MaybeSendSync + 'static,
     R: ReplyShape,
-    C: Send + Sync,
-    S: Send + Sync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<Message<Hd, P>, R, (), C, S>,
 {
     async fn call(
@@ -582,102 +583,14 @@ where
         self.0.value.body.handle(input, &(), ctx).await
     }
 }
-/// The local twins of the solo reply cells above: the body is a [`LocalHandle`] and its future
-/// is awaited where the delivery is polled. The axes keep their bounds, as on the multi-thread
-/// runner.
-macro_rules! impl_local_reply {
-    ($($axis:ident $(+ $extra:ident)?),+ $(,)?) => {$(
-        // Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
-        #[allow(clippy::future_not_send)]
-        impl<T, R, C, S, H, Doc, Dest> LocalPublishingCall<S>
-            for Sealed<ReplyValue<HandleValue<$axis<T>, R, (), C, H, Doc>, Dest>>
-        where
-            Self: PublishingDef<
-                    Input = <$axis<T> as Axis>::Kind,
-                    Injections = (),
-                    Reply = R,
-                    Context = C,
-                >,
-            T: Input<Axis = $axis<T>> $(+ $extra)? + Send + Sync + 'static,
-            R: ReplyShape,
-            H: LocalHandle<T, R, (), C, S>,
-        {
-            async fn call_local(
-                &self,
-                input: &T,
-                _injections: &(),
-                ctx: &mut Context<'_, C, S>,
-            ) -> Result<R, HandlerOutcome> {
-                self.0.value.body.handle(input, &(), ctx).await
-            }
-        }
-    )+};
-}
-
-impl_local_reply!(Solo, SoloSet, SoloCarried + Clone);
-
-// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
-#[allow(clippy::future_not_send)]
-impl<F, R, C, S, H, Doc, Dest> LocalPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloDeserialized<F>, R, (), C, H, Doc>, Dest>>
-where
-    Self: PublishingDef<
-            Input = <SoloDeserialized<F> as Axis>::Kind,
-            Injections = (),
-            Reply = R,
-            Context = C,
-        >,
-    F: Deserialized + Send + Sync + 'static,
-    for<'p> F::Output<'p>: Input<Axis = SoloDeserialized<F>>,
-    R: ReplyShape,
-    H: for<'p> LocalHandle<F::Output<'p>, R, (), C, S>,
-{
-    async fn call_local(
-        &self,
-        input: &[u8],
-        _injections: &(),
-        ctx: &mut Context<'_, C, S>,
-    ) -> Result<R, HandlerOutcome> {
-        let input = construct::<F, C, S>(input, ctx)?;
-        self.0.value.body.handle(&input, &(), ctx).await
-    }
-}
-
-// Polled on the one thread that hosts the app: `Send` exactly where the types it runs are.
-#[allow(clippy::future_not_send)]
-impl<Hd, P, R, C, S, H, Doc, Dest> LocalPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, (), C, H, Doc>, Dest>>
-where
-    Self: PublishingDef<
-            Input = <SoloPair<Hd, P> as Axis>::Kind,
-            Injections = (),
-            Reply = R,
-            Context = C,
-        >,
-    Message<Hd, P>: Input<Axis = SoloPair<Hd, P>>,
-    Hd: Send + Sync + 'static,
-    P: Send + Sync + 'static,
-    R: ReplyShape,
-    H: LocalHandle<Message<Hd, P>, R, (), C, S>,
-{
-    async fn call_local(
-        &self,
-        input: &Message<Hd, P>,
-        _injections: &(),
-        ctx: &mut Context<'_, C, S>,
-    ) -> Result<R, HandlerOutcome> {
-        self.0.value.body.handle(input, &(), ctx).await
-    }
-}
-
 impl<A, R, C, H, Doc, Dest> BatchPublishingDef
     for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), C, H, Doc>, Dest>>
 where
     A: BatchedAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
-    C: Send + Sync,
-    H: Send + Sync,
-    Doc: AxisDocs<A> + Send + Sync,
+    C: MaybeSendSync,
+    H: MaybeSendSync,
+    Doc: AxisDocs<A> + MaybeSendSync,
     Dest: ReplyDest<R>,
 {
     type Input = A::Kind;
@@ -779,10 +692,10 @@ where
             Reply = R,
         >,
     [T]: Input<Axis = Batch<T>>,
-    T: Send + Sync + 'static,
+    T: MaybeSendSync + 'static,
     R: ReplyShape,
-    C: Send + Sync,
-    S: Send + Sync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<[T], Vec<R>, (), C, S>,
 {
     async fn call(
@@ -806,10 +719,10 @@ where
             Reply = R,
         >,
     [T]: Input<Axis = BatchSet<T>>,
-    T: Send + Sync + 'static,
+    T: MaybeSendSync + 'static,
     R: ReplyShape,
-    C: Send + Sync,
-    S: Send + Sync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<[T], Vec<R>, (), C, S>,
 {
     async fn call(
@@ -833,11 +746,11 @@ where
             Reply = R,
         >,
     [Message<Hd, P>]: Input<Axis = BatchPair<Hd, P>>,
-    Hd: Send + Sync + 'static,
-    P: Send + Sync + 'static,
+    Hd: MaybeSendSync + 'static,
+    P: MaybeSendSync + 'static,
     R: ReplyShape,
-    C: Send + Sync,
-    S: Send + Sync,
+    C: MaybeSendSync,
+    S: MaybeSendSync,
     H: Handle<[Message<Hd, P>], Vec<R>, (), C, S>,
 {
     async fn call(

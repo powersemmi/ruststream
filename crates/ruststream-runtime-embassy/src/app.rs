@@ -65,7 +65,7 @@ pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 /// use core::future::ready;
 ///
 /// use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
-/// use ruststream_runtime::{Context, Deserialized, Input, LocalHandle, SoloDeserialized, local_subscriber};
+/// use ruststream_runtime::{Context, Deserialized, Input, Handle, SoloDeserialized, subscriber};
 /// use ruststream_runtime_embassy::{Control, EmbeddedApp, Mounts};
 ///
 /// /// A reading, as the sensor sends it: the frame's bytes.
@@ -87,7 +87,7 @@ pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 /// /// Logs every reading.
 /// struct OnReading;
 ///
-/// impl LocalHandle<Reading<'_>> for OnReading {
+/// impl Handle<Reading<'_>> for OnReading {
 ///     fn handle(
 ///         &self,
 ///         reading: &Reading<'_>,
@@ -103,7 +103,7 @@ pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 ///
 /// fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
 ///     EmbeddedApp::new().with_broker(bus, |b| {
-///         b.include(local_subscriber(LocalMemorySource::new("sensors/temp"), OnReading).build())
+///         b.include(subscriber(LocalMemorySource::new("sensors/temp"), OnReading).build())
 ///     })
 /// }
 ///

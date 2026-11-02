@@ -4,6 +4,7 @@ use alloc::borrow::ToOwned;
 use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
 use alloc::borrow::Cow;
 use core::num::NonZeroU32;
@@ -268,7 +269,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         meta: HandlerMetadata,
     ) -> Router<B, (HandleRoute<S, H>, Routes), RouteCodec, RouteLayers, RoutePipe>
     where
-        S: Subscriber + Send + 'static,
+        S: Subscriber + MaybeSend + 'static,
         H: Handler<S::Message> + 'static,
     {
         self.with_route(HandleRoute {
@@ -655,7 +656,7 @@ impl<B, Head, Tail, C, Layers, Pipe, Policy, Transforms, Enc, Dest>
     for Router<B, (Head, Tail), C, Layers, Pipe>
 where
     B: Broker + 'static,
-    Head: RetryOpen + RouteMetadata + RouteSubscription<B, Context: Send + Sync + 'static>,
+    Head: RetryOpen + RouteMetadata + RouteSubscription<B, Context: MaybeSendSync + 'static>,
     // The descriptor decides whether there is a publisher of this process's to name at all: where
     // the broker moves the delivery itself, this is the bound that refuses the position and names
     // the descriptor.
@@ -674,8 +675,8 @@ where
         + PublishTransform<
             ForReply<RetryCx<Head, B>>,
             <RetryWire<Transforms, Policy, B, Head> as Publisher>::Options,
-        > + Send
-        + Sync
+        > + MaybeSend
+        + MaybeSync
         + 'static,
     // `FitsOffer` is the other half of the same rule: a transform may name the destination only
     // where the position offers the right, so a declared destination and a naming transform are
@@ -683,8 +684,9 @@ where
     RetryUse<Transforms, Policy, B, Head>: NarrowToUse<Policy>
         + NamesDestination
         + FitsOffer<RetryOfferOf<Head, B, Dest>, Reads, Retry>,
-    RetryPolicy<Transforms, Policy, B, Head>:
-        PublishPolicy<Connected<B>, Live: Publisher + Send + Sync + 'static> + Send + 'static,
+    RetryPolicy<Transforms, Policy, B, Head>: PublishPolicy<Connected<B>, Live: Publisher + MaybeSendSync + 'static>
+        + MaybeSend
+        + 'static,
 {
     type Out = Router<
         B,
@@ -823,9 +825,9 @@ struct ComposedBlanket<Outer, Inner> {
 impl<Outer: BlanketLayer, Inner: BlanketLayer> BlanketLayer for ComposedBlanket<Outer, Inner> {
     fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
-        M: Send + Sync + 'static,
-        C: Send + 'static,
-        S: Send + Sync + 'static,
+        M: MaybeSendSync + 'static,
+        C: MaybeSend + 'static,
+        S: MaybeSendSync + 'static,
         H: Handler<M, C, S> + 'static,
     {
         self.outer
@@ -840,7 +842,7 @@ impl<B, Routes, C, Layers, Pipe, State, RetryPipeline> RouterDef<B, State, Retry
 where
     B: Broker + 'static,
     Routes: RouterDef<B, State, Pipe>,
-    Layers: BlanketLayer + Clone + Send + Sync + 'static,
+    Layers: BlanketLayer + Clone + MaybeSendSync + 'static,
 {
     fn mount<G, PP, Sink>(
         self,
@@ -849,8 +851,8 @@ where
         _retry_pipeline: &RetryPipeline,
         sink: &mut Sink,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
     {
         let composed = ComposedBlanket {
@@ -878,7 +880,7 @@ impl<B, Routes, C, Layers, Pipe, State, RetryPipeline> MountRoute<B, State, Retr
 where
     B: Broker + 'static,
     Routes: RouterDef<B, State, Pipe>,
-    Layers: BlanketLayer + Clone + Send + Sync + 'static,
+    Layers: BlanketLayer + Clone + MaybeSendSync + 'static,
 {
     // A whole router is many registrations, each with its own context; nothing here reads one.
     type Context = ();
@@ -896,8 +898,8 @@ where
         // one, so neither binds here: `RetryOpen` is not implemented for a router.
         _setup: RetrySetup<B, (), Slot>,
     ) where
-        G: BlanketLayer + Clone + Send + Sync + 'static,
-        PP: PublishPipeline + Clone + Send + 'static,
+        G: BlanketLayer + Clone + MaybeSendSync + 'static,
+        PP: PublishPipeline + Clone + MaybeSend + 'static,
         Sink: MountSink<B, State>,
     {
         RouterDef::<B, State, RetryPipeline>::mount(self, global, pipeline, retry_pipeline, sink);

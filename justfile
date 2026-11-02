@@ -60,6 +60,13 @@ check:
     # no codec feature at all; only encoding and decoding may demand one.
     cargo check --workspace --exclude ruststream-no-std-probe --no-default-features \
         --features testing,memory,macros
+    # The core's `send` feature is additive: a build that enables it without the Tokio runner (any
+    # crate may) takes the `Send` bounds in every boxed future of the runtime as well.
+    cargo check -p ruststream-runtime --features ruststream-core/send
+    cargo check -p ruststream-runtime --no-default-features --features alloc,ruststream-core/send
+    # The firmware facade with no serde codec: an embedded handler's `Out` slot mounts, and only
+    # an encoding publish asks for a codec.
+    cargo check -p ruststream --no-default-features --features embassy,macros,memory --tests
     cargo check -p ruststream-no-std-probe
     # The contract builds without `std`, for a Cortex-M4F with an allocator and for a Cortex-M0+,
     # which has no compare-and-swap: there `bytes` takes `extra-platforms`, and the library build
@@ -141,6 +148,9 @@ test:
     cargo test -p ruststream-testing --features embassy,json
     # The same crate on the tokio runner alone: every embedded target gates itself on embassy.
     cargo test -p ruststream-testing --features tokio,json
+    # The Tokio runner off: the contract traits ask nothing of a broker's types, and a broker that
+    # keeps its state in `Rc` runs a body written once for every broker.
+    cargo test --no-default-features --features memory,testing,json,embassy --test local_family
     # The reduced-feature legs CI runs, in CI's order. A module compiled only with a feature off
     # is invisible to the workspace run above, so an API a refactor removed can survive there
     # until CI says otherwise: `codec_free_lanes` and `ui_codec_free` build only where no codec

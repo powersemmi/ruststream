@@ -1635,6 +1635,7 @@ version = "0.8.0"
 dependencies = [
  "bytes",
  "bytes-utils",
+ "critical-section",
  "embassy-futures",
  "embassy-sync",
  "futures",
@@ -1702,9 +1703,11 @@ dependencies = [
  "ruststream-core",
  "ruststream-memory",
  "schemars",
+ "send_wrapper",
  "serde",
  "serde-json-slice",
  "serde_json",
+ "spin",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -1777,6 +1780,7 @@ dependencies = [
  "ruststream-runtime",
  "ruststream-runtime-embassy",
  "ruststream-runtime-tokio",
+ "send_wrapper",
  "serde",
  "serde_json",
  "tokio",
@@ -1838,6 +1842,15 @@ name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+
+[[package]]
+name = "send_wrapper"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd0b0ec5f1c1ca621c432a25813d8d60c88abe6d3e08a3eb9cf37d97a0fe3d73"
+dependencies = [
+ "futures-core",
+]
 
 [[package]]
 name = "serde"
@@ -1995,6 +2008,12 @@ dependencies = [
  "libc",
  "windows-sys",
 ]
+
+[[package]]
+name = "spin"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
 
 [[package]]
 name = "stable_deref_trait"

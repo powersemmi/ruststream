@@ -858,15 +858,6 @@ pub trait HasSlots {
     type Markers;
 }
 
-/// [`HasSlots`] for a definition whose body is a [`LocalHandle`](crate::LocalHandle): its arena
-/// holds [`LocalSlot`](crate::LocalSlot) entries, which is what a local chain reads to bind
-/// them. Machinery; never named directly.
-#[doc(hidden)]
-pub trait LocalHasSlots {
-    /// The slot markers, in the handler signature's parameter order.
-    type Markers;
-}
-
 /// Builds the initial all-unbound attachment tuple for a definition's markers. Machinery behind
 /// `include`; never named directly.
 #[doc(hidden)]
@@ -928,25 +919,6 @@ pub trait BindSlots<C: ConnectedBroker, Sources>: Sized {
     fn bind(self, sources: Sources) -> (Self::Bound, Self::Extra);
 }
 
-/// [`BindSlots`] for a chain started with [`Router::local`](crate::Router::local): instantiates a
-/// slot-carrying definition from sources paired against a broker of the local family.
-///
-/// Implemented next to [`HasSlots`] by a definition whose body is a
-/// [`LocalHandle`](crate::LocalHandle); each slot is a [`LocalSlot`](crate::LocalSlot) over the
-/// source's [`PublishPolicy::Live`](crate::PublishPolicy::Live). Machinery; never named
-/// directly.
-#[doc(hidden)]
-pub trait LocalBindSlots<C: ConnectedBroker, Sources>: Sized {
-    /// The publisher-applied definition type.
-    type Bound;
-
-    /// The extra tuple the startup resolution resolves the injections against.
-    type Extra;
-
-    /// Instantiates the definition and arranges the sources for resolution.
-    fn bind_local(self, sources: Sources) -> (Self::Bound, Self::Extra);
-}
-
 /// Implements [`InitSlots`] for each marker-tuple arity: every position starts as its marker's
 /// [`MissingSlot`].
 /// [`BindSlots`] of a `#[subscriber]` declaration over the body function it wraps: the
@@ -959,17 +931,6 @@ pub trait BindSlotsBody<C: ConnectedBroker, Sources, Body>: Sized {
     type Extra;
     /// See [`BindSlots::bind`].
     fn bind_body(body: Body, sources: Sources) -> (Self::Bound, Self::Extra);
-}
-
-/// [`LocalBindSlots`] of a `#[subscriber]` declaration over the body function it wraps.
-#[doc(hidden)]
-pub trait LocalBindSlotsBody<C: ConnectedBroker, Sources, Body>: Sized {
-    /// See [`LocalBindSlots::Bound`].
-    type Bound;
-    /// See [`LocalBindSlots::Extra`].
-    type Extra;
-    /// See [`LocalBindSlots::bind_local`].
-    fn bind_local_body(body: Body, sources: Sources) -> (Self::Bound, Self::Extra);
 }
 
 macro_rules! impl_init_slots {

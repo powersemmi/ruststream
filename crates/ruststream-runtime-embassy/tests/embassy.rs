@@ -23,18 +23,17 @@ use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream_core::Broker;
 use ruststream_core::IncomingMessage;
 use ruststream_core::{
-    BytesMut, CallerName, LocalPublisher, MessageHeaders, NoHeaders, OutgoingDestination,
+    BytesMut, CallerName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
+};
+use ruststream_core::{MaybeSend, MaybeSendSync};
+use ruststream_runtime::{
+    BlanketLayer, Deserialized, Handle, Input, MessageWire, OpenRoutes, OutEntry, OutSlot, Outs,
+    PublishedThrough, Reads, ReplyShape, Router, RunRoutes, Serialized, SerializedReply,
+    SerializedWire, SoloDeserialized, SubscriberSettings, WireBytes, subscriber,
 };
 use ruststream_runtime::{
-    Clock, Context, Continuation, Delivery, Detach, DispatchFailure, FailurePolicies,
-    HandlerOutcome, HeadersAtOnce, INSTRUMENTED_BODY, LocalDetach, LocalHandler, ScopeDelivery,
-    run_sequential,
-};
-use ruststream_runtime::{
-    Deserialized, Input, LocalBlanketLayer, LocalHandle, LocalOutEntry, MessageWire, OpenRoutes,
-    OutSlot, Outs, PublishedThrough, Reads, ReplyShape, Router, RunRoutes, Serialized,
-    SerializedReply, SerializedWire, SoloDeserialized, SubscriberSettings, WireBytes,
-    local_subscriber,
+    Clock, Context, Continuation, Delivery, Detach, DispatchFailure, FailurePolicies, Handler,
+    HandlerOutcome, HeadersAtOnce, INSTRUMENTED_BODY, ScopeDelivery, run_sequential,
 };
 use ruststream_runtime_embassy::frames::{
     Frame, FrameBroker, FrameDelivery, FramePublish, FrameSource, FrameSubscriber, Frames,
@@ -76,7 +75,7 @@ impl CountDetached {
 impl Detach for CountDetached {
     fn detach<Work>(&self, _work: Work)
     where
-        Work: Future<Output = ()> + Send + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static,
     {
         self.detached.fetch_add(1, Ordering::Relaxed);
     }
@@ -87,7 +86,7 @@ impl Detach for CountDetached {
 
     fn detach_after<Work>(&self, _delay: Duration, _work: Work)
     where
-        Work: Future<Output = ()> + Send + 'static,
+        Work: Future<Output = ()> + MaybeSend + 'static,
     {
         self.detached.fetch_add(1, Ordering::Relaxed);
     }
@@ -144,7 +143,7 @@ struct App {
 #[derive(Default)]
 struct LocalCount(Cell<usize>);
 
-impl LocalDetach for LocalCount {
+impl Detach for LocalCount {
     fn detach<Work>(&self, _work: Work)
     where
         Work: Future<Output = ()> + 'static,
@@ -182,7 +181,7 @@ struct CountReadings {
     seen: &'static AtomicU32,
 }
 
-impl LocalHandle<Reading<'_>> for CountReadings {
+impl Handle<Reading<'_>> for CountReadings {
     fn handle(
         &self,
         reading: &Reading<'_>,
@@ -212,10 +211,13 @@ struct Counted<H> {
     reached: &'static AtomicU32,
 }
 
-impl LocalBlanketLayer for CountDeliveries {
-    fn apply<M, C, S, H>(&self, handler: H) -> impl LocalHandler<M, C, S>
+impl BlanketLayer for CountDeliveries {
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
-        H: LocalHandler<M, C, S>,
+        M: MaybeSendSync + 'static,
+        C: MaybeSend + 'static,
+        S: MaybeSendSync + 'static,
+        H: Handler<M, C, S> + 'static,
     {
         Counted {
             inner: handler,
@@ -224,7 +226,7 @@ impl LocalBlanketLayer for CountDeliveries {
     }
 }
 
-impl<M, C, S, H: LocalHandler<M, C, S>> LocalHandler<M, C, S> for Counted<H> {
+impl<M, C, S, H: Handler<M, C, S>> Handler<M, C, S> for Counted<H> {
     fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = HandlerOutcome> {
         self.reached.fetch_add(1, Ordering::Relaxed);
         self.inner.handle(msg, ctx)
@@ -237,7 +239,7 @@ struct CountBursts {
     readings: &'static AtomicU32,
 }
 
-impl LocalHandle<[Reading<'_>]> for CountBursts {
+impl Handle<[Reading<'_>]> for CountBursts {
     fn handle(
         &self,
         readings: &[Reading<'_>],
@@ -277,7 +279,7 @@ impl ReplyShape for Pong {
 /// The app's request handler: answers every request with a [`Pong`].
 struct Answer;
 
-impl LocalHandle<Reading<'_>, Pong> for Answer {
+impl Handle<Reading<'_>, Pong> for Answer {
     fn handle(
         &self,
         _request: &Reading<'_>,
@@ -328,9 +330,9 @@ impl PublishedThrough<Trail> for Relayed {}
 /// the publish, so its future is not `Send`.
 struct Relay;
 
-impl<T> LocalHandle<Reading<'_>, (), Outs<(T,)>> for Relay
+impl<T> Handle<Reading<'_>, (), Outs<(T,)>> for Relay
 where
-    T: LocalOutEntry<Trail, Wire: LocalPublisher>,
+    T: OutEntry<Trail, Wire: Publisher>,
 {
     async fn handle(
         &self,
@@ -366,24 +368,24 @@ fn routes(app: &'static App) -> impl OpenRoutes<FrameBroker> {
             reached: &app.layered,
         })
         .include(
-            local_subscriber(
+            subscriber(
                 FrameSource::new("readings"),
                 CountReadings { seen: &app.seen },
             )
             .build(),
         )
         .include(
-            local_subscriber(FrameSource::bursts("bursts"), bursts)
+            subscriber(FrameSource::bursts("bursts"), bursts)
                 .batch(BURST)
                 .build(),
         )
         .include(
-            local_subscriber(FrameSource::requests("requests"), Answer)
+            subscriber(FrameSource::requests("requests"), Answer)
                 .reply()
                 .to("pongs")
                 .build(),
         )
-        .include(local_subscriber(FrameSource::events("events"), Relay).build())
+        .include(subscriber(FrameSource::events("events"), Relay).build())
         .out(Trail, FramePublish)
         .build()
 }
@@ -414,7 +416,7 @@ struct WaitOnClock {
     handled: &'static Cell<u32>,
 }
 
-impl LocalHandler<FrameDelivery> for WaitOnClock {
+impl Handler<FrameDelivery> for WaitOnClock {
     async fn handle(&self, delivery: &FrameDelivery, _ctx: &mut Context<'_>) -> HandlerOutcome {
         if delivery.payload() == SPOILED {
             return HandlerOutcome::drop();

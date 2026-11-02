@@ -34,12 +34,12 @@ mod scenarios {
     use futures_core::Stream;
     use ruststream_core::IncomingMessage;
     use ruststream_core::{
-        AckError, Broker, BrokerMoves, ConnectedBroker, HeaderMap, LocalSettle, LocalSubscriber,
+        AckError, Broker, BrokerMoves, ConnectedBroker, HeaderMap, Settle, Subscriber,
         SubscriptionSource,
     };
     use ruststream_runtime::{
-        Clock, Context, Deserialized, HandlerOutcome, Input, IntoSource, LocalHandle,
-        SoloDeserialized, local_subscriber,
+        Clock, Context, Deserialized, Handle, HandlerOutcome, Input, IntoSource, SoloDeserialized,
+        subscriber,
     };
     use ruststream_runtime_embassy::{Control, EmbassyClock, EmbeddedApp, MountSteps, Mounts};
     use static_cell::StaticCell;
@@ -108,7 +108,7 @@ mod scenarios {
         }
     }
 
-    impl LocalSettle for KeyedDelivery {
+    impl Settle for KeyedDelivery {
         fn ack(self) -> impl Future<Output = Result<(), AckError>> {
             self.acked.set(self.acked.get() + 1);
             ready(Ok(()))
@@ -156,7 +156,7 @@ mod scenarios {
         }
     }
 
-    impl LocalSubscriber for KeyedSubscriber {
+    impl Subscriber for KeyedSubscriber {
         type Message = KeyedDelivery;
         type Error = Fault;
 
@@ -260,7 +260,7 @@ mod scenarios {
         record: &'static Record,
     }
 
-    impl LocalHandle<Seq> for Slow {
+    impl Handle<Seq> for Slow {
         fn handle(
             &self,
             seq: &Seq,
@@ -300,7 +300,7 @@ mod scenarios {
         };
         EmbeddedApp::new().with_broker(broker, |b| {
             b.include(
-                local_subscriber(
+                subscriber(
                     KeyedSource,
                     Slow {
                         record: &stand.record,
@@ -319,7 +319,7 @@ mod scenarios {
         };
         EmbeddedApp::new().with_broker(broker, |b| {
             b.include(
-                local_subscriber(
+                subscriber(
                     KeyedSource,
                     Slow {
                         record: &stand.record,
@@ -338,7 +338,7 @@ mod scenarios {
         };
         EmbeddedApp::new().with_broker(broker, |b| {
             b.include(
-                local_subscriber(
+                subscriber(
                     KeyedSource,
                     Slow {
                         record: &stand.record,

@@ -5,7 +5,7 @@ use alloc::vec;
 use core::future::ready;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 use bytes::Bytes;
 use futures::StreamExt;

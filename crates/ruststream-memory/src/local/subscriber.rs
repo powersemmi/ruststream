@@ -1,7 +1,7 @@
 //! The subscription descriptor of the local bus, its subscriber and one delivery.
 
+use super::share::Shared;
 use alloc::borrow::Cow;
-use alloc::rc::Rc;
 use core::convert::Infallible;
 use core::fmt;
 use core::future::ready;
@@ -12,8 +12,8 @@ use core::task::{Context, Poll};
 
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, AddressedCopies, FromName, HeaderMap, IncomingMessage, LocalBatchSubscriber,
-    LocalSettle, LocalSubscriber, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource,
+    AckError, AddressedCopies, BatchSubscriber, FromName, HeaderMap, IncomingMessage,
+    RedeliveryAddress, RedeliveryAddressed, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -173,12 +173,15 @@ impl<const CAP: usize> RedeliveryAddressed<ConnectedLocalMemoryBroker<CAP>> for 
 /// # Ok::<(), LocalMemoryError>(())
 /// ```
 pub struct LocalMemorySubscriber<const CAP: usize> {
-    subscription: Rc<Subscription<CAP>>,
-    bus: Rc<Bus<CAP>>,
+    subscription: Shared<Subscription<CAP>>,
+    bus: Shared<Bus<CAP>>,
 }
 
 impl<const CAP: usize> LocalMemorySubscriber<CAP> {
-    pub(super) const fn new(subscription: Rc<Subscription<CAP>>, bus: Rc<Bus<CAP>>) -> Self {
+    pub(super) const fn new(
+        subscription: Shared<Subscription<CAP>>,
+        bus: Shared<Bus<CAP>>,
+    ) -> Self {
         Self { subscription, bus }
     }
 
@@ -186,7 +189,7 @@ impl<const CAP: usize> LocalMemorySubscriber<CAP> {
         LocalMemoryMessage {
             delivery,
             settled: false,
-            subscription: Rc::clone(&self.subscription),
+            subscription: Clone::clone(&self.subscription),
         }
     }
 }
@@ -205,7 +208,7 @@ impl<const CAP: usize> fmt::Debug for LocalMemorySubscriber<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalSubscriber for LocalMemorySubscriber<CAP> {
+impl<const CAP: usize> Subscriber for LocalMemorySubscriber<CAP> {
     type Message = LocalMemoryMessage<CAP>;
     type Error = Infallible;
 
@@ -214,7 +217,7 @@ impl<const CAP: usize> LocalSubscriber for LocalMemorySubscriber<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalBatchSubscriber for LocalMemorySubscriber<CAP> {
+impl<const CAP: usize> BatchSubscriber for LocalMemorySubscriber<CAP> {
     type Batch = Vec<LocalMemoryMessage<CAP>>;
 
     fn batches(
@@ -321,7 +324,7 @@ pub struct LocalMemoryMessage<const CAP: usize> {
     delivery: Delivery,
     // Set by a settlement, so the drop that follows it releases the place without a requeue.
     settled: bool,
-    subscription: Rc<Subscription<CAP>>,
+    subscription: Shared<Subscription<CAP>>,
 }
 
 impl<const CAP: usize> LocalMemoryMessage<CAP> {
@@ -401,7 +404,7 @@ impl<const CAP: usize> IncomingMessage for LocalMemoryMessage<CAP> {
     }
 }
 
-impl<const CAP: usize> LocalSettle for LocalMemoryMessage<CAP> {
+impl<const CAP: usize> Settle for LocalMemoryMessage<CAP> {
     fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {
         self.settled = true;
         ready(Ok(()))
@@ -429,11 +432,11 @@ mod tests {
     use embassy_futures::block_on;
     use futures::{FutureExt, StreamExt};
     use ruststream_core::{
-        Broker, BytesMut, ConnectedBroker, LocalPublisher, OutgoingMessage, Subscribe,
+        Broker, BytesMut, ConnectedBroker, OutgoingMessage, Publisher, Subscribe,
     };
 
     #[cfg(feature = "testing")]
-    use ruststream_runtime::testing::{Coordinator, LocalTestableBroker};
+    use ruststream_runtime::testing::{Coordinator, TestableBroker};
 
     use ruststream_runtime::RETRY_COUNT_HEADER;
 

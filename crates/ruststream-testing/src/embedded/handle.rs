@@ -6,6 +6,7 @@ use std::fmt;
 use std::pin::pin;
 
 use embassy_futures::poll_once;
+use send_wrapper::SendWrapper;
 
 use ruststream_core::{Lend, OutgoingDestination, OutgoingMessage, RawMessage};
 use ruststream_runtime::SinkOutcome;
@@ -13,7 +14,7 @@ use ruststream_runtime::testing::{
     PublishTarget, PublishedAssertions, RunBroker, SubscriberAssertions, TestError, attribute,
 };
 use ruststream_runtime::{
-    HeadersUnset, LocalPublishSink, MessageBody, PublishBuilder, UnnamedCodec, message_of,
+    HeadersUnset, MessageBody, PublishBuilder, PublishSink, UnnamedCodec, message_of,
 };
 
 use super::TestApp;
@@ -48,8 +49,11 @@ impl fmt::Debug for BrokerHandle<'_> {
 ///
 /// See [`TestApp`].
 pub struct InjectSink<'a> {
-    app: &'a TestApp,
-    broker: RunBroker,
+    // The harness belongs to the test's one thread. The wrapper lets the sink satisfy a contract
+    // that asks for a `Send` future next to a multi-thread runtime, and refuses any use from
+    // another thread.
+    app: SendWrapper<&'a TestApp>,
+    broker: SendWrapper<RunBroker>,
 }
 
 impl fmt::Debug for InjectSink<'_> {
@@ -58,7 +62,7 @@ impl fmt::Debug for InjectSink<'_> {
     }
 }
 
-impl LocalPublishSink for InjectSink<'_> {
+impl PublishSink for InjectSink<'_> {
     // The in-process transport copies what it keeps out of the bytes it is lent.
     type Payload = Lend;
     type Error = TestError;
@@ -70,26 +74,30 @@ impl LocalPublishSink for InjectSink<'_> {
         msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&Self::Options>,
     ) -> SinkOutcome<Self::Error> {
-        let testable = self.broker.testable().ok_or(TestError::ShutDown)?;
-        let coordinator = self.app.coordinator();
-        // The test's own publish is part of the record: it tells a message the test put on a
-        // destination from one the app published there.
-        let recorded = RawMessage::new(msg.name().to_owned(), msg.payload().to_vec())
-            .with_headers(msg.headers().clone());
-        let started = coordinator.test_publish_started();
-        testable.inject(msg);
-        // The app owns the connected form and shuts it down only while it holds the one count:
-        // a stop the message sets off must find this one gone.
-        drop(testable);
-        let hooks = coordinator
-            .record_published(self.broker.scope_id(), recorded, started)
-            .run();
-        // One poll hands the hooks of the test's own publish to the harness, which polls them
-        // beside the app in every step. A hook that waits on the clock stays queued there past
-        // this publish, as one registered on a subscriber does, and finishes when the test
-        // advances the clock or shuts the app down.
-        let _ = poll_once(pin!(hooks));
-        self.app.settle().await.map_err(Into::into)
+        let (app, broker) = (&self.app, &self.broker);
+        SendWrapper::new(async move {
+            let testable = broker.testable().ok_or(TestError::ShutDown)?;
+            let coordinator = app.coordinator();
+            // The test's own publish is part of the record: it tells a message the test put on a
+            // destination from one the app published there.
+            let recorded = RawMessage::new(msg.name().to_owned(), msg.payload().to_vec())
+                .with_headers(msg.headers().clone());
+            let started = coordinator.test_publish_started();
+            testable.inject(msg);
+            // The app owns the connected form and shuts it down only while it holds the one
+            // count: a stop the message sets off must find this one gone.
+            drop(testable);
+            let hooks = coordinator
+                .record_published(broker.scope_id(), recorded, started)
+                .run();
+            // One poll hands the hooks of the test's own publish to the harness, which polls
+            // them beside the app in every step. A hook that waits on the clock stays queued
+            // there past this publish, as one registered on a subscriber does, and finishes when
+            // the test advances the clock or shuts the app down.
+            let _ = poll_once(pin!(hooks));
+            app.settle().await.map_err(Into::into)
+        })
+        .await
     }
 }
 
@@ -114,8 +122,8 @@ impl<'a> BrokerHandle<'a> {
         T: OutgoingDestination,
     {
         let sink = InjectSink {
-            app: self.app,
-            broker: self.broker.clone(),
+            app: SendWrapper::new(self.app),
+            broker: SendWrapper::new(self.broker.clone()),
         };
         message_of(sink, value, UnnamedCodec::new())
     }

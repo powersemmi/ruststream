@@ -1,6 +1,7 @@
 //! The live reply sink: a byte publisher paired with a codec and its transform stacks.
 
 use core::fmt;
+use ruststream_core::MaybeSync;
 
 #[cfg(feature = "std")]
 use futures::lock::Mutex;
@@ -13,7 +14,7 @@ use super::{
 use crate::codec::{Codec, Encoding};
 use crate::lifecycle::BoxError;
 use crate::publish_failure::Refusal;
-use crate::{HeaderMap, LocalPublisher, PayloadForm};
+use crate::{HeaderMap, PayloadForm, Publisher};
 
 /// A byte [`Publisher`](crate::Publisher) paired with a [`Codec`] and a static [`PublishTransform`] stack: what a
 /// reply wiring becomes once the broker connects.
@@ -63,11 +64,11 @@ impl<P, C> TypedPublisher<P, C, PublishTransformIdentity, BatchTransformIdentity
     }
 }
 
-// Written over the local twin, so one body serves a publisher of either family: a runner that
+// Written over the contract trait, so one body serves either runner: a runner that
 // knows its leaf is a `Publisher` and its pipeline a `PublishPipeline` proves these futures
 // `Send` through the forwarding impls.
 #[allow(clippy::future_not_send)]
-impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
+impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// The message a reply starts from: `name` and the encoded `payload` over the publisher's
     /// own base ([`Publisher::base_headers`](crate::Publisher::base_headers)).
     ///
@@ -90,7 +91,7 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
 
     /// Encodes `value`, applies the static transforms (reading the originating delivery through
     /// `cx`), then publishes to `name` through `pipeline`.
-    pub(crate) async fn publish<'e, T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish<'e, T: Serialize + MaybeSync, Cx, PP>(
         &self,
         name: &'e str,
         value: &T,
@@ -100,8 +101,8 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     ) -> Result<(), Refusal>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
-        BL: Sync,
-        Cx: Sync,
+        BL: MaybeSync,
+        Cx: MaybeSync,
         PP: SendThrough<P>,
     {
         let payload =
@@ -122,7 +123,13 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
     /// serializes into the outgoing headers before the transforms run, and the body encodes
     /// through the reply codec.
-    pub(crate) async fn publish_pair<'e, Hd: Serialize + Sync, T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish_pair<
+        'e,
+        Hd: Serialize + MaybeSync,
+        T: Serialize + MaybeSync,
+        Cx,
+        PP,
+    >(
         &self,
         name: &'e str,
         headers: &Hd,
@@ -133,8 +140,8 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     ) -> Result<(), Refusal>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
-        BL: Sync,
-        Cx: Sync,
+        BL: MaybeSync,
+        Cx: MaybeSync,
         PP: SendThrough<P>,
     {
         let payload =
@@ -157,7 +164,7 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// instead of the per-message [`PublishTransform`] one. Used per reply on the batch path: the
     /// per-message transforms do not run for batched replies (a transform wanted on both paths is
     /// added to each, reusing it on the batch side with [`for_batch`]).
-    pub(crate) async fn publish_batched<'e, T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish_batched<'e, T: Serialize + MaybeSync, Cx, PP>(
         &self,
         name: &'e str,
         value: &T,
@@ -166,9 +173,9 @@ impl<P: LocalPublisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         encode: <P::Payload as PayloadForm>::Encode<'e>,
     ) -> Result<(), Refusal>
     where
-        PL: Sync,
+        PL: MaybeSync,
         BL: BatchPublishTransform<Cx, P::Options>,
-        Cx: Sync,
+        Cx: MaybeSync,
         PP: SendThrough<P>,
     {
         let payload =

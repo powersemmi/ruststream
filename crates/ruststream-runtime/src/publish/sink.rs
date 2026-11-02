@@ -6,7 +6,9 @@ use core::error::Error as StdError;
 use crate::codec::Codec;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
-use crate::{HeaderMap, OutgoingFor, PayloadForm, Publisher, Transaction};
+use crate::{
+    HeaderMap, MaybeSend, MaybeSendSync, OutgoingFor, PayloadForm, Publisher, Transaction,
+};
 pub use ruststream_core::{SinkOutcome, SinkRefusal};
 
 /// The byte sink a publish builder resolves down to.
@@ -51,7 +53,7 @@ pub use ruststream_core::{SinkOutcome, SinkRefusal};
 ///     }
 /// }
 /// ```
-pub trait PublishSink: Send {
+pub trait PublishSink: MaybeSend {
     /// How the publisher or transaction underneath consumes the payload, forwarded so the
     /// builder encodes into the form it declared. See
     /// [`Publisher::Payload`](crate::Publisher::Payload).
@@ -66,7 +68,7 @@ pub trait PublishSink: Send {
     /// This is the type a broker's builder steps are bounded on: an extension trait written
     /// `where Sink: PublishSink<Options = MyOptions>` appears on a builder over that broker's
     /// publisher and on no other. See [`Publisher::Options`](crate::Publisher::Options).
-    type Options: Clone + Send + Sync + 'static;
+    type Options: Clone + MaybeSendSync + 'static;
 
     /// Sends one message into the sink, with the settings the builder's steps put on it.
     ///
@@ -83,7 +85,7 @@ pub trait PublishSink: Send {
         &mut self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error>> + Send;
+    ) -> impl Future<Output = SinkOutcome<Self::Error>> + MaybeSend;
 
     /// The headers the sink contributes underneath the publish's own, or `None` when it
     /// contributes nothing.
@@ -109,7 +111,7 @@ impl<P: Publisher> PublishSink for &P {
         &mut self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error>> + Send {
+    ) -> impl Future<Output = SinkOutcome<Self::Error>> + MaybeSend {
         (**self).publish_kept(msg, options)
     }
 
@@ -129,100 +131,13 @@ impl<T: Transaction> PublishSink for &mut T {
         &mut self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error>> + Send {
+    ) -> impl Future<Output = SinkOutcome<Self::Error>> + MaybeSend {
         let sent = (**self).publish(msg, options);
         async move { sent.await.map_err(SinkRefusal::returned::<T::Payload>) }
     }
 
     fn base_headers(&self) -> Option<&HeaderMap> {
         (**self).base_headers()
-    }
-}
-
-/// The byte sink of a publish builder on a runner that polls every delivery on one thread:
-/// [`PublishSink`] without `Send` on the sink or on its send.
-///
-/// The builder is generic over this trait, so the same steps and terminals reach an `Out` slot of
-/// the local family. Every [`PublishSink`] is one through a forwarding impl whose future is the
-/// sink's own, so a publish on the multi-thread runner stays `Send`. A broker's builder steps
-/// bounded on [`PublishSink`] keep reaching every sink of that family.
-///
-/// # Examples
-///
-/// ```
-/// use ruststream_runtime::{LocalPublishSink, PublishBuilder};
-///
-/// /// The per-message settings of a device broker whose publisher is not `Send`.
-/// #[derive(Clone, Default)]
-/// struct RadioOptions {
-///     power: Option<u8>,
-/// }
-///
-/// trait RadioSteps {
-///     fn power(self, power: u8) -> Self;
-/// }
-///
-/// impl<Sink, Body, Enc, Hdrs, Dest> RadioSteps for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
-/// where
-///     Sink: LocalPublishSink<Options = RadioOptions>,
-/// {
-///     fn power(mut self, power: u8) -> Self {
-///         self.options_mut()
-///             .get_or_insert_with(RadioOptions::default)
-///             .power = Some(power);
-///         self
-///     }
-/// }
-/// ```
-pub trait LocalPublishSink {
-    /// See [`PublishSink::Payload`].
-    type Payload: PayloadForm;
-
-    /// See [`PublishSink::Error`].
-    type Error: StdError + Send + Sync + 'static;
-
-    /// See [`PublishSink::Options`].
-    type Options: Clone + Send + Sync + 'static;
-
-    /// Sends one message into the sink. See [`PublishSink::send`].
-    ///
-    /// # Errors
-    ///
-    /// See [`PublishSink::send`].
-    ///
-    /// # Cancel safety
-    ///
-    /// See [`PublishSink::send`].
-    fn send(
-        &mut self,
-        msg: OutgoingFor<'_, Self::Payload>,
-        options: Option<&Self::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error>>;
-
-    /// See [`PublishSink::base_headers`].
-    fn base_headers(&self) -> Option<&HeaderMap> {
-        None
-    }
-}
-
-// A forwarding call: the future is the multi-thread sink's own, so a publish whose sink is known
-// to be a `PublishSink` proves its future `Send` through this impl.
-impl<Sink: PublishSink> LocalPublishSink for Sink {
-    type Payload = Sink::Payload;
-    type Error = Sink::Error;
-    type Options = Sink::Options;
-
-    #[inline]
-    fn send(
-        &mut self,
-        msg: OutgoingFor<'_, Self::Payload>,
-        options: Option<&Self::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error>> {
-        PublishSink::send(self, msg, options)
-    }
-
-    fn base_headers(&self) -> Option<&HeaderMap> {
-        PublishSink::base_headers(self)
     }
 }
 
