@@ -7,7 +7,9 @@
 
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream_runtime::{Outgoing, SlotContext};
+use std::error::Error;
+
+use ruststream_runtime::{Outgoing, PublishLayer, PublishNext, PublishPipeline, SlotContext};
 
 use super::error::{DownPublish, Job};
 
@@ -171,4 +173,50 @@ async fn a_refused_publish_of_a_value_s_own_bytes_returns_them() {
         .published::<Job>("fallback")
         .assert_called_once()
         .with_raw(b"own bytes");
+}
+
+/// An app-wide layer that stamps and rewrites what leaves for the primary destination only, so the
+/// fallback shows what the refused send carried.
+#[derive(Clone)]
+struct StampPrimary;
+
+impl PublishLayer for StampPrimary {
+    async fn on_publish<'a, N: PublishPipeline, P: Publisher>(
+        &'a self,
+        out: &'a mut Outgoing<'_>,
+        next: PublishNext<'a, N, P>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if out.name() == "primary" {
+            out.headers_mut().insert("x-layer", "yes");
+            out.set_payload(&b"layered"[..]);
+        }
+        next.run(out).await
+    }
+}
+
+/// The message the app's publish layers rewrote is the one the error returns.
+#[tokio::test(start_paused = true)]
+async fn a_refused_publish_under_a_publish_layer_returns_the_message_it_left() {
+    let app = RustStream::new(AppInfo::new("relay", "0.1.0"))
+        .publish_layer(StampPrimary)
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(relay_rewritten)
+                .out(Primary, DownPublish)
+                .out(DefaultSlot, Publish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&Job { id: 9 })
+        .to("relay-rewritten")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Job>("fallback")
+        .assert_called_once()
+        .with_raw(b"layered")
+        .with_header("x-layer", "yes");
 }
