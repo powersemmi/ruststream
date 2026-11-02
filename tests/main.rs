@@ -18,6 +18,7 @@ mod app_dispatch;
 mod app_start;
 mod app_trait;
 mod asyncapi;
+mod asyncapi_compio;
 mod batch_reply_context;
 mod batch_router_coverage;
 mod batch_seek;

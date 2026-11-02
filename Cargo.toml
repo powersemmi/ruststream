@@ -1107,6 +1107,7 @@ tokio = [
     "alloc",
     "dep:ruststream-runtime-tokio",
     "dep:ruststream-cli",
+    "ruststream-cli/tokio",
     "ruststream-memory?/std",
     "ruststream-testing?/tokio",
 ]
@@ -1116,7 +1117,13 @@ embassy = [
     "ruststream-testing?/embassy",
 ]
 # The compio runner: one runtime per core, on io_uring where the kernel has it.
-compio = ["alloc", "dep:ruststream-runtime-compio", "ruststream-memory?/embassy"]
+compio = [
+    "alloc",
+    "dep:ruststream-runtime-compio",
+    "dep:ruststream-cli",
+    "ruststream-cli/compio",
+    "ruststream-memory?/embassy",
+]
 # The loggers an app selects with `.logger(..)`; each feature compiles its logger into the crates
 # that report, and nothing is reported until the app selects one. The tokio runner turns `tracing`
 # on; a heap-backed embassy app turns it on itself.
@@ -1210,7 +1217,7 @@ ruststream-memory = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }
 ruststream-testing = { workspace = true, optional = true }
-ruststream-cli = { workspace = true, optional = true, features = ["tokio"] }
+ruststream-cli = { workspace = true, optional = true }
 ruststream-conformance = { workspace = true, optional = true }
 ruststream-macros = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }

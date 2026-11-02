@@ -8,6 +8,9 @@ pub use ruststream_runtime_compio::{
     RunningApp, RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
 };
 
+/// The entry point `#[ruststream::app(runtime = compio)]` expands to.
+pub use ruststream_cli::compio::run_main;
+
 /// Time for service code on the compio runner: the sleep that runs on the app's clock.
 pub mod time {
     pub use ruststream_runtime_compio::time::sleep;
