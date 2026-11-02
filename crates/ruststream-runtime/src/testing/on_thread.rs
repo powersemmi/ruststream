@@ -1,7 +1,7 @@
 //! A value the harness keeps for a test that runs on one thread.
 //!
-//! With the tokio runner a recorded value or a registered hook is `Send + Sync`, as the bound of
-//! the code that produced it says. Without it the app and the test share a thread, nothing in the
+//! With the tokio or the compio runner a recorded value or a registered hook is `Send + Sync`, as
+//! the bound of the code that produced it says. Without one the app and the test share a thread, nothing in the
 //! contract asks for `Send`, and the harness's records still sit behind a coordinator that crosses
 //! threads in type. The wrapper there holds the value for that thread alone and refuses a touch
 //! from any other.

@@ -23,8 +23,8 @@ use crate::bindable::Bindable;
 /// [`Connected`](Self::Connected) form. Publishers are likewise produced by broker-specific
 /// constructors.
 ///
-/// The tokio runner moves the broker across tasks, so it asks for `Send + Sync` of the
-/// brokers it runs.
+/// The tokio and compio runners move the broker across tasks and threads, so they ask for
+/// `Send + Sync` of the brokers they run.
 ///
 /// # Writing a broker crate
 ///
@@ -110,8 +110,8 @@ use crate::bindable::Bindable;
 /// [`PublishPolicy`](crate::PublishPolicy) and [`DefaultPublish`](crate::DefaultPublish))
 /// run once, while the app starts or stops, and carry no `Send` on their futures. A broker
 /// whose client holds `Rc` or `RefCell` (a thread-per-core client, an embedded network
-/// stack) implements them as they are, and the embedded runner runs it. The tokio runner
-/// asks for `Send + Sync` where it moves a broker or spawns a subscription loop.
+/// stack) implements them as they are, and the embedded runner runs it. The tokio and compio
+/// runners ask for `Send + Sync` where they move a broker or spawn a subscription loop.
 ///
 /// The per-message traits ([`Subscriber`](crate::Subscriber), [`Settle`](crate::Settle),
 /// [`Publisher`](crate::Publisher) and the capability traits) are one trait per concept for
@@ -119,7 +119,7 @@ use crate::bindable::Bindable;
 /// that moves work between threads is in the build, and for nothing otherwise: the same
 /// `Publisher` is implemented by a broker on the tokio runner and by one on the embedded runner.
 /// A build with both takes the stricter bound, so a type that holds `Rc` does not implement the
-/// traits next to the tokio runner, and the compiler says so.
+/// traits next to the tokio or the compio runner, and the compiler says so.
 ///
 /// Error types keep `Send + Sync + 'static`: a broker maps its client's error into an error type
 /// of its own.
@@ -344,13 +344,14 @@ pub trait ConnectedBroker: Sized + 'static {
 /// `S: SubscriptionSource<Connected<B>>` instead of spelling the associated type projection.
 pub type Connected<B> = <B as Broker>::Connected;
 
-/// A broker the tokio runner can run: [`Broker`] with `Send + Sync` on the broker and on its
-/// connected form.
+/// A broker the tokio and compio runners can run: [`Broker`] with `Send + Sync` on the broker and
+/// on its connected form.
 ///
 /// The lifecycle traits carry no `Send`, so a broker whose client holds `Rc` or `RefCell` can
-/// implement them. The tokio runner moves a broker and its connected form across the tasks of a
-/// multi-thread pool, and asks for this bound where it does. Every `Broker` whose types are
-/// `Send + Sync` and `'static` implements it, so a broker crate writes nothing for it.
+/// implement them. The tokio and compio runners move a broker and its connected form across the
+/// tasks of a multi-thread pool or the cores of a service, and ask for this bound where they do.
+/// Every `Broker` whose types are `Send + Sync` and `'static` implements it, so a broker crate
+/// writes nothing for it.
 ///
 /// # Examples
 ///
@@ -363,10 +364,10 @@ pub type Connected<B> = <B as Broker>::Connected;
 /// }
 /// ```
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a broker the tokio runner can run",
+    message = "`{Self}` is not a broker the tokio and compio runners can run",
     label = "not a `Send + Sync + 'static` broker",
-    note = "the tokio runner moves a broker and its connected form across threads, so both must \
-            be `Send + Sync + 'static`",
+    note = "the tokio and compio runners move a broker and its connected form across threads, so \
+            both must be `Send + Sync + 'static`",
     note = "a broker whose client holds `Rc` or `RefCell` runs on the embedded runner, or keeps \
             the client's shared state in `Arc` and `Mutex` to run here"
 )]

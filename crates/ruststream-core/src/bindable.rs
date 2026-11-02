@@ -7,7 +7,7 @@
 //! cannot provide, and the registration order stops mattering (a bidirectional bridge binds
 //! both directions up front).
 
-// The cold path of the contract carries no Send; the tokio runner asks for it where it spawns.
+// The cold path of the contract carries no Send; the tokio and compio runners ask for it where they spawn.
 #![allow(clippy::future_not_send)]
 
 use alloc::boxed::Box;

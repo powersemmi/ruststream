@@ -1,7 +1,7 @@
 //! The subscription sources the core ships: a bare name, a kind left unnamed until the mount
 //! site names it, and a start position wrapped around another source.
 
-// The cold path of the contract carries no Send; the tokio runner asks for it where it spawns.
+// The cold path of the contract carries no Send; the tokio and compio runners ask for it where they spawn.
 #![allow(clippy::future_not_send)]
 
 use super::{NameText, name_str, static_text};
