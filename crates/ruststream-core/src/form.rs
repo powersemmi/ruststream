@@ -351,4 +351,26 @@ mod tests {
             "bytes the pipeline was lent are lent on, with nothing copied on the way",
         );
     }
+
+    /// A stage that hands a message on to a taking transport leaves it holding the destination
+    /// alone: lent bytes are copied, owned ones move, and a consumed message leaves empty.
+    #[test]
+    fn a_taking_transport_is_handed_the_bytes_in_whatever_form_the_stage_held_them() {
+        let mut spent = None;
+        let lent_bytes = b"lent".to_vec();
+        let lent = <Lend as PayloadForm>::rebuilt("t".into(), &lent_bytes, Headers::new());
+        let handed = <Take as PayloadForm>::handed_on(lent, &mut spent);
+        assert_eq!(handed.payload(), b"lent");
+
+        let mut spent = None;
+        let owned = Outgoing::new("t", PayloadBuf::from(&b"owned"[..]));
+        let handed = <Take as PayloadForm>::handed_on(owned, &mut spent);
+        assert_eq!(handed.payload(), b"owned");
+
+        let mut spent = None;
+        let mut consumed = Outgoing::new("t", b"gone".as_slice());
+        consumed.consume();
+        let handed = <Take as PayloadForm>::handed_on(consumed, &mut spent);
+        assert_eq!(handed.payload(), b"");
+    }
 }

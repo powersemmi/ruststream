@@ -363,6 +363,31 @@ mod tests {
     }
 
     #[test]
+    fn a_default_buffer_is_empty_and_keeps_its_room() {
+        let buf = FixedBuf::<6>::default();
+        assert!(buf.is_empty());
+        assert_eq!(buf.capacity(), 6);
+    }
+
+    #[test]
+    fn a_buffer_reads_as_a_byte_slice() {
+        fn length(bytes: impl AsRef<[u8]>) -> usize {
+            bytes.as_ref().len()
+        }
+        let buf = FixedBuf::<8>::try_from(&b"abc"[..]).unwrap();
+        assert_eq!(length(&buf), 3);
+    }
+
+    #[test]
+    fn buffers_are_equal_by_their_bytes() {
+        let small = FixedBuf::<4>::try_from(&b"ab"[..]).unwrap();
+        let same = FixedBuf::<4>::try_from(&b"ab"[..]).unwrap();
+        let other = FixedBuf::<4>::try_from(&b"ac"[..]).unwrap();
+        assert_eq!(small, same);
+        assert_ne!(small, other);
+    }
+
+    #[test]
     fn debug_names_capacity_and_bytes() {
         let buf = FixedBuf::<4>::try_from(&b"a"[..]).unwrap();
         let mut text = FixedBuf::<64>::new();

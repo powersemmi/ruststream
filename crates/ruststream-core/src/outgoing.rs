@@ -595,6 +595,31 @@ mod tests {
     }
 
     #[test]
+    fn a_consumed_message_is_written_again_from_nothing() {
+        let mut out = Outgoing::new("t", b"body".as_slice());
+        out.consume();
+        assert!(out.is_consumed());
+        assert_eq!(out.payload(), b"");
+
+        out.payload_mut().extend_from_slice(b"again");
+
+        assert!(!out.is_consumed());
+        assert_eq!(out.payload(), b"again");
+    }
+
+    #[test]
+    fn the_payload_a_transport_keeps_is_copied_from_lent_bytes_and_empty_once_consumed() {
+        let body = b"body".to_vec();
+        let mut lent = <Lend as PayloadForm>::rebuilt("t".into(), &body, Headers::new());
+        assert!(matches!(lent.payload, Payload::Lent(_)));
+        assert_eq!(lent.take_payload(), b"body".as_slice());
+
+        let mut consumed = Outgoing::new("t", b"body".as_slice());
+        consumed.consume();
+        assert!(consumed.take_payload().is_empty());
+    }
+
+    #[test]
     fn a_lent_payload_is_copied_where_something_writes_and_nowhere_else() {
         // What a publish stage rebuilding a message starts from: a transform that stamps a header
         // reads the payload and never copies it, and the copy happens at the first write.
