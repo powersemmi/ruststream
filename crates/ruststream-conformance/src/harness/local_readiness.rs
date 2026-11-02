@@ -10,11 +10,12 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use futures::Stream;
-use futures::task::{ArcWake, noop_waker, waker};
+use futures::task::{ArcWake, waker};
 use ruststream_core::{
     AckError, Broker, ConnectedBroker, OutgoingMessage, Publisher, ReadyHint, Settle, Subscriber,
     SubscriptionSource,
 };
+use tokio::sync::Notify;
 use tokio::time::timeout;
 
 use crate::helpers::unique_subject;
@@ -30,10 +31,14 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(2);
 ///
 /// | Step | Asserts |
 /// |---|---|
-/// | after a publish, before any poll | the probe says a delivery may be ready |
-/// | after a poll that returned `Pending` | a publish wakes the waker of that poll, and the probe says a delivery may be ready |
-/// | with two deliveries queued, one taken | whenever the probe says nothing may be ready, a poll returns `Pending` |
-/// | after the broker shut down | the probe says the stream may be ready, and the next poll yields the end |
+/// | a poll that returned `Pending` | a publish wakes the waker of that poll, within a deadline |
+/// | after such a wake | whenever the probe says nothing may be ready, the next poll returns `Pending` rather than the delivery |
+/// | with two deliveries queued | each one arrives by the same rule |
+/// | after the broker shut down | the shutdown wakes the parked poll, and the stream yields the end |
+///
+/// A delivery may take a moment to reach the subscriber after its publish returned, as on a
+/// socket: the suite waits for it within a deadline, and a probe that says nothing is ready
+/// before the delivery has arrived is correct.
 ///
 /// A broker whose probe is the constant `true` passes: the suite checks that a probe never hides a
 /// delivery, not that it is exact. A broker whose subscriber returns no probe passes the same way.
@@ -64,9 +69,9 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(2);
 ///
 /// # Panics
 ///
-/// Panics with a message naming the step when the probe says nothing may be ready while the
-/// stream has a delivery or its end to yield, when a publish does not wake a poll that returned
-/// `Pending`, or when a step hangs.
+/// Panics with a message naming the step when the probe says nothing may be ready after a wake
+/// while the stream yields the delivery that woke it, when a publish or the shutdown does not wake
+/// a poll that returned `Pending`, or when a step hangs.
 pub async fn local_readiness<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_broker: MkBroker,
     make_source: MkSrc,
@@ -90,73 +95,135 @@ pub async fn local_readiness<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     let probe = subscriber.ready_hint();
     let mut stream = pin!(subscriber.stream());
     let wakes = Arc::new(Wakes::default());
-    let counting = waker(Arc::clone(&wakes));
 
+    // A delivery counts as arrived once the stream has yielded it or woken the task for it: a
+    // transport may take a moment between the end of a publish and the delivery's arrival.
     publish(&publisher, &subject, b"first").await;
-    assert!(
-        probe.may_be_ready(),
-        "local_readiness: the probe said nothing may be ready after a publish and before the \
-         first poll; a delivery waits",
-    );
-    settle(taken(poll(stream.as_mut(), &counting), "first")).await;
-    assert!(
-        poll(stream.as_mut(), &counting).is_pending(),
-        "local_readiness: the stream yielded with nothing published",
-    );
+    settle(taken(
+        arrive(stream.as_mut(), &probe, &wakes, None).await,
+        "first",
+    ))
+    .await;
 
-    let woken = wakes.count();
+    let parked = park(stream.as_mut(), &wakes);
     publish(&publisher, &subject, b"second").await;
-    assert!(
-        wakes.count() > woken,
-        "local_readiness: a publish did not wake the poll that returned `Pending`; the \
-         stream registers the waker whenever it returns `Pending`",
-    );
-    assert!(
-        probe.may_be_ready(),
-        "local_readiness: the probe said nothing may be ready after a wake; the delivery that \
-         woke the task waits",
-    );
-    settle(taken(poll(stream.as_mut(), &counting), "second")).await;
+    let asked = awake(&wakes, &probe, parked, "a publish").await;
+    settle(taken(
+        arrive(stream.as_mut(), &probe, &wakes, Some(asked)).await,
+        "second",
+    ))
+    .await;
 
     publish(&publisher, &subject, b"third").await;
     publish(&publisher, &subject, b"fourth").await;
-    settle(taken(poll(stream.as_mut(), &counting), "third")).await;
-    if !probe.may_be_ready() {
-        assert!(
-            poll(stream.as_mut(), &noop_waker()).is_pending(),
-            "local_readiness: the probe said nothing may be ready, yet the stream yielded a \
-             delivery that waited in the queue",
-        );
-    }
-    settle(taken(poll(stream.as_mut(), &counting), "fourth")).await;
+    settle(taken(
+        arrive(stream.as_mut(), &probe, &wakes, None).await,
+        "third",
+    ))
+    .await;
+    settle(taken(
+        arrive(stream.as_mut(), &probe, &wakes, None).await,
+        "fourth",
+    ))
+    .await;
 
+    let parked = park(stream.as_mut(), &wakes);
     within("shutdown", connected.shutdown())
         .await
         .unwrap_or_else(|err| panic!("local_readiness: shutdown failed: {err}"));
+    let asked = awake(&wakes, &probe, parked, "the shutdown").await;
     assert!(
-        probe.may_be_ready(),
-        "local_readiness: the probe said nothing may be ready after the shutdown; the stream \
-         has its end to yield",
-    );
-    assert!(
-        matches!(poll(stream.as_mut(), &counting), Poll::Ready(None)),
+        matches!(
+            arrive(stream.as_mut(), &probe, &wakes, Some(asked)).await,
+            Poll::Ready(None)
+        ),
         "local_readiness: the stream did not end after the shutdown",
     );
 }
 
-/// Counts the wakes of the poll that registered it.
+/// Counts the wakes of the poll that registered it, and lets a step wait for the next one.
 #[derive(Default)]
-struct Wakes(AtomicUsize);
+struct Wakes {
+    count: AtomicUsize,
+    woken: Notify,
+}
 
 impl Wakes {
     fn count(&self) -> usize {
-        self.0.load(Ordering::Relaxed)
+        self.count.load(Ordering::Relaxed)
     }
 }
 
 impl ArcWake for Wakes {
     fn wake_by_ref(arc_self: &Arc<Self>) {
-        arc_self.0.fetch_add(1, Ordering::Relaxed);
+        arc_self.count.fetch_add(1, Ordering::Relaxed);
+        arc_self.woken.notify_one();
+    }
+}
+
+/// Polls the stream, which has nothing to yield, and returns the wake count it registered at.
+fn park<S: Stream>(stream: Pin<&mut S>, wakes: &Arc<Wakes>) -> usize {
+    let at = wakes.count();
+    let counting = waker(Arc::clone(wakes));
+    assert!(
+        poll(stream, &counting).is_pending(),
+        "local_readiness: the stream yielded with nothing published",
+    );
+    at
+}
+
+/// Waits for a wake after the count `parked` and answers what the probe says then: `cause` must
+/// wake the poll that returned `Pending`, because the stream registers the waker whenever it
+/// returns `Pending`.
+async fn awake<P: ReadyHint>(wakes: &Wakes, probe: &P, parked: usize, cause: &str) -> bool {
+    timeout(STEP_TIMEOUT, async {
+        while wakes.count() <= parked {
+            wakes.woken.notified().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "local_readiness: {cause} did not wake the poll that returned `Pending` within \
+             {STEP_TIMEOUT:?}; the stream registers the waker whenever it returns `Pending`"
+        )
+    });
+    probe.may_be_ready()
+}
+
+/// Polls until the stream yields something other than `Pending`.
+///
+/// `asked` is the answer of the probe to a wake the caller already waited for. Each `Pending` is followed by a wait for the next wake, and after the wake the probe is asked
+/// before the poll: a probe that says nothing may be ready while the poll that follows yields a
+/// delivery hid it from the app, which would have skipped that poll. A wake that finds nothing
+/// yet, as a transport that is still receiving may cause, goes back to waiting.
+async fn arrive<S, P>(
+    mut stream: Pin<&mut S>,
+    probe: &P,
+    wakes: &Arc<Wakes>,
+    mut asked: Option<bool>,
+) -> Poll<Option<S::Item>>
+where
+    S: Stream,
+    P: ReadyHint,
+{
+    let counting = waker(Arc::clone(wakes));
+    loop {
+        let at = wakes.count();
+        match poll(stream.as_mut(), &counting) {
+            Poll::Pending => {
+                asked = Some(awake(wakes, probe, at, "the delivery").await);
+            }
+            ready @ Poll::Ready(_) => {
+                assert!(
+                    asked != Some(false),
+                    "local_readiness: the probe said nothing may be ready after a wake, yet the \
+                     stream yielded the delivery that woke the task; the app would have skipped \
+                     the poll",
+                );
+                return ready;
+            }
+        }
     }
 }
 
@@ -207,8 +274,10 @@ async fn within<Output>(step: &str, work: impl Future<Output = Output>) -> Outpu
 
 #[cfg(test)]
 mod tests {
+    use std::pin::Pin;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::{Context, Poll, Waker};
 
     use futures::Stream;
     use ruststream_core::{
@@ -278,6 +347,107 @@ mod tests {
         }
     }
 
+    /// A source whose deliveries take `held` polls to arrive, as on a socket: each of those polls
+    /// wakes the task and answers `Pending`, and the probe says nothing is ready until the
+    /// delivery has arrived.
+    struct InTransit<Src> {
+        inner: Src,
+        held: usize,
+    }
+
+    struct InTransitSubscriber<Sub> {
+        inner: Sub,
+        left: Arc<AtomicUsize>,
+        held: usize,
+    }
+
+    struct Arrived<Probe> {
+        inner: Probe,
+        left: Arc<AtomicUsize>,
+    }
+
+    impl<Probe: ReadyHint> ReadyHint for Arrived<Probe> {
+        fn may_be_ready(&self) -> bool {
+            self.left.load(Ordering::Relaxed) == 0 && self.inner.may_be_ready()
+        }
+    }
+
+    struct Hold<Inner> {
+        inner: Pin<Box<Inner>>,
+        left: Arc<AtomicUsize>,
+        held: usize,
+    }
+
+    impl<Inner: Stream> Stream for Hold<Inner> {
+        type Item = Inner::Item;
+
+        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let left = self.left.load(Ordering::Relaxed);
+            if left > 0 {
+                self.left.store(left - 1, Ordering::Relaxed);
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+            let polled = self.inner.as_mut().poll_next(cx);
+            if polled.is_ready() {
+                self.left.store(self.held, Ordering::Relaxed);
+            }
+            polled
+        }
+    }
+
+    impl<Sub: Subscriber> Subscriber for InTransitSubscriber<Sub> {
+        type Message = Sub::Message;
+        type Error = Sub::Error;
+
+        fn stream(
+            &mut self,
+        ) -> impl Stream<Item = Result<Self::Message, Self::Error>> + MaybeSend + '_ {
+            Hold {
+                inner: Box::pin(self.inner.stream()),
+                left: Arc::clone(&self.left),
+                held: self.held,
+            }
+        }
+
+        fn ready_hint(&self) -> impl ReadyHint + MaybeSendSync + 'static {
+            Arrived {
+                inner: self.inner.ready_hint(),
+                left: Arc::clone(&self.left),
+            }
+        }
+    }
+
+    impl<C: ConnectedBroker, Src: SubscriptionSource<C>> SubscriptionSource<C> for InTransit<Src> {
+        type Subscriber = InTransitSubscriber<Src::Subscriber>;
+        type Copies = Src::Copies;
+
+        fn name(&self) -> &str {
+            self.inner.name()
+        }
+
+        async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+            Ok(InTransitSubscriber {
+                inner: self.inner.subscribe(connected).await?,
+                left: Arc::new(AtomicUsize::new(self.held)),
+                held: self.held,
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_delivery_still_in_transit_after_the_publish_returns_passes() {
+        local_readiness(
+            LocalMemoryBroker::<16>::new,
+            |name| InTransit {
+                inner: LocalMemorySource::new(name),
+                held: 2,
+            },
+            |connected: &ConnectedLocalMemoryBroker<16>| connected.publisher(),
+        )
+        .await;
+    }
+
     async fn run(true_for: usize) {
         local_readiness(
             LocalMemoryBroker::<16>::new,
@@ -306,32 +476,71 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    #[should_panic(
-        expected = "local_readiness: the probe said nothing may be ready after a publish"
-    )]
+    #[should_panic(expected = "local_readiness: the probe said nothing may be ready after a wake")]
     async fn a_probe_that_never_says_ready_fails() {
         run(0).await;
     }
 
     #[tokio::test(flavor = "current_thread")]
     #[should_panic(expected = "local_readiness: the probe said nothing may be ready after a wake")]
-    async fn a_probe_that_misses_the_woken_delivery_fails() {
+    async fn a_probe_that_hides_the_end_fails() {
         run(1).await;
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    #[should_panic(
-        expected = "local_readiness: the probe said nothing may be ready, yet the stream"
-    )]
-    async fn a_probe_that_hides_a_queued_delivery_fails() {
-        run(2).await;
+    /// A source whose stream polls the bus with a waker of its own, so a publish never wakes the
+    /// task that polled it.
+    struct Deaf<Src>(Src);
+
+    struct DeafSubscriber<Sub>(Sub);
+
+    struct Muted<Inner>(Pin<Box<Inner>>);
+
+    impl<Inner: Stream> Stream for Muted<Inner> {
+        type Item = Inner::Item;
+
+        fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            self.0
+                .as_mut()
+                .poll_next(&mut Context::from_waker(Waker::noop()))
+        }
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    #[should_panic(
-        expected = "local_readiness: the probe said nothing may be ready after the shutdown"
-    )]
-    async fn a_probe_that_hides_the_end_fails() {
-        run(3).await;
+    impl<Sub: Subscriber> Subscriber for DeafSubscriber<Sub> {
+        type Message = Sub::Message;
+        type Error = Sub::Error;
+
+        fn stream(
+            &mut self,
+        ) -> impl Stream<Item = Result<Self::Message, Self::Error>> + MaybeSend + '_ {
+            Muted(Box::pin(self.0.stream()))
+        }
+
+        fn ready_hint(&self) -> impl ReadyHint + MaybeSendSync + 'static {
+            self.0.ready_hint()
+        }
+    }
+
+    impl<C: ConnectedBroker, Src: SubscriptionSource<C>> SubscriptionSource<C> for Deaf<Src> {
+        type Subscriber = DeafSubscriber<Src::Subscriber>;
+        type Copies = Src::Copies;
+
+        fn name(&self) -> &str {
+            self.0.name()
+        }
+
+        async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+            Ok(DeafSubscriber(self.0.subscribe(connected).await?))
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    #[should_panic(expected = "local_readiness: a publish did not wake the poll")]
+    async fn a_stream_that_does_not_wake_on_a_publish_fails() {
+        local_readiness(
+            LocalMemoryBroker::<16>::new,
+            |name| Deaf(LocalMemorySource::new(name)),
+            |connected: &ConnectedLocalMemoryBroker<16>| connected.publisher(),
+        )
+        .await;
     }
 }
