@@ -213,7 +213,7 @@ jobs:
             --manifest-path Cargo.toml --config external-types.toml
           cargo +nightly-2026-03-20 check-external-types --no-default-features \
             --features "$EMBASSY_FEATURES" --manifest-path Cargo.toml --config external-types.toml
-          for manifest in crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
+          for manifest in crates/ruststream-{core,runtime,runtime-tokio,runtime-compio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
             cargo +nightly-2026-03-20 check-external-types --all-features \
               --manifest-path "$manifest" --config external-types.toml
           done
@@ -231,7 +231,8 @@ jobs:
         run: |
           cargo publish --locked --dry-run -p ruststream-macros \
             -p ruststream-core -p ruststream-runtime -p ruststream-runtime-tokio \
-            -p ruststream-runtime-embassy -p ruststream-memory -p ruststream-asyncapi \
+            -p ruststream-runtime-embassy -p ruststream-runtime-compio -p ruststream-memory \
+            -p ruststream-asyncapi \
             -p ruststream-observability -p ruststream-testing -p ruststream-conformance \
             -p ruststream-cli -p ruststream
 

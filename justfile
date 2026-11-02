@@ -175,7 +175,7 @@ check:
         --manifest-path Cargo.toml --config external-types.toml
     cargo +nightly-2026-03-20 check-external-types --no-default-features \
         --features {{ embassy_set }} --manifest-path Cargo.toml --config external-types.toml
-    for manifest in crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do \
+    for manifest in crates/ruststream-{core,runtime,runtime-tokio,runtime-compio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do \
         cargo +nightly-2026-03-20 check-external-types --all-features \
             --manifest-path "$manifest" --config external-types.toml || exit 1; \
     done
