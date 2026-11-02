@@ -157,14 +157,12 @@
 //! the codec stay explicit, since those are the choices a service makes for itself.
 
 #![forbid(unsafe_code)]
-// The embassy runtime runs on a device with no standard library; the tokio runner needs it.
-#![cfg_attr(not(feature = "tokio"), no_std)]
+// The embassy runtime runs on a device with no standard library; the tokio and compio runners
+// need it.
+#![cfg_attr(not(any(feature = "tokio", feature = "compio")), no_std)]
 
 #[cfg(any(ruststream_alloc, feature = "testing"))]
 extern crate alloc;
-// The compio runner runs on the standard library, which the `main` the attribute emits names.
-#[cfg(all(feature = "compio", not(feature = "tokio")))]
-extern crate std;
 
 pub mod prelude;
 pub mod testing;
