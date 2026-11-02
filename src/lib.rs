@@ -157,6 +157,9 @@
 
 #[cfg(any(ruststream_alloc, feature = "testing"))]
 extern crate alloc;
+// The compio runner runs on the standard library, which the `main` the attribute emits names.
+#[cfg(all(feature = "compio", not(feature = "tokio")))]
+extern crate std;
 
 pub mod prelude;
 pub mod testing;
@@ -421,8 +424,8 @@ pub mod __private {
     pub use alloc::vec::Vec as BatchVec;
     #[cfg(not(ruststream_alloc))]
     pub use ruststream_runtime::BatchVec;
-    // What the tokio `main` that `#[ruststream::app]` generates returns.
-    #[cfg(feature = "tokio")]
+    // What the tokio or compio `main` that `#[ruststream::app]` generates returns.
+    #[cfg(any(feature = "tokio", feature = "compio"))]
     pub use std::process::ExitCode;
     /// Reports the error an embassy app stopped on, which the task `#[ruststream::app]` emits
     /// calls.
