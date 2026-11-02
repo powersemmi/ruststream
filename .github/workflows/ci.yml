@@ -367,7 +367,9 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-minimal
+          RUSTSTREAM_COMPIO_REQUIRE_IO_URING: '1'
         run: |
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
           cargo check --locked --workspace --examples --all-features
           cargo test --locked --workspace $EMBASSY_TESTS_EXCLUDE --all-features --no-fail-fast --tests
           cargo test --locked --workspace $EMBASSY_TESTS_EXCLUDE --all-features --no-fail-fast --doc
@@ -502,11 +504,22 @@ jobs:
         env:
           RUN_UI_TESTS: '1'
           REQUIRE_UI_TESTS: '1'
+          RUSTSTREAM_COMPIO_REQUIRE_IO_URING: '1'
         # `--tests` and not every target: the examples' tests are modules of one test binary, so
         # an example needs no binary of its own, and clippy has already compiled each one.
         # The embassy runtime's legs build the facade with the other runtime, so they are runs of
         # their own, and the report below merges every run's profile.
         run: |
+          # The compio tests must run on io_uring: the ring locks memory against the process's
+          # memlock limit, and a hosted runner's default is too small for a test binary's many
+          # rings. The limit is raised for this shell and inherited by cargo and the tests. What
+          # the host offers is printed first, so a refusal can be read from the log.
+          echo "kernel: $(uname -r)"
+          echo "memlock before: $(ulimit -l)"
+          echo "cgroup memory.max: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo unknown)"
+          echo "io_uring_disabled: $(sysctl -n kernel.io_uring_disabled 2>/dev/null || echo absent)"
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
+          echo "memlock after: $(ulimit -l)"
           cargo llvm-cov --locked --no-report --workspace $EMBASSY_TESTS_EXCLUDE --all-features \
             --no-fail-fast --tests
           cargo llvm-cov --locked --no-report -p ruststream-runtime-embassy --no-fail-fast --tests

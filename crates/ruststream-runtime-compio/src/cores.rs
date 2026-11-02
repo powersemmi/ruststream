@@ -2,6 +2,7 @@
 //! runtime of its own.
 
 use std::collections::HashSet;
+use std::env;
 use std::error::Error;
 use std::io;
 use std::num::NonZeroUsize;
@@ -9,6 +10,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::pin::pin;
 use std::thread::{self, ScopedJoinHandle};
 
+use compio::driver::DriverType;
 use compio::runtime::{Runtime, RuntimeBuilder};
 use compio::signal::ctrl_c;
 #[cfg(unix)]
@@ -330,7 +332,27 @@ pub(crate) fn build_runtime(_core: usize, cpu: Option<usize>) -> io::Result<Runt
     if let Some(cpu) = cpu {
         builder.thread_affinity(HashSet::from([cpu]));
     }
-    builder.build()
+    let runtime = builder.build()?;
+    // One environment read per runtime built, at startup; nothing runs per message.
+    let required = env::var_os(REQUIRE_IO_URING).is_some_and(|value| value == "1");
+    require_driver(runtime, required)
+}
+
+/// The environment switch that makes a runtime on the polling driver a startup failure. A CI job
+/// sets it so a suite that fell back to polling is red, not green on a driver it was not meant to
+/// test; a host without `io_uring` leaves it unset and falls back with a warning.
+pub(crate) const REQUIRE_IO_URING: &str = "RUSTSTREAM_COMPIO_REQUIRE_IO_URING";
+
+/// `runtime`, or the error naming the switch and the driver where `required` and the runtime is
+/// not on `io_uring`.
+fn require_driver(runtime: Runtime, required: bool) -> io::Result<Runtime> {
+    let driver = runtime.driver_type();
+    if required && cfg!(target_os = "linux") && driver != DriverType::IoUring {
+        return Err(io::Error::other(format!(
+            "{REQUIRE_IO_URING} is set, but the runtime came up on the {driver:?} driver"
+        )));
+    }
+    Ok(runtime)
 }
 
 /// One core: its runtime, pinned and made current, running the core's future to its end.
@@ -413,13 +435,13 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use compio::driver::{DriverType, ProactorBuilder};
+    use compio::driver::ProactorBuilder;
     use compio::runtime::RuntimeBuilder;
     use compio::time::sleep;
 
     use ruststream_runtime::ShutdownWait;
 
-    use super::{CoresError, Pinning, build_runtime};
+    use super::{CoresError, DriverType, Pinning, REQUIRE_IO_URING, build_runtime, require_driver};
     use crate::{Cores, Stop};
 
     // A host that refuses an io_uring (a container profile that blocks it, a kernel without it,
@@ -435,6 +457,26 @@ mod tests {
             .expect("the runtime builds");
         assert_eq!(runtime.driver_type(), DriverType::Poll);
         runtime.block_on(async { sleep(Duration::from_millis(1)).await });
+    }
+
+    // A runtime that came up on the polling driver is refused where io_uring is required, and
+    // accepted where it is not.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_required_io_uring_refuses_a_runtime_on_the_polling_driver() {
+        let polling = || {
+            let mut proactor = ProactorBuilder::new();
+            proactor.driver_type(DriverType::Poll);
+            RuntimeBuilder::new()
+                .with_proactor(proactor)
+                .build()
+                .expect("the runtime builds")
+        };
+        let refusal = require_driver(polling(), true).expect_err("the polling driver is refused");
+        let message = refusal.to_string();
+        assert!(message.contains(REQUIRE_IO_URING), "{message}");
+        assert!(message.contains("Poll"), "{message}");
+        assert!(require_driver(polling(), false).is_ok());
     }
 
     // The cores that keep their runtimes until core 0's teardown wait for a signal of core 0; when
