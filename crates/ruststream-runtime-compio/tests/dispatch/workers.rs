@@ -8,7 +8,7 @@ use compio::runtime::spawn;
 use event_listener::Event;
 use futures::StreamExt;
 use futures::channel::mpsc;
-use ruststream_runtime::Workers;
+use ruststream_runtime::{ShutdownWait, Workers};
 use ruststream_runtime_compio::dispatch::{Layout, Mount, spawn_dispatch_workers};
 
 use crate::support::{
@@ -159,4 +159,26 @@ fn threads_two_on_three_cores_run_on_cores_one_and_two_only() {
             "no delivery reached core {core}"
         );
     }
+}
+
+#[test]
+fn a_lane_that_panics_fails_the_app_while_it_runs() {
+    let reason = on_cores(3, async |fabric, stop, _tasks| {
+        fabric
+            .run_on(1, "orders", || {
+                spawn(async {
+                    panic!("a lane outside the handler");
+                })
+            })
+            .expect("core 1 serves");
+        // The failure raises the stop; without it the scenario times out.
+        stop.cancelled().await;
+        stop.failure()
+    });
+
+    let reason = reason.expect("the lane's panic is the failure");
+    assert!(
+        reason.contains("orders") && reason.contains("core 1"),
+        "got {reason}"
+    );
 }

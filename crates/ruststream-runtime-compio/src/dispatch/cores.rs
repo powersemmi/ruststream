@@ -5,12 +5,11 @@ use std::fmt::{self, Debug, Formatter, Write};
 use std::iter;
 use std::sync::{Arc, Mutex};
 
-use compio::runtime::JoinHandle;
+use compio::runtime::{JoinError, JoinHandle};
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use futures::future::{self, Either};
 use futures::stream::FuturesUnordered;
-use futures::{StreamExt, pin_mut};
-use ruststream_runtime::{Placement, ShutdownWait, Workers};
+use futures::{FutureExt, StreamExt, pin_mut, select};
+use ruststream_runtime::{Halt, Placement, ShutdownWait, Workers};
 use thiserror::Error;
 use tracing::error;
 
@@ -129,14 +128,21 @@ pub struct StartLaneError {
 /// What a core runs when its mailbox hands it a lane: it spawns the lane on the core's runtime.
 type Job = Box<dyn FnOnce() -> JoinHandle<()> + Send>;
 
+/// A lane to start: the subscription it belongs to, which a failure of the lane names, and the job
+/// that spawns it.
+struct Mail {
+    subscription: Box<str>,
+    job: Job,
+}
+
 /// The mailboxes of the cores: how core 0 starts a lane on another core.
 ///
 /// A mailbox is made at startup and used only then, once per lane, so a job is boxed; a delivery
 /// never passes through it (deliveries travel the rings). A clone shares the mailboxes.
 #[derive(Clone)]
 pub struct Fabric {
-    senders: Arc<[UnboundedSender<Job>]>,
-    inboxes: Arc<Mutex<Vec<Option<UnboundedReceiver<Job>>>>>,
+    senders: Arc<[UnboundedSender<Mail>]>,
+    inboxes: Arc<Mutex<Vec<Option<UnboundedReceiver<Mail>>>>>,
 }
 
 impl Debug for Fabric {
@@ -179,7 +185,10 @@ impl Fabric {
         Lane: FnOnce() -> JoinHandle<()> + Send + 'static,
     {
         self.senders[core]
-            .unbounded_send(Box::new(job))
+            .unbounded_send(Mail {
+                subscription: subscription.into(),
+                job: Box::new(job),
+            })
             .map_err(|_| StartLaneError {
                 subscription: subscription.to_owned(),
                 core,
@@ -203,30 +212,49 @@ impl Fabric {
             return;
         };
         let mut lanes = FuturesUnordered::new();
+        let ended = |subscription: &str, outcome: Result<(), JoinError>| {
+            if outcome.is_err() {
+                error!(target: "ruststream::dispatch", core, subscription, "a lane panicked");
+                // A lane that is gone leaves the subscription on fewer lanes than it asked for,
+                // so the service fails like it does for a handler that panics.
+                stop.fail(subscription, &format!("a lane panicked on core {core}"));
+            }
+        };
         {
-            let cancelled = stop.cancelled();
+            let cancelled = stop.cancelled().fuse();
             pin_mut!(cancelled);
             loop {
-                let next = inbox.next();
-                pin_mut!(next);
-                match future::select(next, cancelled.as_mut()).await {
-                    Either::Left((Some(job), _)) => lanes.push(job()),
-                    Either::Left((None, _)) | Either::Right(((), _)) => break,
+                select! {
+                    mail = inbox.next() => match mail {
+                        Some(mail) => lanes.push(watch(mail)),
+                        None => break,
+                    },
+                    (subscription, outcome) = lanes.select_next_some() => {
+                        ended(&subscription, outcome);
+                    }
+                    () = cancelled => break,
                 }
             }
         }
         // What was mailed before the stop is still started: its ring is drained by it, and a lane
         // that never started would leave the loop feeding it waiting.
         inbox.close();
-        while let Some(job) = inbox.next().await {
-            lanes.push(job());
+        while let Some(mail) = inbox.next().await {
+            lanes.push(watch(mail));
         }
-        while let Some(ended) = lanes.next().await {
-            if ended.is_err() {
-                error!(target: "ruststream::dispatch", core, "a lane panicked");
-            }
+        while let Some((subscription, outcome)) = lanes.next().await {
+            ended(&subscription, outcome);
         }
     }
+}
+
+/// Starts the lane of `mail` on this core and resolves with how it ended, named by its
+/// subscription.
+fn watch(mail: Mail) -> impl Future<Output = (Box<str>, Result<(), JoinError>)> {
+    let Mail { subscription, job } = mail;
+    // Spawned now, not when the result is first polled: the lane's ring is waiting for it.
+    let lane = job();
+    async move { (subscription, lane.await) }
 }
 
 #[cfg(test)]
