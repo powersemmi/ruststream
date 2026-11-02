@@ -176,16 +176,33 @@ fn park<S: Stream>(stream: Pin<&mut S>, wakes: &Arc<Wakes>) -> usize {
     at
 }
 
+/// The probe's answer to a wake, with the wake count read before the question: a wake that
+/// lands while the probe answers is one the app still sees.
+#[derive(Clone, Copy)]
+struct Asked {
+    ready: bool,
+    at: usize,
+}
+
+/// Reads the wake count, then asks the probe.
+fn ask<P: ReadyHint>(wakes: &Wakes, probe: &P) -> Asked {
+    let at = wakes.count();
+    Asked {
+        ready: probe.may_be_ready(),
+        at,
+    }
+}
+
 /// Waits for a wake after the count `parked` and answers what the probe says then: `cause` must
 /// wake the poll that returned `Pending`, because the stream registers the waker whenever it
 /// returns `Pending`.
-async fn awake<P: ReadyHint>(wakes: &Wakes, probe: &P, parked: usize, cause: &str) -> bool {
+async fn awake<P: ReadyHint>(wakes: &Wakes, probe: &P, parked: usize, cause: &str) -> Asked {
     assert!(
         woken(wakes, parked, Instant::now() + STEP_TIMEOUT).await,
         "local_readiness: {cause} did not wake the poll that returned `Pending` within \
          {STEP_TIMEOUT:?}; the stream registers the waker whenever it returns `Pending`"
     );
-    probe.may_be_ready()
+    ask(wakes, probe)
 }
 
 /// Waits until the wake count passes `at`, and answers whether it did before `deadline`.
@@ -202,8 +219,8 @@ async fn woken(wakes: &Wakes, at: usize, deadline: Instant) -> bool {
 /// Drives the stream the way the embedded app does until it yields something other than
 /// `Pending`, within one deadline for the whole wait.
 ///
-/// `asked` is the answer of the probe to a wake the caller already waited for; `None` means the
-/// last poll was not `Pending`, so the app polls at once. After a `Pending` the app waits for a
+/// `asked` is the probe's answer to a wake the caller already waited for, with the count read
+/// before it; `None` means the last poll was not `Pending`, so the app polls at once. After a `Pending` the app waits for a
 /// wake and polls only when the probe then says something may be ready; while it says nothing is,
 /// the app goes back to waiting without a poll. A delivery that arrives only through the polls the
 /// app skips, or a stream that keeps answering `Pending`, runs out the deadline.
@@ -211,7 +228,7 @@ async fn arrive<S, P>(
     mut stream: Pin<&mut S>,
     probe: &P,
     wakes: &Arc<Wakes>,
-    mut asked: Option<bool>,
+    asked: Option<Asked>,
     which: &str,
 ) -> Poll<Option<S::Item>>
 where
@@ -220,26 +237,29 @@ where
 {
     let deadline = Instant::now() + STEP_TIMEOUT;
     let counting = waker(Arc::clone(wakes));
+    let mut asked = asked.unwrap_or_else(|| Asked {
+        ready: true,
+        at: wakes.count(),
+    });
     loop {
         // A stream that wakes its task inside every poll never lets the wait below suspend, so
         // the deadline is read here as well.
-        let at = wakes.count();
-        if Instant::now() < deadline
-            && asked != Some(false)
-            && let ready @ Poll::Ready(_) = poll(stream.as_mut(), &counting)
-        {
-            return ready;
+        if Instant::now() < deadline && asked.ready {
+            asked.at = wakes.count();
+            if let ready @ Poll::Ready(_) = poll(stream.as_mut(), &counting) {
+                return ready;
+            }
         }
-        if Instant::now() >= deadline || !woken(wakes, at, deadline).await {
-            let why = if asked == Some(false) {
+        if Instant::now() >= deadline || !woken(wakes, asked.at, deadline).await {
+            let why = if asked.ready {
+                "the stream kept answering `Pending`"
+            } else {
                 "after a wake the probe said nothing may be ready, so the app would not poll the \
                  stream and the subscription stalls"
-            } else {
-                "the stream kept answering `Pending`"
             };
             panic!("local_readiness: {which} did not arrive within {STEP_TIMEOUT:?}; {why}");
         }
-        asked = Some(probe.may_be_ready());
+        asked = ask(wakes, probe);
     }
 }
 
@@ -474,7 +494,15 @@ mod tests {
     /// A source whose deliveries arrive a few scheduler turns after the stream took them off the
     /// bus, as on a socket: a task of the transport finishes the arrival and wakes the stream, and
     /// the probe says something is ready from then on.
-    struct InTransit<Src>(Src);
+    ///
+    /// With `racing` the transport's task first only announces the delivery with a wake, and the
+    /// arrival lands right after the probe answered that wake with `false`: a second wake follows
+    /// the probe's answer, as when a socket's receiver queues the delivery between the app's
+    /// question and its next wait.
+    struct InTransit<Src> {
+        inner: Src,
+        racing: bool,
+    }
 
     struct InTransitSubscriber<Sub> {
         inner: Sub,
@@ -484,8 +512,19 @@ mod tests {
     /// What the transport's task and the stream share.
     #[derive(Default)]
     struct Wire {
+        racing: bool,
+        announced: AtomicBool,
         arrived: AtomicBool,
         reader: Mutex<Option<Waker>>,
+    }
+
+    impl Wire {
+        fn wake_reader(&self) {
+            // The waker stays registered until the next poll, as a stream's waker does.
+            if let Some(reader) = self.reader.lock().expect("the wire's waker").as_ref() {
+                reader.wake_by_ref();
+            }
+        }
     }
 
     struct Landed<Probe> {
@@ -495,7 +534,12 @@ mod tests {
 
     impl<Probe: ReadyHint> ReadyHint for Landed<Probe> {
         fn may_be_ready(&self) -> bool {
-            self.wire.arrived.load(Ordering::Relaxed) || self.inner.may_be_ready()
+            let answer = self.wire.arrived.load(Ordering::Relaxed) || self.inner.may_be_ready();
+            if self.wire.announced.swap(false, Ordering::Relaxed) {
+                self.wire.arrived.store(true, Ordering::Relaxed);
+                self.wire.wake_reader();
+            }
+            answer
         }
     }
 
@@ -531,11 +575,12 @@ mod tests {
                 for _ in 0..3 {
                     yield_now().await;
                 }
-                wire.arrived.store(true, Ordering::Relaxed);
-                let reader = wire.reader.lock().expect("the wire's waker").take();
-                if let Some(reader) = reader {
-                    reader.wake();
+                if wire.racing {
+                    wire.announced.store(true, Ordering::Relaxed);
+                } else {
+                    wire.arrived.store(true, Ordering::Relaxed);
                 }
+                wire.wake_reader();
             });
             Poll::Pending
         }
@@ -568,13 +613,16 @@ mod tests {
         type Copies = Src::Copies;
 
         fn name(&self) -> &str {
-            self.0.name()
+            self.inner.name()
         }
 
         async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
             Ok(InTransitSubscriber {
-                inner: self.0.subscribe(connected).await?,
-                wire: Arc::default(),
+                inner: self.inner.subscribe(connected).await?,
+                wire: Arc::new(Wire {
+                    racing: self.racing,
+                    ..Wire::default()
+                }),
             })
         }
     }
@@ -583,7 +631,23 @@ mod tests {
     async fn a_delivery_still_in_transit_after_the_publish_returns_passes() {
         local_readiness(
             LocalMemoryBroker::<16>::new,
-            |name| InTransit(LocalMemorySource::new(name)),
+            |name| InTransit {
+                inner: LocalMemorySource::new(name),
+                racing: false,
+            },
+            |connected: &ConnectedLocalMemoryBroker<16>| connected.publisher(),
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_delivery_that_lands_right_after_the_probe_answered_passes() {
+        local_readiness(
+            LocalMemoryBroker::<16>::new,
+            |name| InTransit {
+                inner: LocalMemorySource::new(name),
+                racing: true,
+            },
             |connected: &ConnectedLocalMemoryBroker<16>| connected.publisher(),
         )
         .await;
