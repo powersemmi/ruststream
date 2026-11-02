@@ -62,7 +62,9 @@ pub(crate) struct HarnessScope {
     subscription: usize,
     /// The calls this dispatch recorded from inside the handler (a batch records its call where
     /// it settles), with the hooks they owe, for the dispatch to run once it is done.
-    calls: Mutex<Vec<DueCall>>,
+    // Bookkept: the dispatch drops the scope inside the polled section, and a mutex that std boxes
+    // frees its box there.
+    calls: Bookkept<Mutex<Vec<DueCall>>>,
 }
 
 impl HarnessScope {
@@ -75,7 +77,7 @@ impl HarnessScope {
             coordinator,
             scope_id,
             subscription,
-            calls: Mutex::new(Vec::new()),
+            calls: Bookkept::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -300,13 +302,17 @@ pub(crate) async fn calls_in_harness_scope<F: Future>(
             HARNESS
                 .scope(scope, async move {
                     let output = fut.await;
-                    let calls = HARNESS.with(|scope| {
-                        mem::take(
-                            &mut *scope
-                                .calls
-                                .lock()
-                                .expect("harness scope calls mutex poisoned"),
-                        )
+                    // The first lock of a mutex allocates on a platform whose std boxes it, so the
+                    // take is the harness's own work.
+                    let calls = harness_section(|| {
+                        HARNESS.with(|scope| {
+                            mem::take(
+                                &mut *scope
+                                    .calls
+                                    .lock()
+                                    .expect("harness scope calls mutex poisoned"),
+                            )
+                        })
                     });
                     (output, calls)
                 })
