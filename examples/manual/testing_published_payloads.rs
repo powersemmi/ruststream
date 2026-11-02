@@ -85,6 +85,12 @@ impl<M: OutSlot> OutMessages<M> for Ticket {
 struct Versioned;
 
 impl Codec for Versioned {
+    type Frame<'a> = ();
+
+    fn frame<'a>(&'a self, _payload: &'a [u8]) -> Result<Self::Frame<'a>, CodecError> {
+        Ok(())
+    }
+
     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
         let mut framed = BytesMut::from(&[1_u8][..]);
         JsonCodec.encode_into(value, &mut framed)?;

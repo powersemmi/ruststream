@@ -1,0 +1,5 @@
+error: `discriminate` and `by_codec` together: a set picks its variant by one rule
+  --> tests/ui/in_messages_by_codec_and_function.rs:15:39
+   |
+15 | #[in_messages(discriminate = by_kind, by_codec)]
+   |                                       ^^^^^^^^

@@ -39,6 +39,11 @@ struct NamedMsgpack;
 
 impl Codec for NamedMsgpack {
     const CONTENT_TYPE: &'static str = "application/msgpack";
+    type Frame<'a> = ();
+
+    fn frame<'a>(&'a self, _payload: &'a [u8]) -> Result<Self::Frame<'a>, CodecError> {
+        Ok(())
+    }
 
     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
         let mut buf = BytesMut::new();

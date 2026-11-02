@@ -516,11 +516,11 @@ pub fn derive_out_messages(item: TokenStream) -> TokenStream {
 /// * `#[in_messages(discriminate = path)]`: the named function reads the delivery (its headers
 ///   and raw payload) and returns `Option<OrderEventKind>`; the variant it names decodes once,
 ///   and `None` is a decode error naming the set.
-/// * `#[in_messages(discriminate_with_codec = ByRecord)]`: the named type implements
-///   `CodecDiscriminator<OrderEventKind, DecodeCodec>`, whose `kind(codec, msg)` reads the decode
-///   codec beside the delivery and returns the kind as above. The set decodes only under the
-///   codecs the type accepts, so mounting it under another one is a compile error, and it does
-///   not implement `InMessages` itself: its decode is written per codec.
+/// * `#[in_messages(by_codec)]`: the decode codec reads a frame from the payload and names the
+///   model. The set decodes the first model the codec's `FrameNames<Model>` impl says the frame
+///   names, and a frame that names none is a decode error naming the set. The set implements
+///   `InMessages<DecodeCodec>` only for the codecs that implement `FrameNames` for every model, so
+///   mounting it under another one is a compile error at the mount site.
 /// * `#[in_messages(header = "event")]` with `#[in_messages(value = "..")]` on every variant:
 ///   the header's value names the variant, the document carries the header with its `const`
 ///   value in each message's headers schema, and a missing header or an unknown value is a
@@ -567,23 +567,14 @@ pub fn derive_out_messages(item: TokenStream) -> TokenStream {
 ///
 /// // The rule asks the decode codec: a registry codec knows which record a schema id stands for.
 /// #[derive(InMessages)]
-/// #[in_messages(discriminate_with_codec = ByRecord)]
+/// #[in_messages(by_codec)]
 /// enum OrderRecord {
 ///     Created(OrderCreated),
 ///     Placed(OrderPlaced),
 /// }
 ///
-/// struct ByRecord;
-///
-/// impl<DecodeCodec: RecordNames> CodecDiscriminator<OrderRecordKind, DecodeCodec> for ByRecord {
-///     fn kind<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Option<OrderRecordKind> {
-///         match codec.record_name(msg.headers().get("schema")?)? {
-///             "OrderCreated" => Some(OrderRecordKind::Created),
-///             "OrderPlaced" => Some(OrderRecordKind::Placed),
-///             _ => None,
-///         }
-///     }
-/// }
+/// // The codec the set mounts under names the records: `impl<Model: MessageInfo>
+/// // FrameNames<Model> for Registry`, over a `Frame` that holds the record name.
 /// ```
 #[proc_macro_derive(InMessages, attributes(in_messages))]
 pub fn derive_in_messages(item: TokenStream) -> TokenStream {

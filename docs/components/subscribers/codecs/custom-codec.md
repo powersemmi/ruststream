@@ -17,6 +17,9 @@ The publish path calls it for a broker that only reads the payload, and inside a
 Its default encodes into a buffer of its own and copies.
 Both sides return a [`CodecError`](api:ruststream::codec::CodecError): the format's error goes in `CodecError::Decode` or `CodecError::Encode` as the source.
 `CONTENT_TYPE` is the media type the generated AsyncAPI document reports.
+Every codec declares a frame: `type Frame<'a>` is what the codec reads from the payload before decoding it, and `frame` reads it.
+A codec that reads none writes `type Frame<'a> = ();` and a `frame` that returns `Ok(())`.
+A codec whose frame names records, such as a schema-registry codec that resolves a schema id, implements [`FrameNames`](api:ruststream::codec::FrameNames) for the models it can tell apart, and a [message set](../message-sets.md) with `#[in_messages(by_codec)]` picks its variant through it.
 
 A codec generic over another composes with it: the inner codec decides the format, and the wrapper changes the bytes around it, such as a version byte in front.
 Both methods are synchronous, so a codec can only use what it holds and the bytes at hand.

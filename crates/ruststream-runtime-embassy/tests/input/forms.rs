@@ -17,12 +17,14 @@ use bytes::BytesMut;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use futures::{FutureExt, StreamExt};
+use ruststream::codec::{Codec, CodecError, FrameNames, JsonCodec};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Message, Mounts};
 use ruststream::{
     Broker, HeaderMap, InMessages, IncomingMessage, MessageInfo, Outgoing, OutgoingMessage,
     Publisher, Subscriber, SubscriptionSource, subscriber,
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use static_cell::StaticCell;
 
@@ -72,8 +74,50 @@ impl Valve {
     }
 }
 
+/// The record a schema id names, if the registry knows the id.
+struct Named(Option<&'static str>);
+
+/// JSON behind a one-byte schema id: the byte names the record, the rest is the body.
+#[derive(Debug, Clone, Copy)]
+struct Registry;
+
+impl Codec for Registry {
+    type Frame<'a> = Named;
+
+    fn frame<'a>(&'a self, payload: &'a [u8]) -> Result<Self::Frame<'a>, CodecError> {
+        Ok(Named(match payload.first() {
+            Some(1) => Some("Opened"),
+            Some(2) => Some("Closed"),
+            _ => None,
+        }))
+    }
+
+    fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
+        JsonCodec.encode(value)
+    }
+
+    fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
+        JsonCodec.decode(bytes.get(1..).unwrap_or_default())
+    }
+}
+
+impl<Model: MessageInfo> FrameNames<Model> for Registry {
+    fn names(frame: &Named) -> bool {
+        frame.0 == Some(Model::NAME)
+    }
+}
+
+/// The set a registry handler takes: the codec's frame names the model, though both have the
+/// same shape.
+#[derive(InMessages)]
+#[in_messages(by_codec)]
+enum Record {
+    Opened(Opened),
+    Closed(Closed),
+}
+
 /// What a handler saw: the sum of the ids, one counter per form.
-static SEEN: [AtomicU32; 3] = [const { AtomicU32::new(0) }; 3];
+static SEEN: [AtomicU32; 4] = [const { AtomicU32::new(0) }; 4];
 
 fn saw(form: usize, id: u32) -> HandlerOutcome {
     SEEN[form].fetch_add(id, Ordering::Relaxed);
@@ -97,6 +141,17 @@ async fn on_pair(pair: &Message<Meta, Order>) -> HandlerOutcome {
 #[subscriber(LocalMemorySource::new("in/valve"))]
 async fn on_valve(valve: &Valve) -> HandlerOutcome {
     saw(2, valve.id())
+}
+
+#[subscriber(LocalMemorySource::new("in/record"))]
+async fn on_record(record: &Record) -> HandlerOutcome {
+    saw(
+        3,
+        match record {
+            Record::Opened(opened) => opened.opened,
+            Record::Closed(closed) => closed.closed * 100,
+        },
+    )
 }
 
 /// The reply every replying handler sends: the id it read.
@@ -143,6 +198,13 @@ fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
             .include(quote_valve)
             .include(receipt)
     })
+}
+
+/// The registry handler on an app of its own: the codec is the scope's, so the other handlers
+/// keep the default one.
+#[ruststream::app(runtime = embassy)]
+fn records(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.with_codec(Registry).include(on_record))
 }
 
 /// What the scenario keeps in statics.
@@ -206,11 +268,15 @@ async fn check_the_forms(spawner: Spawner, stand: &'static Stand) {
         );
     }
     spawner.spawn(app::task(stand.bus.clone()).expect("the app task is free"));
+    spawner.spawn(records::task(stand.bus.clone()).expect("the records task is free"));
     settle().await;
 
     publish(&stand.bus, "in/order", r#"{"id":1}"#).await;
     publish(&stand.bus, "in/pair", r#"{"id":2}"#).await;
     publish(&stand.bus, "in/valve", r#"{"closed":3}"#).await;
+    // Both models read `{"closed":..}` and `{"opened":..}` by field, so the id byte alone is what
+    // names the record the codec hands the set.
+    publish(&stand.bus, "in/record", "\u{2}{\"closed\":4}").await;
     publish(&stand.bus, "in/quote-order", r#"{"id":8}"#).await;
     publish(&stand.bus, "in/quote-pair", r#"{"id":9}"#).await;
     publish(&stand.bus, "in/quote-valve", r#"{"opened":10}"#).await;
@@ -219,6 +285,7 @@ async fn check_the_forms(spawner: Spawner, stand: &'static Stand) {
     let answered: Vec<_> = replies.iter_mut().map(next).collect();
 
     app::CONTROL.stop();
+    records::CONTROL.stop();
     settle().await;
 
     assert_eq!(seen(0), 1, "the id the decoded handler saw");
@@ -231,6 +298,8 @@ async fn check_the_forms(spawner: Spawner, stand: &'static Stand) {
     passed("a handler of a message pair reads its headers and its payload");
     assert_eq!(seen(2), 3, "the id the set handler saw");
     passed("a handler of a message set runs on the embedded app");
+    assert_eq!(seen(3), 400, "the closed record the frame names");
+    passed("a set picked by the codec frame runs on the embedded app");
     assert_eq!(
         answered,
         [

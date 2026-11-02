@@ -170,6 +170,11 @@ impl ciborium_io::Write for BufWriter<'_> {
 ///
 /// impl Codec for OrdersJson {
 ///     const CONTENT_TYPE: &'static str = "application/vnd.orders.v1+json";
+///     type Frame<'a> = ();
+///
+///     fn frame<'a>(&'a self, _payload: &'a [u8]) -> Result<Self::Frame<'a>, CodecError> {
+///         Ok(())
+///     }
 ///
 ///     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
 ///         let bytes =
@@ -242,8 +247,27 @@ impl ciborium_io::Write for BufWriter<'_> {
 ///
 /// impl std::error::Error for BadVersion {}
 ///
+/// /// The bytes behind the version byte, or the error of a frame this build does not read.
+/// fn unversioned(bytes: &[u8]) -> Result<&[u8], CodecError> {
+///     match bytes {
+///         [VERSION, payload @ ..] => Ok(payload),
+///         [version, ..] => Err(CodecError::Decode(Box::new(BadVersion(*version)))),
+///         [] => Err(CodecError::Decode(Box::new(BadVersion(0)))),
+///     }
+/// }
+///
 /// impl<C: Codec> Codec for Versioned<C> {
 ///     const CONTENT_TYPE: &'static str = C::CONTENT_TYPE;
+///
+///     // The frame is the wrapped codec's, read behind the version byte.
+///     type Frame<'a>
+///         = C::Frame<'a>
+///     where
+///         Self: 'a;
+///
+///     fn frame<'a>(&'a self, bytes: &'a [u8]) -> Result<Self::Frame<'a>, CodecError> {
+///         self.0.frame(unversioned(bytes)?)
+///     }
 ///
 ///     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
 ///         let mut framed = BytesMut::new();
@@ -257,11 +281,7 @@ impl ciborium_io::Write for BufWriter<'_> {
 ///     }
 ///
 ///     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
-///         match bytes {
-///             [VERSION, payload @ ..] => self.0.decode(payload),
-///             [version, ..] => Err(CodecError::Decode(Box::new(BadVersion(*version)))),
-///             [] => Err(CodecError::Decode(Box::new(BadVersion(0)))),
-///         }
+///         self.0.decode(unversioned(bytes)?)
 ///     }
 /// }
 ///
@@ -302,6 +322,11 @@ pub trait Codec: Send + Sync + Clone {
     ///
     /// impl Codec for OrdersJson {
     ///     const CONTENT_TYPE: &'static str = "application/vnd.orders.v1+json";
+    ///     type Frame<'a> = ();
+    ///
+    ///     fn frame<'a>(&'a self, _payload: &'a [u8]) -> Result<Self::Frame<'a>, CodecError> {
+    ///         Ok(())
+    ///     }
     ///
     ///     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
     ///         let bytes = serde_json::to_vec(value)
@@ -339,6 +364,17 @@ pub trait Codec: Send + Sync + Clone {
     /// # fn main() {}
     /// ```
     const CONTENT_TYPE: &'static str = "application/octet-stream";
+
+    /// What the codec reads from a frame before decoding it: `()` for a codec that reads none
+    /// (JSON, `CBOR`, `MessagePack`), the schema id resolved through the codec's own cache for a
+    /// schema-registry codec.
+    ///
+    /// A message set declared with `#[in_messages(by_codec)]` picks its variant through
+    /// [`FrameNames`], which maps this value to a model. A codec that wraps another forwards the
+    /// frame of the codec it wraps.
+    type Frame<'a>
+    where
+        Self: 'a;
 
     /// Encodes `value` into a mutable byte buffer.
     ///
@@ -407,6 +443,123 @@ pub trait Codec: Send + Sync + Clone {
     ///
     /// Returns [`CodecError::Decode`] when the underlying deserializer fails.
     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError>;
+
+    /// Reads what this codec knows about a frame before decoding it.
+    ///
+    /// A message set declared with `#[in_messages(by_codec)]` asks the frame which model it
+    /// names. Only the payload and the codec's own state decide it, so the read costs a delivery
+    /// nothing beyond the codec's own work, and a codec whose frame is `()` never has this called.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError::Decode`] when the payload carries no readable frame (a truncated
+    /// header, a schema id the codec cannot resolve). The subscriber's decode failure policy
+    /// settles the delivery.
+    fn frame<'a>(&'a self, payload: &'a [u8]) -> Result<Self::Frame<'a>, CodecError>;
+}
+
+/// The codec says which model a frame names: implemented by codecs whose frame names records.
+///
+/// `#[in_messages(by_codec)]` bounds the codec by this trait once per model of the set, so a set
+/// mounts only under a codec that can tell its models apart. A codec that reads no frame (JSON,
+/// `CBOR`, `MessagePack`) implements none, and mounting such a set under it is a compile error
+/// naming the set, the codec and the model.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::codec::{Codec, CodecError, FrameNames, JsonCodec};
+/// use ruststream::memory::prelude::*;
+/// use serde::de::DeserializeOwned;
+/// use serde::{Deserialize, Serialize};
+///
+/// /// What the codec reads from a payload: the record the schema id stands for, if known.
+/// pub struct Record(Option<&'static str>);
+///
+/// /// JSON behind a one-byte schema id; the registry the codec holds names the record.
+/// #[derive(Debug, Clone, Copy)]
+/// pub struct Registry;
+///
+/// impl Registry {
+///     fn record(schema: u8) -> Option<&'static str> {
+///         match schema {
+///             1 => Some("OrderCreated"),
+///             2 => Some("OrderShipped"),
+///             _ => None,
+///         }
+///     }
+/// }
+///
+/// impl Codec for Registry {
+///     /// The record the schema id stands for, resolved through the registry.
+///     type Frame<'a> = Record;
+///
+///     fn frame<'a>(&'a self, payload: &'a [u8]) -> Result<Self::Frame<'a>, CodecError> {
+///         Ok(Record(payload.first().and_then(|schema| Self::record(*schema))))
+///     }
+///
+///     /// The registry is read here, never written: the producer that owns it frames its records.
+///     fn encode<T: Serialize>(&self, _value: &T) -> Result<BytesMut, CodecError> {
+///         Err(CodecError::Encode("the registry codec reads records only".into()))
+///     }
+///
+///     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
+///         JsonCodec.decode(bytes.get(1..).unwrap_or_default())
+///     }
+/// }
+///
+/// /// Every model that derives `MessageInfo` is named by its own name.
+/// impl<Model: MessageInfo> FrameNames<Model> for Registry {
+///     fn names(frame: &Record) -> bool {
+///         frame.0 == Some(Model::NAME)
+///     }
+/// }
+///
+/// /// An order was placed.
+/// #[derive(Deserialize, MessageInfo)]
+/// struct OrderCreated {
+///     id: u64,
+/// }
+///
+/// /// An order was shipped: the same shape, so only the frame tells the two apart.
+/// #[derive(Deserialize, MessageInfo)]
+/// struct OrderShipped {
+///     id: u64,
+/// }
+///
+/// #[derive(InMessages)]
+/// #[in_messages(by_codec)]
+/// enum OrderEvent {
+///     Created(OrderCreated),
+///     Shipped(OrderShipped),
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn on_event(event: &OrderEvent) -> HandlerOutcome {
+///     match event {
+///         OrderEvent::Created(created) => tracing::info!(created.id, "created"),
+///         OrderEvent::Shipped(shipped) => tracing::info!(shipped.id, "shipped"),
+///     }
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker_codec(
+///         MemoryBroker::new(),
+///         Registry,
+///         |b| {
+///             b.include(on_event)
+///         },
+///     )
+/// }
+/// # }
+/// # fn main() {}
+/// ```
+pub trait FrameNames<Model>: Codec {
+    /// Whether the frame names `Model`.
+    fn names(frame: &Self::Frame<'_>) -> bool;
 }
 
 /// A value paired with the codec that encodes it, the shape the payload forms encode through.

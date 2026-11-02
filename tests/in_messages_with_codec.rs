@@ -1,6 +1,5 @@
-//! A message set whose variant only the decode codec can name declares a discriminator type
-//! with `#[in_messages(discriminate_with_codec = ..)]`: the type reads the scope codec and the
-//! delivery and returns the kind to decode.
+//! A message set whose variant only the decode codec can name declares `#[in_messages(by_codec)]`:
+//! the codec reads a frame from the payload and says which model it names.
 
 #![cfg(all(
     feature = "macros",
@@ -12,7 +11,7 @@
 use std::error::Error;
 
 use crate::log_capture::Captured;
-use ruststream::codec::{Codec, CodecError, JsonCodec};
+use ruststream::codec::{Codec, CodecError, FrameNames, JsonCodec};
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 use serde::de::DeserializeOwned;
@@ -47,64 +46,66 @@ impl Seen {
     }
 }
 
-/// The schema id a producer stamps on every record, as the typed-headers publish writes it.
-#[derive(Serialize)]
-struct SchemaId {
-    schema: &'static str,
+/// A record as a producer sends it: the schema id byte, then the JSON body.
+#[derive(Outgoing, Serialized)]
+struct Framed(Vec<u8>);
+
+impl Framed {
+    fn of<T: Serialize>(schema: u8, value: &T) -> Result<Self, serde_json::Error> {
+        let mut bytes = vec![schema];
+        bytes.extend(serde_json::to_vec(value)?);
+        Ok(Self(bytes))
+    }
 }
 
-/// What a registry codec answers beside decoding: the record name a schema id stands for.
-trait RecordNames: Codec {
-    fn record_name(&self, schema: &[u8]) -> Option<&'static str>;
-}
+/// The record the registry names for a payload's schema id, if it knows the id.
+struct Record(Option<&'static str>);
 
-/// JSON whose records are named by a registry the codec holds.
+/// JSON behind a one-byte schema id; a registry the codec holds names the record behind it.
 #[derive(Debug, Clone, Copy)]
 struct Registry {
-    records: &'static [(&'static str, &'static str)],
+    records: &'static [(u8, &'static str)],
 }
 
 impl Codec for Registry {
+    type Frame<'a> = Record;
+
+    fn frame<'a>(&'a self, payload: &'a [u8]) -> Result<Self::Frame<'a>, CodecError> {
+        let schema = payload.first();
+        Ok(Record(
+            self.records
+                .iter()
+                .find(|(id, _)| Some(id) == schema)
+                .map(|(_, name)| *name),
+        ))
+    }
+
     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
-        JsonCodec.encode(value)
+        let mut framed = BytesMut::from(&[0u8][..]);
+        framed.extend_from_slice(&JsonCodec.encode(value)?);
+        Ok(framed)
     }
 
     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
-        JsonCodec.decode(bytes)
+        JsonCodec.decode(bytes.get(1..).unwrap_or_default())
     }
 }
 
-impl RecordNames for Registry {
-    fn record_name(&self, schema: &[u8]) -> Option<&'static str> {
-        self.records
-            .iter()
-            .find(|(id, _)| id.as_bytes() == schema)
-            .map(|(_, name)| *name)
+impl<Model: MessageInfo> FrameNames<Model> for Registry {
+    fn names(frame: &Record) -> bool {
+        frame.0 == Some(Model::NAME)
     }
 }
 
 const REGISTRY: Registry = Registry {
-    records: &[("1", "OrderCreated"), ("2", "OrderShipped")],
+    records: &[(1, "OrderCreated"), (2, "OrderShipped")],
 };
 
 #[derive(InMessages)]
-#[in_messages(discriminate_with_codec = ByRecord)]
+#[in_messages(by_codec)]
 enum OrderEvent {
     Created(OrderCreated),
     Shipped(OrderShipped),
-}
-
-/// Picks the variant by the record the registry names for the delivery's schema id.
-struct ByRecord;
-
-impl<DecodeCodec: RecordNames> CodecDiscriminator<OrderEventKind, DecodeCodec> for ByRecord {
-    fn kind<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Option<OrderEventKind> {
-        match codec.record_name(msg.headers().get("schema")?)? {
-            "OrderCreated" => Some(OrderEventKind::Created),
-            "OrderShipped" => Some(OrderEventKind::Shipped),
-            _ => None,
-        }
-    }
 }
 
 #[subscriber("rec.orders", reply("rec.seen"))]
@@ -128,20 +129,16 @@ async fn the_codec_names_the_variant() -> Result<(), Box<dyn Error>> {
     let tb = TestApp::start(app()).await?;
     let broker = tb.broker::<MemoryBroker>();
 
-    // The same bytes decode as either model: the registry, not the order, picks the variant.
+    // The same JSON decodes as either model: the schema id the codec resolves picks the variant.
     broker
-        .publish_with_headers(
-            "rec.orders",
-            &OrderShipped { id: 1 },
-            &SchemaId { schema: "2" },
-        )
+        .message(&Framed::of(2, &OrderShipped { id: 1 })?)
+        .to("rec.orders")
+        .publish()
         .await?;
     broker
-        .publish_with_headers(
-            "rec.orders",
-            &OrderCreated { id: 2 },
-            &SchemaId { schema: "1" },
-        )
+        .message(&Framed::of(1, &OrderCreated { id: 2 })?)
+        .to("rec.orders")
+        .publish()
         .await?;
     tb.settle().await?;
 
@@ -161,11 +158,9 @@ async fn a_schema_the_registry_does_not_know_is_a_decode_error() -> Result<(), B
     let broker = tb.broker::<MemoryBroker>();
 
     broker
-        .publish_with_headers(
-            "rec.orders",
-            &OrderCreated { id: 3 },
-            &SchemaId { schema: "9" },
-        )
+        .message(&Framed::of(9, &OrderCreated { id: 3 })?)
+        .to("rec.orders")
+        .publish()
         .await?;
     tb.settle().await?;
 
@@ -175,7 +170,7 @@ async fn a_schema_the_registry_does_not_know_is_a_decode_error() -> Result<(), B
         .assert_last_failed_to_decode();
     let log = captured.text();
     assert!(
-        log.contains("the discriminator of the message set `OrderEvent` chose no variant"),
+        log.contains("the codec frame names no variant of the message set `OrderEvent`"),
         "the failure names the set: {log}"
     );
     Ok(())

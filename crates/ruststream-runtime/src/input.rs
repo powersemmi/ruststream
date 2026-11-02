@@ -25,7 +25,7 @@ use serde::de::DeserializeOwned;
 use crate::Message;
 use crate::codec::{Codec, CodecError};
 use crate::handle::{Input, Solo, SoloSet};
-use crate::in_messages::DecodeSet;
+use crate::in_messages::InMessages;
 use crate::metadata::IncomingMessageMetadata;
 use crate::{Carries, IncomingMessage, Settle, Subscriber, SubscriptionSource};
 
@@ -170,13 +170,13 @@ impl<T: DeserializeOwned, DecodeCodec: Codec> TypedLane<T, DecodeCodec> for Solo
     }
 }
 
-impl<T: DecodeSet<DecodeCodec>, DecodeCodec: Codec> TypedLane<T, DecodeCodec> for SoloSet<T> {
+impl<T: InMessages<DecodeCodec>, DecodeCodec: Codec> TypedLane<T, DecodeCodec> for SoloSet<T> {
     fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<T, CodecError> {
-        <T as DecodeSet<DecodeCodec>>::decode(codec, msg)
+        <T as InMessages<DecodeCodec>>::decode(codec, msg)
     }
 
     fn incoming() -> Vec<IncomingMessageMetadata> {
-        <T as DecodeSet<DecodeCodec>>::incoming()
+        <T as InMessages<DecodeCodec>>::incoming()
     }
 }
 

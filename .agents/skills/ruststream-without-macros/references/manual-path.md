@@ -226,7 +226,7 @@ publisher.message(&Receipt { order_id: 7 }).to("receipts").publish().await?;
 ```
 
 A set of message models a handler receives on one subscription (what `#[derive(InMessages)]`
-declares) is two impls on the enum. `InMessages` holds the rule, written out in `decode` (each
+declares) is two impls on the enum. `InMessages<DecodeCodec>` holds the rule, written out in `decode` (each
 model through `<Model as InVariant<Set>>::decode_variant`, so a `serde` model takes the codec and
 a `Deserialized` one its own reader), and returns one `IncomingMessageMetadata` per model from
 `incoming()` (`<Model as InVariant<Set>>::describe()`, plus `with_discriminator` under a header
