@@ -8,15 +8,19 @@ use std::convert::Infallible;
 use std::future::{Ready, pending, ready};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use compio::runtime::spawn;
 use ruststream_memory::local::LocalMemoryBroker;
 use ruststream_runtime::{AppInfo, HandlerOutcome, Workers, subscriber};
 use ruststream_runtime_compio::{
-    Cores, HealthProbe, HealthState, RustStream, RustStreamError, SubscriptionEnd, yield_now,
+    Cores, HealthProbe, HealthState, RustStream, RustStreamError, SubscriptionEnd, time, yield_now,
 };
 
 use super::support::{Log, On, on_runtime, wire};
+
+/// When the signal that ends a healthy run arrives.
+const SIGNAL_AFTER: Duration = Duration::from_secs(3);
 
 fn accept(_position: usize) -> Ready<Result<(), HandlerOutcome>> {
     ready(Ok(()))
@@ -233,5 +237,33 @@ fn a_panicking_handler_fails_the_run_fast() {
     match error {
         RustStreamError::Dispatch(reason) => assert!(reason.contains("orders"), "got: {reason}"),
         other => panic!("expected a dispatch failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_subscription_that_panics_outside_its_handler_fails_the_run_fast() {
+    let log = Log::default();
+    let (orders, _line) = wire("orders", &log);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(LocalMemoryBroker::<8>::new(), |b| {
+            b.include(subscriber(orders.exploding(), On(accept)).build())
+        });
+
+    let cores = Cores::new(NonZeroUsize::MIN).without_signals();
+    // The signal that ends a healthy run comes late: a failed service must not wait for it.
+    let started = Instant::now();
+    let error = app
+        .run_until(cores, time::sleep(SIGNAL_AFTER))
+        .expect_err("a panic in the subscription's loop fails the service");
+
+    assert!(
+        started.elapsed() < SIGNAL_AFTER,
+        "the service ran on after its subscription died"
+    );
+    match error {
+        RustStreamError::Join(reason) => {
+            assert!(reason.contains("the client library broke"), "got: {reason}");
+        }
+        other => panic!("expected the loop's panic, got {other:?}"),
     }
 }

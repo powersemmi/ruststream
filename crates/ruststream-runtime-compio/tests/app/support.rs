@@ -149,6 +149,7 @@ pub(crate) struct Wire {
     inbox: Arc<Mutex<Option<UnboundedReceiver<Mail>>>>,
     log: Log,
     refuse: bool,
+    explode: bool,
 }
 
 /// A wire named `name`, and the test's end of it. `log` hears when the subscription opens and
@@ -162,6 +163,7 @@ pub(crate) fn wire(name: &'static str, log: &Log) -> (Wire, Line) {
             inbox: Arc::new(Mutex::new(Some(inbox))),
             log: log.clone(),
             refuse: false,
+            explode: false,
         },
         Line {
             post: Some(post),
@@ -172,6 +174,12 @@ pub(crate) fn wire(name: &'static str, log: &Log) -> (Wire, Line) {
 }
 
 impl Wire {
+    /// The stream of the wire panics when the loop opens it, as a client library with a bug does.
+    pub(crate) fn exploding(mut self) -> Self {
+        self.explode = true;
+        self
+    }
+
     /// The wire refuses to open, as a server that has no such queue does.
     pub(crate) fn refusing(mut self) -> Self {
         self.refuse = true;
@@ -207,6 +215,7 @@ impl SubscriptionSource<ConnectedLocalMemoryBroker<8>> for Wire {
             Ok(Open {
                 name: self.name,
                 inbox: self.inbox.lock().expect("the inbox").take(),
+                explode: self.explode,
                 log: self.log,
             })
         })
@@ -217,6 +226,7 @@ impl SubscriptionSource<ConnectedLocalMemoryBroker<8>> for Wire {
 pub(crate) struct Open {
     name: &'static str,
     inbox: Option<UnboundedReceiver<Mail>>,
+    explode: bool,
     log: Log,
 }
 
@@ -231,6 +241,7 @@ impl Subscriber for Open {
     type Error = Infallible;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Mail, Infallible>> + Send + '_ {
+        assert!(!self.explode, "the client library broke");
         self.inbox
             .take()
             .expect("the stream is opened once")

@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::spawn::spawn;
-use compio::runtime::JoinHandle;
+use compio::runtime::{JoinError, JoinHandle};
 use futures::future::{self, Either};
 use tracing::{debug, info, warn};
 
@@ -27,6 +27,7 @@ use crate::{
     Connected, Cores, HandlerMetadata, PairError, PublishPolicy, SendBroker, ShutdownWait, Stop,
     Tasks,
 };
+use ruststream_runtime::Halt;
 
 use super::health::{Consuming, HealthProbe, HealthReport};
 use super::service::RegisteredBroker;
@@ -620,7 +621,12 @@ async fn start_subscribers<State: Send + Sync>(
             input = meta.input_type,
             "subscriber started",
         );
-        handles.push(counted(handle, placed.health.consuming()));
+        handles.push(counted(
+            handle,
+            placed.health.consuming(),
+            placed.stop.clone(),
+            &meta.name,
+        ));
     }
     Ok(())
 }
@@ -628,10 +634,18 @@ async fn start_subscribers<State: Send + Sync>(
 /// Holds `handle` in a task that carries the subscription's place in the health count, so the
 /// count drops with the loop however it ends. Dropping or cancelling the returned handle cancels
 /// the loop.
-fn counted(handle: JoinHandle<()>, consuming: Consuming) -> Loop {
+///
+/// A loop that panics, outside the handler (building the context, polling the broker's stream),
+/// has stopped consuming for good, so the service fails like it does for a handler that panics.
+fn counted(handle: JoinHandle<()>, consuming: Consuming, stop: Stop, subscription: &str) -> Loop {
+    let subscription = Box::<str>::from(subscription);
     spawn(async move {
         let _consuming = consuming;
-        handle.await
+        let ended = handle.await;
+        if matches!(ended, Err(JoinError::Panicked(_))) {
+            stop.fail(&subscription, "its dispatch loop panicked");
+        }
+        ended
     })
 }
 
