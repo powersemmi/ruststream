@@ -22,6 +22,7 @@ default = ["std"]
 # alone; without it the crate holds the traits a runner implements.
 alloc = [
     "ruststream-core/alloc",
+    "dep:spin",
     "dep:bytes",
     "dep:bytes-utils",
     "dep:futures",
@@ -92,6 +93,9 @@ tracing = { workspace = true, optional = true }
 # The handle of the app's runtime under the `tokio` feature, and the harness's coordinator under
 # `testing`; the delivery body itself names no runtime. Only `rt`: the body spawns nothing.
 send_wrapper = { version = "0.6", optional = true }
+# The lock of a value the elements of a batch share, where the core's `send` feature is on and
+# `std` (and its mutex) is off.
+spin = { version = "0.10", optional = true, default-features = false, features = ["mutex", "spin_mutex"] }
 tokio = { version = "1.44", optional = true, default-features = false, features = ["rt"] }
 tokio-util = { workspace = true, optional = true }
 quanta = { workspace = true, optional = true }

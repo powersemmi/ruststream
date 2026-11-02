@@ -63,6 +63,7 @@ check:
     # The core's `send` feature is additive: a build that enables it without the Tokio runner (any
     # crate may) takes the `Send` bounds in every boxed future of the runtime as well.
     cargo check -p ruststream-runtime --features ruststream-core/send
+    cargo check -p ruststream-runtime --no-default-features --features alloc,ruststream-core/send
     # The firmware facade with no serde codec: an embedded handler's `Out` slot mounts, and only
     # an encoding publish asks for a codec.
     cargo check -p ruststream --no-default-features --features embassy,macros,memory --tests

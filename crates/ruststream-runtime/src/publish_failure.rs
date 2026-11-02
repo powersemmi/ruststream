@@ -17,6 +17,8 @@ use core::panic::AssertUnwindSafe;
 #[cfg(feature = "std")]
 use futures::FutureExt;
 use futures::future::join;
+#[cfg(not(feature = "std"))]
+use spin::Mutex as SpinMutex;
 #[cfg(feature = "std")]
 use std::panic::resume_unwind;
 #[cfg(feature = "std")]
@@ -588,6 +590,17 @@ impl<Value> Guarded<Value> for Mutex<Value> {
     }
 }
 
+#[cfg(not(feature = "std"))]
+impl<Value> Guarded<Value> for SpinMutex<Value> {
+    fn guard(value: Value) -> Self {
+        Self::new(value)
+    }
+
+    fn with<Out>(&self, change: impl FnOnce(&mut Value) -> Out) -> Out {
+        change(&mut self.lock())
+    }
+}
+
 impl<Value> Guarded<Value> for RefCell<Value> {
     fn guard(value: Value) -> Self {
         Self::new(value)
@@ -604,9 +617,10 @@ impl<Value> Guarded<Value> for RefCell<Value> {
 #[cfg(feature = "std")]
 type Exclusive<Value> = Mutex<Value>;
 
-/// See the `std` form: a build without `std` has no mutex, and a cell is all it can name.
+/// See the `std` form: a build without `std` has no mutex of its own, so it takes a spin lock,
+/// held only for the change, never across an await.
 #[cfg(not(feature = "std"))]
-type Exclusive<Value> = RefCell<Value>;
+type Exclusive<Value> = SpinMutex<Value>;
 
 /// A value shared by the elements of a batch and changed under a lock held for the change alone.
 struct Lock<Value>(IfSend<Exclusive<Value>, RefCell<Value>>);

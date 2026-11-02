@@ -1707,6 +1707,7 @@ dependencies = [
  "serde",
  "serde-json-slice",
  "serde_json",
+ "spin",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -2007,6 +2008,12 @@ dependencies = [
  "libc",
  "windows-sys",
 ]
+
+[[package]]
+name = "spin"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
 
 [[package]]
 name = "stable_deref_trait"
