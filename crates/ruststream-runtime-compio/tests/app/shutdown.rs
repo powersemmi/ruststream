@@ -30,22 +30,17 @@ impl Drop for Dropped {
     }
 }
 
-/// Runs `run` on a thread with `count` cores and fails the test if it is still going after
-/// fifteen seconds: a shutdown that hangs is a defect, not a slow test.
+/// Runs `run` on a thread with `cores` and gives up on it after fifteen seconds (`None`): a
+/// shutdown that hangs is a defect, which the caller's `expect` turns into a failed test.
 fn run_guarded(
-    count: usize,
+    cores: Cores,
     run: impl FnOnce(Cores) -> Result<(), RustStreamError> + Send + 'static,
-) -> Result<(), RustStreamError> {
+) -> Option<Result<(), RustStreamError>> {
     let (done, finished) = channel();
-    let cores = Cores::new(NonZeroUsize::new(count).expect("a count"))
-        .unpinned()
-        .without_signals();
     thread::spawn(move || {
         let _ = done.send(run(cores));
     });
-    finished
-        .recv_timeout(Duration::from_secs(15))
-        .expect("the run ended in time")
+    finished.recv_timeout(Duration::from_secs(15)).ok()
 }
 
 type Gate = Arc<Mutex<Option<oneshot::Receiver<()>>>>;
@@ -211,12 +206,16 @@ fn a_lane_stuck_on_another_core_is_cancelled_at_the_cap_and_the_run_ends() {
         });
 
     // Both workers hold a delivery - one runs on core 0, the other on core 1 - before the run ends.
-    run_guarded(3, move |cores| {
+    let cores = Cores::new(NonZeroUsize::new(3).expect("three"))
+        .unpinned()
+        .without_signals();
+    run_guarded(cores, move |cores| {
         app.run_until(cores, async move {
             handling.next().await.expect("the first handler started");
             handling.next().await.expect("the second handler started");
         })
     })
+    .expect("the run ended in time")
     .expect("the cap ends the run cleanly");
 
     let dropped = log

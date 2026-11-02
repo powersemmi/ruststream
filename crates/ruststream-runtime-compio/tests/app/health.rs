@@ -5,19 +5,20 @@
 //! so these tests keep `start` and its `RunningApp`.
 
 use std::convert::Infallible;
-use std::future::{pending, ready};
+use std::future::{Ready, pending, ready};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
+use compio::runtime::spawn;
 use ruststream_memory::local::LocalMemoryBroker;
-use ruststream_runtime::{AppInfo, Workers, subscriber};
+use ruststream_runtime::{AppInfo, HandlerOutcome, Workers, subscriber};
 use ruststream_runtime_compio::{
     Cores, HealthProbe, HealthState, RustStream, RustStreamError, SubscriptionEnd, yield_now,
 };
 
 use super::support::{Log, On, on_runtime, wire};
 
-fn accept(_position: usize) -> std::future::Ready<Result<(), ruststream_runtime::HandlerOutcome>> {
+fn accept(_position: usize) -> Ready<Result<(), HandlerOutcome>> {
     ready(Ok(()))
 }
 
@@ -103,7 +104,7 @@ fn a_probe_parked_in_changed_wakes_on_the_transition() {
     let woken = on_runtime(async {
         let running = app.start().await.expect("the service starts");
         let mut health = running.health();
-        let parked = compio::runtime::spawn(async move { health.changed().await });
+        let parked = spawn(async move { health.changed().await });
         // The probe parks before the shutdown moves the state.
         yield_now().await;
         running.shutdown().await.expect("a clean shutdown");
