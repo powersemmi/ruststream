@@ -151,3 +151,38 @@ where
         self.source.pair(connected.as_ref()).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::format;
+
+    use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish};
+
+    use super::*;
+
+    #[test]
+    fn a_wrapper_and_its_token_print_without_the_broker() {
+        let actuators = Bindable::new(LocalMemoryBroker::<2>::new());
+        let token = actuators.bind(LocalMemoryPublish);
+
+        assert_eq!(format!("{actuators:?}"), "Bindable { .. }");
+        assert_eq!(
+            format!("{token:?}"),
+            "Bound { source: LocalMemoryPublish, .. }"
+        );
+    }
+
+    /// A token is cloned into every mount that publishes through it, and each copy reads the slot
+    /// the wrapper fills at start.
+    #[test]
+    fn a_cloned_token_reads_the_slot_of_the_wrapper_it_came_from() {
+        let actuators = Bindable::new(LocalMemoryBroker::<2>::new());
+        let token = actuators.bind(LocalMemoryPublish);
+        let copy = token.clone();
+
+        let (_broker, slot) = actuators.into_parts();
+        assert_eq!(format!("{slot:?}"), "BindSlot { .. }");
+        assert!(Rc::ptr_eq(&copy.slot.0, &slot.0));
+        assert!(Rc::ptr_eq(&token.slot.0, &slot.0));
+    }
+}

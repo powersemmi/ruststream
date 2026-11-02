@@ -91,6 +91,14 @@ fn target_last(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mount
         .with_broker(actuators, |b| b)
 }
 
+/// The token's broker is never registered with the app.
+#[ruststream::app(runtime = embassy)]
+fn unregistered(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mounts> {
+    let actuators = EmbeddedBindable::new(actuators);
+    let to_actuators = actuators.bind(LocalMemoryPublish);
+    EmbeddedApp::new().with_broker(sensors, |b| b.include(on_level).out(Commands, to_actuators))
+}
+
 /// Each broker publishes through a token bound to the other.
 #[ruststream::app(runtime = embassy)]
 fn bridge(sensors: Sensors, actuators: Actuators) -> EmbeddedApp<impl Mounts> {
@@ -120,6 +128,18 @@ fn a_command_reaches_a_bus_registered_after_its_publisher() -> Result<(), Box<dy
         tb.shutdown().await?;
         Ok(())
     })
+}
+
+#[test]
+fn a_token_whose_broker_never_registers_stops_the_start() {
+    block_on(async {
+        let started = TestApp::start(unregistered(Sensors::new(), Actuators::new())).await;
+        let Err(error) = started else {
+            panic!("the token cannot pair");
+        };
+        let error = error.to_string();
+        assert!(error.contains("not connected"), "{error}");
+    });
 }
 
 #[test]
