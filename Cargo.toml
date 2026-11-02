@@ -33,7 +33,7 @@ authors = ["RustStream contributors"]
 [workspace.dependencies]
 # The contract builds without `std`, so these take no default features here; each crate that needs
 # `std` from them names it.
-bytes = { version = "1", default-features = false }
+bytes = { version = "1.9", default-features = false }
 # The owned string of the message path: a `Bytes` with the UTF-8 invariant, so a name and a header
 # key clone by reference count and can be sliced out of a buffer a broker already holds.
 # 0.1.3 is the real floor: `Str::from_static`, which is how a constant key costs nothing, arrived
