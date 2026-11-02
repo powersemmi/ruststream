@@ -13,7 +13,9 @@ use crate::runtime::Runtime;
 pub(crate) struct AppRuntimeArgs {
     flavor: Option<LitStr>,
     worker_threads: Option<LitInt>,
-    /// The runner the app runs on: tokio unless `runtime = embassy` names the embedded one.
+    /// The core count `runtime = compio` was given; open means every available core.
+    cores: Option<LitInt>,
+    /// The runner the app runs on: tokio unless `runtime` names the embedded or the compio one.
     target: Runtime,
 }
 
@@ -32,10 +34,11 @@ impl Parse for AppRuntimeArgs {
                 target = match &pair.value {
                     syn::Expr::Path(path) if path.path.is_ident("embassy") => Runtime::Embassy,
                     syn::Expr::Path(path) if path.path.is_ident("tokio") => Runtime::Tokio,
+                    syn::Expr::Path(path) if path.path.is_ident("compio") => Runtime::Compio,
                     other => {
                         return Err(syn::Error::new_spanned(
                             other,
-                            "expected `runtime = tokio` or `runtime = embassy`",
+                            "expected `runtime = tokio`, `runtime = embassy` or `runtime = compio`",
                         ));
                     }
                 };
@@ -56,6 +59,7 @@ impl AppRuntimeArgs {
         let mut args = Self {
             flavor: None,
             worker_threads: None,
+            cores: None,
             target: runtime,
         };
         let metas = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
@@ -63,6 +67,9 @@ impl AppRuntimeArgs {
             return metas
                 .first()
                 .map_or(Ok(args), |meta| Err(embassy_argument(meta)));
+        }
+        if runtime == Runtime::Compio {
+            return Self::parse_compio(args, metas);
         }
         let mut pairs = Vec::with_capacity(metas.len());
         for meta in metas {
@@ -114,6 +121,12 @@ impl AppRuntimeArgs {
                         "duplicate `worker_threads`",
                     ));
                 }
+            } else if pair.path.is_ident("cores") {
+                return Err(syn::Error::new_spanned(
+                    &pair.path,
+                    "`cores` sizes a compio app; on tokio use `worker_threads = n`, or add \
+                     `runtime = compio`",
+                ));
             } else {
                 return Err(syn::Error::new_spanned(
                     &pair.path,
@@ -135,6 +148,53 @@ impl AppRuntimeArgs {
 }
 
 impl AppRuntimeArgs {
+    /// Parses the arguments of `runtime = compio`: the core count alone.
+    fn parse_compio(mut args: Self, metas: Punctuated<Meta, Token![,]>) -> syn::Result<Self> {
+        for meta in metas {
+            let path = meta.path();
+            if let Some(knob) = ["flavor", "worker_threads"]
+                .into_iter()
+                .find(|knob| path.is_ident(knob))
+            {
+                return Err(syn::Error::new_spanned(
+                    path,
+                    format!(
+                        "`{knob}` {} a tokio runtime; on the compio runtime the app runs on \
+                         `cores` single-threaded cores, so drop it or size the app with \
+                         `cores = n`",
+                        if knob == "flavor" { "chooses" } else { "sizes" },
+                    ),
+                ));
+            }
+            let Meta::NameValue(pair) = &meta else {
+                return Err(compio_unknown(path));
+            };
+            if !pair.path.is_ident("cores") {
+                return Err(compio_unknown(path));
+            }
+            let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Int(count),
+                ..
+            }) = &pair.value
+            else {
+                return Err(syn::Error::new_spanned(
+                    &pair.value,
+                    "expected a core count",
+                ));
+            };
+            if count.base10_parse::<usize>()? == 0 {
+                return Err(syn::Error::new_spanned(
+                    count,
+                    "an app needs at least one core; omit `cores` to use every available one",
+                ));
+            }
+            if args.cores.replace(count.clone()).is_some() {
+                return Err(syn::Error::new_spanned(&pair.path, "duplicate `cores`"));
+            }
+        }
+        Ok(args)
+    }
+
     /// The `AppRuntime` value the arguments name.
     fn runtime(&self) -> TokenStream2 {
         let runtime = quote!(::ruststream::runtime::cli::AppRuntime);
@@ -163,12 +223,27 @@ pub(crate) fn expand_app(runtime: &AppRuntimeArgs, func: &ItemFn) -> syn::Result
     expand_for(runtime, func, runtime.target).map(Into::into)
 }
 
+/// Why `runtime = compio` refuses an argument it does not know.
+fn compio_unknown(path: &syn::Path) -> syn::Error {
+    syn::Error::new_spanned(
+        path,
+        "unknown argument; #[ruststream::app(runtime = compio)] takes `cores`",
+    )
+}
+
 /// Why the embassy runtime refuses an argument: the attribute takes none there.
 fn embassy_argument(meta: &Meta) -> syn::Error {
     let path = meta.path();
     let tokio_knob = ["flavor", "worker_threads"]
         .into_iter()
         .find(|knob| path.is_ident(knob));
+    if path.is_ident("cores") {
+        return syn::Error::new_spanned(
+            path,
+            "`cores` sizes a compio app; on the embassy runtime the app runs as one embassy \
+             task, and #[ruststream::app] takes no arguments",
+        );
+    }
     let message = match tokio_knob {
         Some("flavor") => {
             "`flavor` chooses a tokio runtime; on the embassy runtime the app runs as one embassy \
@@ -205,6 +280,19 @@ fn expand_for(
         ));
     }
     let name = &func.sig.ident;
+    if target == Runtime::Compio {
+        let cores = runtime.cores.as_ref().map_or_else(
+            || quote!(::core::option::Option::None),
+            |count| quote!(::core::option::Option::Some(#count)),
+        );
+        return Ok(quote! {
+            #func
+
+            fn main() -> ::ruststream::__private::ExitCode {
+                ::ruststream::runtime::compio::run_main(#cores, #name)
+            }
+        });
+    }
     let runtime = runtime.runtime();
     Ok(quote! {
         #func
@@ -326,6 +414,160 @@ mod tests {
 
     fn no_args(runtime: Runtime) -> AppRuntimeArgs {
         args(runtime, TokenStream2::new()).expect("no arguments parse")
+    }
+
+    #[test]
+    fn compio_takes_a_core_count() {
+        let parsed = args(Runtime::Compio, quote!(cores = 4)).expect("a core count parses");
+
+        assert_eq!(parsed.cores.expect("cores kept").base10_digits(), "4");
+    }
+
+    #[test]
+    fn compio_without_cores_leaves_the_count_open() {
+        assert!(no_args(Runtime::Compio).cores.is_none());
+    }
+
+    #[test]
+    fn compio_with_the_runtime_argument_parses_through_the_attribute() {
+        let parsed: AppRuntimeArgs =
+            syn::parse2(quote!(runtime = compio, cores = 4)).expect("the attribute parses");
+
+        assert_eq!(parsed.target, Runtime::Compio);
+        assert!(parsed.cores.is_some());
+    }
+
+    #[test]
+    fn zero_cores_are_refused() {
+        let refused = rejection(args(Runtime::Compio, quote!(cores = 0)));
+
+        assert_eq!(
+            refused,
+            "an app needs at least one core; omit `cores` to use every available one"
+        );
+    }
+
+    #[test]
+    fn cores_that_is_not_a_number_is_refused() {
+        let refused = rejection(args(Runtime::Compio, quote!(cores = "4")));
+
+        assert_eq!(refused, "expected a core count");
+    }
+
+    #[test]
+    fn a_repeated_core_count_is_refused() {
+        let refused = rejection(args(Runtime::Compio, quote!(cores = 2, cores = 4)));
+
+        assert_eq!(refused, "duplicate `cores`");
+    }
+
+    #[test]
+    fn the_tokio_knobs_are_refused_on_compio() {
+        let flavor = rejection(args(Runtime::Compio, quote!(flavor = "current_thread")));
+        let workers = rejection(args(Runtime::Compio, quote!(worker_threads = 2)));
+
+        assert_eq!(
+            flavor,
+            "`flavor` chooses a tokio runtime; on the compio runtime the app runs on `cores` \
+             single-threaded cores, so drop it or size the app with `cores = n`"
+        );
+        assert_eq!(
+            workers,
+            "`worker_threads` sizes a tokio runtime; on the compio runtime the app runs on \
+             `cores` single-threaded cores, so drop it or size the app with `cores = n`"
+        );
+    }
+
+    #[test]
+    fn an_unknown_argument_is_refused_on_compio() {
+        let refused = rejection(args(Runtime::Compio, quote!(threads = 2)));
+
+        assert_eq!(
+            refused,
+            "unknown argument; #[ruststream::app(runtime = compio)] takes `cores`"
+        );
+    }
+
+    #[test]
+    fn cores_is_refused_on_tokio() {
+        let refused = rejection(args(Runtime::Tokio, quote!(cores = 4)));
+
+        assert_eq!(
+            refused,
+            "`cores` sizes a compio app; on tokio use `worker_threads = n`, or add \
+             `runtime = compio`"
+        );
+    }
+
+    #[test]
+    fn cores_is_refused_on_embassy() {
+        let refused = rejection(args(Runtime::Embassy, quote!(cores = 4)));
+
+        assert_eq!(
+            refused,
+            "`cores` sizes a compio app; on the embassy runtime the app runs as one embassy \
+             task, and #[ruststream::app] takes no arguments"
+        );
+    }
+
+    #[test]
+    fn a_compio_builder_gets_a_main_that_hands_it_the_core_count() {
+        let func: ItemFn = syn::parse_quote! {
+            fn app() -> impl App {
+                RustStream::new(AppInfo::new("svc", "0.1.0"))
+            }
+        };
+        let parsed = args(Runtime::Compio, quote!(cores = 4)).expect("cores parse");
+
+        let expanded = expand_for(&parsed, &func, Runtime::Compio)
+            .expect("a compio builder expands")
+            .to_string();
+
+        assert!(
+            expanded.contains(
+                "fn main () -> :: ruststream :: __private :: ExitCode { :: ruststream :: \
+                 runtime :: compio :: run_main (:: core :: option :: Option :: Some (4) , app) }"
+            ),
+            "{expanded}"
+        );
+    }
+
+    #[test]
+    fn a_compio_builder_without_cores_hands_none() {
+        let func: ItemFn = syn::parse_quote! {
+            fn app() -> impl App {
+                RustStream::new(AppInfo::new("svc", "0.1.0"))
+            }
+        };
+
+        let expanded = expand_for(&no_args(Runtime::Compio), &func, Runtime::Compio)
+            .expect("a compio builder expands")
+            .to_string();
+
+        assert!(
+            expanded.contains("run_main (:: core :: option :: Option :: None , app)"),
+            "{expanded}"
+        );
+    }
+
+    #[test]
+    fn a_compio_builder_keeps_the_synchronous_no_argument_rule() {
+        let func: ItemFn = syn::parse_quote! {
+            async fn app() -> impl App {
+                RustStream::new(AppInfo::new("svc", "0.1.0"))
+            }
+        };
+
+        let refused = rejection(expand_for(
+            &no_args(Runtime::Compio),
+            &func,
+            Runtime::Compio,
+        ));
+
+        assert_eq!(
+            refused,
+            "#[ruststream::app] requires a synchronous builder returning `impl App` or `RustStream`"
+        );
     }
 
     #[test]

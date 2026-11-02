@@ -1,0 +1,5 @@
+error: `worker_threads` sizes a tokio runtime; on the compio runtime the app runs on `cores` single-threaded cores, so drop it or size the app with `cores = n`
+ --> tests/ui/app_worker_threads_on_compio.rs:4:25
+  |
+4 | #[app(runtime = compio, worker_threads = 4)]
+  |                         ^^^^^^^^^^^^^^

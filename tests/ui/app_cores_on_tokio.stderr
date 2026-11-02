@@ -1,0 +1,5 @@
+error: `cores` sizes a compio app; on tokio use `worker_threads = n`, or add `runtime = compio`
+ --> tests/ui/app_cores_on_tokio.rs:4:7
+  |
+4 | #[app(cores = 4)]
+  |       ^^^^^

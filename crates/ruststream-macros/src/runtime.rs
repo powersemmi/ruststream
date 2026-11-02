@@ -12,6 +12,9 @@ pub(crate) enum Runtime {
     /// The embedded runner on embassy: every delivery is polled on the app's one task, so
     /// nothing is asked to be `Send`.
     Embassy,
+    /// The compio runner: one single-threaded runtime per core, so nothing is asked to be
+    /// `Send` and the publisher capabilities are named as the service wrote them.
+    Compio,
 }
 
 impl Runtime {
@@ -23,7 +26,7 @@ impl Runtime {
         bounds: &Punctuated<TypeParamBound, Token![+]>,
     ) -> Punctuated<TypeParamBound, Token![+]> {
         match self {
-            Self::Tokio => bounds.clone(),
+            Self::Tokio | Self::Compio => bounds.clone(),
             Self::Embassy => bounds.iter().map(through_facade).collect(),
         }
     }

@@ -1,0 +1,5 @@
+error: `flavor` chooses a tokio runtime; on the compio runtime the app runs on `cores` single-threaded cores, so drop it or size the app with `cores = n`
+ --> tests/ui/app_flavor_on_compio.rs:4:25
+  |
+4 | #[app(runtime = compio, flavor = "current_thread")]
+  |                         ^^^^^^

@@ -1,0 +1,5 @@
+error: an app needs at least one core; omit `cores` to use every available one
+ --> tests/ui/app_zero_cores.rs:4:33
+  |
+4 | #[app(runtime = compio, cores = 0)]
+  |                                 ^

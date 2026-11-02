@@ -320,6 +320,22 @@ pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///     }
 /// }
 /// ```
+///
+/// # On the compio runtime
+///
+/// `runtime = compio` runs the app on one single-threaded runtime per core, and
+/// `cores = n` sizes it (omitted, every available core). The builder has the same shape as on
+/// tokio, and the expansion hands it to `ruststream::runtime::compio::run_main`, so the binary
+/// understands the same `run` and `asyncapi gen` commands. `cores` takes a number of at least
+/// one; `flavor` and `worker_threads` belong to tokio and are refused here, as `cores` is on
+/// tokio.
+///
+/// ```ignore
+/// #[ruststream::app(runtime = compio, cores = 4)]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new())
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn app(attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);

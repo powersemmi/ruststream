@@ -1,4 +1,4 @@
-error: expected `runtime = tokio` or `runtime = embassy`
+error: expected `runtime = tokio`, `runtime = embassy` or `runtime = compio`
  --> tests/ui/app_unknown_runtime.rs:8:17
   |
 8 | #[app(runtime = smol)]
