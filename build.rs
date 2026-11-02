@@ -7,6 +7,11 @@ use std::env;
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(ruststream_alloc)");
     println!("cargo::rerun-if-env-changed=DEP_RUSTSTREAM_CORE_ALLOC");
+    println!("cargo::rustc-check-cfg=cfg(ruststream_tracing)");
+    println!("cargo::rerun-if-env-changed=DEP_RUSTSTREAM_CORE_TRACING");
+    if env::var_os("DEP_RUSTSTREAM_CORE_TRACING").is_some() {
+        println!("cargo::rustc-cfg=ruststream_tracing");
+    }
     if env::var_os("DEP_RUSTSTREAM_CORE_ALLOC").is_some() {
         println!("cargo::rustc-cfg=ruststream_alloc");
     }

@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```
-//! # #[cfg(feature = "json")]
+//! # #[cfg(all(feature = "json", feature = "tracing"))]
 //! # mod demo {
 //! use ruststream::memory::prelude::*;
 //! use ruststream::runtime::layers::TracingLayer;
@@ -43,10 +43,10 @@
 //! # fn main() {}
 //! ```
 
-#[cfg(ruststream_alloc)]
+#[cfg(ruststream_tracing)]
 use super::context::Context;
 use super::handler::Handler;
-#[cfg(ruststream_alloc)]
+#[cfg(ruststream_tracing)]
 use super::handler::HandlerOutcome;
 use ruststream_core::{MaybeSend, MaybeSendSync};
 
@@ -75,7 +75,7 @@ pub trait Layer<H> {
 /// layer that applies uniformly (logging, metrics) can wrap every router handler from one bound.
 ///
 /// Implemented for [`Identity`], a [`Stack`] of blanket layers, and the bundled
-/// [`TracingLayer`](layers::TracingLayer). Implement it for a custom layer to let the app's global
+/// `TracingLayer`. Implement it for a custom layer to let the app's global
 /// stack reach router handlers; a layer that only wraps specific handler types cannot be blanket.
 ///
 /// # Examples
@@ -245,7 +245,7 @@ where
 }
 
 /// Bundled, opinionated middleware layers ready to drop into a handler stack.
-#[cfg(ruststream_alloc)]
+#[cfg(ruststream_tracing)]
 pub mod layers {
     use ruststream_core::__alloc::tracing::{Instrument as _, debug, info, trace_span, warn};
     use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};

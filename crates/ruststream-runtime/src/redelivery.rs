@@ -958,8 +958,8 @@ fn announce(subscription: &str, declaration: &RetryDeclaration, publishes_copies
         info!(
             target: "ruststream::retry",
             subscription = %subscription,
-            max_attempts,
-            dead_letter = declaration.dead_letter(),
+            max_attempts = ?max_attempts,
+            dead_letter = ?declaration.dead_letter(),
             applied_by = "runtime",
             "retry declaration; a cap applies to the copies this process publishes, and to a \
              native delayed redelivery through the broker's delivery count where the transport \
@@ -969,8 +969,8 @@ fn announce(subscription: &str, declaration: &RetryDeclaration, publishes_copies
         info!(
             target: "ruststream::retry",
             subscription = %subscription,
-            max_attempts,
-            dead_letter = declaration.dead_letter(),
+            max_attempts = ?max_attempts,
+            dead_letter = ?declaration.dead_letter(),
             applied_by = "broker",
             "retry declaration; the broker moves a spent delivery itself and applies it",
         );

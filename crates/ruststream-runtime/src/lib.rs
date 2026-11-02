@@ -270,7 +270,7 @@ pub use metadata::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
     OutgoingMessageMetadata,
 };
-#[cfg(ruststream_alloc)]
+#[cfg(ruststream_tracing)]
 pub use middleware::layers;
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack};
 #[cfg(feature = "poll-diagnostics")]

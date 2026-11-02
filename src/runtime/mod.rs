@@ -13,7 +13,7 @@ pub use ruststream_runtime::Out;
 #[cfg(not(ruststream_alloc))]
 pub use ruststream_runtime::Outcomes;
 pub use ruststream_runtime::Retry;
-#[cfg(ruststream_alloc)]
+#[cfg(ruststream_tracing)]
 pub use ruststream_runtime::layers;
 #[doc(hidden)]
 pub use ruststream_runtime::{

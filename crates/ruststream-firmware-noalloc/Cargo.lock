@@ -611,15 +611,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "portable-atomic"
-version = "1.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
-dependencies = [
- "critical-section",
-]
-
-[[package]]
 name = "postcard"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -708,10 +699,8 @@ dependencies = [
  "embassy-time",
  "embassy-time-driver",
  "panic-halt",
- "portable-atomic",
  "ruststream",
  "serde",
- "spin",
  "systick-timer",
 ]
 
@@ -751,7 +740,6 @@ dependencies = [
  "send_wrapper",
  "serde",
  "serde-json-core",
- "spin",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -911,15 +899,6 @@ name = "smallvec"
 version = "1.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
-
-[[package]]
-name = "spin"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
-dependencies = [
- "portable-atomic",
-]
 
 [[package]]
 name = "stable_deref_trait"

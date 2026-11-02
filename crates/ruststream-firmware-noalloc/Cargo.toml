@@ -32,7 +32,3 @@ systick-timer = { version = "0.2.3", features = ["embassy-time-driver"] }
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7.5"
 panic-halt = "1"
-# A Cortex-M0+ has no compare-and-swap: the framework's spin lock takes it from `portable-atomic`,
-# which the firmware backs with the critical section it already links.
-spin = { version = "0.10", default-features = false, features = ["portable_atomic"] }
-portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }

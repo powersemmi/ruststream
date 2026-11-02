@@ -23,11 +23,11 @@ use core::convert::Infallible;
 use std::sync::Mutex;
 
 #[cfg(feature = "json")]
-use ruststream_core::__alloc::tracing::field::{Field, Visit};
+use tracing::field::{Field, Visit};
 #[cfg(feature = "json")]
-use ruststream_core::__alloc::tracing::subscriber::{self, DefaultGuard};
+use tracing::subscriber::{self, DefaultGuard};
 #[cfg(feature = "json")]
-use ruststream_core::__alloc::tracing::{Event, Subscriber};
+use tracing::{Event, Subscriber};
 
 use super::*;
 use crate::HeaderSet;

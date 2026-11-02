@@ -13,10 +13,10 @@ use core::panic::AssertUnwindSafe;
 #[cfg(feature = "std")]
 use futures::FutureExt;
 use futures::future::join;
+#[cfg(not(feature = "std"))]
+use ruststream_core::__alloc::spin::Mutex as SpinMutex;
 use ruststream_core::IfSend;
 use ruststream_core::diag::warn;
-#[cfg(not(feature = "std"))]
-use spin::Mutex as SpinMutex;
 #[cfg(feature = "std")]
 use std::panic::resume_unwind;
 #[cfg(feature = "std")]

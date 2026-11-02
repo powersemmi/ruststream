@@ -121,9 +121,9 @@ pub(crate) mod log_capture {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, Once};
 
-    use ruststream_core::__alloc::tracing::field::{Field, Visit};
-    use ruststream_core::__alloc::tracing::subscriber::DefaultGuard;
-    use ruststream_core::__alloc::tracing::{Event, Subscriber, subscriber};
+    use tracing::field::{Field, Visit};
+    use tracing::subscriber::DefaultGuard;
+    use tracing::{Event, Subscriber, subscriber};
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::{Context, SubscriberExt as _};
 

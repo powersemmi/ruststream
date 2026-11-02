@@ -66,7 +66,9 @@ testing = [
     "tokio?/test-util",
     "ruststream-core/testing",
 ]
-# The diagnostics of a build without `alloc` go to the `log` crate or to `defmt`.
+# The diagnostics go to `tracing` (which needs `alloc`), or without it to the `log` crate or to
+# `defmt`; `TracingLayer` is there when they do.
+tracing = ["alloc", "ruststream-core/tracing"]
 log = ["ruststream-core/log"]
 defmt = ["ruststream-core/defmt"]
 # The app's runtime as a handler reaches it (`MainRuntime`), for the runner built on Tokio.
@@ -82,9 +84,6 @@ thiserror = { workspace = true }
 # The handle of the app's runtime under the `tokio` feature, and the harness's coordinator under
 # `testing`; the delivery body itself names no runtime. Only `rt`: the body spawns nothing.
 send_wrapper = { version = "0.6", optional = true }
-# The lock of a value the elements of a batch share, where the core's `send` feature is on and
-# `std` (and its mutex) is off.
-spin = { version = "0.10", default-features = false, features = ["mutex", "spin_mutex"] }
 tokio = { version = "1.44", optional = true, default-features = false, features = ["rt"] }
 tokio-util = { workspace = true, optional = true }
 quanta = { workspace = true, optional = true }

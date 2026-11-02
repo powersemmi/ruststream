@@ -4,7 +4,7 @@
 //! `name = %value` (shown with `Display`), `name = ?value` (shown with `Debug`), `name = value` or
 //! just `name`, and a message with its format arguments last.
 //!
-//! * With the contract's `tracing` feature (the heap variant) an event is a `tracing` event and
+//! * With the contract's `tracing` feature (which needs `alloc`) an event is a `tracing` event and
 //!   no other sink receives it.
 //! * Without it an event goes to every sink that is switched on: the `log` feature writes a
 //!   record, the `defmt` feature a defmt line. Both carry the fields after the message as
@@ -23,7 +23,7 @@ pub use crate::{__diag_debug as debug, __diag_error as error, __diag_info as inf
 pub mod private {
     #[cfg(feature = "log")]
     pub use log;
-    #[cfg(feature = "tracing")]
+    #[cfg(diag_tracing)]
     pub use tracing;
 }
 
@@ -190,7 +190,7 @@ macro_rules! __diag_debug {
 }
 
 /// The event as a `tracing` event.
-#[cfg(feature = "tracing")]
+#[cfg(diag_tracing)]
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __diag {
@@ -200,7 +200,7 @@ macro_rules! __diag {
 }
 
 /// The event handed to the sinks that are on, or type-checked and dropped when none is.
-#[cfg(not(feature = "tracing"))]
+#[cfg(not(diag_tracing))]
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __diag {

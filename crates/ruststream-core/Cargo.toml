@@ -24,16 +24,16 @@ default = ["std"]
 # message type needs it. A `no_std` build with an allocator turns on this feature alone.
 #
 # It also brings the heap dependencies the rest of the family needs in its heap variant (`bytes`,
-# `bytes-utils`, `tracing`, `futures` with its own `alloc`) and hands them to
-# the other crates through a hidden module, so a crate that turns this feature on is enough: the
+# `bytes-utils`, `futures` with its own `alloc` and `spin`; the last two on targets with pointer
+# atomics) and hands them to the other crates through a hidden module, so a crate that turns this feature on is enough: the
 # family's other crates need no feature of their own to follow it.
 alloc = [
     "dep:bytes",
     "dep:bytes-utils",
     "serde/alloc",
-    "tracing",
     "dep:futures",
     "futures/alloc",
+    "dep:spin",
 ]
 # The standard library's side of the dependencies, and the broker wrapper `Bindable`, whose slot is
 # a `std` mutex.
@@ -47,10 +47,10 @@ std = [
     "tracing?/std",
     "futures?/std",
 ]
-# Where the framework's diagnostics go. A build with `tracing` reports through it and no other sink;
-# the others serve a build without `alloc`: `log` for a host or a board with a logger, `defmt` for a
-# board with a probe (both may be on). With none of them a diagnostic is type-checked and dropped.
-tracing = ["dep:tracing"]
+# Where the framework's diagnostics go. A build with `tracing` (which needs `alloc`) reports through
+# it and no other sink; otherwise `log` serves a host or a board with a logger and `defmt` a board
+# with a probe (both may be on). With none of them a diagnostic is type-checked and dropped.
+tracing = ["alloc", "dep:tracing"]
 log = ["dep:log"]
 defmt = ["dep:defmt"]
 # `Send` (and `Sync`) on the futures and the implementors of the contract traits, for a runtime that
@@ -68,16 +68,22 @@ testing = ["dep:tokio", "dep:bytes", "dep:bytes-utils", "bytes/std", "bytes-util
 [dependencies]
 bytes = { workspace = true, optional = true }
 bytes-utils = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
 futures-core.workspace = true
 heapless.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, optional = true }
-tracing = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 defmt = { workspace = true, optional = true }
+
+# The heap crates of the family's alloc variant use pointer atomics (`Arc`, a lock), so a target
+# without them (a Cortex-M0+) has none: the contract with `alloc` alone still builds there, and
+# the diagnostics go to `defmt` or `log`.
+[target.'cfg(target_has_atomic = "ptr")'.dependencies]
+futures = { workspace = true, optional = true }
+spin = { version = "0.10", optional = true, default-features = false, features = ["mutex", "spin_mutex"] }
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 futures.workspace = true
