@@ -116,7 +116,9 @@ per concept for every runtime: their futures ask for `Send` when `tokio` is on a
 the embedded runner alone, so the same impl serves a device and a server. `IncomingMessage` gives
 the accessors of a delivery. Error types stay `Send + Sync + 'static`. A build with both runtime
 features takes the stricter bound, so a type that holds `Rc` does not compile next to tokio. The
-tokio runner asks for `Send + Sync` where it spawns a subscription loop.
+tokio runner asks for `Send + Sync` where it spawns a subscription loop. The suites of the local family
+(`run_local_suite`, `local_lifecycle`) come with the facade's `conformance` feature, which turns
+tokio on, so they check such a client in a build where its types are `Send`.
 
 ### Report a coordinate, never credentials
 

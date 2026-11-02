@@ -1,8 +1,11 @@
-//! The suites of the local family: the routing contract and the lifecycle ladder for a broker
-//! whose types are not `Send`.
+//! The suites of the local family: the routing contract and the lifecycle ladder, driven on the
+//! caller's task.
+//!
+//! They spawn nothing, so nothing of the broker crosses a thread. A broker crate reaches them
+//! through the facade's `conformance` feature, which turns the tokio runner on, so the contract
+//! types are `Send` there, as in every build beside tokio.
 
-// The suites drive brokers whose types are not `Send` on the caller's task, so their futures are
-// not `Send` by design.
+// The suites drive a broker on the caller's task and ask nothing of their own futures.
 #![allow(clippy::future_not_send)]
 
 use std::fmt;
@@ -38,8 +41,8 @@ type LocalLive<C> = <<C as DefaultPublish>::Policy as PublishPolicy<C>>::Live;
 /// Runs the routing contract against a broker of the local family, panicking with a descriptive
 /// message on the first failure.
 ///
-/// It is [`run_suite`](super::run_suite) for a broker whose types are not `Send`: the same
-/// scenarios, driven on the caller's task, so nothing of the broker crosses a thread. `factory`
+/// It is [`run_suite`](super::run_suite) for a broker of the local family: the same scenarios,
+/// driven on the caller's task, so nothing of the broker crosses a thread. `factory`
 /// builds a fresh production broker per scenario, and each scenario connects it through its
 /// [`InProcess`] transition.
 ///
@@ -261,8 +264,8 @@ async fn settle_ack<M: Settle>(msg: M) {
 
 /// Verifies a broker of the local family honours the lifecycle ladder end to end.
 ///
-/// It is [`lifecycle`](super::lifecycle) for a broker whose types are not `Send`: every step
-/// runs on the caller's task, so the checks that move a handle to another thread's runtime do not
+/// It is [`lifecycle`](super::lifecycle) for a broker of the local family: every step runs on
+/// the caller's task, so the checks that move a handle to another thread's runtime do not
 /// apply. The steps:
 ///
 /// * **Connect** through [`Broker::connect`], then open a subscription through the broker's
@@ -431,7 +434,7 @@ where
 /// local family.
 ///
 /// It is [`refused_publish_returns_message`](crate::lifecycle::refused_publish_returns_message)
-/// for a broker whose types are not `Send`: the broker connects and shuts down, and a publish
+/// for a broker of the local family: the broker connects and shuts down, and a publish
 /// through a publisher paired before the shutdown must fail with the message it was handed.
 ///
 /// # Examples
