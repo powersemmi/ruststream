@@ -4,7 +4,11 @@
 use super::dispatch::Workers;
 use super::failure::FailurePolicies;
 use super::input::InputKind;
+#[cfg(ruststream_alloc)]
 use super::metadata::HandlerMetadata;
+#[cfg(ruststream_alloc)]
+use alloc::borrow::ToOwned;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
 
 /// A handler definition produced by the `#[subscriber]` macro (with or without `raw`).
@@ -47,6 +51,7 @@ pub trait SubscriberDef: Sized {
 
     /// The input type's serialized JSON Schema, when it implements [`schemars::JsonSchema`] and the
     /// `asyncapi` feature is on. The macro fills this in; the default omits it.
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         None
     }
@@ -55,6 +60,7 @@ pub trait SubscriberDef: Sized {
     /// [`Headers<T>`](super::Headers) parameter), when `T` implements
     /// [`schemars::JsonSchema`] and the `asyncapi` feature is on. The macro fills this in; the
     /// default omits it.
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         None
     }
@@ -89,8 +95,9 @@ pub trait SubscriberDef: Sized {
 }
 
 /// Builds the registration metadata for a subscriber definition mounted under `name`.
-pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> HandlerMetadata {
-    let mut meta = HandlerMetadata::raw(name).with_def_details(
+#[cfg(ruststream_alloc)]
+pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: &str, def: &D) -> HandlerMetadata {
+    let mut meta = HandlerMetadata::raw(name.to_owned()).with_def_details(
         def.description(),
         def.input_schema(),
         def.headers_schema(),
@@ -103,12 +110,12 @@ pub(crate) fn subscriber_metadata<D: SubscriberDef>(name: String, def: &D) -> Ha
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
-    use alloc::borrow::ToOwned;
     use core::future::ready;
 
     use super::{SubscriberDef, subscriber_metadata};
-    use crate::HeaderMap;
+    use crate::HeaderSet;
     use crate::Name;
     use crate::context::Context;
     use crate::dispatch::{Delivery, Workers};
@@ -169,7 +176,7 @@ mod tests {
     #[test]
     fn a_raw_def_reports_the_family_label() {
         let def = ManualRawDef;
-        let meta = subscriber_metadata("frames".to_owned(), &def);
+        let meta = subscriber_metadata("frames", &def);
         assert_eq!(meta.name, "frames");
         assert!(meta.input_type.ends_with("Frame"), "{}", meta.input_type);
         assert!(meta.payload_schema.is_none());
@@ -186,7 +193,7 @@ mod tests {
         assert!(def.message_description().is_none());
         let _source = def.source();
 
-        let meta = subscriber_metadata("manual".to_owned(), &def);
+        let meta = subscriber_metadata("manual", &def);
         assert_eq!(meta.name, "manual");
         assert_eq!(meta.input_type, "u32");
 
@@ -194,7 +201,7 @@ mod tests {
         let handler = def.into_handler();
         let state = ();
         let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("manual", &headers, &state, (), &delivery);
         assert!(handler.handle(&7u32, &mut ctx).await.is_ack());
     }

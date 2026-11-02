@@ -22,17 +22,13 @@ default = ["std"]
 # alone; without it the crate holds the traits a runner implements.
 alloc = [
     "ruststream-core/alloc",
+    "ruststream-core/tracing",
+    "dep:tracing",
     "dep:spin",
     "dep:bytes",
     "dep:bytes-utils",
-    "dep:futures",
     "futures/alloc",
-    "dep:serde",
     "serde/alloc",
-    "dep:thiserror",
-    "dep:tracing",
-    "tracing/attributes",
-    "dep:pin-project-lite",
 ]
 # The standard library's side of the body and of its dependencies: the panic policy's catching
 # part, the mutex-backed broker wrapper, and every feature below that reaches the standard library.
@@ -44,7 +40,7 @@ std = [
     "futures/std",
     "serde/std",
     "thiserror/std",
-    "tracing/std",
+    "tracing?/std",
 ]
 # The codecs. Their writer follows the target: `std::io::Write` wherever the standard library
 # exists, whatever the features. On a bare-metal target CBOR writes through its own writer trait,
@@ -59,6 +55,9 @@ json = [
 ]
 msgpack = ["alloc", "dep:rmp-serde"]
 cbor = ["alloc", "dep:ciborium", "dep:ciborium-io"]
+# The slice codecs of a build without `alloc`, which encode into a fixed buffer.
+postcard = ["dep:postcard"]
+json-core = ["dep:serde-json-core"]
 # Payload and header schemas for the generated document, and the binding types of the contract.
 asyncapi = ["std", "json", "dep:schemars", "ruststream-core/asyncapi"]
 # The handler result the Prometheus layer reads, and the poll-time diagnostics counters it exports.
@@ -67,7 +66,10 @@ metrics = ["alloc"]
 otel = ["std", "dep:opentelemetry"]
 # The in-process dispatch the test harness drives, and the broker contract of that harness.
 testing = [
-    "std",
+    "dep:assert_no_alloc",
+    "dep:bytes",
+    "bytes/std",
+    "futures/std",
     "dep:inventory",
     "dep:send_wrapper",
     "dep:tokio",
@@ -78,18 +80,22 @@ testing = [
     "tokio?/test-util",
     "ruststream-core/testing",
 ]
+# The diagnostics of a build without `alloc` go to the `log` crate or to `defmt`.
+log = ["ruststream-core/log"]
+defmt = ["ruststream-core/defmt"]
 # The app's runtime as a handler reaches it (`MainRuntime`), for the runner built on Tokio.
 tokio = ["std", "dep:tokio", "ruststream-core/send"]
-poll-diagnostics = ["std", "dep:quanta", "dep:pin-project-lite"]
+poll-diagnostics = ["std", "dep:quanta"]
 
 [dependencies]
+assert_no_alloc = { version = "1.1.2", optional = true }
 ruststream-core.workspace = true
 bytes = { workspace = true, optional = true }
 bytes-utils = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
-thiserror = { workspace = true, optional = true }
-tracing = { workspace = true, optional = true }
+futures = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true, features = ["attributes"], optional = true }
 # The handle of the app's runtime under the `tokio` feature, and the harness's coordinator under
 # `testing`; the delivery body itself names no runtime. Only `rt`: the body spawns nothing.
 send_wrapper = { version = "0.6", optional = true }
@@ -99,7 +105,15 @@ spin = { version = "0.10", optional = true, default-features = false, features =
 tokio = { version = "1.44", optional = true, default-features = false, features = ["rt"] }
 tokio-util = { workspace = true, optional = true }
 quanta = { workspace = true, optional = true }
-pin-project-lite = { workspace = true, optional = true }
+# Both without their default `heapless` types: the codecs hand over `&mut [u8]` and `&[u8]` and
+# nothing else, so neither needs a collection.
+postcard = { version = "1.1.3", optional = true, default-features = false }
+serde-json-core = { version = "0.7.0", optional = true, default-features = false }
+# The continuation room and the hook table of the variant without `alloc` are built on these; the
+# crate holds them in every build so the features stay additive.
+pin-project-lite.workspace = true
+dyn-utils = { workspace = true, features = ["macros"] }
+heapless.workspace = true
 serde_json = { workspace = true, optional = true }
 ciborium = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
@@ -136,7 +150,7 @@ tracing-subscriber = { version = "0.3.22", default-features = false, features = 
 # in-memory broker through it. A path dependency without a version is dropped on publish.
 ruststream = { path = "../..", features = ["macros", "memory", "json", "asyncapi", "testing", "conformance", "poll-diagnostics", "metrics", "otel"] }
 # The local family's doc examples mount on the local in-memory broker.
-ruststream-memory = { path = "../ruststream-memory", features = ["embassy"] }
+ruststream-memory = { path = "../ruststream-memory", features = ["embassy", "alloc"] }
 
 [lints]
 workspace = true

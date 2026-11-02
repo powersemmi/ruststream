@@ -30,7 +30,9 @@ Each rule names the trait it concerns; the rustdoc of that trait is the referenc
   runner; a build with both runtime features takes the stricter bound, so it does not compile
   next to tokio. A delivery implements `IncomingMessage` (the accessors) and `Settle`.
 - A broker on a channel or a socket (a device broker) returns a probe from `Subscriber::ready_hint`:
-  a `ReadyHint` handle on the state its stream reads, taken before the stream opens. `may_be_ready`
+  a `ReadyHint` handle on the state its stream reads, taken before the stream opens (an owned
+  handle: the signature ends in `+ use<..>` listing the subscriber's type and const parameters, no
+  lifetime). `may_be_ready`
   is `true` whenever the next poll could return an item, an error or the end, and the stream
   registers its waker whenever it returns `Pending`. The embedded app skips the poll of an idle
   subscription while the probe says `false`; the constant `true` is legal and gains nothing. Run

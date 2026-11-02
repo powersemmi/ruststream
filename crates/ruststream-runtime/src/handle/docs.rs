@@ -6,10 +6,13 @@
 //! still in the documented state, so the opt-out is a compile-time exit rather than a runtime
 //! switch. Without the feature the state still exists but demands nothing and produces nothing.
 
-use alloc::borrow::Cow;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 
+use crate::NameText;
+#[cfg(ruststream_alloc)]
 use crate::metadata::OutgoingMessageMetadata;
 #[cfg(feature = "asyncapi")]
 use crate::schema_json;
@@ -45,12 +48,14 @@ pub struct Undocumented;
 )]
 pub trait Documentable {
     /// The serialized JSON Schema, captured once at registration.
+    #[cfg(ruststream_alloc)]
     #[must_use]
     fn schema_json() -> Option<String>;
 }
 
 #[cfg(feature = "asyncapi")]
 impl<T: schemars::JsonSchema + ?Sized> Documentable for T {
+    #[cfg(ruststream_alloc)]
     fn schema_json() -> Option<String> {
         schema_json::<T>()
     }
@@ -60,6 +65,7 @@ impl<T: schemars::JsonSchema + ?Sized> Documentable for T {
 #[cfg(not(feature = "asyncapi"))]
 pub trait Documentable {
     /// No document is generated without the `asyncapi` feature.
+    #[cfg(ruststream_alloc)]
     #[must_use]
     fn schema_json() -> Option<String> {
         None
@@ -74,16 +80,19 @@ impl<T: ?Sized> Documentable for T {}
 #[doc(hidden)]
 pub trait DocState<T: ?Sized> {
     /// The serialized JSON Schema this state reports for `T`.
+    #[cfg(ruststream_alloc)]
     fn schema() -> Option<String>;
 }
 
 impl<T: ?Sized + Documentable> DocState<T> for Documented {
+    #[cfg(ruststream_alloc)]
     fn schema() -> Option<String> {
         T::schema_json()
     }
 }
 
 impl<T: ?Sized> DocState<T> for Undocumented {
+    #[cfg(ruststream_alloc)]
     fn schema() -> Option<String> {
         None
     }
@@ -92,6 +101,7 @@ impl<T: ?Sized> DocState<T> for Undocumented {
 // The probed state computes nothing per type: everything it reports was captured into `Docs`
 // at the expansion site.
 impl<T: ?Sized> DocState<T> for Probed {
+    #[cfg(ruststream_alloc)]
     fn schema() -> Option<String> {
         None
     }
@@ -103,17 +113,27 @@ impl<T: ?Sized> DocState<T> for Probed {
 /// (`None` fields defer to the axis-computed values, so the value path is unaffected).
 #[derive(Debug, Clone, Default)]
 pub struct Docs {
-    pub(crate) description: Option<Cow<'static, str>>,
+    pub(crate) description: Option<NameText>,
+    #[cfg(ruststream_alloc)]
     pub(crate) input_schema: Option<String>,
+    #[cfg(ruststream_alloc)]
     pub(crate) headers_schema: Option<String>,
     pub(crate) message_name: Option<&'static str>,
     pub(crate) message_description: Option<&'static str>,
+    #[cfg(ruststream_alloc)]
     pub(crate) outgoing: Option<Vec<OutgoingMessageMetadata>>,
 }
 
 impl Docs {
     pub(crate) fn description(&self) -> Option<&str> {
-        self.description.as_deref()
+        #[cfg(ruststream_alloc)]
+        {
+            self.description.as_deref()
+        }
+        #[cfg(not(ruststream_alloc))]
+        {
+            self.description
+        }
     }
 }
 
@@ -128,14 +148,17 @@ pub struct ProbedDocs {
     /// The handler's doc comment.
     pub description: Option<&'static str>,
     /// The input type's JSON Schema, when derivable.
+    #[cfg(ruststream_alloc)]
     pub input_schema: Option<String>,
     /// The typed header contract's JSON Schema, when one applies.
+    #[cfg(ruststream_alloc)]
     pub headers_schema: Option<String>,
     /// The input type's `MessageInfo` name.
     pub message_name: Option<&'static str>,
     /// The input type's `MessageInfo` description.
     pub message_description: Option<&'static str>,
     /// The declared outgoing messages (the reply entry, the slots' dictionaries).
+    #[cfg(ruststream_alloc)]
     pub outgoing: Option<Vec<OutgoingMessageMetadata>>,
 }
 
@@ -143,11 +166,17 @@ impl ProbedDocs {
     /// Lowers the capture into the definition's [`Docs`].
     pub(super) fn into_docs(self) -> Docs {
         Docs {
-            description: self.description.map(Cow::Borrowed),
+            #[cfg(ruststream_alloc)]
+            description: self.description.map(NameText::from),
+            #[cfg(not(ruststream_alloc))]
+            description: self.description,
+            #[cfg(ruststream_alloc)]
             input_schema: self.input_schema,
+            #[cfg(ruststream_alloc)]
             headers_schema: self.headers_schema,
             message_name: self.message_name,
             message_description: self.message_description,
+            #[cfg(ruststream_alloc)]
             outgoing: self.outgoing,
         }
     }

@@ -2,16 +2,22 @@
 //! mounts through the inject machinery, bound to the include site's policies, with the body
 //! adapted to the dispatch contracts here.
 
+#[cfg(ruststream_alloc)]
 use crate::batch::BatchResult;
-use crate::batch_inject::{BatchInjectCall, BatchInjectDef};
+#[cfg(ruststream_alloc)]
+use crate::batch_inject::BatchInjectCall;
+use crate::batch_inject::BatchInjectDef;
 use crate::context::Context;
 use crate::handler::HandlerOutcome;
 use crate::inject::{InjectCall, InjectDef};
+#[cfg(ruststream_alloc)]
 use crate::metadata::OutgoingMessageMetadata;
 use crate::router::IncludeDef;
 use crate::slot::{BindSlots, HasSlots, OutSlot};
 use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use ruststream_core::MaybeSendSync;
 
@@ -19,10 +25,14 @@ use super::arena::{EntryMarkers, Outs, SlotDictionary};
 use super::entry::Slot;
 use crate::handle::Handle;
 use crate::handle::axis::{
-    Axis, AxisDocs, Batch, BatchPair, BatchSet, BatchedAxis, Deserialized, Input, Message, Solo,
-    SoloAxis, SoloCarried, SoloDeserialized, SoloPair, SoloSet,
+    Axis, AxisDocs, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis, SoloCarried,
+    SoloDeserialized, SoloPair, SoloSet,
 };
-use crate::handle::eager::{construct, run_batch, settle_solo};
+#[cfg(ruststream_alloc)]
+use crate::handle::axis::{Batch, BatchPair, BatchSet};
+#[cfg(ruststream_alloc)]
+use crate::handle::eager::run_batch;
+use crate::handle::eager::{construct, settle_solo};
 use crate::handle::value::{HandleValue, Sealed};
 
 impl<A, E, C, H, Doc> IncludeDef for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
@@ -105,6 +115,7 @@ where
         self.0.docs.description()
     }
 
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         self.0
             .docs
@@ -113,6 +124,7 @@ where
             .or_else(Doc::payload_schema)
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         self.0
             .docs
@@ -129,6 +141,7 @@ where
         self.0.docs.message_description
     }
 
+    #[cfg(ruststream_alloc)]
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
         self.0.docs.outgoing.clone().unwrap_or_else(E::outgoing)
     }
@@ -260,6 +273,7 @@ where
         self.0.docs.description()
     }
 
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         self.0
             .docs
@@ -268,6 +282,7 @@ where
             .or_else(Doc::payload_schema)
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         self.0
             .docs
@@ -284,11 +299,13 @@ where
         self.0.docs.message_description
     }
 
+    #[cfg(ruststream_alloc)]
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
         self.0.docs.outgoing.clone().unwrap_or_else(E::outgoing)
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<T, C, S, H, Doc, E> BatchInjectCall<S>
     for Sealed<HandleValue<Batch<T>, (), Outs<E>, C, H, Doc>>
 where
@@ -310,6 +327,7 @@ where
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<T, C, S, H, Doc, E> BatchInjectCall<S>
     for Sealed<HandleValue<BatchSet<T>, (), Outs<E>, C, H, Doc>>
 where
@@ -331,6 +349,7 @@ where
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<Hd, P, C, S, H, Doc, E> BatchInjectCall<S>
     for Sealed<HandleValue<BatchPair<Hd, P>, (), Outs<E>, C, H, Doc>>
 where

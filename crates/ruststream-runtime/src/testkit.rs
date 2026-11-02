@@ -86,6 +86,7 @@ impl Shutdown {
     }
 
     /// The first failure recorded, naming its subscription.
+    #[cfg(ruststream_alloc)]
     pub(crate) fn peek_failure(&self) -> Option<String> {
         self.0
             .lock()
@@ -210,14 +211,14 @@ pub(crate) mod unreadable {
     use core::future::ready;
 
     use crate::codec::CodecError;
-    use crate::{AckError, HeaderMap, IncomingMessage, Settle};
+    use crate::{AckError, HeaderSet, IncomingMessage, Settle};
 
     /// What the delivery reports, as the inner error of a [`CodecError::Decode`].
     pub(crate) const REASON: &str = "the column `amount` holds text";
 
     pub(crate) struct Unreadable {
         payload: Vec<u8>,
-        headers: HeaderMap,
+        headers: HeaderSet,
         error: CodecError,
     }
 
@@ -225,7 +226,7 @@ pub(crate) mod unreadable {
         pub(crate) fn new(payload: &[u8]) -> Self {
             Self {
                 payload: payload.to_vec(),
-                headers: HeaderMap::new(),
+                headers: HeaderSet::new(),
                 error: CodecError::Decode(REASON.into()),
             }
         }
@@ -236,7 +237,7 @@ pub(crate) mod unreadable {
             &self.payload
         }
 
-        fn headers(&self) -> &HeaderMap {
+        fn headers(&self) -> &HeaderSet {
             &self.headers
         }
 

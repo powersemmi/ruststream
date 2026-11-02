@@ -49,6 +49,14 @@ The app function names its state in its type, `EmbeddedApp<impl Mounts<State = L
 The harness connects every broker first, then calls `build` with the brokers, so `brokers.broker::<B>()` returns the connected form of the app's broker of type `B`, as on [tokio](./starting-and-stopping/with-state.md).
 Everything else of startup runs as in `TestApp::start`.
 
+### A build without a heap
+
+The harness follows the build: without the framework's `alloc` feature the same `TestApp` drives the fixed form of the app, with `FixedHeaders`, slice codecs, the continuation room and the board's `static` bus.
+A test binary can install `assert_no_alloc::AllocDisabler` as its global allocator, and the harness arms it around every poll of the app, so a test fails on an allocation the framework makes.
+The harness's own bookkeeping, a call record or a settlement note, runs where the allocator lets it through.
+
+The state of a service in this build holds no heap type either: a `static` counter replaces an `Rc`, because the app drops its state inside a poll.
+
 ## Example
 
 ### Out slot records
@@ -101,3 +109,13 @@ Everything else of startup runs as in `TestApp::start`.
 
 </TabItem>
 </Tabs>
+
+### A build without a heap
+
+The allocator the test binary installs, and a test of a retry on the mock clock against the service of the [Embedded runtime](../embedded-runtime.md) page:
+
+```rust reference="tests/doc_device.rs#allocator"
+```
+
+```rust reference="tests/doc_device.rs#test"
+```

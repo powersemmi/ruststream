@@ -18,7 +18,8 @@ Post-settle work is at most once: the delivery is already settled, so a lost or 
 Work whose loss must redeliver the message belongs in the body, before the settlement.
 A graceful shutdown waits for running continuations within the app's `shutdown_timeout`.
 With the tokio runtime on, the continuation's future is `Send` and runs on a task of its own.
-On the embedded runtime alone it carries no `Send`, so it may hold the local bus's publisher or an `Rc`; the app's one task polls it, and it costs one allocation, the box the outcome made.
+On the embedded runtime alone it carries no `Send`, so it may hold the local bus's publisher or an `Rc`; the app's one task polls it.
+With the heap it costs one allocation, the box the outcome made; without `alloc` it lives in a room of 128 bytes inside the outcome, and a capture past the room does not compile, as the [embedded runtime](../../application/embedded-runtime.md) page shows.
 A test waits for them with [`drain`](../../application/testing/driving/drain.md).
 A [hook](./hooks.md) on the context runs after the settlement too, gated by which settlement it was.
 [`.error`](./error.md) beside it reacts to a failed publish the runtime made for the outcome; with both, `and_after` follows a publish that succeeded.

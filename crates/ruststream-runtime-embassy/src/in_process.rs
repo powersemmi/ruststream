@@ -90,9 +90,20 @@ where
                 broker: type_name::<B>(),
                 source: err.into(),
             })?;
-        let connected = Rc::new(connected);
-        slot.fill(&connected);
-        let scope = run.connected::<B>(&connected);
+        // The harness reaches the connected form through a count of its own. Its bookkeeping is
+        // the harness's, not the framework's, so a build without `alloc` lets it allocate.
+        let (connected, scope) = harness_section(|| {
+            let connected = Rc::new(connected);
+            let scope = run.connected::<B>(&connected);
+            (connected, scope)
+        });
+        #[cfg(ruststream_alloc)]
+        let connected = {
+            slot.fill(&connected);
+            connected
+        };
+        #[cfg(not(ruststream_alloc))]
+        let connected = slot.hold_shared(connected);
         Ok(Linked {
             connection: SharedConnection { connected, slot },
             routes,
@@ -122,4 +133,17 @@ where
             }
         }
     }
+}
+
+/// Runs the harness's own bookkeeping: the failing allocator of a build without `alloc` lets an
+/// allocation made here through, so what fails is still an allocation of the framework.
+#[cfg(not(ruststream_alloc))]
+fn harness_section<T>(section: impl FnOnce() -> T) -> T {
+    assert_no_alloc::permit_alloc(section)
+}
+
+/// Runs the harness's own bookkeeping; a build with `alloc` has no failing allocator.
+#[cfg(ruststream_alloc)]
+fn harness_section<T>(section: impl FnOnce() -> T) -> T {
+    section()
 }

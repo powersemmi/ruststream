@@ -1,7 +1,7 @@
-use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::string::ToString;
 use alloc::vec;
+use alloc::vec::Vec;
 use core::future::ready;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
@@ -21,7 +21,7 @@ use crate::codec::{CodecError, JsonCodec};
 use crate::testkit::Shutdown;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 use crate::testkit::log_capture;
-use crate::{AckError, HeaderMap, IncomingMessage, Name, Subscriber, SubscriptionSource};
+use crate::{AckError, HeaderSet, IncomingMessage, Name, Subscriber, SubscriptionSource};
 use crate::{Input, SoloDeserialized};
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
 
@@ -47,7 +47,7 @@ async fn per_element_outcomes_settle_individually() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("selective", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 3);
@@ -94,7 +94,7 @@ async fn per_element_continuations_run_after_settle() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(tasks.clone());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("after-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
@@ -127,7 +127,7 @@ async fn unmatched_remainder_is_retried() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("short", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 3);
@@ -163,7 +163,7 @@ async fn per_element_outcomes_carry_delays() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("delayed", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
@@ -191,7 +191,7 @@ async fn uniform_outcome_settles_the_whole_batch() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("uniform", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 2);
@@ -280,7 +280,7 @@ fn batch_def_defaults_register_without_documentation() {
     let def = BareBatch;
     // The mount site names the registration after the def's own source.
     let source = def.source();
-    let name = SubscriptionSource::<ConnectedMemoryBroker>::name(&source).to_owned();
+    let name = SubscriptionSource::<ConnectedMemoryBroker>::name(&source);
     let meta = batch_metadata(name, &def);
 
     assert_eq!(meta.name, "bare");
@@ -328,7 +328,7 @@ async fn fail_fast_decode_tears_down_and_drops_the_element() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx =
         Context::new("ff-batch", &headers, &state, (), &delivery).with_failfast(&shutdown);
     let batch = pull_batch(&mut sub).await;
@@ -355,9 +355,9 @@ impl IncomingMessage for UnsettleableMessage {
         b"0"
     }
 
-    fn headers(&self) -> &HeaderMap {
-        static EMPTY: OnceLock<HeaderMap> = OnceLock::new();
-        EMPTY.get_or_init(HeaderMap::new)
+    fn headers(&self) -> &HeaderSet {
+        static EMPTY: OnceLock<HeaderSet> = OnceLock::new();
+        EMPTY.get_or_init(HeaderSet::new)
     }
 }
 
@@ -386,7 +386,7 @@ async fn a_refused_ack_does_not_abort_the_batch() {
     let mut batch = batch;
     settle_batch(
         &mut batch,
-        BatchResult::Uniform(HandlerOutcome::ack()),
+        &mut BatchResult::Uniform(HandlerOutcome::ack()),
         "refusing",
         &Delivery::<()>::empty(),
         &Tracked(TaskTracker::new()),
@@ -411,7 +411,7 @@ async fn outcome_count_mismatch_is_logged_with_both_counts() {
     let mut batch = batch;
     settle_batch(
         &mut batch,
-        BatchResult::PerElement(vec![HandlerOutcome::ack()]),
+        &mut BatchResult::PerElement(vec![HandlerOutcome::ack()]),
         "short-batch",
         &Delivery::<()>::empty(),
         &Tracked(TaskTracker::new()),
@@ -447,14 +447,14 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("diag-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
 
     settle_batch(
         &mut vec![UnsettleableMessage(Arc::new(AtomicUsize::new(0)))],
-        BatchResult::Uniform(HandlerOutcome::ack()),
+        &mut BatchResult::Uniform(HandlerOutcome::ack()),
         "diag-batch",
         &Delivery::<()>::empty(),
         &Tracked(TaskTracker::new()),
@@ -491,7 +491,7 @@ fn a_reported_element_is_logged_with_its_subscription_type_and_error() {
     let (events, guard) = log_capture::start();
     let state = ();
     let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let ctx = Context::new("diag-batch", &headers, &state, (), &delivery);
     let outcome = reported(&Unreadable::new(b"7"), "u32", FailurePolicy::Skip, &ctx);
     drop(guard);
@@ -559,7 +559,7 @@ async fn a_deserialized_batch_lends_the_payloads_and_settles_the_deliveries() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     handled(&handler, batch, &mut (), &mut ctx, &host).await;
@@ -578,7 +578,7 @@ async fn an_empty_deserialized_batch_reaches_no_handler() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
     handled(
         &handler,
@@ -607,7 +607,7 @@ async fn a_failed_construction_is_settled_and_the_rest_reach_the_batch() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     handled(&handler, batch, &mut (), &mut ctx, &host).await;
@@ -645,9 +645,9 @@ impl IncomingMessage for PlainMessage {
         &self.payload
     }
 
-    fn headers(&self) -> &HeaderMap {
-        static EMPTY: OnceLock<HeaderMap> = OnceLock::new();
-        EMPTY.get_or_init(HeaderMap::new)
+    fn headers(&self) -> &HeaderSet {
+        static EMPTY: OnceLock<HeaderSet> = OnceLock::new();
+        EMPTY.get_or_init(HeaderSet::new)
     }
 }
 
@@ -720,7 +720,7 @@ async fn a_uniform_batch_retry_after_defers_a_republish() {
     });
     let dropped = Arc::new(AtomicUsize::new(0));
     let state = ();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     handled(
         &handler,
@@ -758,7 +758,7 @@ async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
     });
     let dropped = Arc::new(AtomicUsize::new(0));
     let state = ();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     handled(
         &handler,
@@ -792,7 +792,7 @@ async fn a_deferred_decode_rejection_is_republished() {
     .with_decode(FailurePolicy::RetryAfter(DEFER));
     let dropped = Arc::new(AtomicUsize::new(0));
     let state = ();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     handled(
         &handler,
@@ -844,7 +844,7 @@ async fn a_split_batch_defers_the_rejected_and_the_accepted_alike() {
         .with_decode(FailurePolicy::RetryAfter(DEFER));
     let dropped = Arc::new(AtomicUsize::new(0));
     let state = ();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     handled(
         &handler,
@@ -885,7 +885,7 @@ fn recording_the_batch_size_allocates_nothing_per_batch() {
     let state = ();
     let delivery = Delivery::<()>::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("sized", &headers, &state, (), &delivery);
     let mut values = Vec::new();
     let mut decode = |batch: &mut Vec<_>| {

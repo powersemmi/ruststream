@@ -4,13 +4,22 @@
 // The hooks' futures are the service's own and run on the app's one task.
 #![allow(clippy::future_not_send)]
 
-use alloc::boxed::Box;
+#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
 use core::error::Error as StdError;
 use core::future::ready;
 
 use ruststream_runtime::BoxError;
-use tracing::warn;
+
+/// The app's state as the hooks and the loops are lent it: counted with `alloc`, the value
+/// itself without, where the app future holds it and every user borrows.
+#[cfg(ruststream_alloc)]
+pub(crate) type AppState<State> = Arc<State>;
+/// The app's state as the hooks and the loops are lent it.
+#[cfg(not(ruststream_alloc))]
+pub(crate) type AppState<State> = State;
+
+use ruststream_core::diag::warn;
 
 /// The hooks of each phase of the app's life.
 #[doc(hidden)]
@@ -38,22 +47,23 @@ pub trait HookList<State> {
     /// # Errors
     ///
     /// The first error a hook returned.
-    fn call(self, state: &Arc<State>) -> impl Future<Output = Result<(), BoxError>>;
+    fn call(self, state: &AppState<State>) -> impl Future<Output = Result<(), BoxError>>;
 
     /// Calls every hook, logging an error and going on, for the phases of shutdown.
-    fn call_all(self, state: &Arc<State>, phase: &'static str) -> impl Future<Output = ()>;
+    fn call_all(self, state: &AppState<State>, phase: &'static str) -> impl Future<Output = ()>;
 }
 
 impl<State> HookList<State> for () {
-    fn call(self, _state: &Arc<State>) -> impl Future<Output = Result<(), BoxError>> {
+    fn call(self, _state: &AppState<State>) -> impl Future<Output = Result<(), BoxError>> {
         ready(Ok(()))
     }
 
-    fn call_all(self, _state: &Arc<State>, _phase: &'static str) -> impl Future<Output = ()> {
+    fn call_all(self, _state: &AppState<State>, _phase: &'static str) -> impl Future<Output = ()> {
         ready(())
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<State, Earlier, Hook, Fut, E> HookList<State> for (Earlier, Hook)
 where
     Earlier: HookList<State>,
@@ -61,15 +71,59 @@ where
     Fut: Future<Output = Result<(), E>>,
     E: StdError + Send + Sync + 'static,
 {
-    async fn call(self, state: &Arc<State>) -> Result<(), BoxError> {
+    async fn call(self, state: &AppState<State>) -> Result<(), BoxError> {
         self.0.call(state).await?;
-        (self.1)(Arc::clone(state)).await.map_err(Box::from)
+        (self.1)(shared(state)).await.map_err(BoxError::from)
     }
 
-    async fn call_all(self, state: &Arc<State>, phase: &'static str) {
+    async fn call_all(self, state: &AppState<State>, phase: &'static str) {
         self.0.call_all(state, phase).await;
-        if let Err(err) = (self.1)(Arc::clone(state)).await {
+        if let Err(err) = (self.1)(shared(state)).await {
             warn!(target: "ruststream::embassy", phase, error = %err, "lifecycle hook failed");
         }
     }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<State, Earlier, Hook, E> HookList<State> for (Earlier, Hook)
+where
+    Earlier: HookList<State>,
+    Hook: AsyncFnOnce(&State) -> Result<(), E>,
+    E: StdError + Send + Sync + 'static,
+{
+    async fn call(self, state: &AppState<State>) -> Result<(), BoxError> {
+        self.0.call(state).await?;
+        (self.1)(shared(state)).await.map_err(BoxError::from)
+    }
+
+    async fn call_all(self, state: &AppState<State>, phase: &'static str) {
+        self.0.call_all(state, phase).await;
+        if let Err(err) = (self.1)(shared(state)).await {
+            warn!(target: "ruststream::embassy", phase, error = %err, "lifecycle hook failed");
+        }
+    }
+}
+
+/// What a hook is handed of the state.
+#[cfg(ruststream_alloc)]
+fn shared<State>(state: &Arc<State>) -> Arc<State> {
+    Arc::clone(state)
+}
+
+/// What a hook is handed of the state.
+#[cfg(not(ruststream_alloc))]
+const fn shared<State>(state: &State) -> &State {
+    state
+}
+
+/// The state the loops read, in place.
+#[cfg(ruststream_alloc)]
+pub(crate) fn borrowed<State>(state: &Arc<State>) -> &State {
+    state
+}
+
+/// The state the loops read, in place.
+#[cfg(not(ruststream_alloc))]
+pub(crate) const fn borrowed<State>(state: &State) -> &State {
+    state
 }

@@ -7,25 +7,32 @@
 //! call. Which positions exist at a call site is decided by the message type's
 //! [`OutgoingDestination`] declaration, so an under-specified publish does not compile.
 
-use alloc::borrow::Cow;
+#[cfg(ruststream_alloc)]
 use alloc::boxed::Box;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
 use core::error::Error as StdError;
 use core::fmt;
 use core::marker::PhantomData;
 use ruststream_core::MaybeSync;
 
-use bytes::BytesMut;
+use ruststream_core::{EncodeBuf, PayloadBuf};
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::codec::{Codec, CodecError, Encoding};
+use crate::codec::{ActiveCodec as Codec, CodecError, Encoding, overflow_error};
+use crate::copied::{
+    CopiedName, CopiedPayload, NameCow, copy_or_empty, empty_payload, form_of, supplied_text,
+};
 use crate::{
-    CallerName, FixedName, HeaderMap, HeadersContract, MessageHeaders, NameTemplate, NoHeaders,
+    CallerName, FixedName, HeaderSet, HeadersContract, MessageHeaders, NameTemplate, NoHeaders,
     OutgoingDestination, OutgoingMessage, PayloadForm, SerializeHeadersError, WithHeaders,
 };
-use bytes::Bytes;
 use ruststream_core::KeptPayload;
+#[cfg(not(ruststream_alloc))]
+use ruststream_core::codec::CodecFailure;
+#[cfg(not(ruststream_alloc))]
+use ruststream_core::wire::WireFailure;
 
 use super::scratch::Scratch;
 use super::sink::{CallCodec, PublishCodec, PublishSink};
@@ -88,13 +95,14 @@ pub struct HeadersUnset;
 #[derive(Debug, Clone, Copy)]
 pub struct TypedHeaders<'a, H: ?Sized>(&'a H);
 
-/// The headers position filled with an already-built [`HeaderMap`], sent as it is.
+/// The headers position filled with an already-built [`Headers`](ruststream_core::Headers), sent
+/// as it is.
 #[derive(Debug, Clone, Default)]
-pub struct MapHeaders(HeaderMap);
+pub struct MapHeaders(HeaderSet);
 
 /// A destination named at the call site, the resolved form of [`CallerName`].
 #[derive(Debug, Clone)]
-pub struct SuppliedName<'a>(Cow<'a, str>);
+pub struct SuppliedName<'a>(NameCow<'a>);
 
 /// A destination that the publish can be sent to: fixed by the declaration, or named at the call.
 ///
@@ -120,7 +128,7 @@ impl ResolvedName for FixedName {
 
 impl ResolvedName for SuppliedName<'_> {
     fn resolve<'n>(&'n self, _declared: &'n str) -> &'n str {
-        &self.0
+        supplied_text(&self.0)
     }
 }
 
@@ -138,24 +146,30 @@ pub trait PublishHeaders {
     ///
     /// Returns [`SerializeHeadersError`] when a typed contract value is not a flat struct or
     /// string-keyed map.
-    fn write(self, headers: &mut HeaderMap) -> Result<(), SerializeHeadersError>;
+    fn write(self, headers: &mut HeaderSet) -> Result<(), SerializeHeadersError>;
 }
 
 impl PublishHeaders for HeadersUnset {
-    fn write(self, _headers: &mut HeaderMap) -> Result<(), SerializeHeadersError> {
+    fn write(self, _headers: &mut HeaderSet) -> Result<(), SerializeHeadersError> {
         Ok(())
     }
 }
 
 impl<H: Serialize + ?Sized> PublishHeaders for TypedHeaders<'_, H> {
-    fn write(self, headers: &mut HeaderMap) -> Result<(), SerializeHeadersError> {
+    fn write(self, headers: &mut HeaderSet) -> Result<(), SerializeHeadersError> {
         headers.insert_typed(self.0)
     }
 }
 
 impl PublishHeaders for MapHeaders {
-    fn write(self, headers: &mut HeaderMap) -> Result<(), SerializeHeadersError> {
+    fn write(self, headers: &mut HeaderSet) -> Result<(), SerializeHeadersError> {
+        #[cfg(ruststream_alloc)]
         headers.overwrite_with(self.0);
+        // A fixed map can run out of room; the call fails the way a full typed header does.
+        #[cfg(not(ruststream_alloc))]
+        headers
+            .overwrite_with(&self.0)
+            .map_err(|_| SerializeHeadersError::Full)?;
         Ok(())
     }
 }
@@ -184,13 +198,17 @@ impl<H> SatisfiesContract<WithHeaders<H>> for TypedHeaders<'_, H> {}
 /// The failure a value reports when its own encoder rejects it, erased so that one error type
 /// serves every wire format.
 ///
+/// Without `alloc` it holds the error's text, cut to a fixed room of 96 bytes.
+///
 /// It is what `#[derive(Serialized)]` names as [`Serialized::Error`] for a type that serializes
 /// itself through `#[wire(encode = ..)]`. A hand-written impl names its own error instead -
 /// [`Infallible`](core::convert::Infallible) where the bytes are already there.
+#[cfg(ruststream_alloc)]
 #[derive(Debug, Error)]
 #[error(transparent)]
 pub struct SerializePayloadError(Box<dyn StdError + Send + Sync>);
 
+#[cfg(ruststream_alloc)]
 impl SerializePayloadError {
     /// Erases one wire format's encode failure.
     #[must_use]
@@ -198,6 +216,34 @@ impl SerializePayloadError {
         Self(Box::new(source))
     }
 }
+
+/// See the `alloc` form.
+#[cfg(not(ruststream_alloc))]
+#[derive(Debug)]
+pub struct SerializePayloadError(heapless::String<96>);
+
+#[cfg(not(ruststream_alloc))]
+impl SerializePayloadError {
+    /// Keeps the text of one wire format's encode failure.
+    #[must_use]
+    pub fn new(source: impl fmt::Display) -> Self {
+        use fmt::Write;
+        let mut text = heapless::String::new();
+        // A text past the room is cut: `write!` into a full string fails, and the head is kept.
+        let _ = write!(text, "{source}");
+        Self(text)
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl fmt::Display for SerializePayloadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl StdError for SerializePayloadError {}
 
 /// What a `#[wire(encode = ..)]` function may return: nothing, or a result. Machinery behind the
 /// derive, so that a format whose writer cannot fail is not made to pretend it can.
@@ -221,7 +267,15 @@ impl EncodeOutcome for () {
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<E: StdError + Send + Sync + 'static> EncodeOutcome for Result<(), E> {
+    fn finish(self) -> Result<(), SerializePayloadError> {
+        self.map_err(SerializePayloadError::new)
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<E: fmt::Display> EncodeOutcome for Result<(), E> {
     fn finish(self) -> Result<(), SerializePayloadError> {
         self.map_err(SerializePayloadError::new)
     }
@@ -271,6 +325,7 @@ pub enum PayloadError {
     #[error(transparent)]
     Codec(#[from] CodecError),
     /// The serialized wire's own encoder failed.
+    #[cfg(ruststream_alloc)]
     #[error(transparent)]
     Serialize(Box<dyn StdError + Send + Sync>),
 }
@@ -301,7 +356,7 @@ pub trait WirePayload<T, Enc> {
     fn payload<'v, Form: PayloadForm>(
         value: &'v T,
         codec: &Enc,
-        buf: &'v mut BytesMut,
+        buf: &'v mut EncodeBuf,
     ) -> Result<Form::Form<'v>, PayloadError>;
 }
 
@@ -309,7 +364,7 @@ impl<T: Serialize, Enc: PublishCodec> WirePayload<T, Enc> for EncodedWire {
     fn payload<'v, Form: PayloadForm>(
         value: &'v T,
         codec: &Enc,
-        buf: &'v mut BytesMut,
+        buf: &'v mut EncodeBuf,
     ) -> Result<Form::Form<'v>, PayloadError> {
         Ok(Form::encoded(
             &Encoding::new(codec.codec(), value),
@@ -322,10 +377,19 @@ impl<T: Serialized, Enc> WirePayload<T, Enc> for SerializedWire {
     fn payload<'v, Form: PayloadForm>(
         value: &'v T,
         _codec: &Enc,
-        buf: &'v mut BytesMut,
+        buf: &'v mut EncodeBuf,
     ) -> Result<Form::Form<'v>, PayloadError> {
-        Form::serialized(value, Form::encode_slot(buf))
-            .map_err(|err| PayloadError::Serialize(Box::new(err)))
+        #[cfg(ruststream_alloc)]
+        return Form::serialized(value, Form::encode_slot(buf))
+            .map_err(|err| PayloadError::Serialize(Box::new(err)));
+        // The value's own error cannot be carried without a heap; the cause is its kind.
+        #[cfg(not(ruststream_alloc))]
+        Form::serialized(value, Form::encode_slot(buf)).map_err(|err| {
+            PayloadError::Codec(CodecError::Encode(match err {
+                WireFailure::Full(_) => CodecFailure::BufferFull,
+                WireFailure::Value(_) => CodecFailure::Type,
+            }))
+        })
     }
 }
 
@@ -338,6 +402,7 @@ pub enum PublishError<E> {
     #[error("encoding the message failed: {0}")]
     Encode(#[source] CodecError),
     /// The value's own encoder failed to produce its bytes.
+    #[cfg(ruststream_alloc)]
     #[error("serializing the message's own bytes failed: {0}")]
     Serialize(#[source] Box<dyn StdError + Send + Sync>),
     /// The typed headers did not serialize into a header map.
@@ -370,6 +435,7 @@ impl<E> From<PayloadError> for PublishError<E> {
     fn from(err: PayloadError) -> Self {
         match err {
             PayloadError::Codec(err) => Self::Encode(err),
+            #[cfg(ruststream_alloc)]
             PayloadError::Serialize(err) => Self::Serialize(err),
         }
     }
@@ -463,6 +529,7 @@ where
 /// Every runtime path carries a typed value or its own erased publisher, so this entry exists for
 /// the suite that drives the builder's own steps over bytes.
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 pub(crate) fn raw_of<Sink, B>(
     sink: Sink,
     payload: &B,
@@ -511,7 +578,7 @@ impl<'a, Sink: PublishSink, T, Enc, Hdrs, Dest>
 }
 
 /// What may fill the headers position of a publish: a borrowed contract value, or an
-/// already-built [`HeaderMap`].
+/// already-built [`Headers`](ruststream_core::Headers).
 ///
 /// The two differ in what they say about the message, not in how they are written: a borrowed
 /// value is the message's declared contract, serialized one entry per field, while a map is the
@@ -520,7 +587,8 @@ impl<'a, Sink: PublishSink, T, Enc, Hdrs, Dest>
 /// [`with_headers`](PublishBuilder::with_headers) is one method and the contract check stays a compile
 /// error either way.
 ///
-/// You never implement it: [`HeaderMap`] and `&H` of every serializable `H` already do.
+/// You never implement it: [`Headers`](ruststream_core::Headers) and `&H` of every serializable
+/// `H` already do.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot fill the headers of a publish",
     note = "pass the message's declared contract by reference (`.with_headers(&meta)`), or an \
@@ -545,7 +613,7 @@ impl<'a, H: ?Sized> HeaderSource for &'a H {
     }
 }
 
-impl HeaderSource for HeaderMap {
+impl HeaderSource for HeaderSet {
     type Position = MapHeaders;
 
     fn into_position(self) -> Self::Position {
@@ -555,7 +623,7 @@ impl HeaderSource for HeaderMap {
 
 impl<Sink: PublishSink, Body, Enc, Dest> PublishBuilder<Sink, Body, Enc, HeadersUnset, Dest> {
     /// Supplies the headers of this publish: the message's declared contract by reference, or an
-    /// already-built [`HeaderMap`] by value.
+    /// already-built [`Headers`](ruststream_core::Headers) by value.
     ///
     /// A contract value is checked against the message's declaration, so a missing, extra or
     /// mismatched one is a compile error; a map carries whatever the caller put in it and stands
@@ -634,7 +702,7 @@ impl<Sink: PublishSink, Body, Enc, Hdrs> PublishBuilder<Sink, Body, Enc, Hdrs, C
     /// Pass a `&str` (the borrowed, no-allocation case) or a `String` (a computed one).
     pub fn to<'n>(
         self,
-        name: impl Into<Cow<'n, str>>,
+        name: impl Into<NameCow<'n>>,
     ) -> PublishBuilder<Sink, Body, Enc, Hdrs, SuppliedName<'n>> {
         PublishBuilder::new(
             self.sink,
@@ -706,7 +774,11 @@ impl<S> MissingSegment<S> {
 )]
 pub trait BoundSegment: fmt::Display {}
 
+#[cfg(ruststream_alloc)]
 impl BoundSegment for String {}
+
+#[cfg(not(ruststream_alloc))]
+impl<const ROOM: usize> BoundSegment for heapless::String<ROOM> {}
 
 /// A publish whose destination is rendered by a generated address builder.
 ///
@@ -735,16 +807,16 @@ enum Refused<E> {
 
 /// The message a sink returned, with the payload still to be taken.
 struct Unsent {
-    destination: String,
+    destination: CopiedName,
     payload: KeptPayload,
-    headers: HeaderMap,
+    headers: HeaderSet,
 }
 
 impl<E> Refused<E> {
     /// The error, with the unsent message made the owner of its bytes. `lent` takes the bytes a
     /// lending sink was shown, given where they were; the caller owns them and so can move them
     /// out instead of copying.
-    fn into_error(self, lent: impl FnOnce(usize, usize) -> Bytes) -> PublishError<E> {
+    fn into_error(self, lent: impl FnOnce(usize, usize) -> CopiedPayload) -> PublishError<E> {
         match self {
             Self::Other(err) => err,
             Self::Sink { source, unsent } => PublishError::Publish {
@@ -825,9 +897,9 @@ where
         if addr == buf.as_ptr() as usize && len == buf.len() {
             return buf.split_off_frozen();
         }
-        let mut spare = BytesMut::new();
+        let mut spare = PayloadBuf::new();
         <T::Wire as WirePayload<T, Enc>>::payload::<Sink::Payload>(value, &codec, &mut spare)
-            .map_or_else(|_| Bytes::new(), |own| Bytes::copy_from_slice(own.as_ref()))
+            .map_or_else(|_| empty_payload(), |own| copy_or_empty(own.as_ref()))
     }))
 }
 
@@ -940,9 +1012,12 @@ where
         // The caller owns these bytes and keeps them for the length of the call: a transport
         // that reads them is lent them, and only one that keeps them is handed a buffer.
         let bytes = body.0;
-        let payload = <Sink::Payload as PayloadForm>::Form::from(bytes);
+        // A transport that keeps the bytes is handed a copy; past the fixed room there is none.
+        let Some(payload) = form_of::<Sink::Payload>(bytes) else {
+            return Err(PublishError::Encode(overflow_error()));
+        };
         deliver(sink, name, payload, headers, options.as_ref())
             .await
-            .map_err(|refused| refused.into_error(|_, _| Bytes::copy_from_slice(bytes)))
+            .map_err(|refused| refused.into_error(|_, _| copy_or_empty(bytes)))
     }
 }

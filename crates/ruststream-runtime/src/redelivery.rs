@@ -8,32 +8,46 @@
 //! ([`SubscriptionSource::Copies`](crate::SubscriptionSource::Copies)), so the mount site is told
 //! at compile time and nothing here refuses to start over an address.
 
-use alloc::borrow::Cow;
-use alloc::borrow::ToOwned;
-use alloc::boxed::Box;
-use alloc::string::String;
+#[cfg(any(ruststream_alloc, feature = "testing"))]
 use alloc::sync::Arc;
+#[cfg(ruststream_alloc)]
 use core::any::type_name;
+#[cfg(ruststream_alloc)]
+use core::error::Error as StdError;
 use core::fmt;
 use core::future::ready;
 use core::marker::PhantomData;
+#[cfg(ruststream_alloc)]
 use core::num::NonZeroU32;
+#[cfg(not(ruststream_alloc))]
+use ruststream_core::Cause;
+use ruststream_core::NameText;
+#[cfg(not(ruststream_alloc))]
+use ruststream_core::diag;
 use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
+#[cfg(ruststream_alloc)]
+use ruststream_core::diag::info;
 use thiserror::Error;
-use tracing::info;
 
+use crate::Meta;
+use crate::copied::{CopiedName, NoRoom, diagnostic_name, form_of, lay_over};
 use crate::dispatch::Delivery;
 use crate::lifecycle::BoxError;
-use crate::metadata::{HandlerMetadata, PublishDescription};
+#[cfg(ruststream_alloc)]
+use crate::metadata::PublishDescription;
 #[cfg(feature = "poll-diagnostics")]
 use crate::poll_diagnostics::PollDiagnostics;
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 use crate::publish::PublishIdentity;
 use crate::publish::{
     ForReply, OutPipeline, PublishContext, PublishTransform, PublishTransformIdentity,
 };
 use crate::publish_failure::Refusal;
+#[cfg(test)]
+use crate::shared::subscription_name;
+use crate::shared::{SubscriptionName, subscription_name_of};
 use crate::{
     AddressedCopies, Broker, BrokerMoves, Connected, ConnectedBroker, DeclareRetryError,
     DefaultPublish, NamedCopies, OutgoingMessage, PairError, PayloadForm, PublishPolicy, Publisher,
@@ -65,15 +79,22 @@ type DefaultLive<B> = <DefaultPolicy<B> as PublishPolicy<Connected<B>>>::Live;
 /// own, which is a [`NamedCopies`] registration whose transforms name it per delivery.
 #[doc(hidden)]
 #[derive(Debug)]
+#[cfg_attr(
+    not(ruststream_alloc),
+    expect(
+        dead_code,
+        reason = "the one-task fold mounts this registration form in a later piece; the multi-thread mount reads it"
+    )
+)]
 pub struct RetryRoute<Retry> {
     /// The registration's retry slot, with the delivery context its transforms read left generic
     /// in the trait. A publish through it travels the mount site's transforms and the app's
     /// publish pipeline.
     pub(crate) publisher: Retry,
-    pub(crate) destination: Option<Arc<str>>,
+    pub(crate) destination: Option<SubscriptionName>,
     /// The subscription's name, which a copy's context and its diagnostics carry; shared, so a
     /// copy takes a reference count rather than a string of its own.
-    pub(crate) subscription: Arc<str>,
+    pub(crate) subscription: SubscriptionName,
     /// The name of the type the handler receives, which a lost copy's diagnostic calls its
     /// message.
     pub(crate) input: &'static str,
@@ -86,8 +107,8 @@ impl<Retry> RetryRoute<Retry> {
     pub(crate) fn to(publisher: Retry, destination: &str) -> Self {
         Self {
             publisher,
-            destination: Some(Arc::from(destination)),
-            subscription: Arc::from(destination),
+            destination: Some(subscription_name(destination).expect("the name fits")),
+            subscription: subscription_name(destination).expect("the name fits"),
             input: "message",
         }
     }
@@ -163,10 +184,10 @@ where
         // any publish through it; the transforms then see the message as it will be sent.
         let (name, payload, delivered) = msg.into_parts();
         let headers = if let Some(base) = self.live.base_headers() {
-            let mut headers = base.clone();
-            for (key, value) in delivered.iter() {
-                headers.insert(key.to_owned(), value.to_owned());
-            }
+            // Past the fixed room the copy cannot be built; the broker moves it instead.
+            let Some(headers) = lay_over(base, &delivered) else {
+                return Err(Refusal::new(NoRoom));
+            };
             headers
         } else {
             // With nothing to sit over, the delivery's map is the outgoing one.
@@ -174,11 +195,10 @@ where
         };
         // The copy carries the delivery's own bytes: a transport that reads them is lent
         // them, and only one that keeps them is handed a buffer of its own.
-        let mut out = <Live::Payload as PayloadForm>::rebuilt(
-            name.into(),
-            <Live::Payload as PayloadForm>::Form::from(payload),
-            headers,
-        );
+        let Some(form) = form_of::<Live::Payload>(payload) else {
+            return Err(Refusal::new(NoRoom));
+        };
+        let mut out = <Live::Payload as PayloadForm>::rebuilt(name.into(), form, headers);
         let mut options: Option<Live::Options> = None;
         self.stack.apply(&mut out, &mut options, cx);
         // The copy is spent once the leaf has it, so what the transforms wrote moves on
@@ -199,6 +219,7 @@ where
 /// The retry publisher of a registration that named neither a transform nor a middleware: what a
 /// bare mount produces, for tests that drive the dispatch functions directly.
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 pub(crate) fn bare_retry_publisher<P>(
     live: P,
 ) -> RetryLeaf<P, PublishTransformIdentity, PublishIdentity>
@@ -365,9 +386,16 @@ impl_no_address!(NamedCopies, BrokerMoves);
 /// so a registration whose subscription publishes its copies here always has one. Its type
 /// follows the slot, so the retry publisher stays concrete from the mount site to the delivery.
 #[doc(hidden)]
+#[cfg_attr(
+    not(ruststream_alloc),
+    expect(
+        dead_code,
+        reason = "the one-task fold mounts this registration form in a later piece; the multi-thread mount reads it"
+    )
+)]
 pub struct RetrySetup<B: Broker, Cx, Slot = UnnamedRetry> {
     publisher: Slot,
-    destination: Option<Cow<'static, str>>,
+    destination: Option<NameText>,
     /// Whether the registration's transforms name the destination per delivery, so the
     /// subscription owes none of its own.
     named_per_delivery: bool,
@@ -451,10 +479,11 @@ where
 impl<B: Broker + 'static, Cx, Slot> RetrySetup<B, Cx, Slot> {
     /// Records the pairing a `.out(Retry, policy)` named, replacing the broker's default, and
     /// the destination the `.to(name)` after it gave the copies.
+    #[cfg(ruststream_alloc)]
     pub(crate) fn with_publisher<Pairing>(
         self,
         publisher: Pairing,
-        destination: Option<Cow<'static, str>>,
+        destination: Option<NameText>,
         named_per_delivery: bool,
     ) -> RetrySetup<B, Cx, NamedRetry<Pairing>> {
         RetrySetup {
@@ -470,6 +499,7 @@ impl<B: Broker + 'static, Cx, Slot> RetrySetup<B, Cx, Slot> {
     }
 
     /// Records what `max_attempts(..)` and `dead_letter(..)` declared.
+    #[cfg(ruststream_alloc)]
     pub(crate) fn with_declaration(mut self, declaration: RetryDeclaration) -> Self {
         self.declaration = declaration;
         self
@@ -481,11 +511,12 @@ impl<B: Broker + 'static, Cx, Slot> RetrySetup<B, Cx, Slot> {
     ///
     /// The description travels with the pairing, so a declared channel is described the same
     /// whether the mount site named a publisher or took the broker's default.
+    #[cfg(ruststream_alloc)]
     #[must_use]
     pub(crate) fn resolve<Copies, Pipeline>(
         self,
         pipeline: &Pipeline,
-        meta: &mut HandlerMetadata,
+        meta: &mut Meta,
     ) -> RetrySetup<B, Cx, Slot::Resolved>
     where
         Slot: RetrySlot<B, Cx, Copies, Pipeline>,
@@ -518,7 +549,7 @@ pub trait BoundRetry<B: Broker, Cx>: MaybeSend + 'static {
     type Leaf: RetryCopies<Cx>;
 
     /// Tells `meta` what the bound policy says about the channels the copies go to.
-    fn describe_copies(&self, meta: &mut HandlerMetadata);
+    fn describe_copies(&self, meta: &mut Meta);
 
     /// Pairs it against the connected broker, producing the publisher a copy leaves through;
     /// `None` where this registration publishes no copy.
@@ -541,7 +572,7 @@ pub struct NoPairing;
 impl<B: Broker + 'static, Cx> BoundRetry<B, Cx> for NoPairing {
     type Leaf = NoRetry;
 
-    fn describe_copies(&self, _meta: &mut HandlerMetadata) {}
+    fn describe_copies(&self, _meta: &mut Meta) {}
 
     fn pair(
         self,
@@ -586,9 +617,13 @@ where
 {
     type Leaf = RetryLeaf<Policy::Live, Stack, Pipe>;
 
-    fn describe_copies(&self, meta: &mut HandlerMetadata) {
+    fn describe_copies(
+        &self,
+        #[cfg_attr(not(ruststream_alloc), allow(unused_variables))] meta: &mut Meta,
+    ) {
         // A retry copy carries the delivery's own bytes and goes where the registration
         // declared, so the position names neither a media type nor a destination of its own.
+        #[cfg(ruststream_alloc)]
         meta.describe_copies(|channel| {
             PublishDescription::of::<Connected<B>, Policy>(&self.policy, None, false, channel)
         });
@@ -743,7 +778,7 @@ impl ScopeDelivery {
 )]
 pub(crate) struct RetryDestinationError {
     /// The subscription as the registration names it.
-    subscription: String,
+    subscription: CopiedName,
     /// The subscription descriptor that addresses nothing.
     source_type: &'static str,
 }
@@ -757,11 +792,12 @@ pub(crate) struct RetryDestinationError {
 #[error("subscription `{subscription}`: {source}")]
 pub(crate) struct RetryDeclareError {
     /// The subscription as the registration names it.
-    subscription: String,
+    subscription: CopiedName,
     #[source]
     source: DeclareRetryError,
 }
 
+#[cfg(ruststream_alloc)]
 /// The policy bound with `.out(Retry, policy)` could not be paired with the connected broker.
 ///
 /// Raised at startup, before the subscription opens, the way a reply policy that fails to pair is.
@@ -772,11 +808,44 @@ pub(crate) struct RetryDeclareError {
 )]
 pub(crate) struct RetryPairError {
     /// The subscription as the registration names it.
-    subscription: String,
+    subscription: CopiedName,
     #[source]
     source: PairError,
 }
 
+/// A failure at startup as the registration reports it: the error itself with `alloc`. Without
+/// it the error is logged with the subscription it belongs to, and a `Copy` cause named `what`
+/// stands in for it, because nothing here can own the error.
+#[cfg(ruststream_alloc)]
+pub(crate) fn startup_failure<Failure>(
+    _what: &'static str,
+    _subscription: &str,
+    failure: Failure,
+) -> BoxError
+where
+    Failure: StdError + Send + Sync + 'static,
+{
+    BoxError::from(failure)
+}
+
+/// See the `alloc` form.
+#[cfg(not(ruststream_alloc))]
+pub(crate) fn startup_failure(
+    what: &'static str,
+    subscription: &str,
+    failure: impl fmt::Display,
+) -> BoxError {
+    diag::error!(
+        target: "ruststream::startup",
+        subscription = %subscription,
+        what,
+        error = %failure,
+        "a subscription failed to open",
+    );
+    BoxError::from(Cause::new(what, 0))
+}
+
+#[cfg(ruststream_alloc)]
 /// Opens `source`'s subscription and builds the delivery context it dispatches under.
 ///
 /// The retry publisher is paired and the descriptor's address resolved first, against the live
@@ -819,13 +888,13 @@ where
         .declare_retry_on(connected, &declaration)
         .map_err(|err| {
             BoxError::from(RetryDeclareError {
-                subscription: subscription.to_owned(),
+                subscription: diagnostic_name(subscription),
                 source: err,
             })
         })?;
     let paired = publisher.pair(connected).await.map_err(|err| {
         BoxError::from(RetryPairError {
-            subscription: subscription.to_owned(),
+            subscription: diagnostic_name(subscription),
             source: err,
         })
     })?;
@@ -845,8 +914,8 @@ where
             // registration whose copies would go nowhere: the chain refuses one that bound the
             // retry position at compile time, and one that bound nothing lands here.
             if destination.is_none() && !named_per_delivery {
-                return Err(Box::new(RetryDestinationError {
-                    subscription: subscription.to_owned(),
+                return Err(BoxError::from(RetryDestinationError {
+                    subscription: diagnostic_name(subscription),
                     source_type: type_name::<Source>(),
                 }));
             }
@@ -877,6 +946,7 @@ where
 #[doc(hidden)]
 pub type OpenedSubscription<Sub, Cx, Retry> = (Sub, Delivery<Cx>, Option<RetryRoute<Retry>>);
 
+#[cfg(ruststream_alloc)]
 /// Says once, at startup, what a registration declared and who applies it, so an operator reading
 /// the log knows whether the cap is this process's business or the broker's.
 fn announce(subscription: &str, declaration: &RetryDeclaration, publishes_copies: bool) {
@@ -927,19 +997,24 @@ pub(crate) async fn open_local_subscription<B, Source, Cx>(
     connected: &Connected<B>,
     scope: &ScopeDelivery,
     declaration: RetryDeclaration,
-) -> Result<(Arc<str>, Source::Subscriber, Delivery<Cx>), BoxError>
+) -> Result<(SubscriptionName, Source::Subscriber, Delivery<Cx>), BoxError>
 where
     B: Broker,
     Source: SubscriptionSource<Connected<B>>,
 {
-    let name: Arc<str> = Arc::from(source.name());
+    let name = subscription_name_of::<Connected<B>, _>(&source)
+        .map_err(|err| startup_failure("subscription name", source.name(), err))?;
     source
         .declare_retry_on(connected, &declaration)
         .map_err(|err| {
-            BoxError::from(RetryDeclareError {
-                subscription: name.as_ref().to_owned(),
-                source: err,
-            })
+            startup_failure(
+                "retry declaration",
+                &name,
+                RetryDeclareError {
+                    subscription: diagnostic_name(&name),
+                    source: err,
+                },
+            )
         })?;
     let source = source.declare_retry(&declaration);
     #[cfg(feature = "testing")]
@@ -956,7 +1031,7 @@ where
     let subscriber = source
         .subscribe(connected)
         .await
-        .map_err(|err| -> BoxError { Box::new(err) })?;
+        .map_err(|err| startup_failure("subscribe", &name, err))?;
     Ok((name, subscriber, delivery))
 }
 
@@ -967,4 +1042,16 @@ where
 #[must_use]
 pub fn open_mounted_subscriber<Cx>(scope: &ScopeDelivery, subscription: &str) -> Delivery<Cx> {
     Delivery::for_subscription(scope, subscription, RetryDeclaration::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RetryRoute;
+
+    #[test]
+    fn a_retry_route_keeps_its_destination_and_the_subscription_name() {
+        let route = RetryRoute::to((), "orders");
+        assert_eq!(&*route.subscription, "orders");
+        assert_eq!(route.destination.as_deref(), Some("orders"));
+    }
 }

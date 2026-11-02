@@ -1,6 +1,8 @@
 //! Message-type metadata for `AsyncAPI` generation.
 
+#[cfg(feature = "alloc")]
 use alloc::string::String;
+#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -101,10 +103,12 @@ pub struct NoHeaders;
 // message) but cannot derive `Message`, and the orphan rule keeps downstream crates from
 // implementing this foreign trait on them - so the contract lives here: none. A collection
 // payload that needs a header contract wraps in a `#[derive(MessageInfo)]` newtype.
+#[cfg(feature = "alloc")]
 impl<T> MessageHeaders for Vec<T> {
     type Contract = NoHeaders;
 }
 
+#[cfg(feature = "alloc")]
 impl MessageHeaders for String {
     type Contract = NoHeaders;
 }
@@ -179,10 +183,12 @@ pub trait OutgoingDestination {
 // The same two bare payloads that carry no header contract declare no destination either: a
 // `Vec<Item>` batch body and a plain text message are sent wherever the call site says. The
 // orphan rule keeps a downstream crate from declaring it, so the declaration lives here.
+#[cfg(feature = "alloc")]
 impl<T> OutgoingDestination for Vec<T> {
     type Form = CallerName;
 }
 
+#[cfg(feature = "alloc")]
 impl OutgoingDestination for String {
     type Form = CallerName;
 }

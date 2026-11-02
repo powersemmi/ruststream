@@ -24,10 +24,16 @@
 //! generated document) hangs off the lifetime-free [`Axis`] marker, so definitions can carry the
 //! axis without carrying a borrow.
 
+#[cfg(ruststream_alloc)]
 use alloc::boxed::Box;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
+#[cfg(ruststream_alloc)]
+use core::error;
+use core::fmt;
+#[cfg(not(ruststream_alloc))]
+use core::fmt::Write;
 use core::marker::PhantomData;
-use core::{error, fmt};
 use ruststream_core::MaybeSendSync;
 
 use serde::de::DeserializeOwned;
@@ -166,6 +172,17 @@ pub trait Deserialized: Sized {
     fn from_payload(payload: &[u8]) -> Result<Self::Output<'_>, Self::Error>;
 }
 
+/// The construction failure a `#[wire(decode = ..)]` function reports, erased.
+///
+/// A boxed error with `alloc`; without it the error's text, cut to a fixed room of 96 bytes. The
+/// derive names this type, so it need not name the format's own error.
+#[cfg(ruststream_alloc)]
+pub type ConstructError = Box<dyn error::Error + Send + Sync>;
+
+/// See the `alloc` form.
+#[cfg(not(ruststream_alloc))]
+pub type ConstructError = heapless::String<96>;
+
 /// What a `#[wire(decode = ..)]` function returns, with its error erased so the derive need not
 /// name a type it cannot see. Machinery behind the derive.
 ///
@@ -178,13 +195,26 @@ pub trait DecodeOutcome<T> {
     ///
     /// # Errors
     ///
-    /// Returns the format's own error, boxed.
-    fn finish(self) -> Result<T, Box<dyn error::Error + Send + Sync>>;
+    /// Returns the format's own error, erased as [`ConstructError`].
+    fn finish(self) -> Result<T, ConstructError>;
 }
 
+#[cfg(ruststream_alloc)]
 impl<T, E: error::Error + Send + Sync + 'static> DecodeOutcome<T> for Result<T, E> {
-    fn finish(self) -> Result<T, Box<dyn error::Error + Send + Sync>> {
+    fn finish(self) -> Result<T, ConstructError> {
         self.map_err(Into::into)
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<T, E: fmt::Display> DecodeOutcome<T> for Result<T, E> {
+    fn finish(self) -> Result<T, ConstructError> {
+        self.map_err(|err| {
+            let mut text = ConstructError::new();
+            // A text past the room is cut where it ends: the start names the failure.
+            let _ = write!(text, "{err}");
+            text
+        })
     }
 }
 
@@ -219,6 +249,7 @@ pub trait Axis: MaybeSendSync + 'static {
     type SlotForm;
 
     /// The serialized payload schema under the documentation state `Doc`.
+    #[cfg(ruststream_alloc)]
     #[must_use]
     fn payload_schema<Doc: AxisDocs<Self>>() -> Option<String> {
         Doc::payload_schema()
@@ -231,10 +262,12 @@ pub trait Axis: MaybeSendSync + 'static {
 #[doc(hidden)]
 pub trait AxisDocs<A: Axis + ?Sized> {
     /// The serialized JSON Schema of the payload type.
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String>;
 
     /// The serialized JSON Schema of the typed header contract, for a pair axis.
     #[must_use]
+    #[cfg(ruststream_alloc)]
     fn headers_schema() -> Option<String> {
         None
     }
@@ -545,6 +578,7 @@ impl<T: Clone + MaybeSendSync + 'static> Axis for BatchCarried<T> {
 }
 
 impl<T: MaybeSendSync + 'static, Doc: DocState<T>> AxisDocs<Solo<T>> for Doc {
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         Doc::schema()
     }
@@ -553,6 +587,7 @@ impl<T: MaybeSendSync + 'static, Doc: DocState<T>> AxisDocs<Solo<T>> for Doc {
 // A message set has no payload schema of its own: each of its models carries one, and the
 // document lists them one by one. No documentation state demands anything of the set.
 impl<S: MaybeSendSync + 'static, Doc> AxisDocs<SoloSet<S>> for Doc {
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         None
     }
@@ -564,6 +599,7 @@ impl<F, Doc> AxisDocs<SoloDeserialized<F>> for Doc
 where
     F: MaybeSendSync + 'static,
 {
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         None
     }
@@ -571,6 +607,7 @@ where
 
 // A carried value is the service's own type, so it documents itself exactly like a decoded one.
 impl<T: Clone + MaybeSendSync + 'static, Doc: DocState<T>> AxisDocs<SoloCarried<T>> for Doc {
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         Doc::schema()
     }
@@ -582,22 +619,26 @@ where
     P: MaybeSendSync + 'static,
     Doc: DocState<P> + DocState<H>,
 {
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         <Doc as DocState<P>>::schema()
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema() -> Option<String> {
         <Doc as DocState<H>>::schema()
     }
 }
 
 impl<T: MaybeSendSync + 'static, Doc: DocState<T>> AxisDocs<Batch<T>> for Doc {
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         Doc::schema()
     }
 }
 
 impl<S: MaybeSendSync + 'static, Doc> AxisDocs<BatchSet<S>> for Doc {
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         None
     }
@@ -607,12 +648,14 @@ impl<F, Doc> AxisDocs<BatchDeserialized<F>> for Doc
 where
     F: MaybeSendSync + 'static,
 {
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         None
     }
 }
 
 impl<T: Clone + MaybeSendSync + 'static, Doc: DocState<T>> AxisDocs<BatchCarried<T>> for Doc {
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         Doc::schema()
     }
@@ -624,10 +667,12 @@ where
     P: MaybeSendSync + 'static,
     Doc: DocState<P> + DocState<H>,
 {
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         <Doc as DocState<P>>::schema()
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema() -> Option<String> {
         <Doc as DocState<H>>::schema()
     }
@@ -654,3 +699,37 @@ impl<F: MaybeSendSync + 'static> BatchedAxis for BatchDeserialized<F> {}
 impl<S: MaybeSendSync + 'static> BatchedAxis for BatchSet<S> {}
 impl<H: MaybeSendSync + 'static, P: MaybeSendSync + 'static> BatchedAxis for BatchPair<H, P> {}
 impl<T: Clone + MaybeSendSync + 'static> BatchedAxis for BatchCarried<T> {}
+
+#[cfg(test)]
+mod tests {
+    use core::error::Error;
+    use core::fmt::{self, Write};
+
+    use super::DecodeOutcome;
+
+    #[derive(Debug)]
+    struct BadLength(usize);
+
+    impl fmt::Display for BadLength {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "length {} is not a multiple of 4", self.0)
+        }
+    }
+
+    impl Error for BadLength {}
+
+    #[test]
+    fn a_failed_constructor_reports_the_format_error() {
+        let outcome: Result<u8, BadLength> = Err(BadLength(7));
+        let failure = outcome.finish().expect_err("the constructor failed");
+        let mut text = heapless::String::<64>::new();
+        write!(text, "{failure}").expect("the text fits");
+        assert_eq!(text, "length 7 is not a multiple of 4");
+    }
+
+    #[test]
+    fn a_constructed_value_passes_through() {
+        let outcome: Result<u8, BadLength> = Ok(3);
+        assert_eq!(outcome.finish().expect("constructed"), 3);
+    }
+}

@@ -92,7 +92,8 @@ loss must redeliver the message does not go here - settle by outcome and let the
 Graceful shutdown drains continuations still in flight. A continuation runs where the delivery ran:
 on a `threads(n)` subscription, on the delivery's thread. The continuation's future is `Send` with
 the tokio runtime on; with the embedded runtime alone it carries no `Send` and may hold the local
-bus's publisher or an `Rc`.
+bus's publisher or an `Rc`. Without `alloc` it lives in a room of 128 bytes and a larger capture
+does not compile (see [embedded.md](embedded.md)).
 
 ## A failed runtime publish (`.error`)
 

@@ -141,10 +141,12 @@ struct Timer {
 }
 
 /// An open slot in the in-flight count, released on drop; see [`Coordinator::hold`].
+#[cfg(ruststream_alloc)]
 pub(crate) struct InFlightHold {
     coordinator: Coordinator,
 }
 
+#[cfg(ruststream_alloc)]
 impl Drop for InFlightHold {
     fn drop(&mut self) {
         let inner = &self.coordinator.inner;
@@ -213,6 +215,7 @@ impl Coordinator {
     /// The runtime's immediate retry copy settles the original before it publishes the copy, and
     /// the copy's enqueue is what counts it; between the two the in-flight count would read zero
     /// and [`drive`](Self::drive) would return before the copy arrived.
+    #[cfg(ruststream_alloc)]
     pub(crate) fn hold(&self) -> InFlightHold {
         self.inner.in_flight.fetch_add(1, Ordering::SeqCst);
         InFlightHold {

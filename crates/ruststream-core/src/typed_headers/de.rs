@@ -1,9 +1,7 @@
-//! The serde deserializer behind [`HeaderMap::to_typed`](crate::HeaderMap::to_typed): a flat struct
+//! The serde deserializer behind [`Headers::to_typed`](crate::Headers::to_typed): a flat struct
 //! (or string-keyed map) reads one header per field, parsing the string-encoded value into
 //! whatever scalar the field expects.
 
-use alloc::borrow::ToOwned;
-use alloc::string::String;
 use core::slice::Iter;
 use core::str;
 use core::str::FromStr;
@@ -13,15 +11,16 @@ use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, Visitor};
 use serde::forward_to_deserialize_any;
 
 use super::DeserializeHeadersError;
-use crate::headers::HeaderMap;
+use super::repr;
+use crate::headers::Headers;
 
 /// Top-level deserializer over a borrowed header map.
 pub(super) struct HeadersDeserializer<'de> {
-    headers: &'de HeaderMap,
+    headers: &'de Headers,
 }
 
 impl<'de> HeadersDeserializer<'de> {
-    pub(super) fn new(headers: &'de HeaderMap) -> Self {
+    pub(super) fn new(headers: &'de Headers) -> Self {
         Self { headers }
     }
 
@@ -78,7 +77,7 @@ impl<'de> de::Deserializer<'de> for HeadersDeserializer<'de> {
 /// Struct fields: walks the declared field list and yields only the headers that are present, so
 /// `Option` fields default to `None` and serde reports missing required fields by name.
 struct FieldAccess<'de> {
-    headers: &'de HeaderMap,
+    headers: &'de Headers,
     fields: Iter<'static, &'static str>,
     pending: Option<(&'static str, &'de [u8])>,
 }
@@ -159,7 +158,7 @@ struct ValueDeserializer<'de> {
 impl<'de> ValueDeserializer<'de> {
     fn utf8(&self) -> Result<&'de str, DeserializeHeadersError> {
         str::from_utf8(self.raw).map_err(|_| DeserializeHeadersError::NotUtf8 {
-            header: self.header.to_owned(),
+            header: repr::text(self.header),
         })
     }
 
@@ -167,15 +166,15 @@ impl<'de> ValueDeserializer<'de> {
         self.utf8()?
             .parse()
             .map_err(|_| DeserializeHeadersError::Parse {
-                header: self.header.to_owned(),
+                header: repr::text(self.header),
                 expected,
-                value: String::from_utf8_lossy(self.raw).into_owned(),
+                value: repr::text_lossy(self.raw),
             })
     }
 
     fn unsupported(&self, kind: &'static str) -> DeserializeHeadersError {
         DeserializeHeadersError::UnsupportedShape {
-            header: self.header.to_owned(),
+            header: repr::text(self.header),
             kind,
         }
     }
@@ -314,9 +313,12 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'de> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "alloc")]
 mod tests {
+    use std::borrow::ToOwned;
     use std::collections::BTreeMap;
     use std::fmt;
+    use std::string::String;
     use std::vec;
     use std::vec::Vec;
 
@@ -325,6 +327,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::*;
+    use crate::headers::HeaderMap;
 
     #[derive(Debug, Deserialize)]
     struct One<T> {

@@ -62,11 +62,12 @@ mod verdict;
 mod matrix_tests;
 
 use crate::settings::{AllOpen, SubscriberBuilder};
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
 #[doc(hidden)]
 pub use axis::{
-    Axis, AxisDocs, Batch, BatchCarried, BatchPair, BatchedAxis, DecodeOutcome, Solo, SoloAxis,
-    SoloCarried, SoloPair,
+    Axis, AxisDocs, Batch, BatchCarried, BatchPair, BatchedAxis, ConstructError, DecodeOutcome,
+    Solo, SoloAxis, SoloCarried, SoloPair,
 };
 pub use axis::{
     BatchDeserialized, BatchSet, Deserialized, Input, Message, SoloDeserialized, SoloSet,
@@ -109,6 +110,7 @@ pub use verdict::{Batched, OneByOne, VerdictFamily};
 /// converted source with every setting open.
 pub type ValueBuilder<Def, Src> = SubscriberBuilder<Def, <Src as IntoSource>::Source, AllOpen>;
 
+#[cfg(ruststream_alloc)]
 use alloc::borrow::Cow;
 
 use crate::{Name, Unnamed};
@@ -164,6 +166,7 @@ impl IntoSource for &'static str {
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl IntoSource for String {
     type Source = Name;
 
@@ -172,6 +175,7 @@ impl IntoSource for String {
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl IntoSource for Cow<'static, str> {
     type Source = Name;
 

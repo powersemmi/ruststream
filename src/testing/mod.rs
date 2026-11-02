@@ -1,9 +1,11 @@
 #![doc = include_str!("README.md")]
 
+#[cfg(all(feature = "testing", ruststream_alloc))]
+pub use ruststream_runtime::testing::TestableRegistration;
 #[cfg(feature = "testing")]
 pub use ruststream_runtime::testing::{
     Backlog, Coordinator, InProcess, Outcome, PublishedAssertions, SubscriberAssertions, TestError,
-    TestableBroker, TestableRegistration, expect_published,
+    TestableBroker, expect_published,
 };
 /// The harness of the embedded runner's app, driven on the host.
 #[cfg(all(feature = "testing", feature = "embassy"))]

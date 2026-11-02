@@ -64,6 +64,10 @@ tokio-util = { version = "0.7.10", features = ["rt"] }
 # 0.1.29 is the real floor: it is the first release whose own `tracing-core` bound reaches 0.1.21,
 # where `Value` for `Option<T>` landed - the dispatch spans record optional fields.
 tracing = { version = "0.1.29", default-features = false }
+# The records of a build without `alloc`: `log` for a host or a board with a logger, `defmt` for a
+# board with a probe. Both are optional features of the contract crate, picked by the service.
+log = { version = "0.4.21", default-features = false }
+defmt = "1"
 # The cycle counter the poll-time diagnostics read: `rdtsc` on x86_64 with an invariant TSC, the
 # system counter on aarch64, the monotonic clock elsewhere.
 quanta = "0.13.0"
@@ -77,6 +81,9 @@ embassy-sync = "0.8"
 embassy-time = "0.5.1"
 # Fixed-capacity collections: the embedded runner's headers, frames and pending stores.
 heapless = { version = "0.9", default-features = false }
+# The room a continuation lives in on a device without a heap: a trait object stored in place,
+# whose capture size is checked when the code is built. No allocation, `no_std`.
+dyn-utils = { version = "0.1.1", default-features = false }
 
 # Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
 # release for release (a loose range let a partial `cargo update` pair a new core with an old
@@ -934,8 +941,43 @@ name = "suite"
 path = "tests/main.rs"
 required-features = ["tokio"]
 
+# The device service the embedded runtime page teaches: the excerpts of the page are its regions.
+[[test]]
+name = "doc_device"
+path = "tests/doc_device.rs"
+required-features = ["embassy", "memory", "macros", "testing", "postcard"]
+
+# A device service's deliveries under an allocator that fails the framework's own allocations,
+# built where the framework's `alloc` feature is off.
+[[test]]
+name = "embedded_no_alloc"
+path = "tests/embedded_no_alloc.rs"
+required-features = ["embassy", "memory", "macros", "testing"]
+
+# A reply a naming transform sent past the fixed name room, on the build without `alloc`.
+[[test]]
+name = "embedded_no_alloc_name"
+path = "tests/embedded_no_alloc_name.rs"
+required-features = ["embassy", "memory", "macros", "testing", "postcard"]
+
+# The size of the device build's futures, which the harness build is not.
+[[test]]
+name = "embedded_future_size"
+path = "tests/embedded_future_size.rs"
+required-features = ["embassy", "memory", "macros"]
+
 # The brokers of this suite keep their state in `Rc`, which a multi-thread runtime refuses, so it
 # is built where the Tokio runner is off.
+[[test]]
+name = "embedded_diagnostics"
+path = "tests/embedded_diagnostics.rs"
+required-features = ["embassy", "memory", "macros", "testing", "log"]
+
+[[test]]
+name = "ui_no_alloc"
+path = "tests/ui_no_alloc.rs"
+required-features = ["embassy", "memory", "macros", "testing"]
+
 [[test]]
 name = "local_family"
 path = "tests/local_family.rs"
@@ -992,6 +1034,7 @@ default = ["json", "tokio"]
 # the observability layers among them, turns `tokio` on. An app picks its runner by its type
 # (`RustStream` or `EmbeddedApp`), and the handlers are the same for both.
 tokio = [
+    "alloc",
     "dep:ruststream-runtime-tokio",
     "dep:ruststream-cli",
     "ruststream-memory?/std",
@@ -999,21 +1042,50 @@ tokio = [
 ]
 embassy = [
     "dep:ruststream-runtime-embassy",
-    "dep:tracing",
     "ruststream-memory?/embassy",
     "ruststream-testing?/embassy",
 ]
+# The diagnostics of a build without `alloc` go to the `log` crate or to `defmt`; each feature turns
+# its sink on in the crates that report, and a service picks the one its board has (both may be on).
+# The heap variant reports through `tracing`.
+log = [
+    "ruststream-core/log",
+    "ruststream-runtime/log",
+    "ruststream-runtime-embassy?/log",
+]
+defmt = [
+    "ruststream-core/defmt",
+    "ruststream-runtime/defmt",
+    "ruststream-runtime-embassy?/defmt",
+]
+# The framework's heap variant: headers, payloads, names, continuations and failures on the heap.
+# Without it the embassy runtime keeps them in fixed storage and a build allocates nothing. Every
+# feature that needs the heap turns it on, so a build with one of them is the heap variant
+# throughout.
+alloc = [
+    "ruststream-macros?/alloc",
+    "ruststream-core/alloc",
+    "ruststream-runtime/alloc",
+    "ruststream-runtime-embassy?/alloc",
+    "ruststream-memory?/alloc",
+    "ruststream-testing?/alloc",
+]
 memory = ["dep:ruststream-memory"]
-conformance = ["tokio", "testing", "dep:ruststream-conformance"]
+conformance = ["alloc", "tokio", "testing", "dep:ruststream-conformance"]
 json = [
+    "alloc",
     "ruststream-core/json",
     "ruststream-runtime/json",
     "ruststream-testing?/json",
 ]
-msgpack = ["ruststream-runtime/msgpack", "ruststream-testing?/msgpack"]
-cbor = ["ruststream-runtime/cbor", "ruststream-testing?/cbor"]
+msgpack = ["alloc", "ruststream-runtime/msgpack", "ruststream-testing?/msgpack"]
+cbor = ["alloc", "ruststream-runtime/cbor", "ruststream-testing?/cbor"]
+# The slice codecs of the embassy runtime without `alloc`: `PostcardCodec` and `JsonCoreCodec`.
+postcard = ["ruststream-runtime/postcard"]
+json-core = ["ruststream-runtime/json-core"]
 macros = ["dep:ruststream-macros"]
 asyncapi = [
+    "alloc",
     "tokio",
     "json",
     "dep:schemars",
@@ -1052,8 +1124,8 @@ otel = ["tokio", "dep:ruststream-observability", "ruststream-observability/otel"
 [dependencies]
 # With a heap and no more: a device build of the embassy runtime has no standard library. A target
 # that has one turns `std` on below.
-ruststream-core = { workspace = true, features = ["alloc"] }
-ruststream-runtime = { workspace = true, features = ["alloc"] }
+ruststream-core.workspace = true
+ruststream-runtime.workspace = true
 ruststream-runtime-tokio = { workspace = true, optional = true }
 ruststream-runtime-embassy = { workspace = true, optional = true }
 ruststream-memory = { workspace = true, optional = true }
@@ -1068,17 +1140,10 @@ ruststream-macros = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
-# The log `#[ruststream::app]`'s embassy task reports an app's error to.
-tracing = { workspace = true, optional = true }
 
-# The standard library follows the target, not the runtime: every target with an operating system
-# has it, the tokio runner and the codecs that write through `std::io` need it, and an embassy
-# service on the host (its tests among them) uses it as the tokio side does. A bare-metal target
-# (`target_os = "none"`, a microcontroller) has none, so a device build stays on `core` and
-# `alloc`.
+# The byte buffers follow the target: every target with an operating system has the standard
+# library, a bare-metal target (`target_os = "none"`, a microcontroller) has none.
 [target.'cfg(not(target_os = "none"))'.dependencies]
-ruststream-core = { workspace = true, features = ["std"] }
-ruststream-runtime = { workspace = true, features = ["std"] }
 bytes = { workspace = true, features = ["std"] }
 bytes-utils = { workspace = true, features = ["std"] }
 
@@ -1114,6 +1179,12 @@ required-features = ["memory", "json", "macros", "tokio"]
 name = "middleware"
 harness = false
 required-features = ["memory", "json", "macros", "tokio"]
+
+# The embedded app without `alloc`: instructions per delivery, and zero allocations.
+[[bench]]
+name = "embedded_idle_no_alloc"
+harness = false
+required-features = ["embassy", "memory", "macros"]
 
 [[bench]]
 name = "batch"
@@ -1214,6 +1285,16 @@ divan = "0.1.21"
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std"] }
 # Counts this thread's allocations around a publish, so a test reads what one costs.
 allocation-counter = "0.8.1"
+# The failing allocator of the no-heap leg: it aborts an allocation made inside a guarded closure,
+# and lets through one made inside a permitted section.
+assert_no_alloc = "1.1.2"
+embassy-time.workspace = true
+# The executor and joins the embedded benchmark drives the app with.
+embassy-futures.workspace = true
+# The critical section the embedded benchmark locks through, a process-wide mutex on a host.
+critical-section = { version = "1.1", features = ["std"] }
+# The sink the diagnostics test reads the records of a build without `alloc` from.
+log = { workspace = true, features = ["std"] }
 # Builds the examples' tests into one test binary (`tests/examples.rs`) instead of a test
 # binary per example. Unpublished: a path dev-dependency without a version is dropped on publish.
 ruststream-example-suite = { path = "crates/ruststream-example-suite" }

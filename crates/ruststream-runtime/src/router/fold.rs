@@ -14,28 +14,29 @@
 // futures are `Send` exactly where the types they run are, and nothing here spawns them.
 #![allow(clippy::future_not_send)]
 
-use alloc::sync::Arc;
+use core::cell::Cell;
 use core::future::{poll_fn, ready};
 use core::num::NonZeroUsize;
 use core::pin::{Pin, pin};
 use core::task::{Context, Poll};
 use ruststream_core::{BatchSlot, BatchStream, MaybeSendSync};
 
-use bytes::BytesMut;
 use futures::future::MaybeDone;
 use pin_project_lite::pin_project;
-use tracing::error;
+use ruststream_core::diag::error;
+use ruststream_core::{EncodeBuf, PayloadBuf};
 
 use crate::RetryDeclaration;
 use crate::batch::{BatchHandler, DeserializedBatch};
 use crate::coop::{Bounded, Cooperative, YIELD_AFTER};
-use crate::dispatch::{Delivery, HeadersAtOnce, Turn, run_batch, run_sequential};
+use crate::dispatch::{Delivery, Gated, HeadersAtOnce, Turn, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::Handler;
 use crate::host::{Detach, Halt, SendHost, ShutdownWait};
 use crate::lifecycle::BoxError;
 use crate::middleware::{BlanketLayer, Stack};
 use crate::redelivery::{ScopeDelivery, open_local_subscription};
+use crate::shared::{StateRef, SubscriptionName, borrowed, handle_of};
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber, SubscriptionSource};
 
 use super::builder::Router;
@@ -71,16 +72,43 @@ pub trait OpenRoutes<B: Broker, State = ()> {
 /// them.
 #[doc(hidden)]
 pub trait RunRoutes<State> {
-    /// Runs each subscription's loop, joined; the future ends when every loop has ended.
-    fn run<Signal, Host>(
+    /// What the list's subscriptions record their idleness in: one flag per subscription that
+    /// a join can gate, in the list's own shape. It lives in the future that runs the list, above
+    /// every join, so a loop borrows its flag and nothing refers to itself.
+    type Parks: Default;
+
+    /// Runs each subscription's loop, joined and gated on `parks`; the future ends when every
+    /// loop has ended.
+    fn run_parked<Signal, Host>(
         self,
+        parks: &Self::Parks,
         signal: Signal,
-        state: &Arc<State>,
+        state: StateRef<'_, State>,
         host: &Host,
     ) -> impl Future<Output = ()>
     where
         Signal: ShutdownWait + Halt + Clone,
         Host: Detach;
+
+    /// Runs each subscription's loop, joined; the future ends when every loop has ended. A join
+    /// skips a subscription that is idle and whose readiness probe says nothing is ready, without
+    /// resuming the subscription's frame.
+    fn run<Signal, Host>(
+        self,
+        signal: Signal,
+        state: StateRef<'_, State>,
+        host: &Host,
+    ) -> impl Future<Output = ()>
+    where
+        Self: Sized,
+        Signal: ShutdownWait + Halt + Clone,
+        Host: Detach,
+    {
+        async move {
+            let parks = Self::Parks::default();
+            self.run_parked(&parks, signal, state, host).await;
+        }
+    }
 }
 
 /// One registration of a router's list, opened under the layer stack that wraps its handler:
@@ -116,7 +144,7 @@ pub struct OpenedRoute<Sub, Body, Cx, Layers> {
     subscriber: Sub,
     handler: Body,
     layers: Layers,
-    name: Arc<str>,
+    name: SubscriptionName,
     delivery: Delivery<Cx>,
     policies: FailurePolicies,
 }
@@ -127,7 +155,7 @@ impl<Sub, Body, Cx, Layers> OpenedRoute<Sub, Body, Cx, Layers> {
         subscriber: Sub,
         handler: Body,
         layers: Layers,
-        name: Arc<str>,
+        name: SubscriptionName,
         delivery: Delivery<Cx>,
         policies: FailurePolicies,
     ) -> Self {
@@ -156,10 +184,13 @@ impl<B: Broker, State> OpenLayered<B, State> for () {
 }
 
 impl<State> RunRoutes<State> for () {
-    fn run<Signal, Host>(
+    type Parks = ();
+
+    fn run_parked<Signal, Host>(
         self,
+        _parks: &(),
         _signal: Signal,
-        _state: &Arc<State>,
+        _state: StateRef<'_, State>,
         _host: &Host,
     ) -> impl Future<Output = ()>
     where
@@ -197,10 +228,13 @@ where
     Head: RunRoutes<State>,
     Tail: RunRoutes<State>,
 {
-    fn run<Signal, Host>(
+    type Parks = (Head::Parks, Tail::Parks);
+
+    fn run_parked<Signal, Host>(
         self,
+        parks: &(Head::Parks, Tail::Parks),
         signal: Signal,
-        state: &Arc<State>,
+        state: StateRef<'_, State>,
         host: &Host,
     ) -> impl Future<Output = ()>
     where
@@ -210,8 +244,8 @@ where
         // A named future, not an `async` block: each pair of the tree is one type level of the
         // app's future, so a device's many routes stay inside the compiler's layout depth.
         Both {
-            left: MaybeDone::Future(self.0.run(signal.clone(), state, host)),
-            right: MaybeDone::Future(self.1.run(signal, state, host)),
+            left: MaybeDone::Future(self.0.run_parked(&parks.0, signal.clone(), state, host)),
+            right: MaybeDone::Future(self.1.run_parked(&parks.1, signal, state, host)),
         }
     }
 }
@@ -356,27 +390,43 @@ where
     Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
     Layers: BlanketLayer,
 {
-    async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
+    type Parks = Cell<bool>;
+
+    fn run_parked<Signal, Host>(
+        self,
+        parks: &Cell<bool>,
+        signal: Signal,
+        state: StateRef<'_, State>,
+        host: &Host,
+    ) -> impl Future<Output = ()>
     where
         Signal: ShutdownWait + Halt + Clone,
         Host: Detach,
     {
-        let failure = DispatchFailure::new(self.policies, signal.clone());
-        // Applied here, where the loop starts: the wrapped handler's type is the layer's own
-        // and cannot be named in the opened list.
-        let handler = BlanketLayer::apply::<Sub::Message, Cx, State, _>(&self.layers, self.handler);
-        run_sequential(
-            Cooperative::new(self.subscriber),
-            handler,
-            signal,
-            self.name,
-            Arc::clone(state),
-            (&self.delivery, host),
-            failure,
-            (),
-            HeadersAtOnce,
-        )
-        .await;
+        // The join's gate asks a probe of its own, taken before the loop takes its.
+        let probe = self.subscriber.ready_hint();
+        let gate = signal.clone();
+        Gated::new(parks, probe, gate, async move {
+            let failure = DispatchFailure::new(self.policies, signal.clone());
+            // Applied here, where the loop starts: the wrapped handler's type is the layer's own
+            // and cannot be named in the opened list.
+            let handler =
+                BlanketLayer::apply::<Sub::Message, Cx, State, _>(&self.layers, self.handler);
+            run_sequential(
+                Cooperative::new(self.subscriber),
+                handler,
+                signal,
+                self.name,
+                handle_of(state),
+                (&self.delivery, host),
+                failure,
+                (),
+                HeadersAtOnce,
+                parks,
+                PayloadBuf::new(),
+            )
+            .await;
+        })
     }
 }
 
@@ -390,7 +440,7 @@ where
 pub struct OpenedBatchRoute<Sub, Body, Cx> {
     subscriber: Sub,
     handler: Body,
-    name: Arc<str>,
+    name: SubscriptionName,
     batch_size: NonZeroUsize,
     delivery: Delivery<Cx>,
     policies: FailurePolicies,
@@ -437,8 +487,15 @@ where
     Sub: BatchSubscriber,
     Body: RunsBatches<Sub::Batch, Cx, State>,
 {
-    async fn run<Signal, Host>(mut self, signal: Signal, state: &Arc<State>, host: &Host)
-    where
+    type Parks = ();
+
+    async fn run_parked<Signal, Host>(
+        mut self,
+        _parks: &(),
+        signal: Signal,
+        state: StateRef<'_, State>,
+        host: &Host,
+    ) where
         Signal: ShutdownWait + Halt + Clone,
         Host: Detach,
     {
@@ -456,7 +513,7 @@ where
         let mut slot = <Sub::Batch as BatchSlot>::with_capacity(self.batch_size);
         let mut taken = <Body as RunsBatches<Sub::Batch, Cx, State>>::taken(self.batch_size);
         let mut scratch = Body::Scratch::default();
-        let mut encode = BytesMut::new();
+        let mut encode = PayloadBuf::new();
         loop {
             if signal.is_cancelled() {
                 break;
@@ -477,7 +534,7 @@ where
                             &mut scratch,
                             &mut encode,
                             &self.name,
-                            &**state,
+                            borrowed(state),
                             &self.delivery,
                             host,
                             &failure,
@@ -525,7 +582,7 @@ pub trait RunsBatches<Batch, C, S> {
         slot: &mut Batch,
         taken: &mut Self::Taken,
         scratch: &mut Self::Scratch,
-        encode: &mut BytesMut,
+        encode: &mut EncodeBuf,
         name: &str,
         state: &S,
         delivery: &Delivery<C>,
@@ -553,7 +610,7 @@ where
         slot: &mut Batch,
         taken: &mut Handler::Taken,
         scratch: &mut Handler::Scratch,
-        encode: &mut BytesMut,
+        encode: &mut EncodeBuf,
         name: &str,
         state: &S,
         delivery: &Delivery<C>,

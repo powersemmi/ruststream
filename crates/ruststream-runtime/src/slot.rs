@@ -17,16 +17,18 @@
 //!   a registration commits only when no `MissingSlot` remains, so a forgotten binding is a
 //!   compile error naming the slot.
 
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 use core::time::Duration;
 
+#[cfg(ruststream_alloc)]
 use crate::metadata::OutgoingMessageMetadata;
 use crate::publish::{DestinationUse, Names, Reads};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{PipelinePublish, record_slot_publish};
 use crate::{
-    CallerName, ConnectedBroker, FixedName, HeaderMap, NameTemplate, OutgoingDestination,
+    CallerName, ConnectedBroker, FixedName, HeaderSet, NameTemplate, OutgoingDestination,
     OutgoingFor, OwnedTransactions, PublishOutcome, Publisher, RequestReply,
     TransactionalPublisher,
 };
@@ -196,6 +198,7 @@ pub trait OutSlot: 'static {
     /// dictionary) publishes nothing declared. Called once at registration; never on the
     /// publish path.
     #[must_use]
+    #[cfg(ruststream_alloc)]
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         Vec::new()
     }
@@ -603,7 +606,7 @@ impl<P: Publisher, M: OutSlot> Publisher for SlotPublisher<P, M> {
 
     // The slot is attribution, not policy: whatever the broker's publisher contributes to every
     // message it sends has to reach the builder through the wrapper unchanged.
-    fn base_headers(&self) -> Option<&HeaderMap> {
+    fn base_headers(&self) -> Option<&HeaderSet> {
         self.inner.base_headers()
     }
 }
@@ -787,11 +790,13 @@ pub trait OutMessages<M: OutSlot> {
     /// The set's declared outgoing messages, for the generated document. Called once at
     /// registration; never on the publish path.
     #[must_use]
+    #[cfg(ruststream_alloc)]
     fn outgoing() -> Vec<OutgoingMessageMetadata>;
 }
 
 // The unrestricted declaration documents the whole dictionary.
 impl<M: OutSlot> OutMessages<M> for () {
+    #[cfg(ruststream_alloc)]
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         M::outgoing()
     }
@@ -825,6 +830,7 @@ impl<Source> WithSource<Source> {
     }
 
     /// Borrows the wrapped source, so a mount can read what it declares before consuming it.
+    #[cfg(ruststream_alloc)]
     pub(crate) const fn source(&self) -> &Source {
         &self.0
     }
@@ -979,4 +985,5 @@ impl_bind_slot! {
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests;

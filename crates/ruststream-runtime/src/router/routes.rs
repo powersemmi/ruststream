@@ -1,34 +1,50 @@
 //! The registration list: route types, the per-route mount trait and [`RouterDef`].
 
-use alloc::borrow::Cow;
+#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
+use ruststream_core::NameText;
+#[cfg(ruststream_alloc)]
 use ruststream_core::{MaybeSend, MaybeSendSync};
 
-use crate::{
-    BatchSubscriber, Broker, BuildContext, Connected, Settle, Subscriber, SubscriptionSource,
-};
+#[cfg(ruststream_alloc)]
+use crate::{BatchSubscriber, BuildContext, Settle, Subscriber};
+use crate::{Broker, Connected, SubscriptionSource};
 
+#[cfg(ruststream_alloc)]
+use crate::BrokerMoves;
+use crate::Meta;
+#[cfg(ruststream_alloc)]
 use crate::batch::BatchHandler;
 use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
+#[cfg(ruststream_alloc)]
 use crate::handler::Handler;
+#[cfg(ruststream_alloc)]
 use crate::metadata::HandlerMetadata;
+#[cfg(ruststream_alloc)]
 use crate::middleware::BlanketLayer;
+#[cfg(ruststream_alloc)]
 use crate::publish::{PublishIdentity, PublishPipeline};
+#[cfg(ruststream_alloc)]
+use crate::redelivery::open_subscription;
+#[cfg(ruststream_alloc)]
 use crate::redelivery::{
     BoundRetry, CopyPathAddress, CopyPathPairing, RetrySetup, RetrySlot, ScopeDelivery,
-    open_subscription,
 };
 use crate::retry::RetryOpen;
 use crate::retry::{Absent, DestinationDeclared};
-use crate::{BrokerMoves, CopyPath, RetryDeclaration};
+use crate::{CopyPath, RetryDeclaration};
 
+#[cfg(ruststream_alloc)]
 use super::head::{Plain, PoisonAt};
+#[cfg(ruststream_alloc)]
 use super::mount_sink::MountSink;
+#[cfg(ruststream_alloc)]
 use super::{SourceBatch, SourceMessage};
 
 /// One subscription registration: a source plus the handler it dispatches to. An implementation
@@ -41,7 +57,7 @@ use super::{SourceBatch, SourceMessage};
 pub struct SubscribeRoute<S, H, Cx = ()> {
     pub(super) source: S,
     pub(super) handler: H,
-    pub(super) meta: HandlerMetadata,
+    pub(super) meta: Meta,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
     pub(super) _context: PhantomData<fn() -> Cx>,
@@ -51,10 +67,17 @@ pub struct SubscribeRoute<S, H, Cx = ()> {
 /// [`Router`](crate::Router).
 #[doc(hidden)]
 #[derive(Debug)]
+#[cfg_attr(
+    not(ruststream_alloc),
+    expect(
+        dead_code,
+        reason = "the one-task fold mounts this registration form in a later piece; the multi-thread mount reads it"
+    )
+)]
 pub struct HandleRoute<S, H> {
     pub(super) subscriber: S,
     pub(super) handler: H,
-    pub(super) meta: HandlerMetadata,
+    pub(super) meta: Meta,
     pub(super) policies: FailurePolicies,
 }
 
@@ -68,7 +91,7 @@ pub struct HandleRoute<S, H> {
 pub struct BatchRoute<S, H, Cx = ()> {
     pub(super) source: S,
     pub(super) handler: H,
-    pub(super) meta: HandlerMetadata,
+    pub(super) meta: Meta,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
     /// The size the subscription opens its batches at, from the registration's `batch(n)`.
@@ -76,6 +99,7 @@ pub struct BatchRoute<S, H, Cx = ()> {
     pub(super) _context: PhantomData<fn() -> Cx>,
 }
 
+#[cfg(ruststream_alloc)]
 /// One mountable registration: applies the global blanket layer to its handler and registers it.
 /// `State` is the app's shared-state type, threaded so a route only mounts on a sink whose state type
 /// its handler matches (a state-agnostic handler matches any).
@@ -180,7 +204,7 @@ where
 #[doc(hidden)]
 pub trait RouteMetadata {
     /// The metadata this registration was built with.
-    fn metadata_mut(&mut self) -> &mut HandlerMetadata;
+    fn metadata_mut(&mut self) -> &mut Meta;
 }
 
 /// One registration with the deferred-retry position bound: the route, plus the pairing the
@@ -190,10 +214,17 @@ pub trait RouteMetadata {
 /// [`RetryOpen`], so a second `.out(Retry, ..)` has nothing to bind - and it keeps the pairing out
 /// of every route type: a route that binds nothing carries nothing.
 #[doc(hidden)]
+#[cfg_attr(
+    not(ruststream_alloc),
+    expect(
+        dead_code,
+        reason = "the one-task fold mounts this registration form in a later piece; the multi-thread mount reads it"
+    )
+)]
 pub struct RetriedRoute<Route, B: Broker, Cx, Parts, Settled = DestinationDeclared> {
     route: Route,
     retry: Parts,
-    destination: Option<Cow<'static, str>>,
+    destination: Option<NameText>,
     named_per_delivery: bool,
     _settled: PhantomData<fn() -> Settled>,
     _registration: PhantomData<fn() -> (B, Cx)>,
@@ -203,7 +234,7 @@ impl<Route, B: Broker, Cx, Parts, Settled> RetriedRoute<Route, B, Cx, Parts, Set
     pub(super) fn new(
         route: Route,
         retry: Parts,
-        destination: Option<Cow<'static, str>>,
+        destination: Option<NameText>,
         named_per_delivery: bool,
     ) -> Self {
         Self {
@@ -240,6 +271,7 @@ impl<Route, Dead> DeclaredRoute<Route, Dead> {
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<Route: RouteMeta, Dead> RouteMeta for DeclaredRoute<Route, Dead> {
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         self.route.collect(out);
@@ -247,7 +279,7 @@ impl<Route: RouteMeta, Dead> RouteMeta for DeclaredRoute<Route, Dead> {
 }
 
 impl<Route: RouteMetadata, Dead> RouteMetadata for DeclaredRoute<Route, Dead> {
-    fn metadata_mut(&mut self) -> &mut HandlerMetadata {
+    fn metadata_mut(&mut self) -> &mut Meta {
         self.route.metadata_mut()
     }
 }
@@ -262,6 +294,7 @@ impl<B: Broker, Route: RouteSubscription<B>, Dead> RouteSubscription<B>
     type Context = Route::Context;
 }
 
+#[cfg(ruststream_alloc)]
 // The wrapped route mounts as it always does, with the declaration the mount site made: this is
 // the one place a declaration reaches the sink.
 impl<B, Route, State, RetryPipeline, Dead> MountRoute<B, State, RetryPipeline>
@@ -307,6 +340,7 @@ impl<Route: fmt::Debug, B: Broker, Cx, Parts, Settled> fmt::Debug
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<Route: RouteMeta, B: Broker, Cx, Parts, Settled> RouteMeta
     for RetriedRoute<Route, B, Cx, Parts, Settled>
 {
@@ -318,11 +352,12 @@ impl<Route: RouteMeta, B: Broker, Cx, Parts, Settled> RouteMeta
 impl<Route: RouteMetadata, B: Broker, Cx, Parts, Settled> RouteMetadata
     for RetriedRoute<Route, B, Cx, Parts, Settled>
 {
-    fn metadata_mut(&mut self) -> &mut HandlerMetadata {
+    fn metadata_mut(&mut self) -> &mut Meta {
         self.route.metadata_mut()
     }
 }
 
+#[cfg(ruststream_alloc)]
 // The wrapped route mounts as it always does, with the pairing the mount site bound: this is the
 // one place a `Some` reaches the sink.
 impl<B, Route, State, RetryPipeline, Cx, Parts, Settled> MountRoute<B, State, RetryPipeline>
@@ -372,7 +407,7 @@ impl_retry_open!(SubscribeRoute<S, H, Cx>, BatchRoute<S, H, Cx>);
 macro_rules! impl_route_metadata {
     ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
         impl<$($param),+> RouteMetadata for $route<$($param),+> {
-            fn metadata_mut(&mut self) -> &mut HandlerMetadata {
+            fn metadata_mut(&mut self) -> &mut Meta {
                 &mut self.meta
             }
         }
@@ -405,28 +440,33 @@ impl_route_subscription!(SubscribeRoute<S, H, Cx>, BatchRoute<S, H, Cx>);
 
 /// One registration's `AsyncAPI` metadata, collected independently of the app state type (so
 /// [`Router::handlers`](crate::Router::handlers) works whatever state the handlers read).
+#[cfg(ruststream_alloc)]
 pub(super) trait RouteMeta {
     fn collect(&self, out: &mut Vec<HandlerMetadata>);
 }
 
+#[cfg(ruststream_alloc)]
 impl<S, H, Cx> RouteMeta for SubscribeRoute<S, H, Cx> {
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         out.push(self.meta.clone());
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<S, H, Cx> RouteMeta for BatchRoute<S, H, Cx> {
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         out.push(self.meta.clone());
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<S, H> RouteMeta for HandleRoute<S, H> {
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         out.push(self.meta.clone());
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<B, S, H, Cx, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
     for SubscribeRoute<S, H, Cx>
 where
@@ -476,6 +516,7 @@ where
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<B, S, H, Cx, State, RetryPipeline> MountRoute<B, State, RetryPipeline> for BatchRoute<S, H, Cx>
 where
     B: Broker + 'static,
@@ -523,6 +564,7 @@ where
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<B, S, H, State, RetryPipeline> MountRoute<B, State, RetryPipeline> for HandleRoute<S, H>
 where
     B: Broker + 'static,
@@ -550,6 +592,7 @@ where
         sink.push_handle(self.subscriber, handler, self.meta, self.policies);
     }
 }
+#[cfg(ruststream_alloc)]
 /// A mountable group of handler registrations.
 ///
 /// Mounting applies the app's global [`BlanketLayer`] to each handler and registers it, so the
@@ -587,12 +630,14 @@ pub trait RouterDef<B: Broker, State = (), RetryPipeline = PublishIdentity>:
 ///
 /// Split from [`RouterDef`] so [`Router::handlers`](crate::Router::handlers) does not have
 /// to name the state type a stateful router's handlers read.
+#[cfg(ruststream_alloc)]
 pub trait RouterHandlers {
     /// Appends each registration's metadata, in registration order.
     #[doc(hidden)]
     fn collect_handlers(&self, out: &mut Vec<HandlerMetadata>);
 }
 
+#[cfg(ruststream_alloc)]
 impl<B: Broker + 'static, State, RetryPipeline> RouterDef<B, State, RetryPipeline> for () {
     fn mount<G, PP, Sink>(
         self,
@@ -608,10 +653,12 @@ impl<B: Broker + 'static, State, RetryPipeline> RouterDef<B, State, RetryPipelin
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl RouterHandlers for () {
     fn collect_handlers(&self, _out: &mut Vec<HandlerMetadata>) {}
 }
 
+#[cfg(ruststream_alloc)]
 impl<B, Head, Tail, State, RetryPipeline> RouterDef<B, State, RetryPipeline> for (Head, Tail)
 where
     B: Broker + 'static,
@@ -644,6 +691,7 @@ where
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<Head, Tail> RouterHandlers for (Head, Tail)
 where
     Head: RouteMeta,

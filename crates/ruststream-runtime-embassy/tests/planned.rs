@@ -131,6 +131,28 @@ async fn on_level(level: &Reading<'_>, Out(alerts): Out<impl Publisher, Alerts>)
     }
 }
 
+/// A note: the sample's bytes, as they came.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "bus/notes")]
+struct Note(Vec<u8>);
+
+/// The slot notes leave through.
+#[derive(OutSlot)]
+#[publishes(Note)]
+struct Notes;
+
+static SAMPLING: InFlight = InFlight::new();
+
+/// Works on a sample for a while and then publishes a note through the slot.
+#[subscriber(LocalMemorySource::new("bus/sample"))]
+async fn on_sample(sample: &Reading<'_>, Out(notes): Out<impl Publisher, Notes>) -> HandlerOutcome {
+    SAMPLING.work().await;
+    match notes.message(&Note(sample.0.to_vec())).publish().await {
+        Ok(()) => HandlerOutcome::ack(),
+        Err(_) => HandlerOutcome::retry(),
+    }
+}
+
 #[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
@@ -141,6 +163,9 @@ fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
             .include(on_level)
             .out(Alerts, LocalMemoryPublish)
             .retry_capacity::<1>()
+            .include(on_sample)
+            .out(Notes, LocalMemoryPublish)
+            .pool::<2>()
     })
 }
 
@@ -201,6 +226,10 @@ async fn check_the_plans(spawner: Spawner, stand: &'static Stand) {
         .subscribe(&connected)
         .await
         .expect("the pongs subscribe");
+    let mut notes = LocalMemorySource::new("bus/notes")
+        .subscribe(&connected)
+        .await
+        .expect("the notes subscribe");
     let mut alerts = LocalMemorySource::new("bus/alerts")
         .subscribe(&connected)
         .await
@@ -213,6 +242,8 @@ async fn check_the_plans(spawner: Spawner, stand: &'static Stand) {
     publish(&stand.bus, "bus/ping", b"a").await;
     publish(&stand.bus, "bus/ping", b"b").await;
     publish(&stand.bus, "bus/levels", b"high").await;
+    publish(&stand.bus, "bus/sample", b"s1").await;
+    publish(&stand.bus, "bus/sample", b"s2").await;
     settle().await;
     let levels_before = LEVELS.load(Ordering::Relaxed);
     advance(WORK).await;
@@ -221,30 +252,65 @@ async fn check_the_plans(spawner: Spawner, stand: &'static Stand) {
     let mut pinged = payloads(&mut pongs).await;
     pinged.sort();
     let alerted = payloads(&mut alerts).await;
+    let mut sampled = payloads(&mut notes).await;
+    sampled.sort();
 
     app::CONTROL.stop();
     settle().await;
+    check_the_outcomes(&Outcomes {
+        levels_before,
+        measures,
+        pinged,
+        alerted,
+        sampled,
+    });
+}
+
+/// What the scenario read off the bus, once the clock moved one work period.
+struct Outcomes {
+    levels_before: u32,
+    measures: Vec<Vec<u8>>,
+    pinged: Vec<Vec<u8>>,
+    alerted: Vec<Vec<u8>>,
+    sampled: Vec<Vec<u8>>,
+}
+
+fn check_the_outcomes(outcomes: &Outcomes) {
+    let Outcomes {
+        levels_before,
+        measures,
+        pinged,
+        alerted,
+        sampled,
+    } = outcomes;
 
     assert_eq!(MEASURING.peak(), 2, "measures in flight at once");
     assert_eq!(
-        measures,
+        *measures,
         [br#"{"bytes":3}"#.to_vec(), br#"{"bytes":4}"#.to_vec()],
         "the replies of both measures, one work period in"
     );
     passed("a pool of two runs a codec reply handler's deliveries at once");
     assert_eq!(PINGING.peak(), 2, "pings in flight at once");
     assert_eq!(
-        pinged,
+        *pinged,
         [b"a".to_vec(), b"b".to_vec()],
         "the replies of both pings, one work period in"
     );
     passed("two keyed lanes run a raw reply handler's deliveries at once");
+    assert_eq!(SAMPLING.peak(), 2, "samples in flight at once");
     assert_eq!(
-        levels_before, 1,
+        *sampled,
+        [b"s1".to_vec(), b"s2".to_vec()],
+        "the notes of both samples, one work period in"
+    );
+    passed("a pool of two runs an Out slot handler's deliveries at once");
+    assert_eq!(
+        *levels_before, 1,
         "deliveries of the level before its copy is due"
     );
     assert_eq!(
-        alerted,
+        *alerted,
         [b"high".to_vec()],
         "the alert the kept copy raised once due"
     );

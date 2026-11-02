@@ -35,6 +35,11 @@ impl<Message> Mailbox<Message> {
         }
     }
 
+    /// Whether the worker waits on an empty slot: it holds no delivery and awaits nothing else.
+    pub(crate) fn is_parked(&self) -> bool {
+        self.parked.get()
+    }
+
     /// Hands the worker `item`, waiting while the slot still holds the previous one.
     pub(crate) async fn send(&self, item: Option<Message>) {
         self.slot.send(item).await;

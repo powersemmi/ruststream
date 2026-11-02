@@ -3,51 +3,57 @@
 
 #[cfg(feature = "testing")]
 use alloc::borrow::ToOwned;
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "testing"))]
 use alloc::format;
-use alloc::sync::Arc;
 #[cfg(feature = "testing")]
 use alloc::vec;
-#[cfg(feature = "testing")]
-use alloc::vec::Vec;
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "testing"))]
 use core::any::Any;
-#[cfg(not(feature = "std"))]
+use core::cell::Cell;
+#[cfg(not(any(feature = "std", feature = "testing")))]
 use core::convert::Infallible;
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "testing"))]
 use core::panic::AssertUnwindSafe;
 use core::pin::Pin;
 use core::task::{Context as TaskContext, Poll};
 use ruststream_core::{MaybeSendSync, ReadyHint};
 
-#[cfg(feature = "testing")]
-use bytes::Bytes;
-use bytes::BytesMut;
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "testing"))]
 use futures::FutureExt;
 use futures::Stream;
-use tracing::error;
+use pin_project_lite::pin_project;
+use ruststream_core::EncodeBuf;
+#[cfg(not(ruststream_alloc))]
+use ruststream_core::FixedBuf;
+#[cfg(ruststream_alloc)]
+use ruststream_core::PayloadBuf;
+use ruststream_core::diag::error;
 
+#[cfg(not(ruststream_alloc))]
+use crate::publish_failure::FailureSlot;
 use crate::publish_failure::Reaction;
 use crate::redelivery::RetryCopies;
-use crate::{BuildContext, HeaderMap, Settle, Subscriber};
+use crate::shared::{StateHandle, SubscriptionName, state_in_place};
+use crate::{BuildContext, HeaderSet, Settle, Subscriber};
 
 use super::batch::{BatchHandler, TakenBatch};
 use super::context::Context;
 use super::failure::DispatchFailure;
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "testing"))]
 use super::failure::{FailurePolicy, panic_reason};
 use super::handler::Handler;
 use super::handler::HandlerOutcome;
 #[cfg(doc)]
 use super::handler::HandlerResult;
-use super::host::{Halt, HostDetach, PrepareKept, SendHost, ShutdownWait};
+use super::host::{Halt, HostDetach, PrepareKept, SendHost, ShutdownWait, detach_continuation};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
     Coordinator, Delivered, HarnessScope, Record, calls_in_harness_scope, in_harness_scope,
 };
 #[cfg(feature = "testing")]
 use crate::testing::hooks::DueCall;
+#[cfg(feature = "testing")]
+use crate::testing::{Bookkept, harness_section};
 pub use delivery::{Delivery, Lent, Slot};
 pub use headers::{HeadersAtOnce, HeadersOnDemand, LendHeaders};
 pub(crate) use settle::{settle_outcome, settle_reacting};
@@ -95,6 +101,31 @@ pub use workers::{Placement, Workers};
 /// ```
 pub const RETRY_COUNT_HEADER: &str = "x-ruststream-retry-count";
 
+/// The storage a dispatch loop encodes its replies into, owned by the loop for as long as it runs.
+///
+/// A runner hands the loop the room its registration asked for: a [`PayloadBuf`] by default,
+/// or without `alloc` a `FixedBuf` of the capacity `.encode_capacity::<N>()` named. The loop
+/// reads it as an [`EncodeBuf`], so no code that writes depends on the capacity.
+#[doc(hidden)]
+pub trait EncodeRoom {
+    /// The buffer replies are encoded into.
+    fn buffer(&mut self) -> &mut EncodeBuf;
+}
+
+#[cfg(ruststream_alloc)]
+impl EncodeRoom for PayloadBuf {
+    fn buffer(&mut self) -> &mut EncodeBuf {
+        self
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<const CAPACITY: usize> EncodeRoom for FixedBuf<CAPACITY> {
+    fn buffer(&mut self) -> &mut EncodeBuf {
+        self
+    }
+}
+
 /// The handler's future, observed by the poll-time diagnostics where the feature is on and handed
 /// through untouched where it is off.
 #[cfg(feature = "poll-diagnostics")]
@@ -123,16 +154,18 @@ macro_rules! observed {
 #[allow(clippy::future_not_send)]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
-pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
+pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers, Park, Room>(
     mut subscriber: S,
     handler: H,
     shutdown: Signal,
-    name: Arc<str>,
-    state: Arc<St>,
+    name: SubscriptionName,
+    state: StateHandle<'_, St>,
     lent: Lending,
     failure: DispatchFailure<Signal>,
     held: Held,
     headers: Headers,
+    parked: Park,
+    mut room: Room,
 ) where
     S: Subscriber,
     H: Handler<S::Message, C, St>,
@@ -141,6 +174,8 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     C: BuildContext<S::Message> + MaybeSendSync + 'static,
     Signal: ShutdownWait + Halt,
     Lending: Lent<C>,
+    Park: Parks,
+    Room: EncodeRoom,
 {
     // Owned by the loop itself, so a runner spawns this future as it is, with no future of its
     // own around it: the loop is the task.
@@ -153,8 +188,8 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
     let mut cancelled = core::pin::pin!(shutdown.cancelled());
     // One encode buffer for the whole loop: a reply that leaves through a publisher which
     // reads the payload is written into this one every time, so the subscription allocates
-    // it once and never again.
-    let mut encode = BytesMut::new();
+    // it once and never again. The runner chose its room; the loop owns it.
+    let encode = room.buffer();
     // The loop's slot, one for the whole loop: the stream's poll writes each delivery
     // straight into it, and the settle takes it out again. A delivery returned by value
     // through the turn and bound to a local on its way here would be copied twice more.
@@ -166,6 +201,7 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
             stream.as_mut(),
             cancelled.as_mut(),
             &mut slot,
+            parked,
         )
         .await
         {
@@ -177,9 +213,9 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
                 let handling = core::pin::pin!(dispatch(
                     &handler,
                     &mut slot,
-                    &mut encode,
+                    &mut *encode,
                     &name,
-                    &state,
+                    state_in_place(&state),
                     delivery,
                     host,
                     &failure,
@@ -226,14 +262,16 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers>(
 ///
 /// The other loops write the same wait out rather than share it: one instantiation shared with
 /// them is enough for the compiler to stop inlining it here.
-fn turn_into<'s, St, Message, Failure, Wait, Signal, Probe>(
+fn turn_into<'s, St, Message, Failure, Wait, Signal, Probe, Park>(
     shutdown: &'s Signal,
     probe: &'s Probe,
     stream: Pin<&'s mut St>,
     cancelled: Pin<&'s mut Wait>,
     slot: &'s mut Slot<Message>,
-) -> TurnInto<'s, St, Message, Wait, Signal, Probe>
+    flag: Park,
+) -> TurnInto<'s, St, Message, Wait, Signal, Probe, Park>
 where
+    Park: Parks,
     St: Stream<Item = Result<Message, Failure>>,
     Wait: Future<Output = ()>,
     Signal: ShutdownWait,
@@ -244,6 +282,7 @@ where
         signal: shutdown,
         probe,
         parked: false,
+        flag,
         stream,
         cancelled,
         slot,
@@ -267,22 +306,99 @@ where
     Probe::GATED && parked && !probe.may_be_ready() && !shutdown.is_cancelled()
 }
 
+/// Where a subscription's loop records that it is idle, for a join above it to read.
+///
+/// `()` records nothing, which is what a loop that no join gates passes; a `&Cell<bool>` is the
+/// flag a [`Gated`](crate::Gated) reads. The loop sets it when a turn found the stream and the
+/// shutdown wait both pending, and clears it when the turn resumes, so a handler that awaits is
+/// never taken for an idle subscription.
+#[doc(hidden)]
+pub trait Parks: Copy + Unpin {
+    /// Records whether the subscription is idle.
+    fn park(self, parked: bool);
+}
+
+impl Parks for () {
+    #[inline]
+    fn park(self, _parked: bool) {}
+}
+
+impl Parks for &Cell<bool> {
+    #[inline]
+    fn park(self, parked: bool) {
+        self.set(parked);
+    }
+}
+
+pin_project! {
+    /// A subscription's loop under the join's gate: while the loop recorded that it is idle and
+    /// its probe says nothing is ready, the join does not resume the loop's frame.
+    ///
+    /// The flag lives in the app's future, above the join, and the loop borrows it (see
+    /// [`Parks`]); the gate holds the probe and a handle on the shutdown signal. A subscription
+    /// whose probe declares none has a gate that is the constant `false`, and the poll is the
+    /// loop's own.
+    #[doc(hidden)]
+    pub struct Gated<'flag, Probe, Signal, Work> {
+        parked: &'flag Cell<bool>,
+        probe: Probe,
+        signal: Signal,
+        #[pin]
+        work: Work,
+    }
+}
+
+impl<'flag, Probe, Signal, Work> Gated<'flag, Probe, Signal, Work> {
+    /// Gates `work`, a loop that records its idleness in `parked`.
+    pub const fn new(parked: &'flag Cell<bool>, probe: Probe, signal: Signal, work: Work) -> Self {
+        Self {
+            parked,
+            probe,
+            signal,
+            work,
+        }
+    }
+}
+
+impl<Probe, Signal, Work> Future for Gated<'_, Probe, Signal, Work>
+where
+    Probe: ReadyHint,
+    Signal: ShutdownWait,
+    Work: Future<Output = ()>,
+{
+    type Output = ();
+
+    #[inline]
+    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<()> {
+        let this = self.project();
+        if idle(this.parked.get(), this.probe, this.signal) {
+            // The loop's last real poll registered the task's waker with the stream and the
+            // shutdown wait, so a delivery or a stop wakes the app and the gate asks again.
+            return Poll::Pending;
+        }
+        this.work.poll(cx)
+    }
+}
+
 /// The future [`turn_into`] returns: written out rather than an `async fn` so its poll carries an
 /// inline hint, which a closure inside `poll_fn` cannot.
-struct TurnInto<'s, St, Message, Wait, Signal, Probe> {
+struct TurnInto<'s, St, Message, Wait, Signal, Probe, Park> {
     shutdown: bool,
     signal: &'s Signal,
     probe: &'s Probe,
     // Set once a poll of this turn found the stream and the shutdown wait both pending.
     parked: bool,
+    // Where the join above this loop reads that the subscription is idle.
+    flag: Park,
     stream: Pin<&'s mut St>,
     cancelled: Pin<&'s mut Wait>,
     slot: &'s mut Slot<Message>,
 }
 
-impl<St, Message, Failure, Wait, Signal, Probe> Future
-    for TurnInto<'_, St, Message, Wait, Signal, Probe>
+impl<St, Message, Failure, Wait, Signal, Probe, Park> Future
+    for TurnInto<'_, St, Message, Wait, Signal, Probe, Park>
 where
+    Park: Parks,
     St: Stream<Item = Result<Message, Failure>>,
     Wait: Future<Output = ()>,
     Signal: ShutdownWait,
@@ -300,6 +416,10 @@ where
         if idle(this.parked, this.probe, this.signal) {
             return Poll::Pending;
         }
+        // A resumed subscription is not idle until a poll of this turn finds it so again.
+        if Probe::GATED {
+            this.flag.park(false);
+        }
         match this.stream.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(msg))) => {
                 this.slot.fill(msg);
@@ -310,6 +430,9 @@ where
             Poll::Pending => {
                 let waiting = this.cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown);
                 this.parked = waiting.is_pending();
+                if Probe::GATED {
+                    this.flag.park(this.parked);
+                }
                 waiting
             }
         }
@@ -351,6 +474,34 @@ pub fn placed<C>(workers: Workers, delivery: &Delivery<C>) -> Workers {
     workers
 }
 
+/// The failure buffer of a delivery, which outlives its context: the `.error` it holds runs after
+/// the settle.
+#[cfg(not(ruststream_alloc))]
+type Failures = Option<FailureSlot>;
+#[cfg(ruststream_alloc)]
+struct Failures;
+
+#[cfg(not(ruststream_alloc))]
+fn take_failures<C, S>(ctx: &mut Context<'_, C, S>) -> Failures {
+    ctx.take_failures()
+}
+
+#[cfg(ruststream_alloc)]
+const fn take_failures<C, S>(_ctx: &mut Context<'_, C, S>) -> Failures {
+    Failures
+}
+
+#[cfg(not(ruststream_alloc))]
+async fn react_to(failures: Failures) {
+    if let Some(mut failures) = failures {
+        failures.react().await;
+    }
+}
+
+#[cfg(ruststream_alloc)]
+#[allow(clippy::unused_async)]
+async fn react_to(_failures: Failures) {}
+
 /// One delivery, end to end: the handler, the settle and what the delivery leaves behind.
 // Written over the contract traits, so the future is `Send` exactly where the types it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
 #[allow(clippy::future_not_send)]
@@ -360,7 +511,7 @@ pub fn placed<C>(workers: Workers, delivery: &Delivery<C>) -> Workers {
 pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     handler: &H,
     slot: &mut Slot<M>,
-    encode: &mut BytesMut,
+    encode: &mut EncodeBuf,
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
@@ -395,7 +546,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     // The hooks a test registered on this subscription, owed by this call once it is settled.
     #[cfg(feature = "testing")]
     let mut due_calls = None;
-    let (settle, after, continuations, reaction) = {
+    let (settle, after, continuations, reaction, failures) = {
         let msg = slot.get();
         let cx = C::build(msg);
         // The delivery itself where it can be shared, not its header map: a handler that reads no
@@ -429,14 +580,14 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         )
         .await;
         // Without `std` a panic aborts, so the handler's future runs uncaught.
-        #[cfg(not(feature = "std"))]
+        #[cfg(not(any(feature = "std", feature = "testing")))]
         let result = Ok::<_, Infallible>(observed!(delivery, handler.handle(msg, &mut ctx)).await);
         #[cfg(feature = "testing")]
         let panicked = result.is_err();
         // Resolve into a `HandlerOutcome` regardless of whether the handler panicked.
         let settled = match result {
             Ok(s) => Some(s),
-            #[cfg(feature = "std")]
+            #[cfg(any(feature = "std", feature = "testing"))]
             Err(payload) => outcome_after_panic(payload.as_ref(), name, failure),
         };
         // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
@@ -448,6 +599,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         // (with the `.and_after` beside it, which then follows the publish), else the one the
         // context registered. Most deliveries carry neither, and pay the two checks.
         // The outcome is taken apart here, so none of it is left to drop once it is settled.
+        let failures = take_failures(&mut ctx);
         let (settle, after, reaction) = match settled.map(HandlerOutcome::into_parts) {
             Some((status, after, Some(error))) => {
                 ctx.demote_errors();
@@ -467,21 +619,24 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         // `msg` and dropping `ctx` clears the decode flag.
         #[cfg(feature = "testing")]
         if let Some(coordinator) = delivery.hooks.coordinator() {
-            let deliveries = vec![Delivered {
-                raw: Bytes::copy_from_slice(msg.payload()),
-                value: ctx.take_carried(),
-                settle,
-            }];
-            due_calls = record_call(
-                coordinator,
-                delivery,
-                name,
-                deliveries,
-                panicked,
-                ctx.took_decode_failed(),
-            );
+            // The record is the harness's own bookkeeping, not the delivery's cost.
+            due_calls = harness_section(|| {
+                let deliveries = vec![Delivered {
+                    raw: bytes::Bytes::copy_from_slice(msg.payload()),
+                    value: ctx.take_carried(),
+                    settle,
+                }];
+                record_call(
+                    coordinator,
+                    delivery,
+                    name,
+                    deliveries,
+                    panicked,
+                    ctx.took_decode_failed(),
+                )
+            });
         }
-        (settle, after, continuations, reaction)
+        (settle, after, continuations, reaction, failures)
     };
     if let Some(status) = settle {
         // Named for the same reason as the delivery's own future above: the settle path is
@@ -497,7 +652,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
         if let Some(after) = after {
-            host.detach_boxed(after);
+            detach_continuation!(host, after);
         }
     } else {
         // A fail-fast left the delivery unsettled: it is released here, as it always was at the
@@ -509,9 +664,10 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     // covers both - the harness's `drain` and the shutdown's alike.
     if let Some(continuations) = continuations {
         for fut in continuations {
-            host.detach_boxed(fut);
+            detach_continuation!(host, fut);
         }
     }
+    react_to(failures).await;
     // The hooks a test registered on this subscription run once the call is settled, inside the
     // dispatch's own in-flight count, so a publish returns only after they are done.
     #[cfg(feature = "testing")]
@@ -521,7 +677,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     }
 }
 
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "testing"))]
 /// What a delivery whose handler panicked settles by: the panic policy's settlement, or `None`
 /// where a fail-fast panic tore the service down and left the delivery unsettled (a broker with
 /// redelivery hands it back after the restart).
@@ -560,7 +716,7 @@ fn record_call<C>(
     coordinator: &Coordinator,
     delivery: &Delivery<C>,
     name: &str,
-    deliveries: Vec<Delivered>,
+    deliveries: impl IntoIterator<Item = Delivered>,
     panicked: bool,
     decode_failed: bool,
 ) -> Option<DueCall> {
@@ -568,7 +724,7 @@ fn record_call<C>(
         scope_id: delivery.scope_id,
         subscription: delivery.subscription,
         name: name.to_owned(),
-        deliveries,
+        deliveries: deliveries.into_iter().collect(),
         panicked,
         decode_failed,
     })
@@ -590,7 +746,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     slot: &mut Batch,
     taken: &mut H::Taken,
     scratch: &mut H::Scratch,
-    encode: &mut BytesMut,
+    encode: &mut EncodeBuf,
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
@@ -610,7 +766,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     // shared app state is threaded the same way as on the single-message path. A batch with
     // nothing in it has nothing to settle and nothing to build a context from.
     let Some(cx) = batch.context() else { return };
-    let empty = HeaderMap::new();
+    let empty = HeaderSet::new();
     let mut ctx = Context::new(name, &empty, state, cx, delivery)
         .with_failfast(&failure.shutdown)
         .with_encode_buffer(encode)
@@ -627,7 +783,9 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     // the deliveries and a panic consumes them) to record the call the settle path never reached.
     // Only a harness reads that record, so a dispatch no harness watches captures nothing.
     #[cfg(feature = "testing")]
-    let unsettled = watcher.as_ref().map(|_| batch.unsettled());
+    let unsettled = watcher
+        .as_ref()
+        .map(|_| harness_section(|| Bookkept::new(batch.unsettled())));
     #[cfg(feature = "testing")]
     if let Some(coordinator) = &watcher {
         coordinator.enqueued();
@@ -660,7 +818,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     )
     .await;
     // Without `std` a panic aborts, so the handler's future runs uncaught.
-    #[cfg(not(feature = "std"))]
+    #[cfg(not(any(feature = "std", feature = "testing")))]
     let result: Result<(), Infallible> = {
         observed!(
             delivery,
@@ -674,11 +832,11 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
             // As on the single-message path: a batch that registered no hook pays the branch.
             if ctx.has_hooks() {
                 for fut in ctx.take_settle_hooks() {
-                    host.detach_boxed(fut);
+                    detach_continuation!(host, fut);
                 }
             }
         }
-        #[cfg(feature = "std")]
+        #[cfg(any(feature = "std", feature = "testing"))]
         Err(payload) => {
             let reason = panic_reason(payload.as_ref());
             error!(
@@ -696,7 +854,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
                     coordinator,
                     delivery,
                     name,
-                    deliveries,
+                    deliveries.into_inner(),
                     true,
                     false,
                 ));
@@ -730,6 +888,7 @@ fn harness_scope<C>(delivery: &Delivery<C>) -> Option<HarnessScope> {
 
 mod delivery;
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod fixtures;
 #[cfg(all(test, feature = "testing"))]
 mod harness_tests;

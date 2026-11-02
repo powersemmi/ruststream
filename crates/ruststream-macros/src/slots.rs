@@ -70,7 +70,7 @@ fn slot_destination(dictionary: &[Type]) -> TokenStream2 {
 /// outgoing messages: each listed type contributes what its own `#[derive(Outgoing)]` declares.
 /// An empty list keeps the trait's own default (nothing declared).
 fn slot_outgoing_metadata(name: &Ident, dictionary: &[Type]) -> TokenStream2 {
-    if dictionary.is_empty() {
+    if dictionary.is_empty() || !cfg!(feature = "alloc") {
         return quote!();
     }
     let entries = dictionary.iter().map(|ty| {
@@ -123,6 +123,19 @@ pub(crate) fn expand_out_messages(input: &DeriveInput) -> syn::Result<TokenStrea
             );
         }
     });
+    let outgoing_method = if cfg!(feature = "alloc") {
+        quote! {
+            fn outgoing()
+                -> ::ruststream::__private::Vec<::ruststream::runtime::OutgoingMessageMetadata>
+            {
+                let mut __rs_entries = ::ruststream::__private::Vec::new();
+                #(#entries)*
+                __rs_entries
+            }
+        }
+    } else {
+        quote!()
+    };
     Ok(quote! {
         #(#memberships)*
 
@@ -131,13 +144,7 @@ pub(crate) fn expand_out_messages(input: &DeriveInput) -> syn::Result<TokenStrea
         where
             #(#models: ::ruststream::runtime::OutMessages<__RsM>,)*
         {
-            fn outgoing()
-                -> ::ruststream::__private::Vec<::ruststream::runtime::OutgoingMessageMetadata>
-            {
-                let mut __rs_entries = ::ruststream::__private::Vec::new();
-                #(#entries)*
-                __rs_entries
-            }
+            #outgoing_method
         }
     })
 }

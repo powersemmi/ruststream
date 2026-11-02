@@ -289,11 +289,7 @@ fn expand_embassy(func: &ItemFn) -> syn::Result<TokenStream2> {
                 if let ::core::result::Result::Err(error) =
                     super::#name(#(#names),*).run(&CONTROL).await
                 {
-                    ::ruststream::__private::tracing::error!(
-                        target: "ruststream::embassy",
-                        error = %error,
-                        "the app stopped on an error"
-                    );
+                    ::ruststream::__private::app_stopped(&error);
                 }
             }
         }

@@ -20,7 +20,6 @@
 // The shared body serves the local contract, whose futures carry no Send.
 #![allow(clippy::future_not_send)]
 
-use alloc::boxed::Box;
 use core::error::Error as StdError;
 
 use thiserror::Error;
@@ -37,7 +36,7 @@ use crate::publish_failure::Refusal;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::PipelinePublish;
 use crate::{
-    ConnectedBroker, HeaderMap, MaybeSend, MaybeSendSync, OutgoingFor, PairError, PayloadForm,
+    ConnectedBroker, HeaderSet, MaybeSend, MaybeSendSync, OutgoingFor, PairError, PayloadForm,
     PublishOutcome, PublishPolicy, Publisher,
 };
 
@@ -210,7 +209,7 @@ impl<P: Publisher> Publisher for NamedDestinationSend<P> {
         self.0.publish(msg, options).await
     }
 
-    fn base_headers(&self) -> Option<&HeaderMap> {
+    fn base_headers(&self) -> Option<&HeaderSet> {
         self.0.base_headers()
     }
 }
@@ -300,7 +299,7 @@ impl<W, Head: PublishLayer + Clone, Tail: PublishPipeline + Clone> OutPipeline<W
     type Error<E: StdError + Send + Sync + 'static> = PipelinePublishError;
 
     fn from_publish_error<E: StdError + Send + Sync + 'static>(err: E) -> PipelinePublishError {
-        PipelinePublishError(Box::new(err))
+        PipelinePublishError(BoxError::from(err))
     }
 
     async fn send<P>(

@@ -10,18 +10,24 @@
 //! [`headers_mut`](Context::headers_mut), so a delivery whose handler and middleware never touch
 //! the headers pays neither the broker's accessor nor a clone.
 
+#[cfg(ruststream_alloc)]
 use alloc::boxed::Box;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::cell::OnceCell;
 use core::fmt;
-#[cfg(feature = "testing")]
+#[cfg(not(ruststream_alloc))]
+use core::fmt::Write;
+#[cfg(not(ruststream_alloc))]
+use core::marker::PhantomData;
+#[cfg(any(feature = "testing", not(ruststream_alloc)))]
 use core::mem;
 
-use bytes::BytesMut;
+use ruststream_core::EncodeBuf;
 
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::RecordedValue;
-use crate::{Field, FieldMut, HeaderMap, Settle};
+use crate::{Field, FieldMut, HeaderSet, Settle};
 
 use super::dispatch::Delivery;
 use super::failure::FailurePolicy;
@@ -29,10 +35,15 @@ use super::handler::{Continuation, ContinuationFuture, HandlerOutcome, HandlerRe
 use crate::host::Halt;
 #[cfg(feature = "tokio")]
 use crate::main_runtime::MainRuntime;
+#[cfg(not(ruststream_alloc))]
+use crate::publish_failure::FailureSlot;
 use crate::publish_failure::{ErrorHook, Failures, Reaction};
 use ruststream_core::IfSend;
 #[cfg(feature = "testing")]
 use ruststream_core::MaybeSendSync;
+
+#[cfg(not(ruststream_alloc))]
+use crate::registrations::{Entry, REGISTRATIONS, Registrations, RegistrationsFull, Vacancy};
 
 /// What a context reads the headers through: `Sync` where the core's `send` feature is on, because the
 /// context then crosses threads; a bare reference without it.
@@ -46,13 +57,13 @@ type SourceRef<'a> = IfSend<&'a (dyn HeaderSource + Sync), &'a dyn HeaderSource>
 #[doc(hidden)]
 pub trait HeaderSource {
     /// This delivery's headers as the broker reports them.
-    fn headers(&self) -> &HeaderMap;
+    fn headers(&self) -> &HeaderSet;
 }
 
 /// A map that is already built: the batch path, which carries no single delivery's headers, and
 /// the tests that drive a context directly.
-impl HeaderSource for HeaderMap {
-    fn headers(&self) -> &HeaderMap {
+impl HeaderSource for HeaderSet {
+    fn headers(&self) -> &HeaderSet {
         self
     }
 }
@@ -65,14 +76,14 @@ impl HeaderSource for HeaderMap {
 #[derive(Clone, Copy)]
 pub(crate) enum DeliveryHeaders<'a> {
     /// The map is already resolved: the handler read or modified it, or there is no delivery.
-    Ready(&'a HeaderMap),
+    Ready(&'a HeaderSet),
     /// Nothing has asked yet; the broker answers on the first read.
     Source(SourceRef<'a>),
 }
 
 impl<'a> DeliveryHeaders<'a> {
     /// The map, asking the source where nothing has yet.
-    pub(crate) fn get(self) -> &'a HeaderMap {
+    pub(crate) fn get(self) -> &'a HeaderSet {
         match self {
             Self::Ready(headers) => headers,
             Self::Source(source) => source.headers(),
@@ -80,16 +91,16 @@ impl<'a> DeliveryHeaders<'a> {
     }
 }
 
-impl<'a> From<&'a HeaderMap> for DeliveryHeaders<'a> {
-    fn from(headers: &'a HeaderMap) -> Self {
+impl<'a> From<&'a HeaderSet> for DeliveryHeaders<'a> {
+    fn from(headers: &'a HeaderSet) -> Self {
         Self::Ready(headers)
     }
 }
 
 /// A map a delivery already answered: what the dispatch path hands the context of a delivery it
 /// cannot share across threads.
-impl HeaderSource for &HeaderMap {
-    fn headers(&self) -> &HeaderMap {
+impl HeaderSource for &HeaderSet {
+    fn headers(&self) -> &HeaderSet {
         self
     }
 }
@@ -105,7 +116,7 @@ impl<M> fmt::Debug for FromDelivery<'_, M> {
 }
 
 impl<M: Settle> HeaderSource for FromDelivery<'_, M> {
-    fn headers(&self) -> &HeaderMap {
+    fn headers(&self) -> &HeaderSet {
         self.0.headers()
     }
 }
@@ -140,11 +151,40 @@ impl OutcomeKind {
 /// (`None` means it runs regardless of how the message settled) and the `.error` registered
 /// beside it. A hook with an `.error` runs its future after the publish the runtime makes for
 /// the settlement; a hook with an `.error` and no future only reacts to a failed publish.
+#[cfg(ruststream_alloc)]
 struct AfterHook {
     gate: Option<OutcomeKind>,
     fut: Option<Continuation>,
     error: Option<ErrorHook>,
 }
+
+/// See the `alloc` form: without a heap the hooks are entries of a fixed table.
+#[cfg(not(ruststream_alloc))]
+type AfterHook = Entry<OutcomeKind, Continuation, ErrorHook>;
+
+/// The registrations of one delivery: a list that grows with `alloc`, a fixed table without.
+#[cfg(ruststream_alloc)]
+type Hooks = Vec<AfterHook>;
+
+/// See the `alloc` form.
+#[cfg(not(ruststream_alloc))]
+type Hooks = Registrations<OutcomeKind, Continuation, ErrorHook, REGISTRATIONS>;
+
+/// The room of a fail-fast reason in a build without `alloc`.
+#[cfg(not(ruststream_alloc))]
+const FAIL_FAST_REASON_ROOM: usize = 128;
+
+/// The continuations drained for one settlement.
+#[cfg(ruststream_alloc)]
+type Runnable = Vec<Continuation>;
+
+/// See the `alloc` form.
+#[cfg(not(ruststream_alloc))]
+type Runnable = heapless::Vec<Continuation, REGISTRATIONS>;
+
+/// What ties a context to the delivery and state types it was built for.
+#[cfg(not(ruststream_alloc))]
+type ContextMarker<'a, C, S> = PhantomData<fn(&'a ()) -> (C, S)>;
 
 /// Per-delivery context, threaded through middleware and into the handler.
 ///
@@ -199,16 +239,20 @@ pub struct Context<'a, C = (), S = ()> {
     name: &'a str,
     source: SourceRef<'a>,
     /// The delivery's own map, resolved off [`Context::source`] the first time anything reads it.
-    original: OnceCell<&'a HeaderMap>,
-    modified: Option<HeaderMap>,
+    original: OnceCell<&'a HeaderSet>,
+    modified: Option<HeaderSet>,
     state: &'a S,
     cx: C,
     delivery: &'a Delivery<C>,
-    after: Vec<AfterHook>,
+    after: Hooks,
+    /// Where a publish the runtime makes for this delivery leaves its failure for the `.error`
+    /// closure to read; the lane awaits [`FailureSlot::react`] after the settle.
+    #[cfg(not(ruststream_alloc))]
+    failures: FailureSlot,
     failfast: Option<&'a dyn Halt>,
     /// The dispatch loop's encode buffer, lent to this delivery's reply. `None` where the
     /// context was built without one, and then the reply encodes into a buffer of its own.
-    encode: Option<&'a mut BytesMut>,
+    encode: Option<&'a mut EncodeBuf>,
     /// The subscriber's materialization policy, set by the dispatcher from the definition's
     /// failure policies. It reaches the handler body because a `Headers` contract is parsed
     /// there rather than in the decode adapter.
@@ -253,7 +297,9 @@ impl<'a, C, S> Context<'a, C, S> {
             state,
             cx,
             delivery,
-            after: Vec::new(),
+            after: Hooks::new(),
+            #[cfg(not(ruststream_alloc))]
+            failures: FailureSlot::new(),
             failfast: None,
             encode: None,
             decode: FailurePolicy::Drop,
@@ -318,7 +364,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// subscription's first message. What the buffer is worth to the publish depends on the
     /// broker: a publisher that reads the payload is lent it, and one that keeps the payload is
     /// handed a buffer of its own regardless.
-    pub(crate) fn with_encode_buffer(mut self, buf: &'a mut BytesMut) -> Self {
+    pub(crate) fn with_encode_buffer(mut self, buf: &'a mut EncodeBuf) -> Self {
         self.encode = Some(buf);
         self
     }
@@ -328,7 +374,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// Taken rather than borrowed, so the rest of the context stays readable while the reply is
     /// being built: what the publish needs of the context (the subscription's name, the
     /// delivery's headers) is read next to the buffer, not through it.
-    pub(crate) fn take_encode_buffer(&mut self) -> Option<&'a mut BytesMut> {
+    pub(crate) fn take_encode_buffer(&mut self) -> Option<&'a mut EncodeBuf> {
         self.encode.take()
     }
 
@@ -385,6 +431,26 @@ impl<'a, C, S> Context<'a, C, S> {
         }
     }
 
+    /// [`fail_fast`](Self::fail_fast) with the reason `what: cause`. Without `alloc` the reason is
+    /// formatted into a fixed room and a reason past it is cut to `what`, so a fail-fast still
+    /// shuts down with the subscription's name.
+    pub(crate) fn fail_fast_with(&self, what: &str, cause: impl fmt::Display) {
+        if self.failfast.is_none() {
+            return;
+        }
+        #[cfg(ruststream_alloc)]
+        self.fail_fast(&alloc::format!("{what}: {cause}"));
+        #[cfg(not(ruststream_alloc))]
+        {
+            let mut reason = heapless::String::<FAIL_FAST_REASON_ROOM>::new();
+            if write!(reason, "{what}: {cause}").is_err() {
+                reason.clear();
+                let _ = reason.push_str(what);
+            }
+            self.fail_fast(&reason);
+        }
+    }
+
     /// The channel (name / subject) the message arrived on.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -426,13 +492,13 @@ impl<'a, C, S> Context<'a, C, S> {
 
     /// The delivery's own headers, taken off the broker on the first call and kept for the rest
     /// of the delivery.
-    fn original(&self) -> &'a HeaderMap {
+    fn original(&self) -> &'a HeaderSet {
         self.original.get_or_init(|| self.source.headers())
     }
 
     /// The working copy of the message headers.
     #[must_use]
-    pub fn headers(&self) -> &HeaderMap {
+    pub fn headers(&self) -> &HeaderSet {
         self.modified
             .as_ref()
             .map_or_else(|| self.original(), |modified| modified)
@@ -453,7 +519,7 @@ impl<'a, C, S> Context<'a, C, S> {
 
     /// The working copy of the message headers, mutably. The first call clones the message
     /// headers; later calls return the same copy.
-    pub fn headers_mut(&mut self) -> &mut HeaderMap {
+    pub fn headers_mut(&mut self) -> &mut HeaderSet {
         let original = self.original();
         self.modified.get_or_insert_with(|| original.clone())
     }
@@ -657,12 +723,33 @@ impl<'a, C, S> Context<'a, C, S> {
     /// ```
     // The gate is a just-built outcome token (`after(HandlerOutcome::ack())`); a reference
     // parameter would force `&` noise at every call site.
+    #[cfg(ruststream_alloc)]
     #[allow(clippy::needless_pass_by_value)]
     pub fn after(&mut self, outcome: HandlerOutcome) -> After<'_, 'a, C, S> {
         After {
             ctx: self,
             gate: Some(OutcomeKind::of(outcome.outcome())),
         }
+    }
+
+    /// Registers a post-settle hook gated on the outcome kind of `outcome`; the builder takes the
+    /// hook's continuation. A delivery holds a fixed number of registrations, and the call is
+    /// refused with [`RegistrationsFull`] once they are taken; nothing registered is dropped.
+    ///
+    /// # Errors
+    ///
+    /// [`RegistrationsFull`] when the delivery already holds all its registrations.
+    #[cfg(not(ruststream_alloc))]
+    #[allow(clippy::needless_pass_by_value)] // see the `alloc` form
+    pub fn after(
+        &mut self,
+        outcome: HandlerOutcome,
+    ) -> Result<After<'_, 'a, C, S>, RegistrationsFull> {
+        Ok(After {
+            vacancy: self.after.vacancy()?,
+            gate: Some(OutcomeKind::of(outcome.outcome())),
+            context: PhantomData,
+        })
     }
 
     /// Registers a post-settle hook that runs only after the message is acked.
@@ -699,12 +786,29 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # }
     /// # fn main() {}
     /// ```
+    #[cfg(ruststream_alloc)]
     pub fn after_ack(&mut self, fut: impl ContinuationFuture) {
         self.after.push(AfterHook {
             gate: Some(OutcomeKind::Ack),
             fut: Some(Box::pin(fut)),
             error: None,
         });
+    }
+
+    /// Registers a post-settle hook that runs only after the message is acked: sugar for
+    /// `self.after(HandlerOutcome::ack())?.then(fut)`. The continuation must fit its room.
+    ///
+    /// # Errors
+    ///
+    /// [`RegistrationsFull`] when the delivery already holds all its registrations.
+    #[cfg(not(ruststream_alloc))]
+    pub fn after_ack(&mut self, fut: impl ContinuationFuture) -> Result<(), RegistrationsFull> {
+        self.after.vacancy()?.put(AfterHook {
+            gate: Some(OutcomeKind::Ack),
+            fut: Some(Continuation::new(fut)),
+            error: None,
+        });
+        Ok(())
     }
 
     /// Registers a post-settle hook that runs after the message settles, whatever the outcome.
@@ -748,12 +852,45 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # }
     /// # fn main() {}
     /// ```
+    #[cfg(ruststream_alloc)]
     pub fn after_settle(&mut self, fut: impl ContinuationFuture) {
         self.after.push(AfterHook {
             gate: None,
             fut: Some(Box::pin(fut)),
             error: None,
         });
+    }
+
+    /// Registers a post-settle hook that runs after the message settles, whatever the outcome.
+    /// The continuation must fit its room.
+    ///
+    /// # Errors
+    ///
+    /// [`RegistrationsFull`] when the delivery already holds all its registrations.
+    #[cfg(not(ruststream_alloc))]
+    pub fn after_settle(&mut self, fut: impl ContinuationFuture) -> Result<(), RegistrationsFull> {
+        self.after.vacancy()?.put(AfterHook {
+            gate: None,
+            fut: Some(Continuation::new(fut)),
+            error: None,
+        });
+        Ok(())
+    }
+
+    /// The buffer a failed publish of this delivery leaves its failure in.
+    #[cfg(not(ruststream_alloc))]
+    pub(crate) const fn failure_slot(&mut self) -> &mut FailureSlot {
+        &mut self.failures
+    }
+
+    /// The buffer a failed publish left its failure in, taken out so it outlives the context: the
+    /// lane runs the `.error` closure on it after the delivery is settled, and the context goes
+    /// before that. `None` when nothing failed, which costs the check alone.
+    #[cfg(not(ruststream_alloc))]
+    pub(crate) fn take_failures(&mut self) -> Option<FailureSlot> {
+        self.failures
+            .is_pending()
+            .then(|| mem::take(&mut self.failures))
     }
 
     /// Whether this delivery registered any post-settle hook at all. The dispatch path reads it
@@ -764,7 +901,14 @@ impl<'a, C, S> Context<'a, C, S> {
 
     /// Drains the registered hooks whose gate matches `outcome` (and the ungated ones), in
     /// registration order. Used by the single-message dispatch path after it settles the message.
-    pub(crate) fn take_hooks_for(&mut self, outcome: HandlerResult) -> Vec<Continuation> {
+    #[cfg(not(ruststream_alloc))]
+    pub(crate) fn take_hooks_for(&mut self, outcome: HandlerResult) -> Runnable {
+        self.after.take_for(OutcomeKind::of(outcome))
+    }
+
+    /// See the form for `alloc`.
+    #[cfg(ruststream_alloc)]
+    pub(crate) fn take_hooks_for(&mut self, outcome: HandlerResult) -> Runnable {
         let kind = OutcomeKind::of(outcome);
         let mut runnable = Vec::new();
         let mut kept = Vec::new();
@@ -782,7 +926,14 @@ impl<'a, C, S> Context<'a, C, S> {
     /// Drains the ungated hooks (registered via [`after_settle`](Self::after_settle)), in
     /// registration order. Used by the batch dispatch path, where per-element outcomes make the
     /// outcome gate ill-defined, so only ungated hooks run.
-    pub(crate) fn take_settle_hooks(&mut self) -> Vec<Continuation> {
+    #[cfg(not(ruststream_alloc))]
+    pub(crate) fn take_settle_hooks(&mut self) -> Runnable {
+        self.after.take_ungated()
+    }
+
+    /// See the form for `alloc`.
+    #[cfg(ruststream_alloc)]
+    pub(crate) fn take_settle_hooks(&mut self) -> Runnable {
         let mut runnable = Vec::new();
         let mut kept = Vec::new();
         for hook in self.after.drain(..) {
@@ -810,6 +961,17 @@ impl<'a, C, S> Context<'a, C, S> {
 
     /// The registered case of [`take_reaction_for`](Self::take_reaction_for), off the path of a
     /// delivery that registered nothing.
+    #[cfg(not(ruststream_alloc))]
+    #[cold]
+    #[inline(never)]
+    fn reaction_registered_for(&mut self, outcome: HandlerResult) -> Option<Reaction> {
+        self.after
+            .take_reaction(OutcomeKind::of(outcome))
+            .map(|(error, then)| Reaction::new(error, then))
+    }
+
+    /// See the form for `alloc`.
+    #[cfg(ruststream_alloc)]
     #[cold]
     #[inline(never)]
     fn reaction_registered_for(&mut self, outcome: HandlerResult) -> Option<Reaction> {
@@ -838,12 +1000,16 @@ impl<'a, C, S> Context<'a, C, S> {
     /// errors: the outcome the handler returned carries an `.error` of its own, which wins.
     #[inline]
     pub(crate) fn demote_errors(&mut self) {
-        if !self.after.is_empty() {
-            self.after.retain_mut(|hook| {
-                hook.error = None;
-                hook.fut.is_some()
-            });
+        if self.after.is_empty() {
+            return;
         }
+        #[cfg(ruststream_alloc)]
+        self.after.retain_mut(|hook| {
+            hook.error = None;
+            hook.fut.is_some()
+        });
+        #[cfg(not(ruststream_alloc))]
+        self.after.demote_errors();
     }
 
     /// Returns the subscription's delivery context: the task tracker post-settle
@@ -874,8 +1040,14 @@ impl<'a, C, S> Context<'a, C, S> {
 /// registers nothing.
 #[must_use = "call `.then(fut)` to register the post-settle hook"]
 pub struct After<'ctx, 'a, C = (), S = ()> {
+    #[cfg(ruststream_alloc)]
     ctx: &'ctx mut Context<'a, C, S>,
+    /// The room `Context::after` found, so registering cannot fail.
+    #[cfg(not(ruststream_alloc))]
+    vacancy: Vacancy<'ctx, OutcomeKind, Continuation, ErrorHook, REGISTRATIONS>,
     gate: Option<OutcomeKind>,
+    #[cfg(not(ruststream_alloc))]
+    context: ContextMarker<'a, C, S>,
 }
 
 impl<C, S> fmt::Debug for After<'_, '_, C, S> {
@@ -921,13 +1093,28 @@ impl<'ctx, 'a, C, S> After<'ctx, 'a, C, S> {
     /// # fn main() {}
     /// ```
     pub fn then(self, fut: impl ContinuationFuture) -> AfterThen<'ctx, 'a, C, S> {
-        let at = self.ctx.after.len();
-        self.ctx.after.push(AfterHook {
-            gate: self.gate,
-            fut: Some(Box::pin(fut)),
-            error: None,
-        });
-        AfterThen { ctx: self.ctx, at }
+        #[cfg(ruststream_alloc)]
+        {
+            let at = self.ctx.after.len();
+            self.ctx.after.push(AfterHook {
+                gate: self.gate,
+                fut: Some(Box::pin(fut)),
+                error: None,
+            });
+            AfterThen { ctx: self.ctx, at }
+        }
+        #[cfg(not(ruststream_alloc))]
+        {
+            let entry = self.vacancy.put_mut(AfterHook {
+                gate: self.gate,
+                fut: Some(Continuation::new(fut)),
+                error: None,
+            });
+            AfterThen {
+                entry,
+                context: PhantomData,
+            }
+        }
     }
 
     /// Registers `react` to run if a publish the runtime makes for this delivery fails while it
@@ -983,20 +1170,52 @@ impl<'ctx, 'a, C, S> After<'ctx, 'a, C, S> {
     /// # }
     /// # fn main() {}
     /// ```
+    #[cfg(ruststream_alloc)]
     pub fn error<React, Reaction>(self, react: React) -> AfterError<'ctx, 'a, C, S>
     where
         React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
+        self.register_error(ErrorHook::new(react))
+    }
+
+    /// Registers `react` to run if a publish the runtime makes for this delivery fails, as the
+    /// build with `alloc` does, with the failures borrowed from the lane's fixed buffer: the
+    /// closure is `async move |failures: &Failures| { .. }`, its captures take at most 128 bytes
+    /// and the future it returns at most 256.
+    #[cfg(not(ruststream_alloc))]
+    pub fn error<React>(self, react: React) -> AfterError<'ctx, 'a, C, S>
+    where
+        React: for<'failures> AsyncFnOnce(&'failures Failures) + MaybeSend + 'static,
+    {
+        self.register_error(ErrorHook::new(react))
+    }
+
+    fn register_error(self, hook: ErrorHook) -> AfterError<'ctx, 'a, C, S> {
         // The builder is always made by `Context::after`, which gates it on an outcome kind.
         let gate = self.gate.unwrap_or(OutcomeKind::Ack);
-        let at = self.ctx.after.len();
-        self.ctx.after.push(AfterHook {
-            gate: Some(gate),
-            fut: None,
-            error: Some(ErrorHook::new(react)),
-        });
-        AfterError { ctx: self.ctx, at }
+        #[cfg(ruststream_alloc)]
+        {
+            let at = self.ctx.after.len();
+            self.ctx.after.push(AfterHook {
+                gate: Some(gate),
+                fut: None,
+                error: Some(hook),
+            });
+            AfterError { ctx: self.ctx, at }
+        }
+        #[cfg(not(ruststream_alloc))]
+        {
+            let entry = self.vacancy.put_mut(AfterHook {
+                gate: Some(gate),
+                fut: None,
+                error: Some(hook),
+            });
+            AfterError {
+                entry,
+                context: PhantomData,
+            }
+        }
     }
 }
 
@@ -1004,8 +1223,14 @@ impl<'ctx, 'a, C, S> After<'ctx, 'a, C, S> {
 /// can still tie to the outcome of the runtime's publish.
 #[derive(Debug)]
 pub struct AfterThen<'ctx, 'a, C = (), S = ()> {
+    #[cfg(ruststream_alloc)]
     ctx: &'ctx mut Context<'a, C, S>,
+    #[cfg(ruststream_alloc)]
     at: usize,
+    #[cfg(not(ruststream_alloc))]
+    entry: &'ctx mut AfterHook,
+    #[cfg(not(ruststream_alloc))]
+    context: ContextMarker<'a, C, S>,
 }
 
 impl<C, S> AfterThen<'_, '_, C, S> {
@@ -1048,14 +1273,32 @@ impl<C, S> AfterThen<'_, '_, C, S> {
     /// # }
     /// # fn main() {}
     /// ```
+    #[cfg(ruststream_alloc)]
     pub fn error<React, Reaction>(self, react: React)
     where
         React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
+        self.register_error(ErrorHook::new(react));
+    }
+
+    /// Registers `react` as [`After::error`] does and makes the `.then` just registered its
+    /// success half, with the failures borrowed from the lane's fixed buffer.
+    #[cfg(not(ruststream_alloc))]
+    pub fn error<React>(self, react: React)
+    where
+        React: for<'failures> AsyncFnOnce(&'failures Failures) + MaybeSend + 'static,
+    {
+        self.register_error(ErrorHook::new(react));
+    }
+
+    fn register_error(self, error: ErrorHook) {
+        #[cfg(ruststream_alloc)]
         let hook = &mut self.ctx.after[self.at];
+        #[cfg(not(ruststream_alloc))]
+        let hook = self.entry;
         if hook.gate.is_some() {
-            hook.error = Some(ErrorHook::new(react));
+            hook.error = Some(error);
         }
     }
 }
@@ -1064,8 +1307,14 @@ impl<C, S> AfterThen<'_, '_, C, S> {
 /// give a success half.
 #[derive(Debug)]
 pub struct AfterError<'ctx, 'a, C = (), S = ()> {
+    #[cfg(ruststream_alloc)]
     ctx: &'ctx mut Context<'a, C, S>,
+    #[cfg(ruststream_alloc)]
     at: usize,
+    #[cfg(not(ruststream_alloc))]
+    entry: &'ctx mut AfterHook,
+    #[cfg(not(ruststream_alloc))]
+    context: ContextMarker<'a, C, S>,
 }
 
 impl<C, S> AfterError<'_, '_, C, S> {
@@ -1111,7 +1360,14 @@ impl<C, S> AfterError<'_, '_, C, S> {
     /// # fn main() {}
     /// ```
     pub fn then(self, fut: impl ContinuationFuture) {
-        self.ctx.after[self.at].fut = Some(Box::pin(fut));
+        #[cfg(ruststream_alloc)]
+        {
+            self.ctx.after[self.at].fut = Some(Box::pin(fut));
+        }
+        #[cfg(not(ruststream_alloc))]
+        {
+            self.entry.fut = Some(Continuation::new(fut));
+        }
     }
 }
 
@@ -1126,4 +1382,8 @@ pub(crate) type MarkingContext<'r, 'a, C, S> = &'r mut Context<'a, C, S>;
 pub(crate) type MarkingContext<'r, 'a, C, S> = &'r Context<'a, C, S>;
 
 #[cfg(test)]
+#[cfg(not(ruststream_alloc))]
+mod fixed_tests;
+#[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests;

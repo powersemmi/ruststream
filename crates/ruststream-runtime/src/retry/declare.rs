@@ -13,10 +13,10 @@
 //! and what keeps the declaration ahead of `out_retry(policy)`: a chain that bound the publisher
 //! carries [`Retried`](super::Retried), which takes no declaration.
 
-use alloc::borrow::Cow;
 use core::fmt;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
+use ruststream_core::NameText;
 
 use crate::RetryDeclaration;
 use crate::router::{AttachDeclaration, RouterCommit};
@@ -190,14 +190,14 @@ pub trait DeclareDeadLetter {
     type Out;
 
     /// Declares it.
-    fn declare_dead_letter(self, destination: Cow<'static, str>) -> Self::Out;
+    fn declare_dead_letter(self, destination: NameText) -> Self::Out;
 }
 
 impl<Rep, Slots> DeclareDeadLetter for (Rep, Slots) {
     type Step = StepOpen;
     type Out = Declaring<Self, Absent, Present>;
 
-    fn declare_dead_letter(self, destination: Cow<'static, str>) -> Self::Out {
+    fn declare_dead_letter(self, destination: NameText) -> Self::Out {
         Declaring::new(self, RetryDeclaration::new().with_dead_letter(destination))
     }
 }
@@ -206,7 +206,7 @@ impl<Under, Cap> DeclareDeadLetter for Declaring<Under, Cap, Absent> {
     type Step = StepOpen;
     type Out = Declaring<Under, Cap, Present>;
 
-    fn declare_dead_letter(self, destination: Cow<'static, str>) -> Self::Out {
+    fn declare_dead_letter(self, destination: NameText) -> Self::Out {
         self.declare(|declaration| declaration.with_dead_letter(destination))
     }
 }
@@ -216,7 +216,7 @@ impl<Under, Cap> DeclareDeadLetter for Declaring<Under, Cap, Present> {
     type Step = StepTaken;
     type Out = Self;
 
-    fn declare_dead_letter(self, _destination: Cow<'static, str>) -> Self {
+    fn declare_dead_letter(self, _destination: NameText) -> Self {
         self
     }
 }
@@ -225,7 +225,7 @@ impl<Under, Attachment, Dest> DeclareDeadLetter for Retried<Under, Attachment, D
     type Step = StepTaken;
     type Out = Self;
 
-    fn declare_dead_letter(self, _destination: Cow<'static, str>) -> Self {
+    fn declare_dead_letter(self, _destination: NameText) -> Self {
         self
     }
 }

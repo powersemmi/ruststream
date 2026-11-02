@@ -136,6 +136,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
     use alloc::sync::Arc;
     use alloc::task::Wake;
@@ -221,7 +222,7 @@ mod tests {
             &[]
         }
 
-        fn headers(&self) -> &ruststream_core::HeaderMap {
+        fn headers(&self) -> &ruststream_core::Headers {
             unreachable!("no delivery is ever yielded")
         }
     }

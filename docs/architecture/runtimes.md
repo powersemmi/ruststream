@@ -15,6 +15,9 @@ ruststream = "0.8"
 # A device with a heap and no operating system: embassy alone, tokio never enters the build.
 ruststream = { version = "0.8", default-features = false, features = ["embassy", "macros", "json"] }
 
+# A device with no heap: the build allocates nothing, at startup or per message.
+ruststream = { version = "0.8", default-features = false, features = ["embassy", "memory", "macros", "postcard"] }
+
 # A broker crate on tokio, which turns the defaults off.
 ruststream = { version = "0.8", default-features = false, features = ["tokio"] }
 ```
@@ -50,8 +53,34 @@ When a delayed retry finds the embassy store full, the copy has nowhere to wait.
 That is a failed publish like any other, with its own error, "no free record": the handler's `.error` continuation is told, and without one the failure is logged and the copy is lost.
 The delivery is settled either way, so the handler never runs again because the store was full.
 
+## The embassy runner without a heap
+
+The embassy runner builds in two forms, and one build holds one of them.
+With the `alloc` feature it keeps headers, payloads, continuations and failures on the heap.
+Without it the same runner keeps them in storage of a fixed size and allocates nothing, at startup or per message, so a device with no heap runs the framework.
+The `tokio`, `json`, `cbor` and `msgpack` features turn `alloc` on, and so does any crate of the dependency graph that asks for it: features add up, and a graph with `alloc` on is the heap form throughout.
+
+A service is written the same way in both forms: `#[subscriber]`, `#[ruststream::app(runtime = embassy)]`, `.then`, `.error`, `Out` slots and typed headers.
+What differs is the form of the parts whose size the heap would decide:
+
+| Part | With `alloc` | Without `alloc` |
+|---|---|---|
+| Headers of a message | `HeaderMap` | `FixedHeaders`: 8 entries and 256 bytes, and `insert` returns an error when it is full |
+| Codec | `Codec`: `json`, `cbor`, `msgpack` | `SliceCodec`: `postcard` and `json-core`, which encode into a slice |
+| Continuation (`and_after`, `.then`, `.error`) | boxed | held in a room of 128 bytes; a larger capture does not compile |
+| Failures that `.error` reads | passed by value | borrowed from the subscription's fixed buffer |
+| `ctx.after(..)` | registers | returns a `Result`, because a delivery holds four registrations |
+| Batch | `Vec` of outcomes | a size up to 16, named at the mount with `.batch::<N>()` |
+| Local bus | `LocalMemoryBroker::new()` | a `LocalMemoryBus` that the board declares as a `static` |
+| Diagnostics | `tracing` events | `log` or `defmt`, whichever the build enables |
+
+The form is chosen by the build, so a handler never branches on it.
+A heap type used in the fixed form does not resolve, and a capacity that is exceeded is a compile error that names it.
+The component page [Embedded runtime](../components/application/embedded-runtime.md) shows a whole device service in the fixed form and every capacity it names.
+
 ## Testing
 
 `TestApp` runs a tokio app, and `testing::embedded::TestApp` runs an embedded app on the host with embassy-time's mock clock.
 Both are in the facade when `testing` is on, beside each other.
 With `testing` on, every broker an embedded app registers implements the in-process mode, `InProcess`.
+The embedded `TestApp` follows the form of the build: without `alloc` it drives the fixed form, and a test binary can install an allocator that fails every allocation the framework makes.

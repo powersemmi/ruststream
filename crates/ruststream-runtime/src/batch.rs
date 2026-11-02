@@ -8,10 +8,15 @@
 //! [`Handler`](super::Handler) counterpart, and [`TypedBatch`] the [`Typed`](super::Typed) decode
 //! adapter.
 
+#[cfg(ruststream_alloc)]
+use alloc::borrow::ToOwned;
+#[cfg(test)]
+#[cfg(ruststream_alloc)]
 use alloc::format;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
+#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::{any, fmt, marker::PhantomData, mem, num::NonZeroUsize};
 use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync, MaybeSync};
 #[cfg(feature = "otel")]
@@ -25,9 +30,9 @@ use opentelemetry::metrics::Histogram;
 use opentelemetry::{KeyValue, global};
 // Only the test-only `typed_batch` constructor still names the bound directly; the adapters
 // reach decoding through `DecodeWith`.
+use ruststream_core::diag::warn;
 #[cfg(all(test, feature = "json"))]
 use serde::de::DeserializeOwned;
-use tracing::warn;
 
 use crate::redelivery::RetryCopies;
 use crate::{BuildBatchContext, Settle};
@@ -39,10 +44,14 @@ use super::handle::Deserialized;
 use super::handler::{Continuation, HandlerOutcome, HandlerResult};
 use super::host::{HostDetach, PrepareKept, SendHost};
 use super::input::{DecodeWith, InputKind, REPORTED};
+#[cfg(ruststream_alloc)]
 use super::metadata::HandlerMetadata;
+#[cfg(not(ruststream_alloc))]
+use super::publish_failure::ErrorHook;
+#[cfg(ruststream_alloc)]
 use super::publish_failure::Fan;
 #[cfg(all(test, feature = "json"))]
-use crate::codec::Codec;
+use crate::codec::ActiveCodec as Codec;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Delivered;
 
@@ -63,7 +72,7 @@ pub enum BatchResult {
     /// continuation. A length mismatch with the dispatched batch is a bug in the handler: the
     /// unmatched remainder is retried (an extra redelivery beats a silently lost message) and the
     /// mismatch is logged.
-    PerElement(Vec<HandlerOutcome>),
+    PerElement(BatchVec<HandlerOutcome>),
 }
 
 /// Conversion into a [`BatchResult`], so batch `#[subscriber]` handlers can return a plain
@@ -71,7 +80,7 @@ pub enum BatchResult {
 ///
 /// Implemented for [`BatchResult`] (identity), [`HandlerOutcome`] / `()` / `Result<(), E>` /
 /// `Result<HandlerOutcome, E>` (one outcome for the whole batch), and a per-element
-/// `Vec<HandlerOutcome>` where element `i` settles slice element `i`.
+/// `BatchVec<HandlerOutcome>` where element `i` settles slice element `i`.
 pub trait IntoBatchResult {
     /// Converts `self` into the settlement the dispatcher applies.
     fn into_batch_result(self) -> BatchResult;
@@ -110,7 +119,7 @@ impl<E> IntoBatchResult for Result<HandlerOutcome, E> {
     }
 }
 
-impl IntoBatchResult for Vec<HandlerOutcome> {
+impl IntoBatchResult for BatchVec<HandlerOutcome> {
     fn into_batch_result(self) -> BatchResult {
         BatchResult::PerElement(self)
     }
@@ -129,7 +138,7 @@ impl IntoBatchResult for Vec<HandlerOutcome> {
 pub fn batch_verdict<O: IntoBatchResult>(
     outcome: O,
     batch_len: usize,
-) -> Result<(), Vec<HandlerOutcome>> {
+) -> Result<(), BatchVec<HandlerOutcome>> {
     match outcome.into_batch_result() {
         BatchResult::Uniform(one) => {
             if one.is_ack() && !one.has_after() {
@@ -143,15 +152,16 @@ pub fn batch_verdict<O: IntoBatchResult>(
 }
 
 /// Fans one uniform outcome out to a batch-length settlement vector: the status repeats per
-/// element, the `.error` is shared by every element (it runs once, with the failure of each
-/// element whose copy fails, after the last element's publish is reported) and, when an `.error`
-/// is registered, the continuation runs once after the batch when at least one publish succeeded;
-/// without one it rides the last element. The failure-path half of [`batch_verdict`], also how the
+/// element. With `alloc` the `.error` is shared by every element (it runs once, with the failure
+/// of each element whose copy fails, after the last element's publish is reported) and, when an
+/// `.error` is registered, the continuation runs once after the batch when at least one publish
+/// succeeded; without one it rides the last element. Without `alloc` the `.error` and the
+/// continuation ride the last element. The failure-path half of [`batch_verdict`], also how the
 /// `#[subscriber]` expansion lowers a batch reply body's uniform `Err`. Machinery; not part of the
 /// public API.
 #[doc(hidden)]
 #[must_use]
-pub fn uniform_batch(outcome: HandlerOutcome, batch_len: usize) -> Vec<HandlerOutcome> {
+pub fn uniform_batch(outcome: HandlerOutcome, batch_len: usize) -> BatchVec<HandlerOutcome> {
     let mut fan = UniformFan::new(outcome, batch_len);
     (0..batch_len)
         .map(|index| fan.element(index + 1 == batch_len))
@@ -160,6 +170,7 @@ pub fn uniform_batch(outcome: HandlerOutcome, batch_len: usize) -> Vec<HandlerOu
 
 /// A uniform outcome handed out element by element: the status and a share of the `.error` to
 /// each, the continuation to the last.
+#[cfg(ruststream_alloc)]
 pub(crate) struct UniformFan {
     status: HandlerResult,
     share: Share,
@@ -168,11 +179,13 @@ pub(crate) struct UniformFan {
 /// Where a uniform outcome's `.error` and continuation go. With an `.error` registered every
 /// element reports its publish to one rendezvous, which runs both once. Without one the
 /// continuation rides the last element.
+#[cfg(ruststream_alloc)]
 enum Share {
     Gathered(Fan),
     Last(Option<Continuation>),
 }
 
+#[cfg(ruststream_alloc)]
 impl UniformFan {
     pub(crate) fn new(outcome: HandlerOutcome, batch_len: usize) -> Self {
         let (status, after, error) = outcome.into_parts();
@@ -199,6 +212,47 @@ impl UniformFan {
                     own
                 }
             },
+        }
+    }
+}
+
+/// A uniform outcome handed out element by element, without `alloc`: every element settles by
+/// the status, and the last carries the `.error` and the continuation. A batch route on the
+/// embedded runner publishes no copy for an element, so that `.error` meets the warning that says
+/// it never runs.
+#[cfg(not(ruststream_alloc))]
+pub(crate) struct UniformFan {
+    status: HandlerResult,
+    tail: Option<(Option<Continuation>, Option<ErrorHook>)>,
+}
+
+#[cfg(not(ruststream_alloc))]
+impl UniformFan {
+    pub(crate) fn new(outcome: HandlerOutcome, _batch_len: usize) -> Self {
+        let (status, after, error) = outcome.into_parts();
+        Self {
+            status,
+            tail: Some((after, error)),
+        }
+    }
+
+    /// The outcome of the next element.
+    #[inline]
+    pub(crate) fn element(&mut self, last: bool) -> HandlerOutcome {
+        let own = HandlerOutcome::from(self.status);
+        if !last {
+            return own;
+        }
+        let Some((after, error)) = self.tail.take() else {
+            return own;
+        };
+        let own = match error {
+            Some(error) => own.error_hook(error),
+            None => own,
+        };
+        match after {
+            Some(after) => own.and_after_boxed(after),
+            None => own,
         }
     }
 }
@@ -297,12 +351,14 @@ pub trait BatchDef: Sized {
 
     /// The element type's serialized JSON Schema, when it implements [`schemars::JsonSchema`] and
     /// the `asyncapi` feature is on. The macro fills this in; the default omits it.
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         None
     }
 
     /// The serialized JSON Schema of the element type's header contract, when one is declared
     /// and the `asyncapi` feature is on. The default omits it.
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         None
     }
@@ -324,8 +380,9 @@ pub trait BatchDef: Sized {
 }
 
 /// Builds the registration metadata for a batch definition mounted under `name`.
-pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetadata {
-    let mut meta = HandlerMetadata::raw(name).with_def_details(
+#[cfg(ruststream_alloc)]
+pub(crate) fn batch_metadata<D: BatchDef>(name: &str, def: &D) -> HandlerMetadata {
+    let mut meta = HandlerMetadata::raw(name.to_owned()).with_def_details(
         def.description(),
         def.input_schema(),
         def.headers_schema(),
@@ -348,7 +405,7 @@ pub trait TakenBatch<C> {
     /// while a harness watches the dispatch; a batch that lends its values keeps the copies it
     /// makes here for the record of its settlement, so each value is cloned once.
     #[cfg(feature = "testing")]
-    fn unsettled(&mut self) -> Vec<Delivered>;
+    fn unsettled(&mut self) -> BatchVec<Delivered>;
 
     /// Drops whatever a handler that panicked left unsettled, so the storage is ready for the
     /// next batch.
@@ -356,7 +413,7 @@ pub trait TakenBatch<C> {
 }
 
 // The decoding forms collect the deliveries, and a batch's context is built from its first.
-impl<M, C> TakenBatch<C> for Vec<M>
+impl<M, C> TakenBatch<C> for BatchVec<M>
 where
     M: Settle,
     C: BuildBatchContext<M>,
@@ -366,7 +423,7 @@ where
     }
 
     #[cfg(feature = "testing")]
-    fn unsettled(&mut self) -> Vec<Delivered> {
+    fn unsettled(&mut self) -> BatchVec<Delivered> {
         self.iter()
             .map(|msg| Delivered {
                 raw: bytes::Bytes::copy_from_slice(msg.payload()),
@@ -419,6 +476,7 @@ pub trait BatchHandler<Slot, C = (), S = ()>: MaybeSendSync {
 }
 
 // A shared handler is a handler: the future is the inner one's own.
+#[cfg(ruststream_alloc)]
 impl<Slot, C, S, H> BatchHandler<Slot, C, S> for Arc<H>
 where
     H: BatchHandler<Slot, C, S>,
@@ -454,12 +512,12 @@ where
 #[cfg(all(test, feature = "json"))]
 pub(crate) async fn handled<H, M, C, S, Host>(
     handler: &H,
-    batch: Vec<M>,
+    batch: BatchVec<M>,
     scratch: &mut H::Scratch,
     ctx: &mut Context<'_, C, S>,
     host: &Host,
 ) where
-    H: BatchHandler<Vec<M>, C, S, Taken = Vec<M>>,
+    H: BatchHandler<BatchVec<M>, C, S, Taken = BatchVec<M>>,
     M: MaybeSend,
     C: MaybeSendSync,
     S: MaybeSendSync,
@@ -546,20 +604,20 @@ where
     C: BuildBatchContext<M> + MaybeSendSync + 'static,
     S: MaybeSendSync,
 {
-    type Scratch = Vec<Input::Owned>;
-    type Taken = Vec<M>;
+    type Scratch = BatchVec<Input::Owned>;
+    type Taken = BatchVec<M>;
 
-    fn taken(size: NonZeroUsize) -> Vec<M> {
-        Vec::with_capacity(size.get())
+    fn taken(size: NonZeroUsize) -> BatchVec<M> {
+        BatchVec::with_room(size.get())
     }
 
-    fn load(taken: &mut Vec<M>, slot: &mut Slot) {
+    fn load(taken: &mut BatchVec<M>, slot: &mut Slot) {
         taken.extend(slot.drain());
     }
 
     async fn handle_batch<Host: SendHost<C>>(
         &self,
-        batch: &mut Vec<M>,
+        batch: &mut BatchVec<M>,
         values: &mut Self::Scratch,
         ctx: &mut Context<'_, C, S>,
         host: &Host,
@@ -578,12 +636,12 @@ where
             return;
         }
         let delivery = ctx.delivery();
-        let result = self.inner.handle_slice(values, ctx).await;
+        let mut result = self.inner.handle_slice(values, ctx).await;
         // The buffer belongs to the caller and outlives the call, so the values are dropped
         // here: a decoded value lives exactly as long as the batch it came from, as it did when
         // the vector was the call's own.
         values.clear();
-        settle_batch(batch, result, subscription, delivery, host).await;
+        settle_batch(batch, &mut result, subscription, delivery, host).await;
     }
 }
 
@@ -640,19 +698,19 @@ where
     // buffer that outlived the batch could not hold them: this form builds its values vector per
     // batch, and the borrow is what forces it.
     type Scratch = ();
-    type Taken = Vec<M>;
+    type Taken = BatchVec<M>;
 
-    fn taken(size: NonZeroUsize) -> Vec<M> {
-        Vec::with_capacity(size.get())
+    fn taken(size: NonZeroUsize) -> BatchVec<M> {
+        BatchVec::with_room(size.get())
     }
 
-    fn load(taken: &mut Vec<M>, slot: &mut Slot) {
+    fn load(taken: &mut BatchVec<M>, slot: &mut Slot) {
         taken.extend(slot.drain());
     }
 
     async fn handle_batch<Host: SendHost<C>>(
         &self,
-        batch: &mut Vec<M>,
+        batch: &mut BatchVec<M>,
         _scratch: &mut (),
         ctx: &mut Context<'_, C, S>,
         host: &Host,
@@ -665,16 +723,16 @@ where
         // The constructed values borrow the deliveries' payloads, so the deliveries stay owned
         // by `batch` and the values are dropped before anything settles. Rejections are settled
         // after the batch runs, which keeps the accepted values contiguous with no second pass.
-        let mut values = Vec::with_capacity(batch.len());
+        let mut values = BatchVec::with_room(batch.len());
         // (index into `batch`, its settlement); empty on the happy path, so nothing allocates.
-        let mut rejected: Vec<(usize, HandlerResult)> = Vec::new();
+        let mut rejected: BatchVec<(usize, HandlerResult)> = BatchVec::new();
         for (index, msg) in batch.iter().enumerate() {
             if let Some(outcome) = reported(msg, any::type_name::<F>(), self.decode, ctx) {
-                rejected.push((index, outcome));
+                rejected.put((index, outcome));
                 continue;
             }
             match F::from_payload(msg.payload()) {
-                Ok(value) => values.push(value),
+                Ok(value) => values.put(value),
                 Err(err) => {
                     warn!(
                         target: "ruststream::dispatch",
@@ -685,7 +743,7 @@ where
                     );
                     let outcome =
                         rejection(&err, "batch payload construction failed", self.decode, ctx);
-                    rejected.push((index, outcome));
+                    rejected.put((index, outcome));
                 }
             }
         }
@@ -693,13 +751,17 @@ where
         if !values.is_empty() {
             record_batch_size(delivery.destination(subscription), values.len());
         }
-        let result = if values.is_empty() {
-            BatchResult::PerElement(Vec::new())
+        let mut result = if values.is_empty() {
+            BatchResult::PerElement(BatchVec::new())
         } else {
             self.inner.handle_slice(&values, ctx).await
         };
         drop(values);
-        settle_split_batch(batch, rejected, result, subscription, delivery, host).await;
+        if rejected.is_empty() {
+            settle_batch(batch, &mut result, subscription, delivery, host).await;
+        } else {
+            settle_split_batch(batch, rejected, &mut result, subscription, delivery, host).await;
+        }
     }
 }
 
@@ -746,8 +808,8 @@ pub(crate) fn record_batch_size(destination: &KeyValue, len: usize) {
 // `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
 #[allow(clippy::future_not_send)]
 pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S, Host>(
-    batch: &mut Vec<M>,
-    values: &mut Vec<Input::Owned>,
+    batch: &mut BatchVec<M>,
+    values: &mut BatchVec<Input::Owned>,
     codec: &DecodeCodec,
     decode: FailurePolicy,
     ctx: &mut Context<'_, C, S>,
@@ -778,6 +840,7 @@ pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S, Host>(
     // remainder is put back on the way past it. A batch that has a rejection in it pays one
     // allocation for the room of the accepted rest.
     let all = mem::take(batch);
+    #[cfg(ruststream_alloc)]
     batch.reserve(all.len() - rejected.len());
     let mut rejected = rejected.into_iter().peekable();
     for (index, msg) in all.into_iter().enumerate() {
@@ -794,7 +857,7 @@ pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S, Host>(
             .await;
             continue;
         }
-        batch.push(msg);
+        batch.put(msg);
     }
 }
 
@@ -803,28 +866,29 @@ pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S, Host>(
 #[inline]
 fn decode_elements<M, Input, DecodeCodec, C, S>(
     batch: &[M],
-    values: &mut Vec<Input::Owned>,
+    values: &mut BatchVec<Input::Owned>,
     codec: &DecodeCodec,
     decode: FailurePolicy,
     ctx: &Context<'_, C, S>,
-) -> Vec<(usize, HandlerResult)>
+) -> BatchVec<(usize, HandlerResult)>
 where
     M: Settle,
     Input: DecodeWith<DecodeCodec>,
 {
     values.clear();
+    #[cfg(ruststream_alloc)]
     values.reserve(batch.len());
     // Empty while every element decodes, and an empty `Vec` holds no buffer: a batch that decodes
     // whole is handed on exactly as it was delivered, so the accepted deliveries cost nothing to
     // carry.
-    let mut rejected = Vec::new();
+    let mut rejected = BatchVec::new();
     for (index, msg) in batch.iter().enumerate() {
         if let Some(outcome) = reported(msg, Input::input_label(), decode, ctx) {
-            rejected.push((index, outcome));
+            rejected.put((index, outcome));
             continue;
         }
         match Input::decode(codec, msg) {
-            Ok(value) => values.push(value),
+            Ok(value) => values.put(value),
             Err(err) => {
                 warn!(
                     target: "ruststream::dispatch",
@@ -833,7 +897,7 @@ where
                     error = %err,
                     "codec decode failed",
                 );
-                rejected.push((index, rejection(&err, "batch decode failed", decode, ctx)));
+                rejected.put((index, rejection(&err, "batch decode failed", decode, ctx)));
             }
         }
     }
@@ -879,7 +943,7 @@ pub(crate) fn rejection<C, S>(
 ) -> HandlerResult {
     match decode {
         FailurePolicy::FailFast => {
-            ctx.fail_fast(&format!("{reason}: {err}"));
+            ctx.fail_fast_with(reason, err);
             HandlerResult::drop()
         }
         other => other.settlement().unwrap_or_else(HandlerResult::drop),
@@ -888,6 +952,13 @@ pub(crate) fn rejection<C, S>(
 
 mod carried;
 mod settle;
+mod store;
+#[cfg(not(ruststream_alloc))]
+pub use store::Outcomes;
+pub use store::{BATCH_CAPACITY, BatchOutcomes, BatchVec};
+pub(crate) use store::{BatchDrain, Gather};
+#[cfg(not(ruststream_alloc))]
+pub use store::{BatchSize, FitsBatch};
 
 pub(crate) use carried::{CarriedBatch, SourceCarriesBatch};
 use settle::settle_split_batch;

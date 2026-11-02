@@ -3,11 +3,11 @@
 
 use core::error::Error as StdError;
 
-use crate::codec::Codec;
+use crate::codec::ActiveCodec as Codec;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
 use crate::{
-    HeaderMap, MaybeSend, MaybeSendSync, OutgoingFor, PayloadForm, Publisher, Transaction,
+    HeaderSet, MaybeSend, MaybeSendSync, OutgoingFor, PayloadForm, Publisher, Transaction,
 };
 pub use ruststream_core::{SinkOutcome, SinkRefusal};
 
@@ -95,7 +95,7 @@ pub trait PublishSink: MaybeSend {
     /// publisher behind deferred redelivery, the test harness's injection point) forwards
     /// whatever it wraps. The builder starts the outgoing header map from this and writes the
     /// publish's headers over it key by key, so the call site has the last word.
-    fn base_headers(&self) -> Option<&HeaderMap> {
+    fn base_headers(&self) -> Option<&HeaderSet> {
         None
     }
 }
@@ -115,7 +115,7 @@ impl<P: Publisher> PublishSink for &P {
         (**self).publish_kept(msg, options)
     }
 
-    fn base_headers(&self) -> Option<&HeaderMap> {
+    fn base_headers(&self) -> Option<&HeaderSet> {
         (**self).base_headers()
     }
 }
@@ -136,7 +136,7 @@ impl<T: Transaction> PublishSink for &mut T {
         async move { sent.await.map_err(SinkRefusal::returned::<T::Payload>) }
     }
 
-    fn base_headers(&self) -> Option<&HeaderMap> {
+    fn base_headers(&self) -> Option<&HeaderSet> {
         (**self).base_headers()
     }
 }

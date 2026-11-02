@@ -35,13 +35,15 @@ mod read;
 
 pub use forward::CloneSource;
 
-use alloc::borrow::Cow;
 use core::fmt;
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 use ruststream_core::MaybeSendSync;
+use ruststream_core::NameText;
 
-use crate::codec::Codec;
+#[cfg(not(ruststream_alloc))]
+use crate::batch::{BatchSize, FitsBatch};
+use crate::codec::ActiveCodec as Codec;
 use crate::handle::{AsDeclared, IntoDeclared};
 use crate::{FromName, StartAt, Unnamed};
 
@@ -378,7 +380,7 @@ pub trait NameStep: Sized {
     type Out;
 
     /// Builds the subscription kind from `name`.
-    fn apply_name(self, name: Cow<'static, str>) -> Self::Out;
+    fn apply_name(self, name: NameText) -> Self::Out;
 }
 
 impl<Def, S: FromName + CloneSource, State, DC> NameStep
@@ -386,7 +388,7 @@ impl<Def, S: FromName + CloneSource, State, DC> NameStep
 {
     type Out = SubscriberBuilder<Def, S, State, DC>;
 
-    fn apply_name(self, name: Cow<'static, str>) -> Self::Out {
+    fn apply_name(self, name: NameText) -> Self::Out {
         let (def, _unnamed, collected) = self.into_parts();
         Self::from_parts(def, Held::new(S::from_name(name)), collected)
     }
@@ -665,7 +667,7 @@ pub trait SubscriberSettings<Mk = AsDeclared>: IntoDeclared<Mk> {
     /// [`FromName`].
     fn name(
         self,
-        name: impl Into<Cow<'static, str>>,
+        name: impl Into<NameText>,
     ) -> <<Self::Decl as Declared>::Settings as NameStep>::Out
     where
         <Self::Decl as Declared>::Settings: NameStep,
@@ -751,6 +753,24 @@ pub trait SubscriberSettings<Mk = AsDeclared>: IntoDeclared<Mk> {
         self.into_declared().declare().apply_start_at(position)
     }
 
+    /// Opens the subscription in batches of at most `SIZE` messages, `SIZE` from 1 to
+    /// [`BATCH_CAPACITY`](crate::BATCH_CAPACITY).
+    ///
+    /// A batch lives in storage of that capacity, so the size is a number in the type and a size
+    /// past it does not compile. The rest is as the build with `alloc` has it: the broker builds
+    /// the batch, and a batch body (`&[T]` and friends) mounts only after this step.
+    #[cfg(not(ruststream_alloc))]
+    fn batch<const SIZE: usize>(self) -> <<Self::Decl as Declared>::Settings as BatchStep>::Out
+    where
+        <Self::Decl as Declared>::Settings: BatchStep,
+        BatchSize<SIZE>: FitsBatch,
+    {
+        self.into_declared()
+            .declare()
+            .apply_batch(<BatchSize<SIZE> as FitsBatch>::SIZE)
+    }
+
+    #[cfg(ruststream_alloc)]
     /// Opens the subscription in batches of at most `size` messages: the one parameter every
     /// batch handler names, and the only one the framework carries down to the broker.
     ///
@@ -857,6 +877,7 @@ pub trait SubscriberSettings<Mk = AsDeclared>: IntoDeclared<Mk> {
 impl<D: IntoDeclared<Mk>, Mk> SubscriberSettings<Mk> for D {}
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
     use super::{AllOpen, BatchSized, Declared, SubscriberBuilder, SubscriberSettings};
     use alloc::format;
@@ -974,5 +995,49 @@ mod tests {
             FailurePolicies::default()
         );
         assert!(format!("{same:?}").contains("SubscriberBuilder"));
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(ruststream_alloc))]
+mod fixed_tests {
+    use super::{BatchSized, Declared, SubscriberBuilder, SubscriberSettings};
+    use crate::forms;
+    use crate::input::Decoded;
+    use crate::subscriber_def::SubscriberDef;
+    use crate::{Name, Unnamed, nonzero};
+
+    /// Stands in for a generated batch definition.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Stub;
+
+    impl SubscriberDef for Stub {
+        type Input = Decoded<u32>;
+        type Context = ();
+        type Handler = ();
+        type Source = Name;
+
+        fn source(&self) -> Name {
+            Name::new("stub")
+        }
+
+        fn into_handler(self) {}
+    }
+
+    impl Declared for Stub {
+        type Form = forms::Subscribing;
+        type Settings = SubscriberBuilder<Self, Unnamed<Name>, super::AllOpen>;
+
+        fn declare(self) -> Self::Settings {
+            SubscriberBuilder::new(self, Unnamed::new())
+        }
+    }
+
+    impl super::CapsBatches for Stub {}
+
+    #[test]
+    fn the_batch_size_is_a_number_the_mount_names_in_its_type() {
+        let built = Stub.name("orders").batch::<4>();
+        assert_eq!(BatchSized::batch_size(&built), nonzero!(4));
     }
 }

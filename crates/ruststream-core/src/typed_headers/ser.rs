@@ -1,26 +1,25 @@
-//! The serde serializer behind [`HeaderMap::insert_typed`](crate::HeaderMap::insert_typed): each
+//! The serde serializer behind [`Headers::insert_typed`](crate::Headers::insert_typed): each
 //! field of a flat struct (or string-keyed map) becomes one header entry with a string-encoded
 //! value.
 
-use alloc::borrow::ToOwned;
-use alloc::string::String;
-use alloc::string::ToString;
-use bytes::Bytes;
-use bytes_utils::Str;
+#[cfg(not(feature = "alloc"))]
+use core::fmt::Display;
+
 use serde::ser::{
     self, Impossible, Serialize, SerializeMap, SerializeStruct, SerializeStructVariant,
 };
 
 use super::SerializeHeadersError;
-use crate::headers::HeaderMap;
+use super::repr::{self, Key, Scalar};
+use crate::headers::Headers;
 
 /// Top-level serializer writing into a header map.
 pub(super) struct HeadersSerializer<'a> {
-    headers: &'a mut HeaderMap,
+    headers: &'a mut Headers,
 }
 
 impl<'a> HeadersSerializer<'a> {
-    pub(super) fn new(headers: &'a mut HeaderMap) -> Self {
+    pub(super) fn new(headers: &'a mut Headers) -> Self {
         Self { headers }
     }
 }
@@ -49,6 +48,12 @@ impl<'a> ser::Serializer for HeadersSerializer<'a> {
     type SerializeMap = EntrySink<'a>;
     type SerializeStruct = FieldSink<'a>;
     type SerializeStructVariant = FieldSink<'a>;
+
+    // Without `alloc` serde offers no default for this method.
+    #[cfg(not(feature = "alloc"))]
+    fn collect_str<T: Display + ?Sized>(self, _value: &T) -> Result<Self::Ok, Self::Error> {
+        Err(top_level("a string"))
+    }
 
     fn serialize_struct(
         self,
@@ -180,7 +185,7 @@ impl<'a> ser::Serializer for HeadersSerializer<'a> {
 
 /// Struct fields: one header per field, skipped when the value serializer yields nothing.
 pub(super) struct FieldSink<'a> {
-    headers: &'a mut HeaderMap,
+    headers: &'a mut Headers,
 }
 
 impl SerializeStruct for FieldSink<'_> {
@@ -193,8 +198,7 @@ impl SerializeStruct for FieldSink<'_> {
         value: &T,
     ) -> Result<(), Self::Error> {
         if let Some(bytes) = value.serialize(ValueSerializer { field: key })? {
-            // A field name is a literal in the contract's own source, so the key costs nothing.
-            self.headers.insert(Str::from_static(key), bytes);
+            repr::put_static(self.headers, key, bytes)?;
         }
         Ok(())
     }
@@ -223,8 +227,8 @@ impl SerializeStructVariant for FieldSink<'_> {
 
 /// Map entries: string keys become header names.
 pub(super) struct EntrySink<'a> {
-    headers: &'a mut HeaderMap,
-    key: Option<String>,
+    headers: &'a mut Headers,
+    key: Option<Key>,
 }
 
 impl SerializeMap for EntrySink<'_> {
@@ -242,7 +246,7 @@ impl SerializeMap for EntrySink<'_> {
             .take()
             .expect("serialize_value called before serialize_key");
         if let Some(bytes) = value.serialize(ValueSerializer { field: &key })? {
-            self.headers.insert(key, bytes);
+            repr::put_owned(self.headers, key, bytes)?;
         }
         Ok(())
     }
@@ -260,7 +264,7 @@ struct ValueSerializer<'k> {
 impl ValueSerializer<'_> {
     fn unsupported(&self, kind: &'static str) -> SerializeHeadersError {
         SerializeHeadersError::UnsupportedValue {
-            field: self.field.to_owned(),
+            field: repr::text(self.field),
             kind,
         }
     }
@@ -270,22 +274,22 @@ macro_rules! display_scalar {
     ($($method:ident($ty:ty)),* $(,)?) => {
         $(
             fn $method(self, v: $ty) -> Result<Self::Ok, Self::Error> {
-                Ok(Some(Bytes::from(v.to_string())))
+                Ok(Some(repr::scalar_display(&v)?))
             }
         )*
     };
 }
 
 impl ser::Serializer for ValueSerializer<'_> {
-    type Ok = Option<Bytes>;
+    type Ok = Option<Scalar>;
     type Error = SerializeHeadersError;
-    type SerializeSeq = Impossible<Option<Bytes>, SerializeHeadersError>;
-    type SerializeTuple = Impossible<Option<Bytes>, SerializeHeadersError>;
-    type SerializeTupleStruct = Impossible<Option<Bytes>, SerializeHeadersError>;
-    type SerializeTupleVariant = Impossible<Option<Bytes>, SerializeHeadersError>;
-    type SerializeMap = Impossible<Option<Bytes>, SerializeHeadersError>;
-    type SerializeStruct = Impossible<Option<Bytes>, SerializeHeadersError>;
-    type SerializeStructVariant = Impossible<Option<Bytes>, SerializeHeadersError>;
+    type SerializeSeq = Impossible<Option<Scalar>, SerializeHeadersError>;
+    type SerializeTuple = Impossible<Option<Scalar>, SerializeHeadersError>;
+    type SerializeTupleStruct = Impossible<Option<Scalar>, SerializeHeadersError>;
+    type SerializeTupleVariant = Impossible<Option<Scalar>, SerializeHeadersError>;
+    type SerializeMap = Impossible<Option<Scalar>, SerializeHeadersError>;
+    type SerializeStruct = Impossible<Option<Scalar>, SerializeHeadersError>;
+    type SerializeStructVariant = Impossible<Option<Scalar>, SerializeHeadersError>;
 
     display_scalar! {
         serialize_bool(bool),
@@ -304,12 +308,17 @@ impl ser::Serializer for ValueSerializer<'_> {
         serialize_char(char),
     }
 
+    #[cfg(not(feature = "alloc"))]
+    fn collect_str<T: Display + ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error> {
+        Ok(Some(repr::scalar_display(&format_args!("{value}"))?))
+    }
+
     fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
-        Ok(Some(Bytes::copy_from_slice(v.as_bytes())))
+        Ok(Some(repr::scalar_bytes(v.as_bytes())?))
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        Ok(Some(Bytes::copy_from_slice(v)))
+        Ok(Some(repr::scalar_bytes(v)?))
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
@@ -326,7 +335,7 @@ impl ser::Serializer for ValueSerializer<'_> {
         _variant_index: u32,
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        Ok(Some(Bytes::from_static(variant.as_bytes())))
+        Ok(Some(repr::scalar_static(variant)?))
     }
 
     fn serialize_newtype_struct<T: Serialize + ?Sized>(
@@ -408,18 +417,23 @@ impl ser::Serializer for ValueSerializer<'_> {
 struct KeySerializer;
 
 impl ser::Serializer for KeySerializer {
-    type Ok = String;
+    type Ok = Key;
     type Error = SerializeHeadersError;
-    type SerializeSeq = Impossible<String, SerializeHeadersError>;
-    type SerializeTuple = Impossible<String, SerializeHeadersError>;
-    type SerializeTupleStruct = Impossible<String, SerializeHeadersError>;
-    type SerializeTupleVariant = Impossible<String, SerializeHeadersError>;
-    type SerializeMap = Impossible<String, SerializeHeadersError>;
-    type SerializeStruct = Impossible<String, SerializeHeadersError>;
-    type SerializeStructVariant = Impossible<String, SerializeHeadersError>;
+    type SerializeSeq = Impossible<Key, SerializeHeadersError>;
+    type SerializeTuple = Impossible<Key, SerializeHeadersError>;
+    type SerializeTupleStruct = Impossible<Key, SerializeHeadersError>;
+    type SerializeTupleVariant = Impossible<Key, SerializeHeadersError>;
+    type SerializeMap = Impossible<Key, SerializeHeadersError>;
+    type SerializeStruct = Impossible<Key, SerializeHeadersError>;
+    type SerializeStructVariant = Impossible<Key, SerializeHeadersError>;
+
+    #[cfg(not(feature = "alloc"))]
+    fn collect_str<T: Display + ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error> {
+        repr::key_display(&format_args!("{value}"))
+    }
 
     fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
-        Ok(v.to_owned())
+        repr::key(v)
     }
 
     fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
@@ -462,7 +476,7 @@ impl ser::Serializer for KeySerializer {
         Err(non_string_key())
     }
     fn serialize_char(self, v: char) -> Result<Self::Ok, Self::Error> {
-        Ok(v.to_string())
+        repr::key_of_char(v)
     }
     fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> {
         Err(non_string_key())
@@ -485,7 +499,7 @@ impl ser::Serializer for KeySerializer {
         _variant_index: u32,
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        Ok(variant.to_owned())
+        repr::key(variant)
     }
     fn serialize_newtype_struct<T: Serialize + ?Sized>(
         self,
@@ -547,8 +561,9 @@ impl ser::Serializer for KeySerializer {
 }
 
 fn non_string_key() -> SerializeHeadersError {
-    SerializeHeadersError::Message("header names must serialize as strings".to_owned())
+    SerializeHeadersError::Message(repr::text("header names must serialize as strings"))
 }
 
 #[cfg(test)]
+#[cfg(feature = "alloc")]
 mod tests;

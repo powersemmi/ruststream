@@ -1,15 +1,16 @@
 //! What a mount pushes its registrations into: the runner's collector of subscription starters.
 
+#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
 use core::num::NonZeroUsize;
 use ruststream_core::{MaybeSend, MaybeSendSync};
 
+use crate::Meta;
 use crate::batch::BatchHandler;
 use crate::dispatch::{Delivery, Workers};
 use crate::failure::FailurePolicies;
 use crate::handler::Handler;
 use crate::lifecycle::BoxError;
-use crate::metadata::HandlerMetadata;
 use crate::middleware::BlanketLayer;
 use crate::redelivery::{OpenedSubscription, RetryCopies, RetryRoute, ScopeDelivery};
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber};
@@ -34,7 +35,7 @@ pub trait MountSink<B: Broker, State> {
         &mut self,
         subscriber: Sub,
         handler: Body,
-        meta: HandlerMetadata,
+        meta: Meta,
         policies: FailurePolicies,
     ) where
         Sub: Subscriber + MaybeSend + 'static,
@@ -50,7 +51,7 @@ pub trait MountSink<B: Broker, State> {
     #[allow(clippy::too_many_arguments)]
     fn push_workers<Open, Opening, Sub, Body, Cx, Global, Retry>(
         &mut self,
-        meta: HandlerMetadata,
+        meta: Meta,
         policies: FailurePolicies,
         workers: Workers,
         global: Global,
@@ -72,7 +73,7 @@ pub trait MountSink<B: Broker, State> {
     /// [`BatchSubscriber::batches`] with `batch_size`.
     fn push_batch<Open, Opening, Sub, Body, Cx, Retry>(
         &mut self,
-        meta: HandlerMetadata,
+        meta: Meta,
         policies: FailurePolicies,
         workers: Workers,
         batch_size: NonZeroUsize,
@@ -93,7 +94,7 @@ pub trait MountSink<B: Broker, State> {
     /// rest is [`push_workers`](Self::push_workers).
     fn push_mounted<Open, Opening, Sub, Body, Cx, Retry>(
         &mut self,
-        meta: HandlerMetadata,
+        meta: Meta,
         policies: FailurePolicies,
         workers: Workers,
         handler: Body,
@@ -113,7 +114,7 @@ pub trait MountSink<B: Broker, State> {
     /// The batch counterpart of [`push_mounted`](Self::push_mounted).
     fn push_batch_mounted<Open, Opening, Sub, Body, Cx, Retry>(
         &mut self,
-        meta: HandlerMetadata,
+        meta: Meta,
         policies: FailurePolicies,
         workers: Workers,
         batch_size: NonZeroUsize,

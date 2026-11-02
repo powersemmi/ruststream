@@ -43,8 +43,11 @@
 //! # fn main() {}
 //! ```
 
+#[cfg(ruststream_alloc)]
 use super::context::Context;
-use super::handler::{Handler, HandlerOutcome};
+use super::handler::Handler;
+#[cfg(ruststream_alloc)]
+use super::handler::HandlerOutcome;
 use ruststream_core::{MaybeSend, MaybeSendSync};
 
 /// A function from one handler to another. Apply with [`HandlerExt::with`], or to one
@@ -242,6 +245,7 @@ where
 }
 
 /// Bundled, opinionated middleware layers ready to drop into a handler stack.
+#[cfg(ruststream_alloc)]
 pub mod layers {
     use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
     use tracing::{debug, info, instrument, warn};
@@ -342,11 +346,12 @@ pub mod layers {
     }
 
     #[cfg(test)]
+    #[cfg(ruststream_alloc)]
     mod tests {
         use core::time::Duration;
 
         use super::*;
-        use crate::HeaderMap;
+        use crate::HeaderSet;
         use crate::dispatch::Delivery;
 
         struct Fixed(HandlerResult);
@@ -365,7 +370,7 @@ pub mod layers {
         async fn traced(layer: &TracingLayer, outcome: HandlerResult) -> HandlerResult {
             let state = ();
             let delivery = Delivery::empty();
-            let headers = HeaderMap::new();
+            let headers = HeaderSet::new();
             let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
             Handler::handle(&layer.layer(Fixed(outcome)), &(), &mut ctx)
                 .await
@@ -395,7 +400,7 @@ pub mod layers {
         async fn the_blanket_form_passes_the_outcome_through() {
             let state = ();
             let delivery = Delivery::empty();
-            let headers = HeaderMap::new();
+            let headers = HeaderSet::new();
             let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
             let delayed = HandlerResult::retry_after(Duration::from_secs(3));
             let layer = TracingLayer::default();

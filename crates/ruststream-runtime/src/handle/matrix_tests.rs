@@ -38,7 +38,7 @@ use crate::subscriber_def::SubscriberDef;
 use crate::testkit::Shutdown;
 use crate::testkit::batch::{publish_payloads, pull_batch};
 use crate::{
-    Broker, BuildBatchContext, CallerName, HeaderMap, Name, OutSlot, OutgoingDestination,
+    Broker, BuildBatchContext, CallerName, HeaderSet, Name, OutSlot, OutgoingDestination,
     OutgoingMessage, PairError, PublishPolicy, Publisher, Seeker, Unnamed,
 };
 use crate::{
@@ -386,7 +386,7 @@ fn definition_of<Def, Src, State, DC>(builder: SubscriberBuilder<Def, Src, State
 /// The per-delivery context the unit-level calls below run against.
 fn context<'a>(
     name: &'a str,
-    headers: &'a HeaderMap,
+    headers: &'a HeaderSet,
     state: &'a (),
     delivery: &'a Delivery,
 ) -> Context<'a, (), ()> {
@@ -569,7 +569,7 @@ async fn a_replying_batch_reads_the_brokers_batch_context() {
 
     let state = ();
     let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("orders", &headers, &state, cx, &delivery);
     let replies = BatchPublishingCall::<()>::call(&def, &orders(2), &(), &mut ctx)
         .await
@@ -640,7 +640,7 @@ async fn a_batch_reaches_a_decoded_body_whole() {
     let batch = orders(3);
     let state = ();
     let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = context("orders", &headers, &state, &delivery);
     let settled = handler.handle_slice(&batch, &mut ctx).await;
 
@@ -675,7 +675,7 @@ async fn a_batch_reaches_a_pair_body_whole() {
         .collect();
     let state = ();
     let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = context("orders", &headers, &state, &delivery);
     let settled = handler.handle_slice(&batch, &mut ctx).await;
 
@@ -701,7 +701,7 @@ async fn a_batch_reaches_a_self_deserializing_body_whole() {
     let batch = [Strict(b"ok1"), Strict(b"ok2"), Strict(b"ok3")];
     let state = ();
     let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = context("frames", &headers, &state, &delivery);
     let settled = handler.handle_slice(&batch, &mut ctx).await;
 
@@ -730,7 +730,7 @@ async fn a_slot_batch_reaches_the_body_whole() {
     let batch = orders(3);
     let state = ();
     let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = context("orders", &headers, &state, &delivery);
     let settled = BatchInjectCall::<()>::call(&def, &batch, &arena, &mut ctx).await;
 
@@ -766,7 +766,7 @@ fn every_batch_form_carries_its_size_to_the_mount() {
 fn a_refused_construction_settles_by_the_decode_policy() {
     let state = ();
     let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = context("frames", &headers, &state, &delivery);
     let outcome = construct::<Strict<'static>, (), ()>(b"bad", &mut ctx)
         .err()
@@ -781,7 +781,7 @@ fn a_refused_construction_under_fail_fast_tears_the_service_down() {
     let shutdown = Shutdown::new();
     let state = ();
     let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = context("frames", &headers, &state, &delivery)
         .with_failfast(&shutdown)
         .with_decode_policy(FailurePolicy::FailFast);
@@ -802,7 +802,7 @@ fn a_refused_construction_names_the_subscription_and_the_input_type() {
 
     let state = ();
     let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = context("frames", &headers, &state, &delivery);
 
     let (events, guard) = log_capture::start();
@@ -832,7 +832,7 @@ async fn a_refused_payload_never_reaches_a_plain_body() {
     let handler = SubscriberDef::into_handler(definition_of(subscriber("frames", Inspect).build()));
     let state = ();
     let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = context("frames", &headers, &state, &delivery);
 
     assert!(handler.handle(b"bad".as_slice(), &mut ctx).await.is_drop());
@@ -851,7 +851,7 @@ async fn a_refused_payload_never_reaches_a_slot_body() {
 
     let state = ();
     let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = context("frames", &headers, &state, &delivery);
 
     let refused = InjectCall::<()>::call(&def, b"bad".as_slice(), &arena, &mut ctx).await;

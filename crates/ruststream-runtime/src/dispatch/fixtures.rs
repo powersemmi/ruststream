@@ -7,7 +7,7 @@ use std::io;
 
 use bytes::Bytes;
 
-use crate::{AckError, HeaderMap, IncomingMessage, Lend, OutgoingMessage, Publisher, Settle};
+use crate::{AckError, HeaderSet, IncomingMessage, Lend, OutgoingMessage, Publisher, Settle};
 use ruststream_core::{PublishMessageError, PublishOutcome};
 
 /// What a test delivery's transport does when asked to settle. The three cases differ in kind,
@@ -40,7 +40,7 @@ impl Settlement {
 /// delivery stores the payload inline, so the delivery's size is the payload's.
 pub(super) struct PlainMessage<Payload = Bytes> {
     pub(super) payload: Payload,
-    pub(super) headers: HeaderMap,
+    pub(super) headers: HeaderSet,
     // 0 = unset, 1 = nack(false) (dropped), 2 = nack(true) (requeued).
     pub(super) settled: Arc<AtomicU8>,
     pub(super) settlement: Settlement,
@@ -54,7 +54,7 @@ where
         self.payload.as_ref()
     }
 
-    fn headers(&self) -> &HeaderMap {
+    fn headers(&self) -> &HeaderSet {
         &self.headers
     }
 }

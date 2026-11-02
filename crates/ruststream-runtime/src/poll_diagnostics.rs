@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use pin_project_lite::pin_project;
 use quanta::Clock;
-use tracing::warn;
+use ruststream_core::diag::warn;
 
 /// The average poll time over which a subscription is reported: past it, the handler holds up the
 /// runtime's threads long enough to delay the I/O, the timers and the other subscriptions behind

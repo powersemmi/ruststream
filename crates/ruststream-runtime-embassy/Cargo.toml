@@ -18,25 +18,32 @@ all-features = true
 [features]
 # The in-process run the test harness drives the app through: every broker connected through its
 # in-process transition. A host test build turns it on through the facade's `testing` feature.
-testing = ["ruststream-runtime/testing"]
+testing = ["ruststream-runtime/testing", "dep:assert_no_alloc"]
+# The heap variant: the framework's `alloc` on in the crates the runner stands on. Without it the
+# runner keeps every record, name and buffer in fixed storage.
+alloc = ["ruststream-core/alloc", "ruststream-runtime/alloc", "futures/alloc"]
+# The diagnostics of a build without `alloc` go to the `log` crate or to `defmt`.
+log = ["ruststream-core/log", "ruststream-runtime/log"]
+defmt = ["ruststream-core/defmt", "ruststream-runtime/defmt"]
 
 [dependencies]
-ruststream-core = { workspace = true, features = ["alloc"] }
-ruststream-runtime = { workspace = true, features = ["alloc"] }
+ruststream-core.workspace = true
+ruststream-runtime.workspace = true
 futures-core.workspace = true
 # The clock a device reads. The driver is the binary's choice: a host test picks the mock driver.
 embassy-time.workspace = true
 # The channels and wakers the runner keeps, all without a heap.
 embassy-sync.workspace = true
 heapless.workspace = true
-futures = { workspace = true, features = ["alloc"] }
+futures.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 bytes.workspace = true
 embassy-futures.workspace = true
 # Projects a worker's future through the gate that keeps a parked worker from being polled.
 pin-project-lite.workspace = true
 # The keyed lanes' hasher: 32-bit FNV-1a, no state and no allocation; heapless already depends on it.
+# Lets the harness's own bookkeeping through the failing allocator of the no-heap test leg.
+assert_no_alloc = { version = "1.1.2", optional = true }
 hash32 = { version = "1.0", default-features = false }
 
 [dev-dependencies]
@@ -52,7 +59,9 @@ embassy-futures.workspace = true
 # process-wide mutex.
 critical-section = { version = "1.1", features = ["std"] }
 static_cell = "2.1"
-ruststream-memory = { workspace = true, features = ["embassy"] }
+# The logger the doc examples report to, as a device service writes its own lines.
+log.workspace = true
+ruststream-memory = { workspace = true, features = ["embassy", "alloc"] }
 # Counts the process's allocations so the test reads what one delivery made: four atomic
 # counters per allocation, in the test binary only.
 stats_alloc = "0.1.10"

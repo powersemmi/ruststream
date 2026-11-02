@@ -56,6 +56,7 @@ use tokio::time::{Instant as TokioInstant, timeout, timeout_at};
 
 use super::harness::{expect_next, on_foreign_runtime, unknown_backlog};
 use super::helpers::unique_subject;
+pub use super::unsent::Unsent;
 use ruststream_core::{
     AckError, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage,
     Publisher, SendBroker, Settle, Subscriber, SubscriptionSource,
@@ -758,20 +759,6 @@ pub(crate) async fn shutdown_within<C: ConnectedBroker>(connected: C, scenario: 
     if let Err(err) = answer {
         panic!("{scenario}: the broker must shut down cleanly, got: {err:?}");
     }
-}
-
-/// What a broker's client does with the message of a publish it refuses.
-///
-/// The answer is the broker's: a client that hands the buffer back in its error lets the crate
-/// return the unsent message, and one that consumes it cannot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Unsent {
-    /// The refusal carries the message that was not sent, destination, payload and headers as
-    /// they were published.
-    Returned,
-    /// The client consumed the message: the refusal may carry it, and carries nothing wrong when
-    /// it does.
-    Consumed,
 }
 
 /// Checks that a publish the broker refuses hands the unsent message back.

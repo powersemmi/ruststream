@@ -58,11 +58,18 @@ ruststream = { version = "0.8", default-features = false, features = ["tokio"] }
 ## The contract without the standard library
 
 A broker crate for a device can depend on the contract alone. `ruststream-core` holds the traits
-and the message types. It builds with `#![no_std]` and needs an allocator:
+and the message types. It builds with `#![no_std]`. With the `alloc` feature it keeps headers and payloads on the heap:
 
 ```toml
 [dependencies]
 ruststream-core = { version = "0.8", default-features = false, features = ["alloc"] }
+```
+
+A device with no heap leaves `alloc` off, and the same crate keeps them in storage of a fixed size:
+
+```toml
+[dependencies]
+ruststream-core = { version = "0.8", default-features = false }
 ```
 
 Its `std` feature is on by default, and `ruststream` turns it on. The runtime, the codecs and the

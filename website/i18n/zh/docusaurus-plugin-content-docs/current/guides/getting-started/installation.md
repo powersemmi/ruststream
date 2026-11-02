@@ -54,11 +54,18 @@ ruststream = { version = "0.8", default-features = false, features = ["tokio"] }
 
 ## 不依赖标准库的契约
 
-面向设备的 Broker crate 可以只依赖契约。`ruststream-core` 包含 trait 和消息类型，它以 `#![no_std]` 构建，只需要一个内存分配器：
+面向设备的 Broker crate 可以只依赖契约。`ruststream-core` 包含 trait 和消息类型，它以 `#![no_std]` 构建。启用 `alloc` feature 时，它把头部和载荷放在堆上：
 
 ```toml
 [dependencies]
 ruststream-core = { version = "0.8", default-features = false, features = ["alloc"] }
+```
+
+没有堆的设备不启用 `alloc`，同一个 crate 就把它们放在固定大小的存储里：
+
+```toml
+[dependencies]
+ruststream-core = { version = "0.8", default-features = false }
 ```
 
 它的 `std` feature 默认开启，`ruststream` 也会打开它。运行时、编解码器和测试工具需要标准库。

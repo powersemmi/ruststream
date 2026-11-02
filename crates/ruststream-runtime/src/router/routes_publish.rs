@@ -7,52 +7,75 @@
 //! handler at startup. A router-mounted publishing handler therefore picks up the app-wide
 //! [`publish_layer`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.publish_layer) chain.
 
+#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
+#[cfg(ruststream_alloc)]
 use core::any::type_name;
 use core::fmt;
 use core::num::NonZeroUsize;
+#[cfg(ruststream_alloc)]
 use ruststream_core::{MaybeSend, MaybeSendSync};
 
+#[cfg(ruststream_alloc)]
 use serde::Serialize;
 
-use crate::codec::Codec;
-use crate::{
-    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, PublishPolicy, Publisher,
-    Settle, SubscriptionSource,
-};
+#[cfg(ruststream_alloc)]
+use crate::codec::ActiveCodec as Codec;
+#[cfg(ruststream_alloc)]
+use crate::{BatchSubscriber, BuildBatchContext, BuildContext, PublishPolicy, Publisher, Settle};
+use crate::{Broker, Connected, SubscriptionSource};
 
-use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
+use crate::Meta;
+use crate::batch_publishing::BatchPublishingDef;
+#[cfg(ruststream_alloc)]
+use crate::batch_publishing::{BatchPublishingCall, BatchPublishingHandler};
 use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
+#[cfg(ruststream_alloc)]
 use crate::inject::FromStartup;
+#[cfg(ruststream_alloc)]
 use crate::input::{DecodeWith, Materialize};
+#[cfg(ruststream_alloc)]
 use crate::lifecycle::BoxError;
-use crate::metadata::{HandlerMetadata, PublishDescription};
+#[cfg(ruststream_alloc)]
+use crate::metadata::HandlerMetadata;
+#[cfg(ruststream_alloc)]
+use crate::metadata::PublishDescription;
+#[cfg(ruststream_alloc)]
 use crate::middleware::BlanketLayer;
+#[cfg(ruststream_alloc)]
 use crate::publish::{
     ForReply, NamesDestination, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
 };
-use crate::publishing::{
-    EncodeReply, PublishingCall, PublishingDef, PublishingHandler, warn_ignored_reply_name,
-};
-use crate::redelivery::{
-    CopyPathAddress, CopyPathPairing, RetrySetup, RetrySlot, ScopeDelivery, open_subscription,
-};
+use crate::publishing::PublishingDef;
+#[cfg(ruststream_alloc)]
+use crate::publishing::{EncodeReply, PublishingCall, PublishingHandler, warn_ignored_reply_name};
+#[cfg(ruststream_alloc)]
+use crate::redelivery::open_subscription;
+#[cfg(ruststream_alloc)]
+use crate::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, RetrySlot, ScopeDelivery};
 use crate::retry::RetryOpen;
-#[cfg(feature = "testing")]
+#[cfg(all(feature = "testing", ruststream_alloc))]
 use crate::testing::coordinator::paired;
 
+#[cfg(ruststream_alloc)]
 use super::SourceMessage;
+#[cfg(ruststream_alloc)]
 use super::mount_sink::MountSink;
-use super::routes::{
-    MountRoute, RouteMeta, RouteMetadata, RouteSubscription, impl_destination_declared,
-};
+#[cfg(ruststream_alloc)]
+use super::routes::MountRoute;
+#[cfg(ruststream_alloc)]
+use super::routes::RouteMeta;
+use super::routes::{RouteMetadata, RouteSubscription, impl_destination_declared};
+#[cfg(ruststream_alloc)]
 use crate::Serialized;
 
 /// What the reply position's transform stack does to the destination, projected against the
 /// publisher it runs over: [`Names`](crate::Names) where a transform decides where each
 /// reply goes, [`Reads`](crate::Reads) otherwise.
+#[cfg(ruststream_alloc)]
 type ReplyUse<Transforms, Cx, Options> =
     <Transforms as PublishTransform<ForReply<Cx>, Options>>::Destination;
 
@@ -64,13 +87,20 @@ type ReplyUse<Transforms, Cx, Options> =
 /// the unit padding when the handler declares none beyond its reply, the bound slot sources when
 /// it carries [`Out`](crate::Out) parameters.
 #[doc(hidden)]
+#[cfg_attr(
+    not(ruststream_alloc),
+    expect(
+        dead_code,
+        reason = "the one-task fold mounts this registration form in a later piece; the multi-thread mount reads it"
+    )
+)]
 pub struct PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
     pub(super) source: Source,
     pub(super) def: Def,
     pub(super) codec: DecodeCodec,
     pub(super) publisher: ReplySource,
     pub(super) extra: Extra,
-    pub(super) meta: HandlerMetadata,
+    pub(super) meta: Meta,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
 }
@@ -80,13 +110,20 @@ pub struct PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
 /// app's publish pipeline is not known when the registration is made, so each route names the
 /// wiring its replies travel.
 #[doc(hidden)]
+#[cfg_attr(
+    not(ruststream_alloc),
+    expect(
+        dead_code,
+        reason = "the one-task fold mounts this registration form in a later piece; the multi-thread mount reads it"
+    )
+)]
 pub struct RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
     pub(super) source: Source,
     pub(super) def: Def,
     pub(super) codec: DecodeCodec,
     pub(super) publisher: ReplySource,
     pub(super) extra: Extra,
-    pub(super) meta: HandlerMetadata,
+    pub(super) meta: Meta,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
 }
@@ -94,13 +131,20 @@ pub struct RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
 /// One batch reply-publishing registration, deferred (see [`PublishingRoute`]). An
 /// implementation detail of [`Router`](crate::Router)'s registration list.
 #[doc(hidden)]
+#[cfg_attr(
+    not(ruststream_alloc),
+    expect(
+        dead_code,
+        reason = "the one-task fold mounts this registration form in a later piece; the multi-thread mount reads it"
+    )
+)]
 pub struct BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
     pub(super) source: Source,
     pub(super) def: Def,
     pub(super) codec: DecodeCodec,
     pub(super) publisher: ReplySource,
     pub(super) extra: Extra,
-    pub(super) meta: HandlerMetadata,
+    pub(super) meta: Meta,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
     /// The size the subscription opens its batches at, from the registration's `batch(n)`.
@@ -119,6 +163,7 @@ macro_rules! debug_by_metadata {
             }
         }
 
+        #[cfg(ruststream_alloc)]
         impl<$($param),+> RouteMeta for $route<$($param),+> {
             fn collect(&self, out: &mut Vec<HandlerMetadata>) {
                 out.push(self.meta.clone());
@@ -152,7 +197,7 @@ impl_retry_open!(
 macro_rules! impl_route_metadata {
     ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
         impl<$($param),+> RouteMetadata for $route<$($param),+> {
-            fn metadata_mut(&mut self) -> &mut HandlerMetadata {
+            fn metadata_mut(&mut self) -> &mut Meta {
                 &mut self.meta
             }
         }
@@ -197,6 +242,7 @@ impl_destination_declared!(
         BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
 );
 
+#[cfg(ruststream_alloc)]
 impl<
     B,
     Source,
@@ -273,6 +319,7 @@ where
         let pipeline = pipeline.clone();
         // The reply's own description: the mount chain fixed the codec and the transforms, so
         // what the document says about the reply channel is settled here, once.
+        #[cfg(ruststream_alloc)]
         meta.describe_reply(|channel| {
             PublishDescription::of::<Connected<B>, ReplySource>(
                 &publisher,
@@ -327,6 +374,7 @@ where
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<B, Source, Def, DecodeCodec, ReplySource, Extra, State, Live, RetryPipeline>
     MountRoute<B, State, RetryPipeline>
     for RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>
@@ -384,6 +432,7 @@ where
         let pipeline = pipeline.clone();
         // A byte-for-byte reply carries its own wire format and no transform stack, so the
         // position names no media type and settles no destination of its own.
+        #[cfg(ruststream_alloc)]
         meta.describe_reply(|channel| {
             PublishDescription::of::<Connected<B>, ReplySource>(&publisher, None, false, channel)
         });
@@ -433,6 +482,7 @@ where
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<B, Source, Def, DecodeCodec, ReplySource, Extra, BatchReply, State, RetryPipeline>
     MountRoute<B, State, RetryPipeline>
     for BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>
@@ -491,6 +541,7 @@ where
         } = self;
         // A batch's replies answer many deliveries at once, so the position never offers a
         // transform the right to name where one goes; what it does fix is the codec.
+        #[cfg(ruststream_alloc)]
         meta.describe_reply(|channel| {
             PublishDescription::of::<Connected<B>, ReplySource>(
                 &publisher,
@@ -564,7 +615,7 @@ mod tests {
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(MemoryPublish, JsonCodec),
             extra: ((),),
-            meta: HandlerMetadata::raw("orders"),
+            meta: Meta::raw("orders"),
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
         };
@@ -578,7 +629,7 @@ mod tests {
             codec: JsonCodec,
             publisher: MemoryPublish,
             extra: ((),),
-            meta: HandlerMetadata::raw("raw-orders"),
+            meta: Meta::raw("raw-orders"),
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
         };
@@ -592,7 +643,7 @@ mod tests {
             codec: JsonCodec,
             publisher: TypedPublisher::with_codec(MemoryPublish, JsonCodec),
             extra: ((),),
-            meta: HandlerMetadata::raw("bulk-orders"),
+            meta: Meta::raw("bulk-orders"),
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
             batch_size: crate::nonzero!(8),

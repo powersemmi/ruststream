@@ -9,40 +9,129 @@
 // The workers and their channels hold deliveries that are not `Send`, on the app's one task.
 #![allow(clippy::future_not_send)]
 
-use alloc::sync::Arc;
 use core::array;
+use core::cell::Cell;
 use core::future::poll_fn;
 use core::hash::Hasher as _;
 use core::marker::PhantomData;
-use core::pin::pin;
+use core::pin::{Pin, pin};
 use core::task::Poll;
 use ruststream_core::MaybeSendSync;
+use ruststream_core::{Broker, Unbounded};
+#[cfg(not(ruststream_alloc))]
+use ruststream_core::{Capped, PAYLOAD_CAPACITY};
 
+#[cfg(ruststream_alloc)]
 use bytes::BytesMut;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use futures::Stream;
 use futures::future::{Either, join, select};
 use hash32::{FnvHasher, Hasher as _};
+#[cfg(not(ruststream_alloc))]
+use ruststream_core::FixedBuf;
+use ruststream_core::diag::error;
 use ruststream_core::{BuildContext, IncomingMessage, Settle, Subscriber};
 use ruststream_runtime::{
-    Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, Halt, Handler, HeadersAtOnce,
-    HostDetach, KeepCopies, Keeping, LocalPipeline, NoCopies, OneTaskDispatch, OneTaskPlanned,
-    OneTaskRoute, PrepareCopy, PrepareKept, RetryCopies, RetryDestinationsDeclared, Router,
-    RouterCommit, RouterWith, ShutdownWait, dispatch, idle,
+    Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, EncodeRoom, Halt, Handler,
+    HeadersAtOnce, HostDetach, KeepCopies, Keeping, LocalPipeline, NoCopies, OneTaskDispatch,
+    OneTaskPlanned, OneTaskRoute, Parks, PrepareCopy, PrepareKept, ReplyRoom, RetryCopies,
+    RetryDestinationsDeclared, Router, RouterCommit, RouterWith, ShutdownWait, dispatch, idle,
 };
-use tracing::error;
 
 use crate::copies::CopyStore;
+use crate::hooks::{AppState, borrowed};
+#[cfg(not(ruststream_alloc))]
+use crate::host::LaneHost;
 use crate::mailbox::{Mailbox, join_workers};
 
 /// The plan of one registration on the embedded runner: its lanes and the room it keeps for
 /// retry copies, [`NoRoom`] for none.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct EmbeddedPlan<Lanes, Capacity> {
+pub struct EmbeddedPlan<Lanes, Capacity, Encoding = Encode<DEFAULT_ENCODE_CAPACITY>> {
     lanes: Lanes,
-    room: PhantomData<Capacity>,
+    room: PhantomData<(Capacity, Encoding)>,
+}
+
+/// The room, in bytes, of a lane's encode buffer when a registration names none.
+pub const DEFAULT_ENCODE_CAPACITY: usize = 256;
+
+/// An encode buffer of `CAPACITY` bytes for each lane of a registration.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Encode<const CAPACITY: usize>;
+
+/// A reply room an `encode_capacity` of `Self` fits in: any size where the reply publisher only
+/// reads the bytes, and up to the payload room where it keeps them.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` asks for more room than the reply publisher can carry (`{Room}`)",
+    label = "this `encode_capacity` is past the reply publisher's payload room",
+    note = "a publisher that keeps its payload (`Take`) is handed a buffer of the payload room, \
+            so a lane's extra room would go unused: name a count within it, or use a publisher \
+            that reads the bytes (`Lend`)"
+)]
+pub trait Within<Room> {}
+
+impl<const CAPACITY: usize> Within<Unbounded> for Encode<CAPACITY> {}
+
+#[cfg(not(ruststream_alloc))]
+macro_rules! within_payload_room {
+    ($($capacity:literal)*) => {$(
+        impl Within<Capped<{ PAYLOAD_CAPACITY }>> for Encode<$capacity> {}
+    )*};
+}
+
+#[cfg(not(ruststream_alloc))]
+within_payload_room!(
+    1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32
+    33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61
+    62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90
+    91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114
+    115 116 117 118 119 120 121 122 123 124 125 126 127 128 129 130 131 132 133 134 135 136
+    137 138 139 140 141 142 143 144 145 146 147 148 149 150 151 152 153 154 155 156 157 158
+    159 160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175 176 177 178 179 180
+    181 182 183 184 185 186 187 188 189 190 191 192 193 194 195 196 197 198 199 200 201 202
+    203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223 224
+    225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246
+    247 248 249 250 251 252 253 254 255 256
+);
+
+// The list above ends where the room does.
+#[cfg(not(ruststream_alloc))]
+const _: () = assert!(
+    PAYLOAD_CAPACITY == 256,
+    "the sizes `within_payload_room` lists end at the payload room"
+);
+
+/// What the lanes of a registration encode their replies into.
+#[doc(hidden)]
+pub trait EncodeSize {
+    /// The buffer one lane owns.
+    type Room: EncodeRoom;
+
+    /// A new, empty buffer for one lane.
+    fn room() -> Self::Room;
+}
+
+#[cfg(ruststream_alloc)]
+impl<const CAPACITY: usize> EncodeSize for Encode<CAPACITY> {
+    type Room = BytesMut;
+
+    // A buffer that grows, so the capacity is the room reserved up front.
+    fn room() -> BytesMut {
+        BytesMut::with_capacity(CAPACITY)
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<const CAPACITY: usize> EncodeSize for Encode<CAPACITY> {
+    type Room = FixedBuf<CAPACITY>;
+
+    fn room() -> FixedBuf<CAPACITY> {
+        FixedBuf::new()
+    }
 }
 
 /// Room for `CAPACITY` retry copies.
@@ -74,14 +163,17 @@ pub struct Keyed<const LANES: usize>;
 #[doc(hidden)]
 pub trait Lanes {
     /// Runs the route on these lanes until `signal` stops it.
-    fn run<Sub, Body, Cx, State, Signal, Host>(
+    fn run<Sub, Body, Cx, State, Signal, Host, Park, Enc>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
         signal: Signal,
-        state: &Arc<State>,
+        state: &AppState<State>,
         host: &Host,
+        parked: Park,
     ) -> impl Future<Output = ()>
     where
+        Enc: EncodeSize,
+        Park: Parks,
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
@@ -89,64 +181,99 @@ pub trait Lanes {
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>;
 }
 
+#[cfg(ruststream_alloc)]
 impl Lanes for OneLane {
-    fn run<Sub, Body, Cx, State, Signal, Host>(
+    fn run<Sub, Body, Cx, State, Signal, Host, Park, Enc>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
         signal: Signal,
-        state: &Arc<State>,
+        state: &AppState<State>,
         host: &Host,
+        parked: Park,
     ) -> impl Future<Output = ()>
     where
+        Enc: EncodeSize,
+        Park: Parks,
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
-        route.run_sequential(signal, state, host)
+        route.run_sequential(signal, state, host, parked, Enc::room())
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl Lanes for OneLane {
+    async fn run<Sub, Body, Cx, State, Signal, Host, Park, Enc>(
+        self,
+        route: OneTaskRoute<Sub, Body, Cx>,
+        signal: Signal,
+        state: &AppState<State>,
+        host: &Host,
+        parked: Park,
+    ) where
+        Enc: EncodeSize,
+        Park: Parks,
+        Sub: Subscriber,
+        Body: Handler<Sub::Message, Cx, State>,
+        Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
+        Signal: ShutdownWait + Halt + Clone,
+        Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
+    {
+        // The lane's own continuation slot, beside its deliveries.
+        let lane = LaneHost::new(host);
+        lane.around(route.run_sequential(signal, state, &lane, parked, Enc::room()))
+            .await;
     }
 }
 
 impl<const WORKERS: usize> Lanes for Pool<WORKERS> {
-    fn run<Sub, Body, Cx, State, Signal, Host>(
+    fn run<Sub, Body, Cx, State, Signal, Host, Park, Enc>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
         signal: Signal,
-        state: &Arc<State>,
+        state: &AppState<State>,
         host: &Host,
+        parked: Park,
     ) -> impl Future<Output = ()>
     where
+        Enc: EncodeSize,
+        Park: Parks,
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
-        run_lanes::<WORKERS, _, _, _, _, _, _>(route, signal, state, host, false)
+        run_lanes::<WORKERS, _, _, _, _, _, _, _, Enc>(route, signal, state, host, false, parked)
     }
 }
 
 impl<const LANES: usize> Lanes for Keyed<LANES> {
-    fn run<Sub, Body, Cx, State, Signal, Host>(
+    fn run<Sub, Body, Cx, State, Signal, Host, Park, Enc>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
         signal: Signal,
-        state: &Arc<State>,
+        state: &AppState<State>,
         host: &Host,
+        parked: Park,
     ) -> impl Future<Output = ()>
     where
+        Enc: EncodeSize,
+        Park: Parks,
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
-        run_lanes::<LANES, _, _, _, _, _, _>(route, signal, state, host, true)
+        run_lanes::<LANES, _, _, _, _, _, _, _, Enc>(route, signal, state, host, true, parked)
     }
 }
 
-impl<L: Lanes> OneTaskDispatch for EmbeddedPlan<L, NoRoom> {
+impl<L: Lanes, Enc: EncodeSize> OneTaskDispatch for EmbeddedPlan<L, NoRoom, Enc> {
     type Copies = NoCopies;
 
     async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
@@ -154,8 +281,9 @@ impl<L: Lanes> OneTaskDispatch for EmbeddedPlan<L, NoRoom> {
         route: OneTaskRoute<Sub, Body, Cx>,
         _path: Option<Path>,
         signal: Signal,
-        state: &Arc<State>,
+        state: &AppState<State>,
         host: &Host,
+        parked: &Cell<bool>,
     ) where
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
@@ -164,11 +292,15 @@ impl<L: Lanes> OneTaskDispatch for EmbeddedPlan<L, NoRoom> {
         Host: Detach,
         Path: PrepareCopy<Cx>,
     {
-        self.lanes.run(route, signal, state, host).await;
+        self.lanes
+            .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, host, parked)
+            .await;
     }
 }
 
-impl<L: Lanes, const CAPACITY: usize> OneTaskDispatch for EmbeddedPlan<L, Room<CAPACITY>> {
+impl<L: Lanes, Enc: EncodeSize, const CAPACITY: usize> OneTaskDispatch
+    for EmbeddedPlan<L, Room<CAPACITY>, Enc>
+{
     type Copies = KeepCopies;
 
     async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
@@ -176,8 +308,9 @@ impl<L: Lanes, const CAPACITY: usize> OneTaskDispatch for EmbeddedPlan<L, Room<C
         route: OneTaskRoute<Sub, Body, Cx>,
         path: Option<Path>,
         signal: Signal,
-        state: &Arc<State>,
+        state: &AppState<State>,
         host: &Host,
+        parked: &Cell<bool>,
     ) where
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
@@ -187,16 +320,21 @@ impl<L: Lanes, const CAPACITY: usize> OneTaskDispatch for EmbeddedPlan<L, Room<C
         Path: PrepareCopy<Cx>,
     {
         let Some(path) = path else {
-            self.lanes.run(route, signal, state, host).await;
+            self.lanes
+                .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, host, parked)
+                .await;
             return;
         };
         // The registration's own store: its copies wait in its records, and its driver
         // publishes the last of them after the lanes have stopped.
-        let store =
-            CopyStore::<Path, CAPACITY>::new(path, Arc::clone(&route.name)).input(route.input);
+        let store = CopyStore::<Path, CAPACITY>::new(path, &route.name).input(route.input);
         let lanes = async {
             let keeping = Keeping(host, &store);
-            self.lanes.run(route, signal, state, &keeping).await;
+            // The store's driver waits on timers of its own beside the lanes, so the join above
+            // must not skip this registration while the lanes are idle: the flag stays clear.
+            self.lanes
+                .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, &keeping, ())
+                .await;
             store.close();
         };
         join(lanes, store.drive(host)).await;
@@ -209,13 +347,16 @@ impl<L: Lanes, const CAPACITY: usize> OneTaskDispatch for EmbeddedPlan<L, Room<C
 /// next free worker in a pool, the lane its partition key hashes to when `keyed` (a delivery
 /// with no key takes the lanes in turn). A pool's loop takes a free worker before it pulls, so
 /// a delivery waits in the subscription rather than in a channel.
-async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
+async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host, Park, Enc>(
     route: OneTaskRoute<Sub, Body, Cx>,
     signal: Signal,
-    state: &Arc<State>,
+    state: &AppState<State>,
     host: &Host,
     keyed: bool,
+    group: Park,
 ) where
+    Enc: EncodeSize,
+    Park: Parks,
     Sub: Subscriber,
     Body: Handler<Sub::Message, Cx, State>,
     Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
@@ -242,14 +383,17 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
     let shared = Shared {
         handler: &handler,
         name: &name,
-        state: &**state,
+        state: borrowed(state),
         delivery: &delivery,
         host,
         failure: &failure,
     };
     let workers = join_workers(&mailboxes, |index, mailbox| {
-        work(mailbox, (!keyed).then_some((&free, index)), &shared)
+        work::<_, _, _, _, _, _, Enc, COUNT>(mailbox, (!keyed).then_some((&free, index)), &shared)
     });
+    // Set while the loop's poll found the stream and the shutdown wait pending, cleared once it
+    // hands a delivery over: with every worker idle, the group is idle.
+    let feed_idle = Cell::new(false);
     let feed = async {
         let probe = subscriber.ready_hint();
         let mut stream = pin!(subscriber.stream());
@@ -276,10 +420,14 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
                     return Poll::Pending;
                 }
                 match stream.as_mut().poll_next(cx) {
-                    Poll::Ready(next) => Poll::Ready(Either::Left(next)),
+                    Poll::Ready(next) => {
+                        feed_idle.set(false);
+                        Poll::Ready(Either::Left(next))
+                    }
                     Poll::Pending => {
                         let waiting = cancelled.as_mut().poll(cx).map(Either::Right);
                         parked = waiting.is_pending();
+                        feed_idle.set(parked);
                         waiting
                     }
                 }
@@ -318,7 +466,31 @@ async fn run_lanes<const COUNT: usize, Sub, Body, Cx, State, Signal, Host>(
             mailbox.send(None).await;
         }
     };
-    join(feed, workers).await;
+    recording_idle(pin!(join(feed, workers)), group, &feed_idle, &mailboxes).await;
+}
+
+/// Runs `running`, the loop joined with its workers, and records in `group` after every poll that
+/// leaves it pending whether the whole group is idle.
+///
+/// A worker holds a delivery, waits on a timer or on a publish only while its mailbox is not
+/// parked, so the group is idle exactly when the loop and every mailbox are: the join above may
+/// then skip the group until its probe says a delivery waits.
+fn recording_idle<'a, Message, Park, Done, const COUNT: usize>(
+    mut running: Pin<&'a mut impl Future<Output = Done>>,
+    group: Park,
+    feed_idle: &'a Cell<bool>,
+    mailboxes: &'a [Mailbox<Message>; COUNT],
+) -> impl Future<Output = Done> + 'a
+where
+    Park: Parks + 'a,
+{
+    poll_fn(move |cx| {
+        let polled = running.as_mut().poll(cx);
+        if polled.is_pending() {
+            group.park(feed_idle.get() && mailboxes.iter().all(Mailbox::is_parked));
+        }
+        polled
+    })
 }
 
 /// What every worker of one subscription borrows from its loop.
@@ -333,29 +505,60 @@ struct Shared<'a, Body, Cx, State, Signal, Host> {
 
 /// One worker: dispatches what its lane hands it until the lane ends, and reports itself free
 /// after each delivery when it is a pool's.
-async fn work<Message, Body, Cx, State, Signal, Host, const COUNT: usize>(
+async fn work<Message, Body, Cx, State, Signal, Host, Enc, const COUNT: usize>(
     mailbox: &Mailbox<Message>,
     free: Option<(&Channel<NoopRawMutex, usize, COUNT>, usize)>,
     shared: &Shared<'_, Body, Cx, State, Signal, Host>,
 ) where
+    Enc: EncodeSize,
     Message: Settle,
     Body: Handler<Message, Cx, State>,
     Cx: BuildContext<Message> + MaybeSendSync + 'static,
     Signal: Halt,
     Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
 {
+    #[cfg(ruststream_alloc)]
+    {
+        deliveries::<_, _, _, _, _, _, _, Enc, COUNT>(mailbox, free, shared, shared.host).await;
+    }
+    // The worker's own continuation slot: a delivery whose continuation finds it busy waits here.
+    #[cfg(not(ruststream_alloc))]
+    {
+        let lane = LaneHost::new(shared.host);
+        lane.around(deliveries::<_, _, _, _, _, _, _, Enc, COUNT>(
+            mailbox, free, shared, &lane,
+        ))
+        .await;
+    }
+}
+
+/// The worker's deliveries, dispatched on `host` until its lane ends.
+async fn deliveries<Message, Body, Cx, State, Signal, Host, Lent, Enc, const COUNT: usize>(
+    mailbox: &Mailbox<Message>,
+    free: Option<(&Channel<NoopRawMutex, usize, COUNT>, usize)>,
+    shared: &Shared<'_, Body, Cx, State, Signal, Host>,
+    host: &Lent,
+) where
+    Enc: EncodeSize,
+    Message: Settle,
+    Body: Handler<Message, Cx, State>,
+    Cx: BuildContext<Message> + MaybeSendSync + 'static,
+    Signal: Halt,
+    Lent: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
+{
     // One encode buffer per worker, as the sequential loop keeps one.
-    let mut encode = BytesMut::new();
+    let mut room = Enc::room();
+    let encode = room.buffer();
     while let Some(msg) = mailbox.receive().await {
         let mut slot = DeliverySlot::new(msg);
         dispatch(
             shared.handler,
             &mut slot,
-            &mut encode,
+            &mut *encode,
             shared.name,
             shared.state,
             shared.delivery,
-            shared.host,
+            host,
             shared.failure,
             HeadersAtOnce,
         )
@@ -417,7 +620,7 @@ fn lane_of<const LANES: usize>(key: &[u8]) -> usize {
 ///         _outs: &(),
 ///         _ctx: &mut Context<'_>,
 ///     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-///         tracing::info!(bytes = command.0.len(), "command");
+///         log::info!("command, {} bytes", command.0.len());
 ///         ready(Ok(()))
 ///     }
 /// }
@@ -505,6 +708,9 @@ pub trait MountSteps: Sized {
     /// The router once the registration keeps room for `CAP` delayed retries.
     #[doc(hidden)]
     type WithCapacity<const CAP: usize>;
+    /// The router once the registration's lanes encode into `N` bytes.
+    #[doc(hidden)]
+    type WithEncode<const N: usize>;
     /// The room the registration keeps so far.
     #[doc(hidden)]
     type Room;
@@ -523,8 +729,9 @@ pub trait MountSteps: Sized {
     /// data, and the registration's own loop publishes it on the clock once it is due, back to
     /// the address the subscription's descriptor reports. A record reuses its buffer from one
     /// copy to the next; a copy still carries the delivery's header map with the retry count in
-    /// it, which allocates. The descriptor declares `Copies = AddressedCopies` and the broker
-    /// names a default publish policy. A registration without this step keeps none, so its
+    /// it, which allocates with the heap form and uses fixed storage without `alloc`. The
+    /// descriptor declares `Copies = AddressedCopies` and the broker names a default publish
+    /// policy. A registration without this step keeps none, so its
     /// `retry_after` requeues.
     ///
     /// The `.transform(..)` steps after `.out_retry(..)` run over a copy when it is kept, while
@@ -532,6 +739,20 @@ pub trait MountSteps: Sized {
     /// with the publish settings they wrote. They read the destination and do not name one.
     ///
     fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP>;
+
+    /// Gives each lane of the registration `N` bytes to encode a reply into, 256 by default.
+    ///
+    /// A reply that does not fit is refused with `CodecFailure::BufferFull`, the way any publish
+    /// the transport cannot take is: the delivery is acknowledged and the reply reaches the
+    /// handler's `.error` continuation. A lane owns its buffer for as long as it runs, so the
+    /// registration's footprint grows by `N` bytes per lane.
+    fn encode_capacity<const N: usize>(self) -> Self::WithEncode<N>
+    where
+        Encode<N>: Within<Self::ReplyRoom>;
+
+    /// The room the registration's reply publisher can carry.
+    #[doc(hidden)]
+    type ReplyRoom;
 
     /// Runs up to `N` deliveries of the registration at once, each on the next free worker.
     fn pool<const N: usize>(self) -> Self::WithLanes<Pool<N>> {
@@ -567,6 +788,8 @@ pub trait SoFar {
     type Lanes;
     /// Its room for delayed retries.
     type Room;
+    /// Its encode buffer.
+    type Encoding;
 
     /// Its lanes, for a step that keeps them.
     fn into_lanes(self) -> Self::Lanes;
@@ -575,15 +798,17 @@ pub trait SoFar {
 impl SoFar for () {
     type Lanes = OneLane;
     type Room = NoRoom;
+    type Encoding = Encode<DEFAULT_ENCODE_CAPACITY>;
 
     fn into_lanes(self) -> OneLane {
         OneLane
     }
 }
 
-impl<L, R> SoFar for EmbeddedPlan<L, R> {
+impl<L, R, E> SoFar for EmbeddedPlan<L, R, E> {
     type Lanes = L;
     type Room = R;
+    type Encoding = E;
 
     fn into_lanes(self) -> L {
         self.lanes
@@ -593,12 +818,18 @@ impl<L, R> SoFar for EmbeddedPlan<L, R> {
 impl<B, Head, Routes, RouteCodec, RouteLayers, Pipe> MountSteps
     for Router<B, (Head, Routes), RouteCodec, RouteLayers, LocalPipeline<Pipe>>
 where
-    Head: OneTaskPlanned<Plan: SoFar>,
+    B: Broker,
+    Head: OneTaskPlanned<Plan: SoFar, Route: ReplyRoom<B>>,
 {
+    type ReplyRoom = <Head::Route as ReplyRoom<B>>::Room;
+
     type WithLanes<Next> = Router<
         B,
         (
-            Dispatched<Head::Route, EmbeddedPlan<Next, <Head::Plan as SoFar>::Room>>,
+            Dispatched<
+                Head::Route,
+                EmbeddedPlan<Next, <Head::Plan as SoFar>::Room, <Head::Plan as SoFar>::Encoding>,
+            >,
             Routes,
         ),
         RouteCodec,
@@ -608,7 +839,27 @@ where
     type WithCapacity<const CAP: usize> = Router<
         B,
         (
-            Dispatched<Head::Route, EmbeddedPlan<<Head::Plan as SoFar>::Lanes, Room<CAP>>>,
+            Dispatched<
+                Head::Route,
+                EmbeddedPlan<
+                    <Head::Plan as SoFar>::Lanes,
+                    Room<CAP>,
+                    <Head::Plan as SoFar>::Encoding,
+                >,
+            >,
+            Routes,
+        ),
+        RouteCodec,
+        RouteLayers,
+        LocalPipeline<Pipe>,
+    >;
+    type WithEncode<const N: usize> = Router<
+        B,
+        (
+            Dispatched<
+                Head::Route,
+                EmbeddedPlan<<Head::Plan as SoFar>::Lanes, <Head::Plan as SoFar>::Room, Encode<N>>,
+            >,
             Routes,
         ),
         RouteCodec,
@@ -636,6 +887,22 @@ where
             room: PhantomData,
         })
     }
+
+    fn encode_capacity<const N: usize>(self) -> Self::WithEncode<N>
+    where
+        Encode<N>: Within<Self::ReplyRoom>,
+    {
+        const {
+            assert!(
+                N > 0,
+                "a lane encodes into at least one byte: give `encode_capacity` a count above zero"
+            );
+        }
+        self.replan(|plan: Head::Plan| EmbeddedPlan {
+            lanes: plan.into_lanes(),
+            room: PhantomData,
+        })
+    }
 }
 
 // A registration with steps of its own (`.out_reply(..)`, `.out(..)`) is committed first, so
@@ -646,10 +913,20 @@ where
 {
     type WithLanes<Next> = <Attach::Out as MountSteps>::WithLanes<Next>;
     type WithCapacity<const CAP: usize> = <Attach::Out as MountSteps>::WithCapacity<CAP>;
+    type WithEncode<const N: usize> = <Attach::Out as MountSteps>::WithEncode<N>;
     type Room = <Attach::Out as MountSteps>::Room;
+
+    type ReplyRoom = <Attach::Out as MountSteps>::ReplyRoom;
 
     fn lanes<Next>(self, lanes: Next) -> Self::WithLanes<Next> {
         self.build().lanes(lanes)
+    }
+
+    fn encode_capacity<const N: usize>(self) -> Self::WithEncode<N>
+    where
+        Encode<N>: Within<Self::ReplyRoom>,
+    {
+        self.build().encode_capacity::<N>()
     }
 
     fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP> {

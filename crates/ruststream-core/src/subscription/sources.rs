@@ -4,7 +4,7 @@
 // The cold path of the contract carries no Send; the tokio runner asks for it where it spawns.
 #![allow(clippy::future_not_send)]
 
-use alloc::borrow::Cow;
+use super::{NameText, name_str, static_text};
 use core::{fmt, future::ready, marker::PhantomData};
 
 use crate::{ConnectedBroker, DeclareRetryError, Seekable, Seeker, Subscribe};
@@ -28,19 +28,19 @@ use super::{
 /// }
 /// ```
 #[derive(Debug, Clone)]
-pub struct Name(Cow<'static, str>);
+pub struct Name(NameText);
 
 impl Name {
     /// Creates a name source bound to `name`.
     #[must_use]
-    pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
+    pub fn new(name: impl Into<NameText>) -> Self {
         Self(name.into())
     }
 
     /// The name the source subscribes to.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        name_str(&self.0)
     }
 }
 
@@ -83,11 +83,11 @@ impl Name {
 pub trait FromName {
     /// Builds the source bound to `name`.
     #[must_use]
-    fn from_name(name: impl Into<Cow<'static, str>>) -> Self;
+    fn from_name(name: impl Into<NameText>) -> Self;
 }
 
 impl FromName for Name {
-    fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
+    fn from_name(name: impl Into<NameText>) -> Self {
         Self::new(name)
     }
 }
@@ -170,7 +170,7 @@ impl<S> Unnamed<S> {
 
     /// Builds the subscription kind now that its name is known.
     #[must_use]
-    pub fn into_named(self, name: impl Into<Cow<'static, str>>) -> S
+    pub fn into_named(self, name: impl Into<NameText>) -> S
     where
         S: FromName,
     {
@@ -205,11 +205,15 @@ impl<C: Subscribe> SubscriptionSource<C> for Name {
     type Copies = C::Copies;
 
     fn name(&self) -> &str {
-        &self.0
+        name_str(&self.0)
+    }
+
+    fn static_name(&self) -> Option<&'static str> {
+        static_text(&self.0)
     }
 
     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
-        connected.subscribe(&self.0).await
+        connected.subscribe(self.0.as_ref()).await
     }
 
     /// A name carries no topology of its own, so what the registration declared is the broker's
@@ -219,12 +223,14 @@ impl<C: Subscribe> SubscriptionSource<C> for Name {
         connected: &C,
         declaration: &RetryDeclaration,
     ) -> Result<(), DeclareRetryError> {
-        connected.declare_retry(&self.0, declaration)
+        connected.declare_retry(self.0.as_ref(), declaration)
     }
 }
 
 /// Where the broker says a subscribe name is also a publish destination, the name is the address,
 /// and no lookup stands between the descriptor and the answer.
+// The name is a `&'static str` without `alloc`, where cloning it is a copy of the reference.
+#[cfg_attr(not(feature = "alloc"), allow(noop_method_call, clippy::clone_on_copy))]
 impl<C: Subscribe<Copies = AddressedCopies>> RedeliveryAddressed<C> for Name {
     fn redelivery_address(
         &self,
@@ -404,6 +410,10 @@ where
 
     fn name(&self) -> &str {
         self.inner.name()
+    }
+
+    fn static_name(&self) -> Option<&'static str> {
+        self.inner.static_name()
     }
 
     fn declare_retry(self, declaration: &RetryDeclaration) -> Self {

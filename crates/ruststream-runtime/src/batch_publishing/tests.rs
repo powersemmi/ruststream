@@ -1,4 +1,3 @@
-use alloc::borrow::ToOwned;
 use alloc::format;
 use alloc::sync::Arc;
 use core::future::ready;
@@ -11,7 +10,7 @@ use super::super::batch::handled;
 use super::super::dispatch::Delivery;
 use super::super::publish::{Transactional, TypedPublisher};
 use super::*;
-use crate::HeaderMap;
+use crate::HeaderSet;
 use crate::codec::JsonCodec;
 use crate::input::Decoded;
 use crate::testkit::Tracked;
@@ -108,7 +107,7 @@ async fn a_batch_reply_answers_for_the_whole_delivered_batch() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     assert_eq!(batch.len(), 3, "the whole batch is delivered at once");
@@ -152,7 +151,7 @@ async fn handler_error_publishes_nothing_and_settles_the_batch() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
@@ -173,7 +172,7 @@ async fn handler_error_publishes_nothing_and_settles_the_batch() {
 fn batch_publishing_def_defaults_register_without_documentation() {
     let def = Confirm::new("confirmations");
     let source = def.source();
-    let name = SubscriptionSource::<ConnectedMemoryBroker>::name(&source).to_owned();
+    let name = SubscriptionSource::<ConnectedMemoryBroker>::name(&source);
     let meta = batch_publishing_metadata(name, &def);
 
     assert_eq!(meta.name, "orders");
@@ -231,7 +230,7 @@ async fn a_fully_undecodable_batch_never_reaches_the_handler() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     assert_eq!(batch.len(), 2);
@@ -272,7 +271,7 @@ impl Publisher for HalfwayPublisher {
 
     async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'msg, BytesMut>,
+        msg: OutgoingMessage<'msg, PayloadBuf>,
         options: Option<&Self::Options>,
     ) -> PublishOutcome<'msg, MemoryError, Take> {
         if self.published.fetch_add(1, Ordering::SeqCst) >= self.succeed_first {
@@ -309,7 +308,7 @@ async fn a_failed_reply_publish_acks_the_whole_batch() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     handled(&handler, batch, &mut Vec::new(), &mut ctx, &host).await;
@@ -352,7 +351,7 @@ async fn a_failed_reply_publish_is_logged_with_its_reply_channel() {
     let state = ();
     let delivery = Delivery::empty();
     let host = Tracked(TaskTracker::new());
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
 

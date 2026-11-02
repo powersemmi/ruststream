@@ -2,7 +2,7 @@
 //! delivery can be shared across threads, at once where it cannot.
 
 use crate::context::{FromDelivery, HeaderSource};
-use crate::{HeaderMap, Settle};
+use crate::{HeaderSet, Settle};
 use ruststream_core::MaybeSync;
 
 /// How the body hands a delivery's headers to the handler's [`Context`](crate::Context): a
@@ -49,12 +49,12 @@ pub struct HeadersAtOnce;
 
 impl<M: Settle> LendHeaders<M> for HeadersAtOnce {
     type Source<'m>
-        = &'m HeaderMap
+        = &'m HeaderSet
     where
         M: 'm;
 
     #[inline]
-    fn source(msg: &M) -> &HeaderMap {
+    fn source(msg: &M) -> &HeaderSet {
         msg.headers()
     }
 }

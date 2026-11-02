@@ -1,26 +1,30 @@
 //! The [`Publisher`] trait and its declaration-side counterpart, [`PublishPolicy`].
 
+#[cfg(feature = "alloc")]
 use alloc::boxed::Box;
+#[cfg(feature = "alloc")]
 use alloc::string::String;
 use core::error::Error as StdError;
 use core::fmt;
 
-use bytes::{Bytes, BytesMut};
+#[cfg(feature = "alloc")]
+use bytes::Bytes;
 use thiserror::Error;
 
 #[cfg(feature = "asyncapi")]
 use crate::bindings::Bindings;
 use crate::codec::CodecError;
 use crate::outgoing::{Outgoing, OutgoingName};
-use crate::wire::Serialized;
-use crate::{ConnectedBroker, HeaderMap, MaybeSend, MaybeSendSync, OutgoingMessage};
+use crate::wire::{Serialized, WireFailure};
+use crate::{ConnectedBroker, Headers, MaybeSend, MaybeSendSync, OutgoingMessage};
+use crate::{EncodeBuf, PayloadBuf};
 
 /// How a transport consumes the payload of a publish: [`Lend`] where it reads the bytes,
 /// [`Take`] where its client keeps them.
 ///
 /// Every [`Publisher`] names one as [`Publisher::Payload`], and the message its `publish`
 /// receives follows the declaration: a lending publisher is handed `&[u8]`, a taking one a
-/// [`BytesMut`] it owns. There is no third form and no arm that never arrives, so a transport
+/// [`BytesMut`](crate::BytesMut) it owns. There is no third form and no arm that never arrives, so a transport
 /// matches on nothing and the runtime branches on nothing: it produces the payload the way the
 /// type said before the first message was ever published.
 ///
@@ -75,12 +79,26 @@ pub trait PayloadForm: sealed::Sealed {
     #[doc(hidden)]
     const LENDS: bool;
 
-    /// The payload as this form carries it: `&'a [u8]` for [`Lend`], [`BytesMut`] for [`Take`].
+    /// The room a publish in this form can carry, as a type a mount's bound reads: [`Unbounded`]
+    /// for [`Lend`], and for [`Take`] the room of the buffer the codec produces, which a build
+    /// without `alloc` fixes at [`PAYLOAD_CAPACITY`](crate::PAYLOAD_CAPACITY).
+    #[doc(hidden)]
+    type Room;
+
+    /// The payload as this form carries it: `&'a [u8]` for [`Lend`], [`BytesMut`](crate::BytesMut) for [`Take`].
     ///
     /// The bounds are what every publish position needs of it: the bytes are readable, the
     /// message crosses a task boundary, and bytes the caller holds can be handed over in this
     /// form (free where the transport lends, one copy where it keeps them).
+    #[cfg(feature = "alloc")]
     type Form<'a>: AsRef<[u8]> + Send + From<&'a [u8]>;
+
+    /// The payload as this form carries it: `&'a [u8]` for [`Lend`], [`PayloadBuf`] for [`Take`].
+    ///
+    /// Bytes the caller holds are handed over in this form where they fit: a fixed buffer
+    /// refuses a payload past its room.
+    #[cfg(not(feature = "alloc"))]
+    type Form<'a>: AsRef<[u8]> + Send + TryFrom<&'a [u8]>;
 
     /// What a publish in this form carries to its encode: the scratch buffer where the form
     /// writes into one, and nothing at all where it does not.
@@ -94,7 +112,7 @@ pub trait PayloadForm: sealed::Sealed {
     /// The publish path's scratch, as this form takes it: inside a dispatch loop, the one buffer
     /// that loop reuses.
     #[doc(hidden)]
-    fn encode_slot(buf: &mut BytesMut) -> Self::Encode<'_>;
+    fn encode_slot(buf: &mut EncodeBuf) -> Self::Encode<'_>;
 
     /// The same scratch again, for the next message of a batch: what a form that carries a
     /// buffer lends on, and nothing for one that carries none.
@@ -127,7 +145,10 @@ pub trait PayloadForm: sealed::Sealed {
     ///
     /// Returns the value's own error when its encoder rejects it.
     #[doc(hidden)]
-    fn serialized<'v, T>(value: &'v T, buf: Self::Encode<'v>) -> Result<Self::Form<'v>, T::Error>
+    fn serialized<'v, T>(
+        value: &'v T,
+        buf: Self::Encode<'v>,
+    ) -> Result<Self::Form<'v>, WireFailure<T::Error>>
     where
         T: Serialized;
 
@@ -151,7 +172,7 @@ pub trait PayloadForm: sealed::Sealed {
     fn rebuilt<'a>(
         name: OutgoingName<'a>,
         payload: Self::Form<'a>,
-        headers: HeaderMap,
+        headers: Headers,
     ) -> Outgoing<'a>;
 
     /// The message that leaves the pipeline, in this form.
@@ -194,10 +215,16 @@ pub trait PayloadForm: sealed::Sealed {
 
 /// The payload of a refused publish, as [`PayloadForm::kept`] leaves it.
 #[doc(hidden)]
+// A fixed buffer sits inline beside a pair of numbers, by design: there is no heap to hold it.
+#[cfg_attr(not(feature = "alloc"), allow(clippy::large_enum_variant))]
 #[derive(Debug)]
 pub enum KeptPayload {
     /// The bytes, owned: a taking transport gave its buffer back.
+    #[cfg(feature = "alloc")]
     Owned(Bytes),
+    /// The bytes, owned: a taking transport gave its buffer back.
+    #[cfg(not(feature = "alloc"))]
+    Owned(PayloadBuf),
     /// The bytes a lending transport was shown, which stay where they were: their address and
     /// length.
     Lent {
@@ -218,14 +245,14 @@ pub trait PayloadEncode {
     /// # Errors
     ///
     /// Returns [`CodecError::Encode`] when the value does not encode.
-    fn encode_into(&self, buf: &mut BytesMut) -> Result<(), CodecError>;
+    fn encode_into(&self, buf: &mut EncodeBuf) -> Result<(), CodecError>;
 
     /// Encodes the value into a buffer of its own.
     ///
     /// # Errors
     ///
     /// Returns [`CodecError::Encode`] when the value does not encode.
-    fn encode(&self) -> Result<BytesMut, CodecError>;
+    fn encode(&self) -> Result<PayloadBuf, CodecError>;
 }
 
 /// The declaration of a transport that reads the payload and keeps nothing: it is handed
@@ -274,10 +301,22 @@ pub trait PayloadEncode {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Lend;
 
-/// The declaration of a transport whose client keeps the payload: it is handed a [`BytesMut`]
+/// A payload room with no limit of its own: the transport reads the bytes where the framework
+/// wrote them. Machinery; never named directly.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct Unbounded;
+
+/// A payload room of `BYTES` bytes, the buffer a transport that keeps its payload is handed.
+/// Machinery; never named directly.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct Capped<const BYTES: usize>;
+
+/// The declaration of a transport whose client keeps the payload: it is handed a [`BytesMut`](crate::BytesMut)
 /// of its own.
 ///
-/// The buffer arrives as it was written, so `Vec::from` and [`BytesMut::freeze`] turn it into
+/// The buffer arrives as it was written, so `Vec::from` and [`BytesMut::freeze`](crate::BytesMut::freeze) turn it into
 /// what the client speaks without copying it. See [`PayloadForm`].
 ///
 /// # Examples
@@ -333,12 +372,12 @@ pub struct Take;
 /// # Examples
 ///
 /// ```
-/// use ruststream::{HeaderMap, OutgoingFor, Publisher, PublishOutcome};
+/// use ruststream::{Headers, OutgoingFor, Publisher, PublishOutcome};
 ///
 /// // A handle that forwards every publish to the publisher it wraps, whichever form that one
 /// // declared.
 /// #[derive(Clone)]
-/// struct Tagged<P>(P, HeaderMap);
+/// struct Tagged<P>(P, Headers);
 ///
 /// impl<P: Publisher> Publisher for Tagged<P> {
 ///     type Payload = P::Payload;
@@ -353,7 +392,7 @@ pub struct Take;
 ///         self.0.publish(msg, options).await
 ///     }
 ///
-///     fn base_headers(&self) -> Option<&HeaderMap> {
+///     fn base_headers(&self) -> Option<&Headers> {
 ///         Some(&self.1)
 ///     }
 /// }
@@ -375,6 +414,9 @@ pub type PublishOutcome<'msg, Error, Form> =
 /// Everything a publisher is handed by reference comes back: the destination and the headers
 /// are never consumed by a client that fails, and a [`Lend`] payload is only borrowed. Success
 /// carries nothing extra, so a publish that works costs what it did before.
+///
+/// In a build without `alloc` a refusal that crosses the runtime's sinks keeps the destination in
+/// a room of 64 bytes. A destination longer than that comes back without its message.
 ///
 /// The error converts into this type with [`From`], so `Err(error.into())` and `?` on a
 /// client call whose error is `Self::Error` hand the broker's error over with no message.
@@ -427,7 +469,7 @@ pub struct PublishMessageError<Error, Message> {
     error: Error,
     // Boxed so the outcome of a publish that went out stays the size of the error: the message
     // is moved into the box only on a refusal, which is off the hot path.
-    message: Option<Box<Message>>,
+    message: Option<Held<Message>>,
 }
 
 impl<Error, Message> PublishMessageError<Error, Message> {
@@ -445,7 +487,7 @@ impl<Error, Message> PublishMessageError<Error, Message> {
     pub fn with_message(error: Error, message: Message) -> Self {
         Self {
             error,
-            message: Some(Box::new(message)),
+            message: Some(hold(message)),
         }
     }
 
@@ -458,7 +500,7 @@ impl<Error, Message> PublishMessageError<Error, Message> {
     /// The message the broker did not send, when the client gave it back.
     #[must_use]
     pub fn message(&self) -> Option<&Message> {
-        self.message.as_deref()
+        self.message.as_ref().map(held_ref)
     }
 
     /// The broker's error, dropping the message.
@@ -470,13 +512,13 @@ impl<Error, Message> PublishMessageError<Error, Message> {
     /// The message the broker did not send, dropping the error.
     #[must_use]
     pub fn into_message(self) -> Option<Message> {
-        self.message.map(|message| *message)
+        self.message.map(unhold)
     }
 
     /// The error and the message, both owned.
     #[must_use]
     pub fn into_parts(self) -> (Error, Option<Message>) {
-        (self.error, self.message.map(|message| *message))
+        (self.error, self.message.map(unhold))
     }
 
     /// The same refusal over another message type, with no message.
@@ -520,21 +562,23 @@ impl<Error: StdError + 'static, Message> StdError for PublishMessageError<Error,
 /// The message is owned, so it outlives the stages of the publish path that rewrote it: a payload
 /// a transform wrote into a buffer of the call moves out of that buffer, and a payload nothing
 /// rewrote stays with the caller that lent it. It is `None` only where the client consumed a
-/// [`Take`] buffer and did not return it. Machinery; a broker's publisher reports a
+/// [`Take`] buffer and did not return it. In a build without `alloc` the destination is kept in a
+/// room of 64 bytes: a destination longer than that comes back without its message, because a
+/// shortened name would send a republished copy to the wrong place. Machinery; a broker's publisher reports a
 /// [`PublishMessageError`] and the sinks of the runtime turn it into this.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct SinkRefusal<Error> {
     error: Error,
-    unsent: Option<Box<UnsentMessage>>,
+    unsent: Option<Held<UnsentMessage>>,
 }
 
 /// The message a refused publish handed back.
 #[derive(Debug)]
 struct UnsentMessage {
-    destination: String,
+    destination: Destination,
     payload: KeptPayload,
-    headers: HeaderMap,
+    headers: Headers,
 }
 
 /// What a sink returns: nothing on success, and on failure the cause with the unsent message.
@@ -563,12 +607,15 @@ impl<Error> SinkRefusal<Error> {
         error: Error,
         destination: &str,
         payload: KeptPayload,
-        headers: HeaderMap,
+        headers: Headers,
     ) -> Self {
+        let Some(destination) = destination_of(destination) else {
+            return Self::new(error);
+        };
         Self {
             error,
-            unsent: Some(Box::new(UnsentMessage {
-                destination: String::from(destination),
+            unsent: Some(hold(UnsentMessage {
+                destination,
                 payload,
                 headers,
             })),
@@ -624,12 +671,70 @@ impl<Error> SinkRefusal<Error> {
     /// The cause and the message, taken apart: its destination, its payload as the sink kept it,
     /// and its headers. `None` where the client consumed the buffer.
     #[must_use]
-    pub fn into_parts(self) -> (Error, Option<(String, KeptPayload, HeaderMap)>) {
+    pub fn into_parts(self) -> (Error, Option<(Destination, KeptPayload, Headers)>) {
         let unsent = self
             .unsent
+            .map(unhold)
             .map(|unsent| (unsent.destination, unsent.payload, unsent.headers));
         (self.error, unsent)
     }
+}
+
+/// The room a refused publish gives the destination it returns, in bytes, in a build without
+/// `alloc`.
+#[cfg(not(feature = "alloc"))]
+pub(crate) const DESTINATION_BYTES: usize = 64;
+
+/// The destination a refused publish returns with its message: a `String` with `alloc`, a
+/// string of [`DESTINATION_BYTES`] bytes without.
+#[cfg(feature = "alloc")]
+pub(crate) type Destination = String;
+/// The destination a refused publish returns with its message: a `String` with `alloc`, a
+/// string of [`DESTINATION_BYTES`] bytes without.
+#[cfg(not(feature = "alloc"))]
+pub(crate) type Destination = heapless::String<DESTINATION_BYTES>;
+
+#[cfg(feature = "alloc")]
+#[expect(clippy::unnecessary_wraps, reason = "one signature for both variants")]
+fn destination_of(name: &str) -> Option<Destination> {
+    Some(String::from(name))
+}
+
+// A name past the room is not kept, and the refusal then reports its error without the message:
+// a returned message under a shortened destination would be republished to the wrong place.
+#[cfg(not(feature = "alloc"))]
+fn destination_of(name: &str) -> Option<Destination> {
+    Destination::try_from(name).ok()
+}
+
+/// A refused message is held behind a `Box` where there is a heap, so the outcome of a publish that
+/// went out stays the size of the error, and inline where there is none.
+#[cfg(feature = "alloc")]
+type Held<Value> = Box<Value>;
+#[cfg(not(feature = "alloc"))]
+type Held<Value> = Value;
+
+#[cfg(feature = "alloc")]
+fn hold<Value>(value: Value) -> Held<Value> {
+    Box::new(value)
+}
+#[cfg(not(feature = "alloc"))]
+const fn hold<Value>(value: Value) -> Held<Value> {
+    value
+}
+
+#[cfg(feature = "alloc")]
+#[expect(clippy::boxed_local, reason = "one signature for both variants")]
+fn unhold<Value>(held: Held<Value>) -> Value {
+    *held
+}
+#[cfg(not(feature = "alloc"))]
+fn unhold<Value>(held: Held<Value>) -> Value {
+    held
+}
+
+fn held_ref<Value>(held: &Held<Value>) -> &Value {
+    held
 }
 
 mod sealed {
@@ -675,7 +780,7 @@ pub trait Publisher: MaybeSendSync + Clone {
     /// nothing, [`Take`] where its client keeps them.
     ///
     /// The declaration decides what [`publish`] receives - `&[u8]` under `Lend`, a
-    /// [`BytesMut`] of its own under `Take` - and what the framework does with its own buffers
+    /// [`BytesMut`](crate::BytesMut) of its own under `Take` - and what the framework does with its own buffers
     /// above it: a lending publisher inside a dispatch loop is lent the one encode buffer that
     /// loop reuses, so a reply through it allocates nothing per message, while a taking one is
     /// handed a fresh buffer it may keep. Declare `Lend` unless the client keeps the bytes past
@@ -831,8 +936,8 @@ pub trait Publisher: MaybeSendSync + Clone {
     ///
     /// What the payload is follows [`Payload`](Self::Payload). A [`Lend`] publisher is handed
     /// `&[u8]` valid for the length of the call: read it, write it into your frame, and hold
-    /// nothing afterwards. A [`Take`] publisher is handed the [`BytesMut`] the framework wrote,
-    /// as it was written, so `Vec::from(payload)` and [`BytesMut::freeze`] turn it into what
+    /// nothing afterwards. A [`Take`] publisher is handed the [`BytesMut`](crate::BytesMut) the framework wrote,
+    /// as it was written, so `Vec::from(payload)` and [`BytesMut::freeze`](crate::BytesMut::freeze) turn it into what
     /// the client speaks with no copy of the body; only a publish lending bytes the framework
     /// does not own is copied into that buffer.
     ///
@@ -936,11 +1041,11 @@ pub trait Publisher: MaybeSendSync + Clone {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::PublishOutcome;
     /// use ruststream::runtime::PublishExt;
-    /// use ruststream::{HeaderMap, Outgoing, OutgoingFor, Publisher, Serialized};
+    /// use ruststream::{Headers, Outgoing, OutgoingFor, Publisher, Serialized};
     ///
     /// // A handle that tags every message it sends, without touching the message itself.
     /// #[derive(Clone)]
-    /// struct Tenanted<P>(P, HeaderMap);
+    /// struct Tenanted<P>(P, Headers);
     ///
     /// impl<P: Publisher> Publisher for Tenanted<P> {
     ///     type Payload = P::Payload;
@@ -955,7 +1060,7 @@ pub trait Publisher: MaybeSendSync + Clone {
     ///         self.0.publish(msg, options).await
     ///     }
     ///
-    ///     fn base_headers(&self) -> Option<&HeaderMap> {
+    ///     fn base_headers(&self) -> Option<&Headers> {
     ///         Some(&self.1)
     ///     }
     /// }
@@ -971,7 +1076,7 @@ pub trait Publisher: MaybeSendSync + Clone {
     /// # Ok(())
     /// # }
     /// ```
-    fn base_headers(&self) -> Option<&HeaderMap> {
+    fn base_headers(&self) -> Option<&Headers> {
         None
     }
 }
@@ -1246,22 +1351,39 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 /// alive, type-erased.
 ///
 /// A cross-broker token pairs against a broker other than the including scope's, so the error
-/// cannot be typed to one broker.
+/// cannot be typed to one broker. Without `alloc` the cause is a `Cause`, which is
+/// `Copy`.
 #[derive(Debug, Error)]
 #[error("pairing a publisher failed: {0}")]
-pub struct PairError(#[source] Box<dyn StdError + Send + Sync>);
+pub struct PairError(
+    #[cfg(feature = "alloc")]
+    #[source]
+    Box<dyn StdError + Send + Sync>,
+    #[cfg(not(feature = "alloc"))]
+    #[source]
+    crate::Cause,
+);
 
 impl PairError {
     /// Wraps a broker's pairing failure.
+    #[cfg(feature = "alloc")]
     #[must_use]
     pub fn new(source: impl StdError + Send + Sync + 'static) -> Self {
         Self(Box::new(source))
     }
 
     /// Wraps an already-boxed failure, or a plain message.
+    #[cfg(feature = "alloc")]
     #[must_use]
     pub fn from_boxed(source: Box<dyn StdError + Send + Sync>) -> Self {
         Self(source)
+    }
+
+    /// Wraps a broker's pairing failure.
+    #[cfg(not(feature = "alloc"))]
+    #[must_use]
+    pub const fn new(cause: crate::Cause) -> Self {
+        Self(cause)
     }
 }
 
@@ -1322,6 +1444,41 @@ mod tests {
         assert!(
             size_of::<PublishOutcome<'_, io::Error, Take>>()
                 <= size_of::<io::Error>() + size_of::<usize>()
+        );
+    }
+}
+
+#[cfg(all(test, not(feature = "alloc")))]
+mod fixed_tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_keeps_a_destination_that_fits_its_room() {
+        let refusal = SinkRefusal::with_message(
+            "refused",
+            "orders",
+            KeptPayload::Lent { addr: 0, len: 0 },
+            Headers::new(),
+        );
+        let (_, unsent) = refusal.into_parts();
+        let (destination, _, _) = unsent.expect("the message is returned");
+        assert_eq!(destination.as_str(), "orders");
+    }
+
+    #[test]
+    fn a_refusal_reports_its_error_without_a_destination_past_the_room() {
+        let long = "d".repeat(DESTINATION_BYTES + 1);
+        let refusal = SinkRefusal::with_message(
+            "refused",
+            &long,
+            KeptPayload::Lent { addr: 0, len: 0 },
+            Headers::new(),
+        );
+        let (error, unsent) = refusal.into_parts();
+        assert_eq!(error, "refused");
+        assert!(
+            unsent.is_none(),
+            "a shortened destination would misroute a copy"
         );
     }
 }

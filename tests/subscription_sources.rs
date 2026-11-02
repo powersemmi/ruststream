@@ -98,3 +98,47 @@ fn a_start_position_hands_back_the_source_it_wraps() {
         "orders-7",
     );
 }
+
+/// A name the program wrote as a literal is held whole by a build without `alloc`; a source that
+/// built its name at run time reports none.
+#[test]
+fn a_literal_name_is_reported_static_and_a_built_one_is_not() {
+    let literal = Name::new("orders");
+    assert_eq!(
+        SubscriptionSource::<ConnectedMemoryBroker>::static_name(&literal),
+        Some("orders")
+    );
+
+    let built = Name::new(String::from("orders"));
+    assert_eq!(
+        SubscriptionSource::<ConnectedMemoryBroker>::static_name(&built),
+        None
+    );
+}
+
+#[test]
+fn a_memory_source_named_by_a_literal_reports_it_static() {
+    let literal: MemorySource = Unnamed::<MemorySource>::default().into_named("orders");
+    assert_eq!(
+        SubscriptionSource::<ConnectedMemoryBroker>::static_name(&literal),
+        Some("orders")
+    );
+
+    let built = MemorySource::new(String::from("orders"));
+    assert_eq!(
+        SubscriptionSource::<ConnectedMemoryBroker>::static_name(&built),
+        None
+    );
+}
+
+#[test]
+fn a_start_position_reports_the_static_name_of_the_source_it_wraps() {
+    let source = StartAt::new(
+        Unnamed::<MemorySource>::default().into_named("orders"),
+        MemoryPosition::start(),
+    );
+    assert_eq!(
+        SubscriptionSource::<ConnectedMemoryBroker<Retaining>>::static_name(&source),
+        Some("orders")
+    );
+}

@@ -1,0 +1,26 @@
+error[E0277]: a batch of this size does not fit the runtime's storage: `BatchSize<0>`
+  --> tests/ui/batch_of_nothing.rs:11:13
+   |
+11 |     batch::<0>();
+   |             ^ the batch size is 0 or past BATCH_CAPACITY (16)
+   |
+   = help: the trait `FitsBatch` is not implemented for `BatchSize<0>`
+   = note: a build without `alloc` holds a batch in fixed storage; name a size from 1 to 16 in `.batch::<N>()`
+   = help: the following other types implement trait `FitsBatch`:
+             BatchSize<10>
+             BatchSize<11>
+             BatchSize<12>
+             BatchSize<13>
+             BatchSize<14>
+             BatchSize<15>
+             BatchSize<16>
+             BatchSize<1>
+           and $N others
+note: required by a bound in `batch`
+  --> tests/ui/batch_of_nothing.rs:6:22
+   |
+ 4 | fn batch<const SIZE: usize>()
+   |    ----- required by a bound in this function
+ 5 | where
+ 6 |     BatchSize<SIZE>: FitsBatch,
+   |                      ^^^^^^^^^ required by this bound in `batch`

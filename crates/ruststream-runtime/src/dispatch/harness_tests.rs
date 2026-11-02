@@ -24,7 +24,7 @@ use crate::testing::coordinator::Coordinator;
 use crate::testkit::Shutdown;
 use crate::testkit::Tracked;
 use crate::{
-    AckError, BatchSlot, BatchStream, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage,
+    AckError, BatchSlot, BatchStream, BatchSubscriber, CarriesBatch, HeaderSet, IncomingMessage,
     NamedCopies, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream::memory::{ConnectedMemoryBroker, MemoryError};
@@ -41,14 +41,14 @@ impl Clone for Counted {
 }
 
 /// A delivery that settles at once.
-struct Claim(HeaderMap);
+struct Claim(HeaderSet);
 
 impl IncomingMessage for Claim {
     fn payload(&self) -> &[u8] {
         &[]
     }
 
-    fn headers(&self) -> &HeaderMap {
+    fn headers(&self) -> &HeaderSet {
         &self.0
     }
 }
@@ -161,7 +161,7 @@ async fn clones_made_dispatching(delivery: &Delivery<()>) -> usize {
     let clones = Arc::new(AtomicUsize::new(0));
     let mut page = Page {
         values: vec![Counted(Arc::clone(&clones)), Counted(Arc::clone(&clones))],
-        claims: vec![Claim(HeaderMap::new()), Claim(HeaderMap::new())],
+        claims: vec![Claim(HeaderSet::new()), Claim(HeaderSet::new())],
     };
     let handler = CarriedBatch::<Pages, ConnectedMemoryBroker, Counted, _>::over(
         |_values: &[Counted], _ctx: &mut Context| ready(HandlerOutcome::ack()),

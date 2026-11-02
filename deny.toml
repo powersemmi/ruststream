@@ -19,6 +19,8 @@ allow = [
     # unicode-ident is (MIT OR Apache-2.0) AND Unicode-3.0; the Unicode license
     # only covers the embedded character tables and is permissive.
     "Unicode-3.0",
+    # assert_no_alloc, the failing allocator of the no-heap test leg (test builds only).
+    "BSD-1-Clause",
 ]
 
 [bans]
@@ -38,6 +40,9 @@ skip = [
     # The embedded runtime hashes lane keys with hash32 1.0, while heapless 0.9.3 still
     # depends on hash32 0.3. Drop this skip once heapless moves to hash32 1.0.
     { crate = "hash32@0.3", reason = "heapless 0.9.3 depends on hash32 0.3" },
+    # defmt depends on bitflags 1 in every release up to 1.2.0, while the rest of the graph is on
+    # bitflags 2. Drop this skip once defmt moves to bitflags 2.
+    { crate = "bitflags@1", reason = "defmt depends on bitflags 1" },
 ]
 
 [sources]

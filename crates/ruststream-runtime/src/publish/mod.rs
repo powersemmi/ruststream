@@ -7,17 +7,22 @@
 //! (content-type, schema id), or observe it (publish metrics). The chain is symmetric to the
 //! consume-side static [`Stack`](super::Stack).
 
+#[cfg(ruststream_alloc)]
 use alloc::boxed::Box;
+#[cfg(ruststream_alloc)]
 use core::pin::Pin;
 
+#[cfg(ruststream_alloc)]
 use crate::lifecycle::BoxError;
 pub use crate::outgoing::{Outgoing, OutgoingName};
 pub use crate::wire::{Serialized, WireBytes};
+#[cfg(ruststream_alloc)]
 use ruststream_core::IfSend;
 
 // The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
 // The static pipeline returns unboxed RPITIT futures; only the opt-in runtime-composed list
-// pays this allocation.
+// pays this allocation, and it exists only where there is a heap to box on.
+#[cfg(ruststream_alloc)]
 pub(super) type PublishFut<'a> = IfSend<
     Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>,
     Pin<Box<dyn Future<Output = Result<(), BoxError>> + 'a>>,
@@ -33,6 +38,8 @@ mod sealed {
 }
 
 mod builder;
+#[cfg(ruststream_alloc)]
+mod dynamic;
 mod ext;
 mod out;
 mod pipeline;
@@ -46,23 +53,24 @@ mod wiring;
 
 pub use builder::message_of;
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 pub(crate) use builder::raw_of;
 pub use builder::{
-    BoundSegment, EncodeOutcome, EncodedWire, HeaderSource, HeadersUnset, MapHeaders, MessageBody,
-    MessageWire, MissingSegment, PayloadError, PublishAt, PublishBuilder, PublishError,
-    PublishHeaders, ResolvedName, SatisfiesContract, SerializePayloadError, SerializedWire,
-    SuppliedName, TemplateAddress, TypedHeaders, WirePayload,
+    BoundSegment, EncodedWire, HeaderSource, HeadersUnset, MapHeaders, MessageBody, MessageWire,
+    MissingSegment, PayloadError, PublishAt, PublishBuilder, PublishError, PublishHeaders,
+    ResolvedName, SatisfiesContract, SerializedWire, SuppliedName, TemplateAddress, TypedHeaders,
+    WirePayload,
 };
+pub use builder::{EncodeOutcome, SerializePayloadError};
+#[cfg(ruststream_alloc)]
+pub use dynamic::{PublishDynLayer, PublishDynNext, PublishDynStack};
 pub use ext::PublishExt;
 pub use out::{
     LowerOutTransforms, NamedDestinationSend, NarrowToUse, OutPipeline, PipelinePublishError,
     SendOnlyPolicy, SlotStackUse, SlotTransforms,
 };
 pub(crate) use pipeline::SendThrough;
-pub use pipeline::{
-    PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity, PublishLayer, PublishNext,
-    PublishPipeline, PublishStack,
-};
+pub use pipeline::{PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishStack};
 pub use publisher::{Transactional, TypedPublisher};
 pub use reply::{BatchRefusal, ReplyPublisher};
 pub use sink::{CallCodec, PublishCodec, PublishSink, SinkOutcome, SinkRefusal, UnnamedCodec};
@@ -82,4 +90,5 @@ pub use wiring::{
 };
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests;

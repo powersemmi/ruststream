@@ -7,8 +7,9 @@
 
 use core::ops::{Deref, DerefMut};
 
-use bytes::{Bytes, BytesMut};
+use crate::copied::{CopiedPayload, take_frozen};
 use ruststream_core::PayloadForm;
+use ruststream_core::{EncodeBuf, PayloadBuf};
 
 #[cfg(feature = "std")]
 use core::cell::Cell;
@@ -19,12 +20,12 @@ use core::mem;
 std::thread_local! {
     // The largest buffer this thread has encoded into, with no cap: the same rule as the
     // buffer a dispatch loop reuses.
-    static SLOT: Cell<Option<BytesMut>> = const { Cell::new(None) };
+    static SLOT: Cell<Option<PayloadBuf>> = const { Cell::new(None) };
 }
 
 /// A buffer for one publish, on loan from the thread's slot when the transport only reads it.
 pub(crate) struct Scratch {
-    buf: BytesMut,
+    buf: PayloadBuf,
     /// Whether the buffer goes back to the slot when the publish is over.
     returns: bool,
 }
@@ -41,7 +42,7 @@ impl Scratch {
             }
         } else {
             Self {
-                buf: BytesMut::new(),
+                buf: PayloadBuf::new(),
                 returns: false,
             }
         }
@@ -49,40 +50,41 @@ impl Scratch {
 
     #[cfg(feature = "std")]
     #[inline]
-    fn lent() -> BytesMut {
+    fn lent() -> PayloadBuf {
         // A slot that is gone (the thread is tearing down) hands out nothing.
         SLOT.try_with(Cell::take).ok().flatten().unwrap_or_default()
     }
 
     #[cfg(not(feature = "std"))]
     #[inline]
-    fn lent() -> BytesMut {
-        BytesMut::new()
+    fn lent() -> PayloadBuf {
+        PayloadBuf::new()
     }
 
     /// Moves the bytes written so far out as a value of their own, with no copy, and keeps the
     /// rest of the buffer out of the slot: it shares storage with what left, so the next publish
     /// on this thread starts a fresh one. The refusal path only.
-    pub(crate) fn split_off_frozen(&mut self) -> Bytes {
+    pub(crate) fn split_off_frozen(&mut self) -> CopiedPayload {
         self.returns = false;
-        self.buf.split().freeze()
+        take_frozen(&mut self.buf)
     }
 }
 
 impl Deref for Scratch {
-    type Target = BytesMut;
+    type Target = EncodeBuf;
 
-    fn deref(&self) -> &BytesMut {
+    fn deref(&self) -> &EncodeBuf {
         &self.buf
     }
 }
 
 impl DerefMut for Scratch {
-    fn deref_mut(&mut self) -> &mut BytesMut {
+    fn deref_mut(&mut self) -> &mut EncodeBuf {
         &mut self.buf
     }
 }
 
+#[cfg(feature = "std")]
 impl Drop for Scratch {
     #[inline]
     fn drop(&mut self) {

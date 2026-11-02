@@ -190,6 +190,15 @@ of `on_startup`. Builder methods such as `app().state(..)` do not exist for this
 `start`, `publish`, `settle` and `advance` return `Result`; the test returns
 `Result<(), Box<dyn Error>>` and uses `?`.
 
+### A device service rides the embedded `TestApp`
+
+`ruststream::testing::embedded::TestApp` drives an `EmbeddedApp` on the host with embassy-time's
+mock clock, and `tb.advance(d)` moves it. It follows the form of the build: without `alloc` it
+drives the fixed form (`FixedHeaders`, slice codecs, the board's `static` bus), and a test binary
+that installs `assert_no_alloc::AllocDisabler` as its global allocator fails on an allocation of
+the framework. A state with a heap type frees it inside the app's poll, so a device test keeps its
+state in `static` counters. See the `ruststream` skill, `references/embedded.md`.
+
 ## Quick reference
 
 | Need | Call |

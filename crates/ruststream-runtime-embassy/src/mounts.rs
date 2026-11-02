@@ -5,27 +5,106 @@
 // are not `Send`, and the app's one task polls them where it was spawned.
 #![allow(clippy::future_not_send)]
 
+#[cfg(any(ruststream_alloc, feature = "testing"))]
 use alloc::rc::Rc;
 use core::any::type_name;
 use core::fmt::{self, Debug, Formatter};
 use core::future::ready;
+#[cfg(not(ruststream_alloc))]
+use core::ops::Deref;
 
+use ruststream_core::diag::warn;
 use ruststream_core::{Broker, ConnectedBroker};
 use ruststream_runtime::{OpenRoutes, RunRoutes, ScopeDelivery};
-use tracing::warn;
 
 use crate::app::RunError;
+
+/// A connected broker as the app holds it: counted with `alloc`, so a [`Bindable`](crate::Bindable)
+/// can share it with its tokens.
+#[cfg(ruststream_alloc)]
+#[doc(hidden)]
+pub type Held<B> = Rc<<B as Broker>::Connected>;
 
 /// Where a broker's connected form is shared once the app has connected it: the slot a
 /// [`Bindable`](crate::Bindable) fills for the tokens it minted, or [`NoSlot`] for a broker that
 /// shares nothing.
+#[cfg(ruststream_alloc)]
 #[doc(hidden)]
 pub trait ConnectSlot<B: Broker> {
     /// Hands the slot the connected form, once the broker is connected.
-    fn fill(&self, connected: &Rc<B::Connected>);
+    fn fill(&self, connected: &Held<B>);
 
     /// Takes the connected form back out, before the broker shuts down.
     fn empty(&self);
+}
+
+/// Where a broker's connected form lives while the app runs: the app's own frame for a broker
+/// registered as it is ([`NoSlot`]), the [`BindCell`](crate::BindCell) of a
+/// [`Bindable`](crate::Bindable) when tokens must reach it.
+#[cfg(not(ruststream_alloc))]
+#[doc(hidden)]
+pub trait ConnectSlot<B: Broker> {
+    /// How the app holds the connected form, reading it through `Deref`.
+    type Held: Deref<Target = B::Connected>;
+
+    /// Takes the connected form into the slot, once the broker is connected.
+    fn hold(&self, connected: B::Connected) -> Self::Held;
+
+    /// Gives the connected form back, before the broker shuts down; `None` when the slot no
+    /// longer has it.
+    fn release(&self, held: Self::Held) -> Option<B::Connected>;
+
+    /// Takes a connected form the test harness shares with the app into the slot, in the
+    /// in-process run.
+    #[cfg(feature = "testing")]
+    fn hold_shared(&self, connected: Rc<B::Connected>) -> Self::Held;
+}
+
+/// A connected form the app owns outright, or in the in-process run shares with the harness.
+#[cfg(not(ruststream_alloc))]
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum Own<Connected> {
+    /// The app's alone.
+    Alone(Connected),
+    /// Counted, so the harness reaches it too.
+    #[cfg(feature = "testing")]
+    Shared(Rc<Connected>),
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<Connected> Own<Connected> {
+    /// The connected form back, when no one else holds it.
+    #[cfg(feature = "testing")]
+    pub(crate) fn into_inner(self) -> Option<Connected> {
+        match self {
+            Self::Alone(connected) => Some(connected),
+            Self::Shared(connected) => Rc::try_unwrap(connected).ok(),
+        }
+    }
+
+    /// The connected form back: the app's alone, so no one else holds it.
+    // The signature is that of the build with `testing`, where a count the harness keeps can
+    // outlive the app.
+    #[cfg(not(feature = "testing"))]
+    #[allow(clippy::unnecessary_wraps)]
+    pub(crate) fn into_inner(self) -> Option<Connected> {
+        let Self::Alone(connected) = self;
+        Some(connected)
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<Connected> Deref for Own<Connected> {
+    type Target = Connected;
+
+    fn deref(&self) -> &Connected {
+        match self {
+            Self::Alone(connected) => connected,
+            #[cfg(feature = "testing")]
+            Self::Shared(connected) => connected,
+        }
+    }
 }
 
 /// The slot of a broker registered as it is: it shares its connected form with no one.
@@ -33,10 +112,29 @@ pub trait ConnectSlot<B: Broker> {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoSlot;
 
+#[cfg(ruststream_alloc)]
 impl<B: Broker> ConnectSlot<B> for NoSlot {
-    fn fill(&self, _connected: &Rc<B::Connected>) {}
+    fn fill(&self, _connected: &Held<B>) {}
 
     fn empty(&self) {}
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<B: Broker> ConnectSlot<B> for NoSlot {
+    type Held = Own<B::Connected>;
+
+    fn hold(&self, connected: B::Connected) -> Own<B::Connected> {
+        Own::Alone(connected)
+    }
+
+    fn release(&self, held: Own<B::Connected>) -> Option<B::Connected> {
+        held.into_inner()
+    }
+
+    #[cfg(feature = "testing")]
+    fn hold_shared(&self, connected: Rc<B::Connected>) -> Own<B::Connected> {
+        Own::Shared(connected)
+    }
 }
 
 /// What `with_broker` takes: a broker as it is, or a [`Bindable`](crate::Bindable) whose tokens
@@ -80,12 +178,15 @@ pub struct BrokerMount<B, Routes, Slot = NoSlot> {
 /// A broker connected: the app owns it, and the slot of a [`Bindable`](crate::Bindable) holds the
 /// other count until the broker shuts down.
 #[doc(hidden)]
-pub struct SharedConnection<B: Broker, Slot> {
-    pub(crate) connected: Rc<B::Connected>,
+pub struct SharedConnection<B: Broker, Slot: ConnectSlot<B>> {
+    #[cfg(ruststream_alloc)]
+    pub(crate) connected: Held<B>,
+    #[cfg(not(ruststream_alloc))]
+    pub(crate) connected: Slot::Held,
     pub(crate) slot: Slot,
 }
 
-impl<B: Broker, Slot> Debug for SharedConnection<B, Slot> {
+impl<B: Broker, Slot: ConnectSlot<B>> Debug for SharedConnection<B, Slot> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("SharedConnection").finish_non_exhaustive()
     }
@@ -96,8 +197,15 @@ impl<B: Broker, Slot: ConnectSlot<B>> CloseAll for SharedConnection<B, Slot> {
         // The slot lets go first, so the app holds the one count. The harness keeps the connected
         // form weakly and upgrades it only inside a synchronous call of its own, never across
         // the app's poll.
-        self.slot.empty();
-        if let Ok(connected) = Rc::try_unwrap(self.connected) {
+        #[cfg(ruststream_alloc)]
+        {
+            self.slot.empty();
+            if let Ok(connected) = Rc::try_unwrap(self.connected) {
+                close(connected).await;
+            }
+        }
+        #[cfg(not(ruststream_alloc))]
+        if let Some(connected) = self.slot.release(self.connected) {
             close(connected).await;
         }
     }
@@ -163,13 +271,13 @@ pub trait OpenLinked<State> {
 
 /// A broker connected, its slot filled, its routes waiting to open under their scope.
 #[doc(hidden)]
-pub struct Linked<B: Broker, Routes, Slot> {
+pub struct Linked<B: Broker, Routes, Slot: ConnectSlot<B>> {
     pub(crate) connection: SharedConnection<B, Slot>,
     pub(crate) routes: Routes,
     pub(crate) scope: ScopeDelivery,
 }
 
-impl<B: Broker, Routes, Slot> Debug for Linked<B, Routes, Slot> {
+impl<B: Broker, Routes, Slot: ConnectSlot<B>> Debug for Linked<B, Routes, Slot> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Linked").finish_non_exhaustive()
     }
@@ -223,8 +331,14 @@ where
             broker: type_name::<B>(),
             source: err.into(),
         })?;
-        let connected = Rc::new(connected);
-        slot.fill(&connected);
+        #[cfg(ruststream_alloc)]
+        let connected = {
+            let connected = Rc::new(connected);
+            slot.fill(&connected);
+            connected
+        };
+        #[cfg(not(ruststream_alloc))]
+        let connected = slot.hold(connected);
         Ok(Linked {
             connection: SharedConnection { connected, slot },
             routes,
@@ -337,5 +451,17 @@ pub(crate) async fn close<Connected: ConnectedBroker>(connected: Connected) {
             error = %err,
             "broker shutdown failed",
         );
+    }
+}
+
+#[cfg(all(test, not(ruststream_alloc)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_connected_form_the_app_owns_alone_reads_through_and_comes_back() {
+        let own = Own::Alone(7u32);
+        assert_eq!(*own, 7);
+        assert_eq!(own.into_inner(), Some(7));
     }
 }

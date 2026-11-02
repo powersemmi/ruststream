@@ -8,14 +8,16 @@
 //! dependencies arrive as arguments instead of being reached for through `ctx.state()`. A failed
 //! extraction short-circuits the delivery with the rejection's [`HandlerOutcome`].
 
+#[cfg(test)]
+#[cfg(ruststream_alloc)]
 use alloc::format;
 use core::any::type_name;
 use core::convert::Infallible;
 use core::fmt;
 use ruststream_core::{MaybeSend, MaybeSync};
 
+use ruststream_core::diag::warn;
 use serde::de::DeserializeOwned;
-use tracing::warn;
 
 use crate::ContextField;
 
@@ -404,7 +406,7 @@ impl<T: DeserializeOwned> Headers<T> {
                 ctx.mark_decode_failed();
                 Err(match policy {
                     FailurePolicy::FailFast => {
-                        ctx.fail_fast(&format!("header extraction failed: {err}"));
+                        ctx.fail_fast_with("header extraction failed", err);
                         HandlerOutcome::drop()
                     }
                     other => other
@@ -432,11 +434,12 @@ where
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
     use serde::Deserialize;
 
     use super::*;
-    use crate::HeaderMap;
+    use crate::HeaderSet;
     use crate::dispatch::Delivery;
 
     #[derive(Debug, Deserialize)]
@@ -456,8 +459,8 @@ mod tests {
         }
     }
 
-    fn headers_with(task_id: &'static str) -> HeaderMap {
-        let mut headers = HeaderMap::new();
+    fn headers_with(task_id: &'static str) -> HeaderSet {
+        let mut headers = HeaderSet::new();
         headers.insert("task_id", task_id);
         headers
     }

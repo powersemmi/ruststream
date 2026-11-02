@@ -41,48 +41,38 @@
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
-#[cfg(any(feature = "std", test))]
+// The harness's side (`testing`) is `std` code of its own: its task-local needs the standard
+// library without the contract's `std` feature, which turns the heap on.
+#[cfg(any(feature = "std", feature = "testing", test))]
 extern crate std;
 
 #[cfg(feature = "std")]
 pub mod bindable;
 #[cfg(feature = "asyncapi")]
 pub mod bindings;
-#[cfg(feature = "alloc")]
 mod broker;
-#[cfg(feature = "alloc")]
 mod capability;
-#[cfg(feature = "alloc")]
 pub mod codec;
 #[cfg(feature = "alloc")]
 mod describe;
-#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub mod diag;
 mod error;
-#[cfg(feature = "alloc")]
 mod field;
-#[cfg(feature = "alloc")]
+mod fixed_buf;
 mod form;
-#[cfg(feature = "alloc")]
 mod headers;
-#[cfg(feature = "alloc")]
 mod message;
-#[cfg(feature = "alloc")]
 pub mod outgoing;
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 pub mod pairing;
-#[cfg(feature = "alloc")]
 mod publisher;
-#[cfg(feature = "alloc")]
 mod schema;
 mod send;
-#[cfg(feature = "alloc")]
 mod subscriber;
-#[cfg(feature = "alloc")]
 mod subscription;
-#[cfg(feature = "alloc")]
 mod typed_headers;
-#[cfg(feature = "alloc")]
 pub mod wire;
 
 #[cfg(feature = "alloc")]
@@ -90,47 +80,49 @@ pub use bytes::{Bytes, BytesMut};
 #[cfg(feature = "alloc")]
 pub use bytes_utils::Str;
 
-#[cfg(feature = "alloc")]
 pub use broker::{Broker, Connected, ConnectedBroker, SendBroker};
 #[cfg(feature = "alloc")]
 pub use capability::{
-    ApiKeyLocation, BatchSlot, BatchStream, BatchSubscriber, Carries, CarriesBatch, DescribeServer,
-    HttpApiKeyLocation, OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme,
-    Seekable, Seeker, ServerSpec, Subscribe, Transaction, TransactionalPublisher,
+    ApiKeyLocation, DescribeServer, HttpApiKeyLocation, SecurityScheme, ServerSpec,
+};
+pub use capability::{
+    BatchSlot, BatchStream, BatchSubscriber, Carries, CarriesBatch, OwnedTransactions, Partitioned,
+    Positioned, RequestReply, Seekable, Seeker, Subscribe, Transaction, TransactionalPublisher,
 };
 #[cfg(feature = "alloc")]
 pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
-#[cfg(feature = "alloc")]
+#[cfg(not(feature = "alloc"))]
+pub use error::Cause;
 pub use error::{AckError, DeclareRetryError};
-#[cfg(feature = "alloc")]
 pub use field::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
+#[cfg(not(feature = "alloc"))]
+pub use fixed_buf::PAYLOAD_CAPACITY;
+pub use fixed_buf::{BufferFull, EncodeBuf, FixedBuf, FixedBufOf, FixedBufView, PayloadBuf};
 #[cfg(feature = "alloc")]
 pub use headers::HeaderMap;
-#[cfg(feature = "alloc")]
-pub use message::{IncomingMessage, OutgoingMessage, RawMessage, Settle};
-#[cfg(feature = "alloc")]
+pub use headers::Headers;
+#[cfg(not(feature = "alloc"))]
+pub use headers::{FixedHeaders, HEADER_BYTES, HEADER_ENTRIES, HeadersFull};
+#[cfg(any(feature = "alloc", feature = "testing"))]
+pub use message::RawMessage;
+pub use message::{IncomingMessage, OutgoingMessage, Settle};
 pub use publisher::{
-    DefaultPublish, Lend, OutgoingFor, PairError, PayloadForm, PublishMessageError, PublishOutcome,
-    PublishPolicy, Publisher, Take,
+    Capped, DefaultPublish, Lend, OutgoingFor, PairError, PayloadForm, PublishMessageError,
+    PublishOutcome, PublishPolicy, Publisher, Take, Unbounded,
 };
-#[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use publisher::{KeptPayload, PayloadEncode, SinkOutcome, SinkRefusal};
-#[cfg(feature = "alloc")]
 pub use schema::{
     CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,
     NameTemplate, NoHeaders, OutgoingDestination, WithHeaders,
 };
 #[doc(hidden)]
 pub use send::{IfSend, MaybeSend, MaybeSendSync, MaybeSync};
-#[cfg(feature = "alloc")]
 pub use subscriber::{ReadyHint, Subscriber};
-#[cfg(feature = "alloc")]
 pub use subscription::{
-    AddressedCopies, BrokerMoves, CopyPath, FromName, Name, NamedCopies, RedeliveryAddress,
-    RedeliveryAddressed, RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
+    AddressedCopies, BrokerMoves, CopyPath, FromName, Name, NameText, NamedCopies,
+    RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
 };
-#[cfg(feature = "alloc")]
 pub use typed_headers::{DeserializeHeadersError, SerializeHeadersError};
 
 /// Builds a [`NonZero`](core::num::NonZero) integer from a literal, rejecting zero at compile

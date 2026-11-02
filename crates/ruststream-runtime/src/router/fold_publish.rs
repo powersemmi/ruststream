@@ -17,7 +17,7 @@ use crate::publish::{
     RawReplyWiring, ReplyWiring, TypedPublisher,
 };
 use crate::publishing::{EncodeReply, PublishingCall, PublishingHandler, warn_ignored_reply_name};
-use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
+use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription, startup_failure};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Origin;
 use crate::{
@@ -100,10 +100,10 @@ where
         let publisher = publisher
             .pair_local(connected)
             .await
-            .map_err(BoxError::from)?;
+            .map_err(|err| startup_failure("reply publisher", &name, err))?;
         let injections = Def::Injections::resolve(extra, connected, &subscriber)
             .await
-            .map_err(BoxError::from)?;
+            .map_err(|err| startup_failure("injections", &name, err))?;
         let handler = PublishingHandler {
             def,
             codec,
@@ -178,10 +178,10 @@ where
         let publisher = publisher
             .pair_local(connected)
             .await
-            .map_err(BoxError::from)?;
+            .map_err(|err| startup_failure("reply publisher", &name, err))?;
         let injections = Def::Injections::resolve(extra, connected, &subscriber)
             .await
-            .map_err(BoxError::from)?;
+            .map_err(|err| startup_failure("injections", &name, err))?;
         let handler = PublishingHandler {
             def,
             codec,

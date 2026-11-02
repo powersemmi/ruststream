@@ -10,6 +10,7 @@
 //! takes a source (a name string or a broker config value), the runtime resolves it once against
 //! the [`ConnectedBroker`] form produced by [`Broker::connect`](crate::Broker::connect).
 
+#[cfg(feature = "alloc")]
 use alloc::borrow::Cow;
 use core::fmt;
 
@@ -21,6 +22,45 @@ use crate::{ConnectedBroker, DeclareRetryError, Subscriber};
 
 mod retry;
 mod sources;
+
+/// The text of a name a descriptor or a declaration holds: a `Cow<'static, str>` with `alloc`, a
+/// `&'static str` without, where a name is a literal of the program.
+#[cfg(feature = "alloc")]
+pub type NameText = Cow<'static, str>;
+/// The text of a name a descriptor or a declaration holds: a `Cow<'static, str>` with `alloc`, a
+/// `&'static str` without, where a name is a literal of the program.
+#[cfg(not(feature = "alloc"))]
+pub type NameText = &'static str;
+
+/// The text of a name, borrowed.
+#[cfg(feature = "alloc")]
+pub(crate) fn name_str(name: &NameText) -> &str {
+    name.as_ref()
+}
+
+/// The text of a name, borrowed.
+#[cfg(not(feature = "alloc"))]
+pub(crate) const fn name_str(name: &NameText) -> &str {
+    name
+}
+
+/// The text of a name when it is a literal of the program: a borrowed `Cow`, or the `&'static str`
+/// itself.
+#[cfg(feature = "alloc")]
+pub(crate) fn static_text(name: &NameText) -> Option<&'static str> {
+    match name {
+        Cow::Borrowed(literal) => Some(literal),
+        Cow::Owned(_) => None,
+    }
+}
+
+/// The text of a name when it is a literal of the program: a borrowed `Cow`, or the `&'static str`
+/// itself.
+#[cfg(not(feature = "alloc"))]
+#[expect(clippy::unnecessary_wraps, reason = "one signature for both variants")]
+pub(crate) const fn static_text(name: &NameText) -> Option<&'static str> {
+    Some(*name)
+}
 
 pub(crate) use retry::copy_path;
 pub use retry::{AddressedCopies, BrokerMoves, CopyPath, NamedCopies, RetryDeclaration};
@@ -111,6 +151,53 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     /// Used for handler metadata and `AsyncAPI` generation; it need not be the only routing
     /// information the source carries.
     fn name(&self) -> &str;
+
+    /// The name as a literal of the program, when the descriptor holds it as one.
+    ///
+    /// A build without `alloc` keeps a subscription's name in a fixed room and refuses to start
+    /// on a longer one, because nothing there can own a name built at run time. A descriptor that
+    /// holds a `&'static str` (or a `Cow::Borrowed`) answers it here, and the runtime then holds
+    /// the name whole, of any length, without copying it. The default answers `None`, which is
+    /// always correct: the runtime copies [`name`](Self::name) into its fixed room instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::borrow::Cow;
+    ///
+    /// use ruststream::{AddressedCopies, Subscribe, SubscriptionSource};
+    ///
+    /// /// A topic descriptor whose name may be a literal of the service or a name built from
+    /// /// its configuration.
+    /// #[derive(Debug, Clone)]
+    /// struct Topic {
+    ///     name: Cow<'static, str>,
+    /// }
+    ///
+    /// impl<C: Subscribe> SubscriptionSource<C> for Topic {
+    ///     type Subscriber = C::Subscriber;
+    ///     type Copies = AddressedCopies;
+    ///
+    ///     fn name(&self) -> &str {
+    ///         &self.name
+    ///     }
+    ///
+    ///     // A borrowed name is a literal; an owned one was built at run time.
+    ///     fn static_name(&self) -> Option<&'static str> {
+    ///         match self.name {
+    ///             Cow::Borrowed(literal) => Some(literal),
+    ///             Cow::Owned(_) => None,
+    ///         }
+    ///     }
+    ///
+    ///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+    ///         connected.subscribe(&self.name).await
+    ///     }
+    /// }
+    /// ```
+    fn static_name(&self) -> Option<&'static str> {
+        None
+    }
 
     /// Opens the subscription against the connected broker. Called once at startup.
     ///
@@ -481,7 +568,7 @@ pub trait RedeliveryAddressed<C: ConnectedBroker>:
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RedeliveryAddress(Cow<'static, str>);
+pub struct RedeliveryAddress(NameText);
 
 impl RedeliveryAddress {
     /// The address a deferred copy is published under.
@@ -526,7 +613,7 @@ impl RedeliveryAddress {
     /// }
     /// ```
     #[must_use]
-    pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
+    pub fn new(name: impl Into<NameText>) -> Self {
         Self(name.into())
     }
 
@@ -552,12 +639,31 @@ impl RedeliveryAddress {
     /// ```
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        name_str(&self.0)
+    }
+
+    /// The address as the text it was made from: a literal stays a borrowed `&'static str`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::RedeliveryAddress;
+    ///
+    /// /// A broker crate keeps the address of a copy for as long as the subscription runs.
+    /// fn kept(address: RedeliveryAddress) -> String {
+    ///     String::from(&*address.into_text())
+    /// }
+    ///
+    /// assert_eq!(kept(RedeliveryAddress::new("orders.retry")), "orders.retry");
+    /// ```
+    #[must_use]
+    pub fn into_text(self) -> NameText {
+        self.0
     }
 }
 
 impl fmt::Display for RedeliveryAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(self.0.as_ref())
     }
 }

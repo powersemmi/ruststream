@@ -15,6 +15,9 @@ ruststream = "0.8"
 # 有堆、没有操作系统的设备：只用 embassy，构建中不会出现 tokio。
 ruststream = { version = "0.8", default-features = false, features = ["embassy", "macros", "json"] }
 
+# 没有堆的设备：构建在启动时和处理每条消息时都不分配内存。
+ruststream = { version = "0.8", default-features = false, features = ["embassy", "memory", "macros", "postcard"] }
+
 # 运行在 tokio 上的 broker crate，它关闭默认 feature。
 ruststream = { version = "0.8", default-features = false, features = ["tokio"] }
 ```
@@ -50,8 +53,34 @@ embassy 运行器提供固定数量的 worker（`.pool::<N>()` 和 `.keyed::<N>(
 这与其他发布失败一样，有它自己的错误“没有空闲记录”：处理函数的 `.error` 续体会收到通知；没有它时，失败会写入日志，副本丢失。
 无论哪种情况，这条投递都已确认，所以处理函数不会因为存储已满而再次运行。
 
+## 没有堆的 embassy 运行器
+
+embassy 运行器有两种构建形态，一次构建只含其中一种。
+启用 `alloc` feature 时，它把头部、载荷、后续任务和失败信息放在堆上。
+不启用时，同一个运行器把它们放在固定大小的存储里，启动时和处理每条消息时都不分配内存，所以没有堆的设备也能运行这个框架。
+`tokio`、`json`、`cbor` 和 `msgpack` 会打开 `alloc`，依赖图中任何请求它的 crate 也会：feature 只会叠加，打开了 `alloc` 的依赖图整体都是带堆的形态。
+
+两种形态下服务的写法相同：`#[subscriber]`、`#[ruststream::app(runtime = embassy)]`、`.then`、`.error`、`Out` 槽位和类型化头部。
+不同的是那些大小原本由堆决定的部分：
+
+| 部分 | 有 `alloc` | 无 `alloc` |
+|---|---|---|
+| 消息的头部 | `HeaderMap` | `FixedHeaders`：8 个条目和 256 字节，装满后 `insert` 返回错误 |
+| 编解码器 | `Codec`：`json`、`cbor`、`msgpack` | `SliceCodec`：`postcard` 和 `json-core`，编码到切片中 |
+| 后续任务（`and_after`、`.then`、`.error`） | 放在堆上 | 放在 128 字节的空间里；更大的捕获无法编译 |
+| `.error` 读取的失败信息 | 按值传入 | 从订阅的固定缓冲区借用 |
+| `ctx.after(..)` | 登记 | 返回 `Result`，因为一次投递只有四个登记名额 |
+| 批 | 结果的 `Vec` | 最多 16 条，在挂载处用 `.batch::<N>()` 指定 |
+| 本地总线 | `LocalMemoryBroker::new()` | 由开发板声明为 `static` 的 `LocalMemoryBus` |
+| 诊断 | `tracing` 事件 | `log` 或 `defmt`，取决于启用了哪个 feature |
+
+形态由构建选定，所以处理器不会按它分支。
+带堆形态的类型在固定形态中无法解析，超出的容量是点名该容量的编译错误。
+组件页面[嵌入式运行时](../components/application/embedded-runtime.md)展示了一个固定形态下的完整设备服务，以及挂载处要指定的每项容量。
+
 ## 测试
 
 `TestApp` 运行 tokio 应用，`testing::embedded::TestApp` 在主机上用 embassy-time 的模拟时钟运行嵌入式应用。
 启用 `testing` 时，两者同时位于门面中。
 启用 `testing` 时，嵌入式应用注册的每个 broker 都实现进程内模式 `InProcess`。
+嵌入式的 `TestApp` 跟随构建的形态：没有 `alloc` 时它驱动固定形态，测试程序可以装上一个对框架的任何内存分配都报错的分配器。

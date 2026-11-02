@@ -67,7 +67,19 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    let entries = declared_entries(template.is_some(), name, &ty_generics, &parameters);
+    // The document describes the declared messages only where the framework has a heap.
+    let outgoing_method = if cfg!(feature = "alloc") {
+        let entries = declared_entries(template.is_some(), name, &ty_generics, &parameters);
+        quote! {
+            fn outgoing()
+                -> ::ruststream::__private::Vec<::ruststream::runtime::OutgoingMessageMetadata>
+            {
+                #entries
+            }
+        }
+    } else {
+        quote!()
+    };
 
     // The OutMessages impl adds its own marker type parameter; pushing it onto a clone of the
     // generics (after any lifetimes) keeps the emitted parameter order legal.
@@ -105,11 +117,7 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         impl #set_impl_generics ::ruststream::runtime::OutMessages<__RsM> for #name #ty_generics
         #set_where_clause
         {
-            fn outgoing()
-                -> ::ruststream::__private::Vec<::ruststream::runtime::OutgoingMessageMetadata>
-            {
-                #entries
-            }
+            #outgoing_method
         }
 
         #template_items

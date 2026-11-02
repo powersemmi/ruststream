@@ -11,10 +11,10 @@ use super::{
     BatchPublishTransform, BatchTransformIdentity, ForReply, Outgoing, PublishContext,
     PublishTransform, PublishTransformIdentity, SendThrough,
 };
-use crate::codec::{Codec, Encoding};
+use crate::codec::{ActiveCodec as Codec, Encoding};
 use crate::lifecycle::BoxError;
 use crate::publish_failure::Refusal;
-use crate::{HeaderMap, PayloadForm, Publisher};
+use crate::{HeaderSet, PayloadForm, Publisher};
 
 /// A byte [`Publisher`](crate::Publisher) paired with a [`Codec`] and a static [`PublishTransform`] stack: what a
 /// reply wiring becomes once the broker connects.
@@ -85,7 +85,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .publisher
             .base_headers()
             .cloned()
-            .unwrap_or_else(HeaderMap::new);
+            .unwrap_or_else(HeaderSet::new);
         <P::Payload as PayloadForm>::rebuilt(name.into(), payload, headers)
     }
 

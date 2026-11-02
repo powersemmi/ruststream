@@ -24,6 +24,7 @@ use crate::pairing::Origin;
 use crate::testing::attribution::{RecordedOptions, RuntimePublish, Span};
 use crate::testing::hooks::{DueCall, DuePublish};
 use crate::testing::on_thread::OnThread;
+use crate::testing::{Bookkept, harness_future, harness_section};
 use crate::{OutgoingMessage, RawMessage};
 
 use super::{Coordinator, LiveSubscription};
@@ -114,7 +115,7 @@ where
 /// The record is what the `published` assertions read (the messages live, the options in both
 /// modes), and what a live settle waits for the subscriptions to handle.
 #[must_use]
-pub(crate) struct PipelinePublish(Option<(Coordinator, Origin, RuntimePublish)>);
+pub(crate) struct PipelinePublish(Option<Bookkept<(Coordinator, Origin, RuntimePublish)>>);
 
 impl PipelinePublish {
     /// Captures `msg` and the `options` it is published with for the harness driving the current
@@ -127,7 +128,7 @@ impl PipelinePublish {
         Payload: AsRef<[u8]>,
         Options: Clone + MaybeSendSync + 'static,
     {
-        Self(
+        Self(harness_section(|| {
             HARNESS
                 .try_with(|scope| {
                     let publish = RuntimePublish {
@@ -138,18 +139,22 @@ impl PipelinePublish {
                             finished: 0,
                         },
                     };
-                    (scope.coordinator.clone(), publishing(), publish)
+                    Bookkept::new((scope.coordinator.clone(), publishing(), publish))
                 })
-                .ok(),
-        )
+                .ok()
+        }))
     }
 
     /// Records the captured message, the broker took it, and runs the hooks registered on the
     /// destination it went to.
     pub(crate) async fn sent(self) {
-        if let Some((coordinator, origin, mut publish)) = self.0 {
-            publish.span.finished = coordinator.tick();
-            coordinator.record_sent(origin, publish).run().await;
+        if let Some(captured) = self.0 {
+            let (coordinator, origin, mut publish) = captured.into_inner();
+            harness_future(async move {
+                publish.span.finished = coordinator.tick();
+                coordinator.record_sent(origin, publish).run().await;
+            })
+            .await;
         }
     }
 }
@@ -164,13 +169,17 @@ fn raw_of<Payload: AsRef<[u8]>>(msg: &OutgoingMessage<'_, Payload>) -> RawMessag
 /// settle path knows the deliveries and their settlements but not which harness (if any) is
 /// watching, and it sits behind four call sites whose signatures would otherwise all have to
 /// carry one.
-pub(crate) fn record_batch(name: &str, deliveries: Vec<Delivered>) {
+pub(crate) fn record_batch(name: &str, deliveries: impl IntoIterator<Item = Delivered>) {
+    harness_section(|| record_batch_in_harness(name, deliveries));
+}
+
+fn record_batch_in_harness(name: &str, deliveries: impl IntoIterator<Item = Delivered>) {
     let _ = HARNESS.try_with(|scope| {
         let due = scope.coordinator.record(Record {
             scope_id: scope.scope_id,
             subscription: scope.subscription,
             name: name.to_owned(),
-            deliveries,
+            deliveries: deliveries.into_iter().collect(),
             panicked: false,
             decode_failed: false,
         });
@@ -445,12 +454,14 @@ impl TestHooks {
     /// one.
     #[doc(hidden)]
     pub fn subscribed(&self, scope_id: usize, name: &str) -> usize {
-        let mut subscriptions = self
-            .subscriptions
-            .lock()
-            .expect("test hooks subscriptions mutex poisoned");
-        subscriptions.push((scope_id, name.to_owned()));
-        subscriptions.len() - 1
+        harness_section(|| {
+            let mut subscriptions = self
+                .subscriptions
+                .lock()
+                .expect("test hooks subscriptions mutex poisoned");
+            subscriptions.push((scope_id, name.to_owned()));
+            subscriptions.len() - 1
+        })
     }
 
     /// Every subscription the app mounts, in mount order.

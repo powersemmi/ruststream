@@ -295,7 +295,7 @@ pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// and adds, beside it, a module of the same name: `task`, the one `#[embassy_executor::task]`
 /// that runs the app, taking the builder's arguments, and `CONTROL`, the app's `static Control`.
 /// The device's crate depends on `embassy-executor`. A run that ends on an error leaves the
-/// health at `Failed` and logs the error through `tracing`. The attribute takes no arguments on
+/// health at `Failed` and reports the error to the build's diagnostics (`tracing` with `alloc`, `log` or `defmt` without). The attribute takes no arguments on
 /// this runtime, and the builder is not generic: the task is one concrete embassy task.
 ///
 /// ```ignore

@@ -10,7 +10,9 @@
 //! raw deliveries (`DynStack<M>`, middleware bound `M: IncomingMessage`) or decoded values
 //! (`DynStack<T>`).
 
+#[cfg(ruststream_alloc)]
 use alloc::boxed::Box;
+#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
 use core::{fmt, pin::Pin};
 use ruststream_core::{IfSend, MaybeSendSync, MaybeSync};
@@ -173,7 +175,7 @@ mod tests {
     use super::super::context::Context;
     use super::super::handler::{Handler, HandlerOutcome};
     use super::{BoxFut, DynMiddleware, DynStack, Next};
-    use crate::HeaderMap;
+    use crate::HeaderSet;
     use crate::dispatch::Delivery;
 
     struct Input;
@@ -217,7 +219,7 @@ mod tests {
         assert!(format!("{handler:?}").contains("DynStackHandler"));
         let state = ();
         let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("test", &headers, &state, (), &delivery);
         assert!(handler.handle(&Input, &mut ctx).await.is_ack());
         assert_eq!(*log.lock().expect("poisoned"), vec!["a", "b", "inner"]);

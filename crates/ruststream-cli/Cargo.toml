@@ -45,7 +45,7 @@ tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "ti
 ruststream = { path = "../..", features = ["macros", "memory", "json"] }
 # The compile-fail snapshot that holds an embedded app out of the CLI.
 ruststream-runtime-embassy.workspace = true
-ruststream-memory = { workspace = true, features = ["embassy"] }
+ruststream-memory = { workspace = true, features = ["embassy", "alloc"] }
 trybuild = "1"
 
 [lints]

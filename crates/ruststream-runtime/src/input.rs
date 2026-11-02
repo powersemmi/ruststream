@@ -11,9 +11,7 @@
 //! copying, or boxing appears on the delivery path: the provided and carried forms borrow
 //! straight out of the delivery on every broker.
 
-use alloc::boxed::Box;
-use alloc::format;
-use alloc::string::ToString;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::any::type_name;
 use core::fmt;
@@ -23,9 +21,10 @@ use ruststream_core::{MaybeSendSync, MaybeSync};
 use serde::de::DeserializeOwned;
 
 use crate::Message;
-use crate::codec::{Codec, CodecError};
+use crate::codec::{ActiveCodec as Codec, CodecError, decode_error};
 use crate::handle::{Input, Solo, SoloSet};
 use crate::in_messages::InMessages;
+#[cfg(ruststream_alloc)]
 use crate::metadata::IncomingMessageMetadata;
 use crate::{Carries, IncomingMessage, Settle, Subscriber, SubscriptionSource};
 
@@ -94,6 +93,7 @@ pub trait DecodeWith<DecodeCodec>: InputKind {
     /// The models of the input's message set, for the generated document: one per variant of
     /// an `InMessages` enum, none for an input that is one message.
     #[must_use]
+    #[cfg(ruststream_alloc)]
     fn incoming() -> Vec<IncomingMessageMetadata> {
         Vec::new()
     }
@@ -133,6 +133,7 @@ pub trait Materialize<Decoder, M>: InputKind {
     /// The models of the input's message set, for the generated document. See
     /// [`DecodeWith::incoming`].
     #[must_use]
+    #[cfg(ruststream_alloc)]
     fn incoming() -> Vec<IncomingMessageMetadata> {
         Vec::new()
     }
@@ -159,6 +160,7 @@ pub trait TypedLane<T, DecodeCodec> {
     /// The models of the type's message set, for the generated document: one per variant of an
     /// `InMessages` enum, none for a type that is one message.
     #[must_use]
+    #[cfg(ruststream_alloc)]
     fn incoming() -> Vec<IncomingMessageMetadata> {
         Vec::new()
     }
@@ -175,6 +177,7 @@ impl<T: InMessages<DecodeCodec>, DecodeCodec: Codec> TypedLane<T, DecodeCodec> f
         <T as InMessages<DecodeCodec>>::decode(codec, msg)
     }
 
+    #[cfg(ruststream_alloc)]
     fn incoming() -> Vec<IncomingMessageMetadata> {
         <T as InMessages<DecodeCodec>>::incoming()
     }
@@ -224,6 +227,7 @@ where
         <T::Axis as TypedLane<T, DecodeCodec>>::decode(codec, msg)
     }
 
+    #[cfg(ruststream_alloc)]
     fn incoming() -> Vec<IncomingMessageMetadata> {
         <T::Axis as TypedLane<T, DecodeCodec>>::incoming()
     }
@@ -251,6 +255,7 @@ where
         held
     }
 
+    #[cfg(ruststream_alloc)]
     fn incoming() -> Vec<IncomingMessageMetadata> {
         <T::Axis as TypedLane<T, DecodeCodec>>::incoming()
     }
@@ -362,10 +367,7 @@ where
     P: DeserializeOwned,
     M: IncomingMessage,
 {
-    let contract: H = msg
-        .headers()
-        .to_typed()
-        .map_err(|err| CodecError::Decode(Box::from(err.to_string())))?;
+    let contract: H = msg.headers().to_typed().map_err(decode_error)?;
     let body: P = codec.decode(msg.payload())?;
     Ok(Message::new(contract, body))
 }
@@ -526,10 +528,10 @@ where
 
     fn materialize<'m>(_decoder: &Lend<Src, Conn>, msg: &'m M) -> Result<&'m T, CodecError> {
         Src::lend(msg).ok_or_else(|| {
-            CodecError::Decode(Box::from(format!(
+            decode_error(format_args!(
                 "the delivery carries no `{}`",
                 type_name::<T>()
-            )))
+            ))
         })
     }
 

@@ -8,7 +8,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::codec::BufWriter;
 #[cfg(target_os = "none")]
 use crate::codec::json_slice;
-use crate::codec::{Codec, CodecError, ENCODE_CAPACITY};
+use crate::codec::{ActiveCodec as Codec, CodecError, ENCODE_CAPACITY};
 
 /// A JSON [`Codec`] (`application/json`). Stateless; clone freely.
 ///

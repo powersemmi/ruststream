@@ -1,36 +1,54 @@
 //! Settling a delivery by its handler's outcome: the ack, the nack, and the copies the runtime
 //! publishes for a retry or a dead letter.
 
+#[cfg(ruststream_alloc)]
 use alloc::string::ToString;
+#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
 use core::time::Duration;
 use ruststream_core::MaybeSendSync;
 
-use bytes::Bytes;
+#[cfg(ruststream_alloc)]
+use crate::copied::CopiedPayload;
+#[cfg(ruststream_alloc)]
+use crate::copied::copy_or_empty;
+#[cfg(ruststream_alloc)]
 use futures::FutureExt;
-use tracing::warn;
+use ruststream_core::diag::warn;
 
-#[cfg(feature = "testing")]
+#[cfg(all(feature = "testing", ruststream_alloc))]
 use super::harness_scope;
 use super::{Delivery, RETRY_COUNT_HEADER, Slot};
 #[cfg(doc)]
 use crate::IncomingMessage;
-use crate::handler::{Continuation, HandlerResult};
-use crate::host::{HostDetach, PrepareKept};
+#[cfg(ruststream_alloc)]
+use crate::OutgoingMessage;
+#[cfg(ruststream_alloc)]
+use crate::Str;
+#[cfg(ruststream_alloc)]
+use crate::handler::Continuation;
+use crate::handler::HandlerResult;
+use crate::host::{HostDetach, PrepareKept, detach_continuation};
+#[cfg(ruststream_alloc)]
 use crate::publish::PublishContext;
+use crate::publish_failure::Reaction;
+#[cfg(ruststream_alloc)]
 use crate::publish_failure::publish_done;
-use crate::publish_failure::{Reaction, Refusal, publish_lost};
-use crate::redelivery::{RetryCopies, RetryRoute};
-#[cfg(feature = "testing")]
+#[cfg(ruststream_alloc)]
+use crate::publish_failure::{Refusal, publish_lost};
+use crate::redelivery::RetryCopies;
+#[cfg(ruststream_alloc)]
+use crate::redelivery::RetryRoute;
+#[cfg(all(feature = "testing", ruststream_alloc))]
 use crate::testing::coordinator::{Coordinator, in_harness_scope};
-use crate::{AckError, HeaderMap, OutgoingMessage, RetryDeclaration, Settle, Str};
+use crate::{AckError, HeaderSet, RetryDeclaration, Settle};
 
 mod keep;
 
 use keep::keep_copy;
 
 /// Parses the current [`RETRY_COUNT_HEADER`] value, defaulting to zero when absent or malformed.
-fn current_retry_count(headers: &HeaderMap) -> u64 {
+fn current_retry_count(headers: &HeaderSet) -> u64 {
     headers
         .get_str(RETRY_COUNT_HEADER)
         .and_then(|v| v.parse().ok())
@@ -128,7 +146,7 @@ pub(crate) async fn settle_reacting<M, C, Host>(
     // No publish took the reaction: the delivery settled without the runtime publishing a copy,
     // so what the handler registered beside `.error` runs now.
     if let Some(then) = reaction.and_then(Reaction::into_then) {
-        host.detach_boxed(then);
+        detach_continuation!(host, then);
     }
 }
 
@@ -265,13 +283,31 @@ where
 
 /// The way a copy of a failed delivery leaves: the subscription's retry publisher, or
 /// the store of copies the runner's host keeps in place.
+#[cfg(ruststream_alloc)]
 enum CopyPath<'a, Retry, Kept> {
     /// A copy published through the registration's retry publisher, its timer the runner's
     /// detached work.
+    #[cfg(ruststream_alloc)]
     Published(&'a Arc<RetryRoute<Retry>>),
+
     /// A copy written into a record of the host's store, published from there.
     Kept(&'a Kept),
 }
+
+/// The way a copy of a failed delivery leaves: the store of copies the runner's host keeps in
+/// place, the only path of a build without a heap.
+#[cfg(not(ruststream_alloc))]
+enum CopyPath<'a, Kept> {
+    /// A copy written into a record of the host's store, published from there.
+    Kept(&'a Kept),
+}
+
+/// The copy path of a host `Host`.
+#[cfg(ruststream_alloc)]
+type HostPath<'a, Host> = CopyPath<'a, <Host as HostDetach>::Retry, <Host as HostDetach>::Kept>;
+/// The copy path of a host `Host`.
+#[cfg(not(ruststream_alloc))]
+type HostPath<'a, Host> = CopyPath<'a, <Host as HostDetach>::Kept>;
 
 /// Where one copy goes.
 #[derive(Debug, Clone, Copy)]
@@ -285,7 +321,8 @@ pub(super) enum Target<'a> {
 /// The copy path of this delivery: the registration's retry publisher where the host carries
 /// one, the host's store of kept copies otherwise; `None` where the broker moves the delivery
 /// itself.
-fn copy_path<Host: HostDetach>(host: &Host) -> Option<CopyPath<'_, Host::Retry, Host::Kept>> {
+fn copy_path<Host: HostDetach>(host: &Host) -> Option<HostPath<'_, Host>> {
+    #[cfg(ruststream_alloc)]
     if let Some(route) = host.retry() {
         return Some(CopyPath::Published(route));
     }
@@ -301,13 +338,15 @@ fn copy_path<Host: HostDetach>(host: &Host) -> Option<CopyPath<'_, Host::Retry, 
 #[allow(clippy::too_many_arguments)]
 // `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
 #[allow(clippy::future_not_send)]
+// Only the published path reads the delivery.
+#[cfg_attr(not(ruststream_alloc), allow(unused_variables))]
 async fn send_copy<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
     target: Target<'_>,
     delay: Option<Duration>,
     reaction: &mut Option<Reaction>,
-    path: CopyPath<'_, Host::Retry, Host::Kept>,
+    path: HostPath<'_, Host>,
     delivery: &Delivery<C>,
     host: &Host,
     build_cx: fn(&M) -> C,
@@ -318,6 +357,7 @@ where
     Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>,
 {
     match path {
+        #[cfg(ruststream_alloc)]
         CopyPath::Published(retry) => {
             let destination = match target {
                 Target::Subscription => retry.destination.clone(),
@@ -544,7 +584,7 @@ async fn dead_letter<M, C, Host>(
     destination: &str,
     at_cap: bool,
     reaction: &mut Option<Reaction>,
-    path: CopyPath<'_, Host::Retry, Host::Kept>,
+    path: HostPath<'_, Host>,
     delivery: &Delivery<C>,
     host: &Host,
     build_cx: fn(&M) -> C,
@@ -605,6 +645,7 @@ fn warn_at_cap(name: &str, attempt: u64, destination: Option<&str>) {
 
 /// Whether the harness, rather than the runner, keeps this delivery's delayed copy.
 #[cfg_attr(not(feature = "testing"), allow(unused_variables))]
+#[cfg(ruststream_alloc)]
 fn harness_schedules<C>(delivery: &Delivery<C>) -> bool {
     #[cfg(feature = "testing")]
     if delivery.hooks.coordinator().is_some() {
@@ -631,6 +672,7 @@ fn harness_schedules<C>(delivery: &Delivery<C>) -> bool {
 #[allow(clippy::too_many_arguments)]
 // `Send` exactly where the runner's host is: a multi-thread runner's `Detach` is `Sync`.
 #[allow(clippy::future_not_send)]
+#[cfg(ruststream_alloc)]
 async fn publish_copy<M, C, Host>(
     slot: &mut Slot<M>,
     name: &str,
@@ -657,7 +699,7 @@ where
     // this path runs only after a delivery has failed, so a broker that keeps owned bytes copies
     // once there, where handing them over would cost the runtime a conversion on every retry.
     let msg = slot.get();
-    let payload = Bytes::copy_from_slice(msg.payload());
+    let payload = copy_or_empty(msg.payload());
     let delivered = msg.headers().clone();
     let mut headers = delivered.clone();
     let next_count = current_retry_count(&headers) + 1;
@@ -737,7 +779,7 @@ where
         // detached task would let the loop pull the next delivery before this one is back. What
         // the handler's `.error` makes of a failure runs beside the loop.
         if let Some(reaction) = republish(false).await {
-            host.detach_boxed(reaction);
+            detach_continuation!(host, reaction);
         }
         return Ok(());
     };
@@ -758,13 +800,14 @@ where
 
 /// What a copy's publish makes of its result: the `.then` that follows a success, and for a
 /// failure the `.error` continuation, or a log line and the loss of the message without one.
+#[cfg(ruststream_alloc)]
 fn copy_sent(
     sent: Result<(), Refusal>,
     reaction: Option<Reaction>,
     subscription: &str,
     target: &str,
     input: &str,
-    payload: Bytes,
+    payload: CopiedPayload,
 ) -> Option<Continuation> {
     match sent {
         Ok(()) => publish_done(reaction),
@@ -778,6 +821,7 @@ fn copy_sent(
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
     use crate::Settle;
     use crate::handler::Continuation;
@@ -797,8 +841,9 @@ mod tests {
     // Named one by one rather than globbed: the module is written over the contract traits,
     // and these tests drive the deliveries through the traits a broker implements.
     use super::{
-        AckError, Arc, Bytes, Delivery, Duration, HandlerResult, HeaderMap, OutgoingMessage,
-        RETRY_COUNT_HEADER, RetryDeclaration, Slot, settle_nack_after, settle_outcome,
+        AckError, Arc, CopiedPayload, Delivery, Duration, HandlerResult, HeaderSet,
+        OutgoingMessage, RETRY_COUNT_HEADER, RetryDeclaration, Slot, settle_nack_after,
+        settle_outcome,
     };
     use crate::IncomingMessage;
     use crate::host::Detach;
@@ -840,12 +885,15 @@ mod tests {
         settled: &Arc<AtomicU8>,
         settlement: Settlement,
     ) -> PlainMessage {
-        let mut headers = HeaderMap::new();
+        let mut headers = HeaderSet::new();
         for (k, v) in name_headers {
-            headers.insert((*k).to_owned(), Bytes::copy_from_slice(v.as_bytes()));
+            headers.insert(
+                (*k).to_owned(),
+                CopiedPayload::copy_from_slice(v.as_bytes()),
+            );
         }
         PlainMessage {
-            payload: Bytes::from_static(b"body"),
+            payload: CopiedPayload::from_static(b"body"),
             headers,
             settled: Arc::clone(settled),
             settlement,

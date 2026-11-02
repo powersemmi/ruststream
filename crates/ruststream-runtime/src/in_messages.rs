@@ -6,23 +6,31 @@
 //! a `serde` model, [`Deserialized`] for one that reads its own bytes), the set picks the variant
 //! by its rule, and the generated document lists one message per variant.
 
+#[cfg(ruststream_alloc)]
 use alloc::boxed::Box;
+#[cfg(ruststream_alloc)]
 use alloc::format;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
-use alloc::string::ToString;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
+#[cfg(ruststream_alloc)]
 use core::any::type_name;
 use core::fmt;
 use core::hash::Hash;
 use ruststream_core::MaybeSendSync;
 
 use serde::de::DeserializeOwned;
+#[cfg(ruststream_alloc)]
 use thiserror::Error;
 
-use crate::codec::{Codec, CodecError, FrameNames};
+use crate::codec::{ActiveCodec as Codec, CodecError, FrameNames, decode_error};
 use crate::handle::{Deserialized, Input, Solo, SoloDeserialized};
+#[cfg(ruststream_alloc)]
 use crate::metadata::IncomingMessageMetadata;
 use crate::{IncomingMessage, MessageInfo};
+#[cfg(not(ruststream_alloc))]
+use ruststream_core::codec::CodecFailure;
 
 /// A declared set of message models a handler receives on one subscription, as
 /// `#[derive(InMessages)]` implements it on an enum whose variants each wrap one model.
@@ -208,6 +216,7 @@ pub trait InMessages<DecodeCodec: Codec>: Sized + MaybeSendSync + 'static {
 
     /// The models of the set, in the order of the variants, as the generated document lists
     /// them.
+    #[cfg(ruststream_alloc)]
     fn incoming() -> Vec<IncomingMessageMetadata>;
 }
 
@@ -276,6 +285,7 @@ pub trait InVariant<Set>: Sized + MaybeSendSync + 'static {
     /// its lane. The set adds the model's schemas and, under the header rule, the value that
     /// names it.
     #[must_use]
+    #[cfg(ruststream_alloc)]
     fn describe() -> IncomingMessageMetadata;
 }
 
@@ -297,6 +307,7 @@ where
         <Model::Axis as VariantLane<Model>>::decode(codec, payload)
     }
 
+    #[cfg(ruststream_alloc)]
     fn describe() -> IncomingMessageMetadata {
         IncomingMessageMetadata::new(type_name::<Model>())
             .with_message_name(Some(Model::NAME))
@@ -337,7 +348,7 @@ where
     const DESERIALIZED: bool = true;
 
     fn decode<DecodeCodec: Codec>(_codec: &DecodeCodec, payload: &[u8]) -> Result<F, CodecError> {
-        F::from_payload(payload).map_err(|err| CodecError::Decode(err.to_string().into()))
+        F::from_payload(payload).map_err(decode_error)
     }
 }
 
@@ -361,6 +372,7 @@ impl<T: MessageInfo> MessageDeclaration for T {}
 
 /// The failure of a set whose every variant failed to decode: each variant's own error, in the
 /// order they were tried.
+#[cfg(ruststream_alloc)]
 #[derive(Debug, Error)]
 #[error(
     "no variant of the message set `{set}` decodes the delivery: {}",
@@ -371,6 +383,7 @@ struct EveryVariantFailed {
     failures: Vec<(&'static str, CodecError)>,
 }
 
+#[cfg(ruststream_alloc)]
 fn list(failures: &[(&'static str, CodecError)]) -> String {
     failures
         .iter()
@@ -381,6 +394,7 @@ fn list(failures: &[(&'static str, CodecError)]) -> String {
 
 /// Why a discriminated set did not decode: the rule picked no variant, or a header it reads is
 /// missing or names no variant.
+#[cfg(ruststream_alloc)]
 #[derive(Debug, Error)]
 enum NoVariant {
     #[error("the discriminator of the message set `{set}` chose no variant for the delivery")]
@@ -410,6 +424,7 @@ enum NoVariant {
 
 /// The decode error of a left-to-right set whose every variant failed. Machinery behind the
 /// derive.
+#[cfg(ruststream_alloc)]
 #[doc(hidden)]
 #[must_use]
 pub fn every_variant_failed(
@@ -421,33 +436,68 @@ pub fn every_variant_failed(
         failures: failures.into_iter().collect(),
     }))
 }
+#[cfg(not(ruststream_alloc))]
+#[doc(hidden)]
+#[must_use]
+pub fn every_variant_failed(
+    set: &'static str,
+    failures: impl IntoIterator<Item = (&'static str, CodecError)>,
+) -> CodecError {
+    let _ = (set, failures);
+    CodecError::Decode(CodecFailure::Type)
+}
 
 /// The decode error of a discriminated set whose function chose no variant. Machinery behind
 /// the derive.
+#[cfg(ruststream_alloc)]
 #[doc(hidden)]
 #[must_use]
 pub fn no_variant_chosen(set: &'static str) -> CodecError {
     CodecError::Decode(Box::new(NoVariant::Chosen { set }))
 }
+#[cfg(not(ruststream_alloc))]
+#[doc(hidden)]
+#[must_use]
+pub fn no_variant_chosen(set: &'static str) -> CodecError {
+    let _ = set;
+    CodecError::Decode(CodecFailure::Type)
+}
 
 /// The decode error of a `by_codec` set whose codec frame names none of its models. Machinery
 /// behind the derive.
+#[cfg(ruststream_alloc)]
 #[doc(hidden)]
 #[must_use]
 pub fn frame_names_no_variant(set: &'static str) -> CodecError {
     CodecError::Decode(Box::new(NoVariant::FrameNamesNone { set }))
 }
+#[cfg(not(ruststream_alloc))]
+#[doc(hidden)]
+#[must_use]
+pub fn frame_names_no_variant(set: &'static str) -> CodecError {
+    let _ = set;
+    CodecError::Decode(CodecFailure::Type)
+}
 
 /// The decode error of a header-discriminated set whose header the delivery lacks. Machinery
 /// behind the derive.
+#[cfg(ruststream_alloc)]
 #[doc(hidden)]
 #[must_use]
 pub fn header_missing(set: &'static str, header: &'static str) -> CodecError {
     CodecError::Decode(Box::new(NoVariant::HeaderMissing { set, header }))
 }
+#[cfg(not(ruststream_alloc))]
+#[doc(hidden)]
+#[must_use]
+pub fn header_missing(set: &'static str, header: &'static str) -> CodecError {
+    let _ = (set, header);
+    CodecError::Decode(CodecFailure::Type)
+}
 
 /// The decode error of a header-discriminated set whose header carries a value no variant
 /// declares. Machinery behind the derive.
+#[cfg(ruststream_alloc)]
 #[doc(hidden)]
 #[must_use]
 pub fn header_unknown(
@@ -463,8 +513,21 @@ pub fn header_unknown(
         known,
     }))
 }
+#[cfg(not(ruststream_alloc))]
+#[doc(hidden)]
+#[must_use]
+pub fn header_unknown(
+    set: &'static str,
+    header: &'static str,
+    seen: &[u8],
+    known: &'static [&'static str],
+) -> CodecError {
+    let _ = (set, header, seen, known);
+    CodecError::Decode(CodecFailure::Type)
+}
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
     use super::{
         every_variant_failed, frame_names_no_variant, header_missing, header_unknown,
@@ -540,5 +603,31 @@ mod tests {
     fn a_value_that_is_not_text_is_rendered_lossily() {
         let err = header_unknown("OrderEvent", "event", &[0xff, b'a'], &["created"]);
         assert!(err.to_string().contains("is `\u{fffd}a`"), "{err}");
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(ruststream_alloc))]
+mod bare_tests {
+    use ruststream_core::codec::CodecFailure;
+
+    use super::{
+        every_variant_failed, frame_names_no_variant, header_missing, header_unknown,
+        no_variant_chosen,
+    };
+    use crate::codec::CodecError;
+
+    #[test]
+    fn a_set_that_decodes_nothing_reports_a_type_mismatch() {
+        let errors = [
+            every_variant_failed("OrderEvent", []),
+            no_variant_chosen("OrderEvent"),
+            frame_names_no_variant("OrderEvent"),
+            header_missing("OrderEvent", "event"),
+            header_unknown("OrderEvent", "event", b"x", &["created"]),
+        ];
+        for err in errors {
+            assert!(matches!(err, CodecError::Decode(CodecFailure::Type)));
+        }
     }
 }

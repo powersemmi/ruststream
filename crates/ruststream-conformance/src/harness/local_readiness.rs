@@ -12,12 +12,12 @@ use std::time::Duration;
 use futures::Stream;
 use futures::task::{ArcWake, waker};
 use ruststream_core::{
-    AckError, Broker, ConnectedBroker, OutgoingMessage, Publisher, ReadyHint, Settle, Subscriber,
-    SubscriptionSource,
+    AckError, Broker, ConnectedBroker, Publisher, ReadyHint, Settle, Subscriber, SubscriptionSource,
 };
 use tokio::sync::Notify;
 use tokio::time::{Instant, timeout, timeout_at};
 
+use super::outgoing;
 use crate::helpers::unique_subject;
 
 /// How long one step of the scenario may take, the whole wait for a delivery included.
@@ -295,7 +295,7 @@ async fn settle<M: Settle>(message: M) {
 async fn publish<Pub: Publisher>(publisher: &Pub, subject: &str, payload: &[u8]) {
     within(
         "publish",
-        publisher.publish(OutgoingMessage::new(subject, payload), None),
+        publisher.publish(outgoing::<Pub::Payload>(subject, payload), None),
     )
     .await
     .unwrap_or_else(|err| panic!("local_readiness: a publish to {subject:?} failed: {err}"));

@@ -9,28 +9,96 @@
 //! connected broker travels from the erased `connect` to the typed starters through a shared
 //! slot ([`ConnectedSlot`]), populated before any subscription opens.
 
+#[cfg(ruststream_alloc)]
 use alloc::boxed::Box;
 #[cfg(feature = "std")]
 use alloc::format;
 #[cfg(feature = "std")]
 use alloc::sync::Arc;
-#[cfg(feature = "testing")]
+#[cfg(all(ruststream_alloc, feature = "testing"))]
 use core::any::{Any, TypeId};
+#[cfg(not(ruststream_alloc))]
+use core::any::{Any, type_name};
+use core::error::Error as StdError;
+#[cfg(ruststream_alloc)]
+use core::pin::Pin;
 #[cfg(feature = "std")]
 use core::{any::type_name, fmt};
-use core::{error::Error as StdError, pin::Pin};
+#[cfg(not(ruststream_alloc))]
+use core::{fmt, ops::Deref};
 
 #[cfg(feature = "std")]
 use crate::bindable::ConnectedSlot;
 #[cfg(feature = "std")]
 use crate::{Broker, ConnectedBroker, SendBroker};
+#[cfg(not(ruststream_alloc))]
+use ruststream_core::Cause;
 
 /// A broker's error, erased.
+#[cfg(ruststream_alloc)]
 pub type BoxError = Box<dyn StdError + Send + Sync>;
+
+/// A broker's error as a device without a heap holds it: the [`Cause`] it maps to, which is
+/// `Copy`.
+///
+/// A [`Cause`] passes through as it is. Any other error is named by its type, because the error
+/// value itself has no heap to live on: the type name is the `kind` and the code is zero. Like
+/// the boxed error of a build with `alloc`, it does not implement `Error` itself; it dereferences
+/// to the cause, which does.
+#[cfg(not(ruststream_alloc))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoxError(Cause);
+
+#[cfg(not(ruststream_alloc))]
+impl BoxError {
+    /// An error that says `kind`, with no client code.
+    #[must_use]
+    pub const fn msg(kind: &'static str) -> Self {
+        Self(Cause::new(kind, 0))
+    }
+
+    /// The cause as an error to print or to walk the sources of.
+    #[must_use]
+    pub const fn as_error(&self) -> &(dyn StdError + Send + Sync + 'static) {
+        &self.0
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<Error: StdError + Send + Sync + 'static> From<Error> for BoxError {
+    fn from(error: Error) -> Self {
+        // `Error: 'static`, so a `Cause` the caller already mapped is recognised and kept whole.
+        let any: &dyn Any = &error;
+        Self(
+            any.downcast_ref::<Cause>()
+                .copied()
+                .unwrap_or_else(|| Cause::new(type_name::<Error>(), 0)),
+        )
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl Deref for BoxError {
+    type Target = Cause;
+
+    fn deref(&self) -> &Cause {
+        &self.0
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl fmt::Display for BoxError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
 /// A future, erased, that may move between tasks.
+#[cfg(ruststream_alloc)]
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// A lifecycle step's future, erased. It is not `Send`: a step runs once, on the task that starts
 /// or stops the app, and the contract's lifecycle futures carry no `Send`.
+#[cfg(ruststream_alloc)]
 pub type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 /// The in-process transition of one registered broker type, erased.
@@ -38,12 +106,13 @@ pub type LocalBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 /// It takes that broker boxed as `Any` and yields its connected form boxed the same way. A test registration builds it for the
 /// concrete type it names, so the erased broker below can connect in process without knowing
 /// which transport it is.
-#[cfg(feature = "testing")]
+#[cfg(all(ruststream_alloc, feature = "testing"))]
 pub type InProcessConnect =
     fn(Box<dyn Any + Send>) -> LocalBoxFuture<'static, Result<Box<dyn Any + Send>, BoxError>>;
 
 /// An unconnected broker, with its concrete type and error erased. Consuming `connect` yields
 /// the erased connected form.
+#[cfg(ruststream_alloc)]
 pub trait BrokerLifecycle: Send + Sync {
     /// Connects the broker, yielding its erased connected form.
     fn connect(
@@ -70,6 +139,7 @@ pub trait BrokerLifecycle: Send + Sync {
 
 /// A connected broker, erased. Consuming `shutdown` drives the typed
 /// [`ConnectedBroker::shutdown`] and discards the typed witness (it carries no erasable surface).
+#[cfg(ruststream_alloc)]
 pub trait ConnectedLifecycle: Send + Sync {
     /// Shuts the broker down, discarding the typed witness.
     fn shutdown(self: Box<Self>) -> LocalBoxFuture<'static, Result<(), BoxError>>;
@@ -209,5 +279,61 @@ impl<B: SendBroker> ConnectedLifecycle for ConnectedCell<B> {
                 .map(|_closed| ())
                 .map_err(BoxError::from)
         })
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(ruststream_alloc))]
+mod fixed_tests {
+    use core::error::Error;
+    use core::fmt::Write;
+
+    use heapless::String;
+    use ruststream_core::Cause;
+
+    use super::BoxError;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("link down")]
+    struct LinkDown;
+
+    fn printed(error: &BoxError) -> String<64> {
+        let mut text = String::new();
+        write!(text, "{error}").expect("fits");
+        text
+    }
+
+    #[test]
+    fn a_cause_passes_through_whole() {
+        let error = BoxError::from(Cause::new("link down", 7));
+
+        assert_eq!((error.kind(), error.code()), ("link down", 7));
+    }
+
+    #[test]
+    fn any_other_error_is_named_by_its_type() {
+        let error = BoxError::from(LinkDown);
+
+        assert!(error.kind().ends_with("LinkDown"));
+        assert_eq!(error.code(), 0);
+    }
+
+    #[test]
+    fn a_message_carries_its_text_as_the_kind() {
+        let error = BoxError::msg("a batch reply was refused");
+
+        assert_eq!(
+            printed(&error).as_str(),
+            "a batch reply was refused (code 0)"
+        );
+    }
+
+    #[test]
+    fn the_error_is_copy_and_prints_as_its_cause() {
+        let error = BoxError::from(Cause::new("link down", 7));
+        let again = error;
+
+        assert_eq!(printed(&error).as_str(), "link down (code 7)");
+        assert!(again.source().is_none());
     }
 }

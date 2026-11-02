@@ -11,6 +11,9 @@ description = "The broker contract of the RustStream messaging framework; servic
 keywords = ["messaging", "async", "broker", "pubsub", "ruststream"]
 categories = ["asynchronous", "network-programming"]
 readme = "../../README.md"
+# Lets the crates that depend on the contract read, in their build scripts, whether it was built
+# with `alloc`: a build has one variant throughout, whatever features each crate asked for.
+links = "ruststream-core"
 
 [package.metadata.docs.rs]
 all-features = true
@@ -19,7 +22,7 @@ all-features = true
 default = ["std"]
 # The contract itself: its headers, payloads, names and errors live on the heap, so every trait and
 # message type needs it. A `no_std` build with an allocator turns on this feature alone.
-alloc = ["dep:bytes", "dep:bytes-utils", "dep:futures-core", "dep:serde", "dep:thiserror", "serde/alloc"]
+alloc = ["dep:bytes", "dep:bytes-utils", "serde/alloc"]
 # The standard library's side of the dependencies, and the broker wrapper `Bindable`, whose slot is
 # a `std` mutex.
 std = [
@@ -30,6 +33,12 @@ std = [
     "thiserror/std",
     "serde_json?/std",
 ]
+# Where the framework's diagnostics go. A build with `tracing` reports through it and no other sink;
+# the others serve a build without `alloc`: `log` for a host or a board with a logger, `defmt` for a
+# board with a probe (both may be on). With none of them a diagnostic is type-checked and dropped.
+tracing = ["dep:tracing"]
+log = ["dep:log"]
+defmt = ["dep:defmt"]
 # `Send` (and `Sync`) on the futures and the implementors of the contract traits, for a runtime that
 # moves work between threads. Without it the same traits ask nothing of the sort, and an embedded
 # runtime implements them with types that hold `Rc` or `RefCell`.
@@ -40,16 +49,20 @@ json = ["alloc", "dep:serde_json", "serde_json/alloc"]
 asyncapi = ["json"]
 # The hook a `Bound` token pairs through, which the test harness reads: a tokio task-local, so the
 # harness's side of the contract runs on a host.
-testing = ["std", "dep:tokio"]
+testing = ["dep:tokio", "dep:bytes", "dep:bytes-utils", "bytes/std", "bytes-utils/std"]
 
 [dependencies]
 bytes = { workspace = true, optional = true }
 bytes-utils = { workspace = true, optional = true }
-futures-core = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
+futures-core.workspace = true
+heapless.workspace = true
+serde.workspace = true
 serde_json = { workspace = true, optional = true }
-thiserror = { workspace = true, optional = true }
+thiserror.workspace = true
 tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
 
 [dev-dependencies]
 futures.workspace = true

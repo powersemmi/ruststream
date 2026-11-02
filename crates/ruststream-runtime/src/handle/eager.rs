@@ -2,15 +2,15 @@
 //! through the ordinary subscriber and batch machinery, with the body adapted to the dispatch
 //! contracts here.
 
-use alloc::format;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
-use alloc::vec::Vec;
 use core::marker::PhantomData;
 use core::{any, fmt};
 use ruststream_core::MaybeSendSync;
 
-use tracing::warn;
+use ruststream_core::diag::warn;
 
+use crate::batch::BatchVec;
 use crate::batch::{BatchDef, BatchResult, SliceHandler};
 use crate::context::{Context, MarkingContext};
 use crate::failure::FailurePolicy;
@@ -49,7 +49,7 @@ where
             ctx.mark_decode_failed();
             Err(match ctx.decode_policy() {
                 FailurePolicy::FailFast => {
-                    ctx.fail_fast(&format!("payload construction failed: {err}"));
+                    ctx.fail_fast_with("payload construction failed", err);
                     HandlerOutcome::drop()
                 }
                 other => other
@@ -187,6 +187,7 @@ where
         self.0.docs.description()
     }
 
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         self.0
             .docs
@@ -195,6 +196,7 @@ where
             .or_else(Doc::payload_schema)
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         self.0
             .docs
@@ -239,7 +241,7 @@ impl<A, H> fmt::Debug for BatchBody<A, H> {
 /// exactly batch-length (a mismatch is a bug in the handler and panics under the subscriber's
 /// panic policy).
 pub(super) fn settle_batch(
-    verdict: Result<(), Vec<HandlerOutcome>>,
+    verdict: Result<(), BatchVec<HandlerOutcome>>,
     batch_len: usize,
     subscription: &str,
 ) -> BatchResult {
@@ -377,6 +379,7 @@ where
         self.0.docs.description()
     }
 
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         self.0
             .docs
@@ -385,6 +388,7 @@ where
             .or_else(Doc::payload_schema)
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         self.0
             .docs

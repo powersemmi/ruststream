@@ -45,14 +45,16 @@ use crate::{MemoryBroker, MemorySeeker, Retaining};
 /// `>`) refuses to open with [`MemoryError::WildcardName`]; [`MemoryPattern`] reads a pattern.
 #[derive(Debug, Clone)]
 pub struct MemorySource {
-    name: String,
+    name: Cow<'static, str>,
 }
 
 impl MemorySource {
     /// Creates a source bound to `name`.
     #[must_use]
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into() }
+        Self {
+            name: Cow::Owned(name.into()),
+        }
     }
 }
 
@@ -60,7 +62,7 @@ impl MemorySource {
 // constructor the `#[subscriber(MemorySource)]` form builds through.
 impl FromName for MemorySource {
     fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(name.into().into_owned())
+        Self { name: name.into() }
     }
 }
 
@@ -72,6 +74,13 @@ impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySour
 
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn static_name(&self) -> Option<&'static str> {
+        match self.name {
+            Cow::Borrowed(literal) => Some(literal),
+            Cow::Owned(_) => None,
+        }
     }
 
     async fn subscribe(

@@ -16,6 +16,7 @@ another line. Deeper material:
 - [references/handlers.md](references/handlers.md): outcomes, retries and dead letters, `and_after`, mount-site settings (`workers`, `threads`, `batch`, `start_at`, `on_failure`), extractors, raw payloads
 - [references/publishing.md](references/publishing.md): replies, `Out` slots, destinations, per-message broker settings, publish transforms, the first publish at startup, transactions
 - [references/app.md](references/app.md): the app builder, state, codecs, routers, middleware, broker descriptors, AsyncAPI
+- [references/embedded.md](references/embedded.md): a device service on the embassy runtime, with a heap and without `alloc`
 
 For tests, use the `ruststream-testing` skill.
 

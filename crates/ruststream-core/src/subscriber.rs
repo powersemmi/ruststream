@@ -56,12 +56,13 @@ pub trait Subscriber: MaybeSend {
 ///
 /// An embedded app is one task that joins every subscription, and a wake of that task cannot tell
 /// which subscription woke it, so each idle subscription is polled on every wake. A subscriber
-/// that returns a `ReadyHint` from [`Subscriber::ready_hint`] lets the app skip the poll, and the
-/// wait for shutdown beside it, while the answer is `false`: one call in place of a poll of the
-/// stream. The cost of an idle subscription per wake falls from a stream poll to that call.
+/// that returns a `ReadyHint` from [`Subscriber::ready_hint`] lets the app skip the subscription
+/// while the answer is `false`: the join that runs the subscriptions asks the probe and does not
+/// resume the subscription at all. The cost of an idle subscription per wake falls from a resume
+/// and a stream poll to that call.
 /// In the `embedded_idle` benchmark of the repository (release, fat LTO, one busy subscription
-/// among sixteen) an idle subscription costs 74 instructions per delivery in place of 143, which
-/// is 48% less; what remains is the resume of the subscription's frame in the app's future.
+/// among sixteen) an idle subscription costs 51 instructions per delivery in place of 143, which
+/// is 64% less; what remains is the join's walk over the subscriptions and the probe's own check.
 ///
 /// # The contract
 ///
@@ -74,6 +75,9 @@ pub trait Subscriber: MaybeSend {
 ///   The app skips polls only after a poll that returned `Pending`, so that registration stands
 ///   until the delivery that wakes it.
 /// - The probe reads state the broker owns and takes no lock a poll of the stream holds.
+/// - The probe is an owned handle: it does not borrow the subscriber, so the app keeps it beside
+///   the subscription while the stream borrows the subscriber mutably. An implementation writes
+///   `use<..>` after the bounds, listing its type and const parameters and no lifetime.
 ///
 /// `conformance::harness::local_readiness` holds a broker to this contract.
 ///

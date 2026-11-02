@@ -6,35 +6,53 @@
 //! handle is live by construction and a "not ready" state is never representable inside the
 //! handler.
 
+#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::fmt;
 use core::num::NonZeroUsize;
+#[cfg(ruststream_alloc)]
 use ruststream_core::{MaybeSend, MaybeSendSync};
 
-use crate::{
-    BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, Settle, SubscriptionSource,
-};
+#[cfg(ruststream_alloc)]
+use crate::{BatchSubscriber, BuildBatchContext, BuildContext, Settle};
+use crate::{Broker, Connected, SubscriptionSource};
 
-use crate::batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
+use crate::Meta;
+use crate::batch_inject::BatchInjectDef;
+#[cfg(ruststream_alloc)]
+use crate::batch_inject::{BatchInjectCall, BatchInjectHandler};
 use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
-use crate::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
+use crate::inject::InjectDef;
+#[cfg(ruststream_alloc)]
+use crate::inject::{FromStartup, InjectCall, InjectHandler};
+#[cfg(ruststream_alloc)]
 use crate::input::{DecodeWith, Materialize};
+#[cfg(ruststream_alloc)]
 use crate::lifecycle::BoxError;
+#[cfg(ruststream_alloc)]
 use crate::metadata::HandlerMetadata;
+#[cfg(ruststream_alloc)]
 use crate::middleware::BlanketLayer;
+#[cfg(ruststream_alloc)]
 use crate::publish::PublishPipeline;
-use crate::redelivery::{
-    CopyPathAddress, CopyPathPairing, RetrySetup, RetrySlot, ScopeDelivery, open_subscription,
-};
+#[cfg(ruststream_alloc)]
+use crate::redelivery::open_subscription;
+#[cfg(ruststream_alloc)]
+use crate::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, RetrySlot, ScopeDelivery};
 use crate::retry::RetryOpen;
 
+#[cfg(ruststream_alloc)]
 use super::SourceMessage;
+#[cfg(ruststream_alloc)]
 use super::mount_sink::MountSink;
-use super::routes::{
-    MountRoute, RouteMeta, RouteMetadata, RouteSubscription, impl_destination_declared,
-};
+#[cfg(ruststream_alloc)]
+use super::routes::MountRoute;
+#[cfg(ruststream_alloc)]
+use super::routes::RouteMeta;
+use super::routes::{RouteMetadata, RouteSubscription, impl_destination_declared};
 
 /// One registration whose handler takes startup injections: an attached publish policy pairing
 /// into an [`Out`](crate::Out) parameter. An implementation detail of
@@ -43,12 +61,19 @@ use super::routes::{
 /// `Extra` is the include-site attachment the injections resolve against, one element per
 /// injected parameter.
 #[doc(hidden)]
+#[cfg_attr(
+    not(ruststream_alloc),
+    expect(
+        dead_code,
+        reason = "the one-task fold mounts this registration form in a later piece; the multi-thread mount reads it"
+    )
+)]
 pub struct InjectRoute<Source, Def, DecodeCodec, Extra> {
     pub(super) source: Source,
     pub(super) def: Def,
     pub(super) codec: DecodeCodec,
     pub(super) extra: Extra,
-    pub(super) meta: HandlerMetadata,
+    pub(super) meta: Meta,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
 }
@@ -56,12 +81,19 @@ pub struct InjectRoute<Source, Def, DecodeCodec, Extra> {
 /// The batch counterpart of [`InjectRoute`]. An implementation detail of
 /// [`Router`](crate::Router)'s registration list.
 #[doc(hidden)]
+#[cfg_attr(
+    not(ruststream_alloc),
+    expect(
+        dead_code,
+        reason = "the one-task fold mounts this registration form in a later piece; the multi-thread mount reads it"
+    )
+)]
 pub struct BatchInjectRoute<Source, Def, DecodeCodec, Extra> {
     pub(super) source: Source,
     pub(super) def: Def,
     pub(super) codec: DecodeCodec,
     pub(super) extra: Extra,
-    pub(super) meta: HandlerMetadata,
+    pub(super) meta: Meta,
     pub(super) policies: FailurePolicies,
     pub(super) workers: Workers,
     /// The size the subscription opens its batches at, from the registration's `batch(n)`.
@@ -80,6 +112,7 @@ macro_rules! debug_by_metadata {
             }
         }
 
+        #[cfg(ruststream_alloc)]
         impl<$($param),+> RouteMeta for $route<$($param),+> {
             fn collect(&self, out: &mut Vec<HandlerMetadata>) {
                 out.push(self.meta.clone());
@@ -100,7 +133,7 @@ macro_rules! impl_route_markers {
         impl<$($param),+> RetryOpen for $route<$($param),+> {}
 
         impl<$($param),+> RouteMetadata for $route<$($param),+> {
-            fn metadata_mut(&mut self) -> &mut HandlerMetadata {
+            fn metadata_mut(&mut self) -> &mut Meta {
                 &mut self.meta
             }
         }
@@ -142,6 +175,7 @@ where
     type Context = Def::Context;
 }
 
+#[cfg(ruststream_alloc)]
 impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 where
@@ -221,6 +255,7 @@ where
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
     for BatchInjectRoute<Source, Def, DecodeCodec, Extra>
 where
@@ -312,7 +347,7 @@ mod tests {
             def: (),
             codec: JsonCodec,
             extra: ((),),
-            meta: HandlerMetadata::raw("jobs"),
+            meta: Meta::raw("jobs"),
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
         };
@@ -325,7 +360,7 @@ mod tests {
             def: (),
             codec: JsonCodec,
             extra: ((),),
-            meta: HandlerMetadata::raw("bulk-jobs"),
+            meta: Meta::raw("bulk-jobs"),
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
             batch_size: crate::nonzero!(8),

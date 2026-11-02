@@ -12,7 +12,7 @@ use core::marker::PhantomData;
 use ruststream_core::MaybeSendSync;
 
 use crate::RawMessage;
-use crate::codec::Codec;
+use crate::codec::ActiveCodec as Codec;
 // Only the DEFAULT codec is feature-dependent; the assertions that take a codec are always here.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;

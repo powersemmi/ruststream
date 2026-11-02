@@ -3,11 +3,15 @@
 use core::future;
 use core::time::Duration;
 
-use bytes::{Bytes, BytesMut};
+#[cfg(any(feature = "alloc", feature = "testing"))]
+use bytes::Bytes;
+#[cfg(feature = "alloc")]
+use bytes::BytesMut;
+#[cfg(any(feature = "alloc", feature = "testing"))]
 use bytes_utils::Str;
 
 use crate::codec::CodecError;
-use crate::{AckError, HeaderMap, MaybeSend, MaybeSendSync, SerializeHeadersError};
+use crate::{AckError, Headers, MaybeSend, MaybeSendSync, PayloadBuf, SerializeHeadersError};
 
 /// An owned snapshot of a message as it travels through the framework.
 ///
@@ -15,13 +19,18 @@ use crate::{AckError, HeaderMap, MaybeSend, MaybeSendSync, SerializeHeadersError
 /// its settlement handle dropped, kept for assertions. Broker-specific subscribers expose a
 /// richer [`IncomingMessage`] type that wraps the broker's native delivery handle, and that is
 /// what a handler receives.
+///
+/// A build without `alloc` has it for the test harness alone (`testing`), whose publish log keeps
+/// its records on the heap while the framework's own paths stay in fixed storage.
+#[cfg(any(feature = "alloc", feature = "testing"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawMessage {
     name: Str,
     payload: Bytes,
-    headers: HeaderMap,
+    headers: Headers,
 }
 
+#[cfg(any(feature = "alloc", feature = "testing"))]
 impl RawMessage {
     /// Constructs a new message for the given name and payload, with no headers.
     ///
@@ -57,13 +66,13 @@ impl RawMessage {
         Self {
             name: name.into(),
             payload: payload.into(),
-            headers: HeaderMap::new(),
+            headers: Headers::new(),
         }
     }
 
     /// Builder-style setter that replaces the header map.
     #[must_use]
-    pub fn with_headers(mut self, headers: HeaderMap) -> Self {
+    pub fn with_headers(mut self, headers: Headers) -> Self {
         self.headers = headers;
         self
     }
@@ -88,12 +97,12 @@ impl RawMessage {
 
     /// Returns a shared reference to the message headers.
     #[must_use]
-    pub fn headers(&self) -> &HeaderMap {
+    pub fn headers(&self) -> &Headers {
         &self.headers
     }
 
     /// Returns a mutable reference to the message headers.
-    pub fn headers_mut(&mut self) -> &mut HeaderMap {
+    pub fn headers_mut(&mut self) -> &mut Headers {
         &mut self.headers
     }
 }
@@ -119,7 +128,7 @@ impl RawMessage {
 /// ```
 /// use std::io;
 ///
-/// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
+/// use ruststream::{Bytes, BytesMut, Headers, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
 /// # #[derive(Clone)]
 /// # struct Client;
 /// # impl Client {
@@ -127,7 +136,7 @@ impl RawMessage {
 /// #         &self,
 /// #         _topic: &str,
 /// #         _payload: Bytes,
-/// #         _headers: HeaderMap,
+/// #         _headers: Headers,
 /// #     ) -> io::Result<()> {
 /// #         Ok(())
 /// #     }
@@ -163,19 +172,19 @@ impl RawMessage {
 pub struct OutgoingMessage<'a, Payload = &'a [u8]> {
     name: &'a str,
     payload: Payload,
-    headers: HeaderMap,
+    headers: Headers,
 }
 
 // Each form is its three fields and nothing on top: no tag, no padding. The promise is checked
 // here rather than left to be measured later.
 const _: () = assert!(
     size_of::<OutgoingMessage<'static>>()
-        == size_of::<&str>() + size_of::<&[u8]>() + size_of::<HeaderMap>(),
+        == size_of::<&str>() + size_of::<&[u8]>() + size_of::<Headers>(),
     "a lent outgoing message is its name, its bytes and its headers",
 );
 const _: () = assert!(
-    size_of::<OutgoingMessage<'static, BytesMut>>()
-        == size_of::<&str>() + size_of::<BytesMut>() + size_of::<HeaderMap>(),
+    size_of::<OutgoingMessage<'static, PayloadBuf>>()
+        == size_of::<&str>() + size_of::<PayloadBuf>() + size_of::<Headers>(),
     "an owned outgoing message is its name, its buffer and its headers",
 );
 
@@ -223,7 +232,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     #[inline]
     #[must_use]
     pub fn with_payload(name: &'a str, payload: Payload) -> Self {
-        Self::assembled(name, payload, HeaderMap::new())
+        Self::assembled(name, payload, Headers::new())
     }
 
     /// The whole message at once, for a stage that already holds all three parts.
@@ -233,7 +242,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// delivery for that to be worth avoiding.
     #[inline]
     #[doc(hidden)]
-    pub fn assembled(name: &'a str, payload: Payload, headers: HeaderMap) -> Self {
+    pub fn assembled(name: &'a str, payload: Payload, headers: Headers) -> Self {
         Self {
             name,
             payload,
@@ -243,13 +252,13 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
 
     /// Builder-style setter that replaces the header map.
     #[must_use]
-    pub fn with_headers(mut self, headers: HeaderMap) -> Self {
+    pub fn with_headers(mut self, headers: Headers) -> Self {
         self.headers = headers;
         self
     }
 
     /// Builder-style setter that serializes a typed contract into the headers, one entry per
-    /// field (see [`HeaderMap::insert_typed`]). Entries already present under other names are kept.
+    /// field (see [`Headers::insert_typed`]). Entries already present under other names are kept.
     ///
     /// # Errors
     ///
@@ -382,7 +391,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// What a transport that only walks the map reads. One that hands the map on to its client
     /// takes it with [`into_parts`](Self::into_parts) rather than cloning it.
     #[must_use]
-    pub fn headers(&self) -> &HeaderMap {
+    pub fn headers(&self) -> &Headers {
         &self.headers
     }
 
@@ -400,7 +409,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// ```
     /// use std::io;
     ///
-    /// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
+    /// use ruststream::{Bytes, BytesMut, Headers, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
     /// # #[derive(Clone)]
     /// # struct Client;
     /// # impl Client {
@@ -408,7 +417,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// #         &self,
     /// #         _topic: &str,
     /// #         _payload: Bytes,
-    /// #         _headers: HeaderMap,
+    /// #         _headers: Headers,
     /// #     ) -> io::Result<()> {
     /// #         Ok(())
     /// #     }
@@ -441,7 +450,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// ```
     #[inline]
     #[must_use]
-    pub fn into_parts(self) -> (&'a str, Payload, HeaderMap) {
+    pub fn into_parts(self) -> (&'a str, Payload, Headers) {
         (self.name, self.payload, self.headers)
     }
 }
@@ -460,6 +469,7 @@ impl<'a, Payload: From<&'a [u8]>> OutgoingMessage<'a, Payload> {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<'a> OutgoingMessage<'a, BytesMut> {
     /// Constructs a new outgoing message handing over a buffer just written, with no headers.
     ///
@@ -546,7 +556,7 @@ pub trait IncomingMessage {
     fn payload(&self) -> &[u8];
 
     /// Returns the headers attached to the message.
-    fn headers(&self) -> &HeaderMap;
+    fn headers(&self) -> &Headers;
 
     /// Returns the routing key the broker partitioned this message by, or `None` when the
     /// message carries no key.
@@ -580,11 +590,11 @@ pub trait IncomingMessage {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{HeaderMap, IncomingMessage};
+    /// use ruststream::{Headers, IncomingMessage};
     ///
     /// struct Delivered {
     ///     payload: Vec<u8>,
-    ///     headers: HeaderMap,
+    ///     headers: Headers,
     ///     delivered: u64,
     /// }
     ///
@@ -592,7 +602,7 @@ pub trait IncomingMessage {
     ///     fn payload(&self) -> &[u8] {
     ///         &self.payload
     ///     }
-    ///     fn headers(&self) -> &HeaderMap {
+    ///     fn headers(&self) -> &Headers {
     ///         &self.headers
     ///     }
     ///     fn redelivery_count(&self) -> Option<u64> {
@@ -633,7 +643,7 @@ pub trait IncomingMessage {
     /// use std::str;
     ///
     /// use ruststream::codec::CodecError;
-    /// use ruststream::{Carries, HeaderMap, IncomingMessage};
+    /// use ruststream::{Carries, Headers, IncomingMessage};
     ///
     /// /// One row of the queue table.
     /// struct SendEmail {
@@ -644,13 +654,13 @@ pub trait IncomingMessage {
     /// /// reading it.
     /// struct Claimed {
     ///     bytes: Vec<u8>,
-    ///     headers: HeaderMap,
+    ///     headers: Headers,
     ///     row: Result<SendEmail, CodecError>,
     /// }
     ///
     /// impl Claimed {
     ///     /// Reads the row the way the driver does: the recipient column holds text.
-    ///     fn read(bytes: Vec<u8>, headers: HeaderMap) -> Self {
+    ///     fn read(bytes: Vec<u8>, headers: Headers) -> Self {
     ///         let row = str::from_utf8(&bytes)
     ///             .map(|to| SendEmail { to: to.to_owned() })
     ///             .map_err(|err| CodecError::Decode(Box::new(err)));
@@ -668,7 +678,7 @@ pub trait IncomingMessage {
     ///     fn payload(&self) -> &[u8] {
     ///         &self.bytes
     ///     }
-    ///     fn headers(&self) -> &HeaderMap {
+    ///     fn headers(&self) -> &Headers {
     ///         &self.headers
     ///     }
     ///     fn decode_error(&self) -> Option<&CodecError> {
@@ -677,7 +687,7 @@ pub trait IncomingMessage {
     /// }
     ///
     /// // A recipient that is not text: the runtime settles this claim by the decode policy.
-    /// let claimed = Claimed::read(vec![0xff, 0xfe], HeaderMap::new());
+    /// let claimed = Claimed::read(vec![0xff, 0xfe], Headers::new());
     /// assert!(claimed.decode_error().is_some());
     /// ```
     fn decode_error(&self) -> Option<&CodecError> {
@@ -724,18 +734,18 @@ pub trait IncomingMessage {
 /// # Examples
 ///
 /// ```
-/// use ruststream::{AckError, HeaderMap, IncomingMessage, Settle};
+/// use ruststream::{AckError, Headers, IncomingMessage, Settle};
 ///
 /// struct Delivered {
 ///     payload: Vec<u8>,
-///     headers: HeaderMap,
+///     headers: Headers,
 /// }
 ///
 /// impl IncomingMessage for Delivered {
 ///     fn payload(&self) -> &[u8] {
 ///         &self.payload
 ///     }
-///     fn headers(&self) -> &HeaderMap {
+///     fn headers(&self) -> &Headers {
 ///         &self.headers
 ///     }
 /// }
@@ -786,18 +796,18 @@ pub trait Settle: IncomingMessage + MaybeSendSync {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{AckError, HeaderMap, IncomingMessage, Settle};
+    /// use ruststream::{AckError, Headers, IncomingMessage, Settle};
     ///
     /// struct CoreMessage {
     ///     payload: Vec<u8>,
-    ///     headers: HeaderMap,
+    ///     headers: Headers,
     /// }
     ///
     /// impl IncomingMessage for CoreMessage {
     ///     fn payload(&self) -> &[u8] {
     ///         &self.payload
     ///     }
-    ///     fn headers(&self) -> &HeaderMap {
+    ///     fn headers(&self) -> &Headers {
     ///         &self.headers
     ///     }
     /// }
@@ -855,12 +865,12 @@ mod tests {
         let msg = RawMessage::new("name.a", b"payload".as_slice());
         assert_eq!(msg.name(), "name.a");
         assert_eq!(msg.payload(), b"payload");
-        assert_eq!(*msg.headers(), HeaderMap::new());
+        assert_eq!(*msg.headers(), Headers::new());
     }
 
     #[test]
     fn raw_message_with_headers() {
-        let mut headers = HeaderMap::new();
+        let mut headers = Headers::new();
         headers.insert("X-Tenant", "acme");
 
         let msg = RawMessage::new("name.a", Bytes::from_static(b"data")).with_headers(headers);
@@ -899,7 +909,7 @@ mod tests {
         // section of the `IncomingMessage` docs states what each default answers.
         struct Stub {
             payload: Vec<u8>,
-            headers: HeaderMap,
+            headers: Headers,
         }
 
         impl IncomingMessage for Stub {
@@ -907,7 +917,7 @@ mod tests {
                 &self.payload
             }
 
-            fn headers(&self) -> &HeaderMap {
+            fn headers(&self) -> &Headers {
                 &self.headers
             }
         }
@@ -924,7 +934,7 @@ mod tests {
 
         let stub = Stub {
             payload: b"body".to_vec(),
-            headers: HeaderMap::new(),
+            headers: Headers::new(),
         };
         assert_eq!(IncomingMessage::payload(&stub), b"body");
         // The default partition_key is None (no key).

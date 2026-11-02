@@ -73,9 +73,14 @@
 //!
 //! * `tokio` (default): the [`runtime::RustStream`] application object on tokio's runtime, its
 //!   lifecycle and the generated entry point ([`runtime::cli`]).
-//! * `embassy`: the embedded runner on embassy's executor and clock, for a device with a heap
-//!   and no operating system. Its items (the `EmbeddedApp` application object, its `Control`
-//!   and `Health`, the `EmbassyClock`) are re-exported in [`runtime`], where their reference is.
+//! * `embassy`: the embedded runner on embassy's executor and clock, for a device with no
+//!   operating system. Its items (the `EmbeddedApp` application object, its `Control` and
+//!   `Health`, the `EmbassyClock`) are re-exported in [`runtime`], where their reference is.
+//! * `alloc`: the heap form of the framework, which `tokio`, `json`, `cbor` and `msgpack` turn
+//!   on. Headers, payloads, continuations and failures live on the heap. A build without it is the
+//!   fixed form of the embassy runtime: they live in storage of a fixed size and the build
+//!   allocates nothing. One build holds one form, so a crate of the graph that turns `alloc` on
+//!   turns it on for all.
 //!
 //! Codec features are mutually compatible and enable only the deserializers you need. They work
 //! on either runtime. On a device without the standard library `json` and `cbor` build, with the
@@ -84,6 +89,20 @@
 //! * `json` (default): [`codec::JsonCodec`].
 //! * `msgpack`: [`codec::MsgpackCodec`].
 //! * `cbor`: [`codec::CborCodec`].
+//!
+//! The embassy runtime without `alloc` mounts with one of these two, which encode into a slice and
+//! decode from one:
+//!
+//! * `postcard`: `codec::PostcardCodec`.
+//! * `json-core`: `codec::JsonCoreCodec`, JSON over `serde-json-core`.
+//!
+//! The embassy runtime without `alloc` reports what it loses or refuses (a reply the bus does not
+//! take, a continuation that never runs) to the logger the device has, each line naming the
+//! subscription and the message type. The feature picks the logger. With `alloc` the same reports
+//! are `tracing` events.
+//!
+//! * `log`: records for the `log` crate, for a host or a board with a logger.
+//! * `defmt`: lines for `defmt`, for a board with a probe. Both may be on and both receive.
 //!
 //! Two more features work on either runtime:
 //!
@@ -117,9 +136,10 @@
 //!
 //! A crate that disables the defaults (`default-features = false`) names its runtime among the
 //! features it enables: `features = ["tokio"]`, `features = ["embassy"]` or both. A broker crate on
-//! tokio enables `tokio`. A device service on a bare-metal target picks from `embassy`, `json`,
-//! `cbor`, `macros` and `memory`. On a target with an operating system the crate uses the standard
-//! library with either runtime.
+//! tokio enables `tokio`. A device service on a bare-metal target picks from `embassy`, `macros`
+//! and `memory`, a codec (`json` and `cbor` with a heap, `postcard` and `json-core` without), and
+//! `log` or `defmt` for its diagnostics. On a target with an operating system the crate uses the
+//! standard library with either runtime.
 //!
 //! # Getting the imports
 //!
@@ -128,8 +148,7 @@
 //! the codec stay explicit, since those are the choices a service makes for itself.
 
 #![forbid(unsafe_code)]
-// The embassy runtime runs on a device with a heap and no standard library; the tokio runner needs
-// it.
+// The embassy runtime runs on a device with no standard library; the tokio runner needs it.
 #![cfg_attr(not(feature = "tokio"), no_std)]
 
 extern crate alloc;
@@ -139,7 +158,7 @@ pub mod testing;
 
 /// Registers a production broker type with the test harness; see
 /// [`testing::TestableRegistration`].
-#[cfg(feature = "testing")]
+#[cfg(all(feature = "testing", ruststream_alloc))]
 #[doc(inline)]
 pub use ruststream_runtime::register_testable_broker;
 
@@ -171,20 +190,28 @@ pub use bytes::Bytes;
 /// nothing at all; `String` moves in without a copy; `&str` copies once.
 pub use bytes_utils::Str;
 
+#[cfg(ruststream_alloc)]
 pub use ruststream_core::HeaderMap;
+#[cfg(any(ruststream_alloc, feature = "testing"))]
+pub use ruststream_core::RawMessage;
 pub use ruststream_core::SendBroker;
 pub use ruststream_core::{AckError, DeclareRetryError};
 pub use ruststream_core::{
     AddressedCopies, BrokerMoves, CopyPath, FromName, Name, NamedCopies, RedeliveryAddress,
     RedeliveryAddressed, RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
 };
+#[cfg(ruststream_alloc)]
 pub use ruststream_core::{
-    ApiKeyLocation, BatchSlot, BatchStream, BatchSubscriber, Carries, CarriesBatch, DescribeServer,
-    HttpApiKeyLocation, OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme,
-    Seekable, Seeker, ServerSpec, Subscribe, Transaction, TransactionalPublisher,
+    ApiKeyLocation, DescribeServer, HttpApiKeyLocation, SecurityScheme, ServerSpec,
 };
+#[cfg(ruststream_alloc)]
 pub use ruststream_core::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
+pub use ruststream_core::{
+    BatchSlot, BatchStream, BatchSubscriber, Carries, CarriesBatch, OwnedTransactions, Partitioned,
+    Positioned, RequestReply, Seekable, Seeker, Subscribe, Transaction, TransactionalPublisher,
+};
 pub use ruststream_core::{Broker, Connected, ConnectedBroker};
+pub use ruststream_core::{BufferFull, EncodeBuf, Headers, PayloadBuf};
 pub use ruststream_core::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
 pub use ruststream_core::{
     CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,
@@ -195,7 +222,7 @@ pub use ruststream_core::{
     PublishPolicy, Publisher, Take,
 };
 pub use ruststream_core::{DeserializeHeadersError, SerializeHeadersError};
-pub use ruststream_core::{IncomingMessage, OutgoingMessage, RawMessage, Settle};
+pub use ruststream_core::{IncomingMessage, OutgoingMessage, Settle};
 pub use ruststream_core::{ReadyHint, Subscriber};
 
 pub use ruststream_core::nonzero;
@@ -328,6 +355,8 @@ pub mod otel;
 /// Not part of the public API; no stability guarantees.
 #[doc(hidden)]
 pub mod __private {
+    #[cfg(feature = "embassy")]
+    use core::fmt::Display;
     use core::marker::PhantomData;
 
     // The standard names the macros emit, reached through the facade so that a `#![no_std]`
@@ -337,13 +366,28 @@ pub mod __private {
     pub use alloc::string::{String, ToString};
     pub use alloc::vec;
     pub use alloc::vec::Vec;
+    // The batch outcome a batch body returns: a `Vec` with `alloc`, a fixed buffer without.
     pub use core::error::Error;
+    pub use ruststream_runtime::BatchOutcomes;
+    // What a batch body replies with, one value per message: a `Vec` with `alloc`, a fixed
+    // buffer without.
+    #[cfg(ruststream_alloc)]
+    pub use alloc::vec::Vec as BatchVec;
+    #[cfg(not(ruststream_alloc))]
+    pub use ruststream_runtime::BatchVec;
     // What the tokio `main` that `#[ruststream::app]` generates returns.
     #[cfg(feature = "tokio")]
     pub use std::process::ExitCode;
-    // The log the embassy task `#[ruststream::app]` emits reports an app's error to.
+    /// Reports the error an embassy app stopped on, which the task `#[ruststream::app]` emits
+    /// calls.
     #[cfg(feature = "embassy")]
-    pub use tracing;
+    pub fn app_stopped(error: &impl Display) {
+        ruststream_core::diag::error!(
+            target: "ruststream::embassy",
+            error = %error,
+            "the app stopped on an error"
+        );
+    }
 
     use crate::runtime::Serialized;
     #[cfg(feature = "asyncapi")]

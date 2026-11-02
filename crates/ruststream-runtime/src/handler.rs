@@ -1,12 +1,18 @@
 //! Handler abstraction and the [`HandlerOutcome`] settlement unit returned to the router.
 
+#[cfg(ruststream_alloc)]
 use alloc::boxed::Box;
+#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
-use core::{convert::Infallible, fmt, pin::Pin, time::Duration};
+#[cfg(ruststream_alloc)]
+use core::pin::Pin;
+use core::{convert::Infallible, fmt, time::Duration};
 
 use super::context::Context;
 use crate::publish_failure::{ErrorHook, Failures};
-pub(crate) use ruststream_core::{IfSend, MaybeSend, MaybeSendSync};
+#[cfg(ruststream_alloc)]
+use ruststream_core::IfSend;
+pub(crate) use ruststream_core::{MaybeSend, MaybeSendSync};
 
 /// A boxed, owned continuation run after a message is settled: what a [`HandlerOutcome`] hands
 /// the dispatcher, and what the dispatcher hands the runner's host.
@@ -14,11 +20,17 @@ pub(crate) use ruststream_core::{IfSend, MaybeSend, MaybeSendSync};
 /// Where the core's `send` feature is on it is `Send`, because a multi-thread runner may poll it on
 /// any worker thread. Without it the box carries no `Send`, so a continuation on a device runner
 /// may hold the local bus's publisher or an `Rc`.
+#[cfg(ruststream_alloc)]
 #[doc(hidden)]
 pub type Continuation = IfSend<
     Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
     Pin<Box<dyn Future<Output = ()> + 'static>>,
 >;
+
+/// Without `alloc` a continuation lives in a fixed room of its own, in place; a capture larger
+/// than the room is a compile error that names its size and the room.
+#[cfg(not(ruststream_alloc))]
+pub(crate) use crate::inline::Continuation;
 
 /// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: `Send` where the
 /// core's `send` feature is on, any `'static` future otherwise.
@@ -203,10 +215,26 @@ pub struct HandlerOutcome {
 /// room it had.
 enum Settlement {
     Plain(HandlerResult),
+    #[cfg(ruststream_alloc)]
     Erroring(Box<(HandlerResult, ErrorHook)>),
+    /// Without a heap the status and its `.error` are held in place.
+    #[cfg(not(ruststream_alloc))]
+    Erroring((HandlerResult, ErrorHook)),
 }
 
 impl Settlement {
+    #[inline]
+    fn erroring(status: HandlerResult, hook: ErrorHook) -> Self {
+        #[cfg(ruststream_alloc)]
+        {
+            Self::Erroring(Box::new((status, hook)))
+        }
+        #[cfg(not(ruststream_alloc))]
+        {
+            Self::Erroring((status, hook))
+        }
+    }
+
     const fn status(&self) -> HandlerResult {
         match self {
             Self::Plain(status) => *status,
@@ -336,7 +364,9 @@ impl HandlerOutcome {
     /// `drop().and_after(..)` is valid. Attaching a second continuation replaces the first.
     /// With the Tokio runner on, the future is `Send` and runs on a tracked task. On the embedded
     /// runtime alone it carries no `Send`, so it may hold the local bus's publisher or an `Rc`;
-    /// the embedded runner's one task polls it, in the one box this call made.
+    /// the embedded runner's one task polls it, in the one box this call made. Without `alloc`
+    /// the future lives in a room of 128 bytes inside the outcome, and a capture past it does not
+    /// compile.
     ///
     /// # Cancel safety
     ///
@@ -374,7 +404,10 @@ impl HandlerOutcome {
     {
         Self {
             outcome: self.outcome,
+            #[cfg(ruststream_alloc)]
             after: Some(Box::pin(fut)),
+            #[cfg(not(ruststream_alloc))]
+            after: Some(Continuation::new(fut)),
         }
     }
 
@@ -391,17 +424,19 @@ impl HandlerOutcome {
     /// first.
     ///
     /// The closure is one-shot, like an [`and_after`](Self::and_after) continuation, so it may
-    /// own what it captures. A single delivery's `Failures` holds one failure. An outcome returned
-    /// for a whole batch runs the closure once, with the failure of every element whose copy
-    /// failed, in the batch's order; its `and_after` runs once, when at least one element's copy
-    /// was published. A batch handler that needs a reaction per element returns one outcome per
-    /// element instead.
+    /// own what it captures. A single delivery's `Failures` holds one failure. On the Tokio runner
+    /// an outcome returned for a whole batch runs the closure once, with the failure of every
+    /// element whose copy failed, in the batch's order; its `and_after` runs once, when at least
+    /// one element's copy was published. A batch handler that needs a reaction per element
+    /// returns one outcome per element instead.
     ///
     /// Without `.error` a failed copy is logged with the subscription, the destination, the
     /// message type and the error, and is lost. On a mount whose broker retries and dead-letters
     /// natively the runtime publishes nothing, so the continuation never runs; a warning names the
-    /// subscription each time such an outcome is returned. With the Tokio runner on, the closure
-    /// and its future are `Send`; on the embedded runtime alone they carry no `Send`.
+    /// subscription each time such an outcome is returned. A batch route of the embedded runner
+    /// publishes nothing either, and its outcomes that ask for a copy meet the same warning. With
+    /// the Tokio runner on, the closure and its future are `Send`; on the embedded runtime alone
+    /// they carry no `Send`.
     ///
     /// # Cancel safety
     ///
@@ -483,13 +518,39 @@ impl HandlerOutcome {
     /// # }
     /// # fn main() {}
     /// ```
+    #[cfg(ruststream_alloc)]
     pub fn error<React, Reaction>(mut self, react: React) -> Self
     where
         React: FnOnce(Failures) -> Reaction + MaybeSend + 'static,
         Reaction: ContinuationFuture,
     {
         let status = self.outcome.status();
-        self.outcome = Settlement::Erroring(Box::new((status, ErrorHook::new(react))));
+        self.outcome = Settlement::erroring(status, ErrorHook::new(react));
+        self
+    }
+
+    /// Reacts to a failed publish the runtime makes for this outcome, as the build with `alloc`
+    /// does, with the failures borrowed instead of passed by value.
+    ///
+    /// The closure is an async closure over a borrow, `async move |failures: &Failures| { .. }`.
+    /// The failures stay in the lane's fixed buffer, so they are stored once and the closure's
+    /// own room stays that of any continuation: its captures take at most 128 bytes, and a larger
+    /// capture is a compile error that names its size and the room. The future the closure
+    /// returns takes at most 256 bytes, the captures included. It runs after the delivery is
+    /// settled and before the lane takes its next delivery. Attaching a second one replaces the
+    /// first.
+    ///
+    /// # Cancel safety
+    ///
+    /// At-most-once, like [`and_after`](Self::and_after): the message is already settled when the
+    /// closure runs.
+    #[cfg(not(ruststream_alloc))]
+    pub fn error<React>(mut self, react: React) -> Self
+    where
+        React: for<'failures> AsyncFnOnce(&'failures Failures) + MaybeSend + 'static,
+    {
+        let status = self.outcome.status();
+        self.outcome = Settlement::erroring(status, ErrorHook::new(react));
         self
     }
 
@@ -497,7 +558,7 @@ impl HandlerOutcome {
     /// closure.
     pub(crate) fn error_hook(mut self, hook: ErrorHook) -> Self {
         let status = self.outcome.status();
-        self.outcome = Settlement::Erroring(Box::new((status, hook)));
+        self.outcome = Settlement::erroring(status, hook);
         self
     }
 
@@ -561,7 +622,10 @@ impl HandlerOutcome {
         match self.outcome {
             Settlement::Plain(status) => (status, self.after, None),
             Settlement::Erroring(registered) => {
+                #[cfg(ruststream_alloc)]
                 let (status, error) = *registered;
+                #[cfg(not(ruststream_alloc))]
+                let (status, error) = registered;
                 (status, self.after, Some(error))
             }
         }
@@ -702,6 +766,7 @@ where
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<M, C, S, H> Handler<M, C, S> for Arc<H>
 where
     H: Handler<M, C, S>,
@@ -716,6 +781,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
     use alloc::format;
     use core::time::Duration;

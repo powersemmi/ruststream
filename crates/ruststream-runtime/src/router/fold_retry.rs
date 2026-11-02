@@ -9,10 +9,10 @@
 // Written over the contract traits for a runner that polls on one thread.
 #![allow(clippy::future_not_send)]
 
-use alloc::borrow::Cow;
 use core::marker::PhantomData;
 
 use crate::lifecycle::BoxError;
+#[cfg(ruststream_alloc)]
 use crate::metadata::OutgoingKind;
 use crate::middleware::BlanketLayer;
 use crate::redelivery::{
@@ -20,6 +20,7 @@ use crate::redelivery::{
 };
 use crate::retry::{RetryOffer, RetryOpen, SettlesDestination};
 use ruststream_core::MaybeSendSync;
+use ruststream_core::NameText;
 
 use crate::{
     Broker, Connected, DestinationDeclared, OutAttachment, Reads, Retry, RetryDeclaration,
@@ -117,11 +118,16 @@ where
     fn attach_retry(
         self,
         slot: OutAttachment<Retry, Policy, Transforms, Enc>,
-        destination: Option<Cow<'static, str>>,
+        destination: Option<NameText>,
     ) -> Self::Out {
         let (policy, stack, _codec) = slot.into_parts();
+        // Only the metadata of the heap build is edited.
+        #[cfg(ruststream_alloc)]
         let (mut head, tail) = self.routes;
+        #[cfg(not(ruststream_alloc))]
+        let (head, tail) = self.routes;
         // A destination named here is a channel of the service, as on the multi-thread runner.
+        #[cfg(ruststream_alloc)]
         if let Some(destination) = destination.clone() {
             head.metadata_mut()
                 .declare_copy(destination, OutgoingKind::RetryCopy);

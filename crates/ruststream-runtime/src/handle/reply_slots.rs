@@ -2,17 +2,27 @@
 //! in one signature. The chain's reply attach seeds the include-site binder, which still takes
 //! one `.out(marker, policy)` per slot.
 
+#[cfg(ruststream_alloc)]
 use alloc::borrow::ToOwned;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
+#[cfg(ruststream_alloc)]
 use alloc::vec;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
+#[cfg(ruststream_alloc)]
 use core::any::type_name;
 use ruststream_core::MaybeSendSync;
 
+#[cfg(ruststream_alloc)]
 use crate::batch::BatchResult;
-use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
+use crate::batch::BatchVec;
+#[cfg(ruststream_alloc)]
+use crate::batch_publishing::BatchPublishingCall;
+use crate::batch_publishing::BatchPublishingDef;
 use crate::context::Context;
 use crate::handler::HandlerOutcome;
+#[cfg(ruststream_alloc)]
 use crate::metadata::{OutgoingKind, OutgoingMessageMetadata};
 use crate::publishing::{PublishingCall, PublishingDef};
 use crate::router::IncludeDef;
@@ -21,12 +31,16 @@ use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Batch, BatchPair, BatchSet, BatchedAxis, Deserialized, Input, Message, Solo,
-    SoloAxis, SoloCarried, SoloDeserialized, SoloPair, SoloSet,
+    Axis, AxisDocs, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis, SoloCarried,
+    SoloDeserialized, SoloPair, SoloSet,
 };
+#[cfg(ruststream_alloc)]
+use super::axis::{Batch, BatchPair, BatchSet};
 use super::eager::construct;
 use super::outs::{EntryMarkers, Outs, Slot};
-use super::reply::{ReplyDest, ReplyRoute, ReplyShape, WireDocs, batch_reply_verdict};
+#[cfg(ruststream_alloc)]
+use super::reply::batch_reply_verdict;
+use super::reply::{ReplyDest, ReplyRoute, ReplyShape, WireDocs};
 use super::value::{HandleValue, ReplyValue, Sealed};
 
 impl<A, R, E, C, H, Doc, Dest> IncludeDef
@@ -123,6 +137,7 @@ where
         self.0.value.docs.description()
     }
 
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         self.0
             .value
@@ -132,6 +147,7 @@ where
             .or_else(Doc::payload_schema)
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         self.0
             .value
@@ -149,6 +165,7 @@ where
         self.0.value.docs.message_description
     }
 
+    #[cfg(ruststream_alloc)]
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
         if let Some(declared) = &self.0.value.docs.outgoing {
             return declared.clone();
@@ -294,7 +311,7 @@ where
     }
 }
 impl<A, R, E, C, H, Doc, Dest> BatchPublishingDef
-    for Sealed<ReplyValue<HandleValue<A, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<A, BatchVec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
     A: BatchedAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
@@ -326,6 +343,7 @@ where
         self.0.value.docs.description()
     }
 
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         self.0
             .value
@@ -335,6 +353,7 @@ where
             .or_else(Doc::payload_schema)
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         self.0
             .value
@@ -352,6 +371,7 @@ where
         self.0.value.docs.message_description
     }
 
+    #[cfg(ruststream_alloc)]
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
         if let Some(declared) = &self.0.value.docs.outgoing {
             return declared.clone();
@@ -368,8 +388,9 @@ where
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<T, R, E, C, S, H, Doc, Dest> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Batch<T>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<Batch<T>, BatchVec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
             Input = <Batch<T> as Axis>::Kind,
@@ -383,21 +404,23 @@ where
     E: MaybeSendSync,
     C: MaybeSendSync,
     S: MaybeSendSync,
-    H: Handle<[T], Vec<R>, Outs<E>, C, S>,
+    H: Handle<[T], BatchVec<R>, Outs<E>, C, S>,
 {
+    #[cfg(ruststream_alloc)]
     async fn call(
         &self,
         batch: &[T],
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<Vec<R>, BatchResult> {
+    ) -> Result<BatchVec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, injections, ctx).await;
         batch_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<T, R, E, C, S, H, Doc, Dest> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<BatchSet<T>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<BatchSet<T>, BatchVec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
             Input = <BatchSet<T> as Axis>::Kind,
@@ -411,21 +434,23 @@ where
     E: MaybeSendSync,
     C: MaybeSendSync,
     S: MaybeSendSync,
-    H: Handle<[T], Vec<R>, Outs<E>, C, S>,
+    H: Handle<[T], BatchVec<R>, Outs<E>, C, S>,
 {
+    #[cfg(ruststream_alloc)]
     async fn call(
         &self,
         batch: &[T],
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<Vec<R>, BatchResult> {
+    ) -> Result<BatchVec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, injections, ctx).await;
         batch_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<Hd, P, R, E, C, S, H, Doc, Dest> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, BatchVec<R>, Outs<E>, C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
             Input = <BatchPair<Hd, P> as Axis>::Kind,
@@ -440,14 +465,15 @@ where
     E: MaybeSendSync,
     C: MaybeSendSync,
     S: MaybeSendSync,
-    H: Handle<[Message<Hd, P>], Vec<R>, Outs<E>, C, S>,
+    H: Handle<[Message<Hd, P>], BatchVec<R>, Outs<E>, C, S>,
 {
+    #[cfg(ruststream_alloc)]
     async fn call(
         &self,
         batch: &[Message<Hd, P>],
         injections: &Outs<E>,
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<Vec<R>, BatchResult> {
+    ) -> Result<BatchVec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, injections, ctx).await;
         batch_reply_verdict(verdict, batch.len(), ctx.name())
     }

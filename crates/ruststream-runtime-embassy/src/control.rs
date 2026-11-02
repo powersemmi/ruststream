@@ -10,8 +10,8 @@ use core::task::{Context, Poll};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::waitqueue::MultiWakerRegistration;
+use ruststream_core::diag::error;
 use ruststream_runtime::{Halt, ShutdownWait};
-use tracing::error;
 
 /// How many tasks may wait on one control at once: the app's task and the device's own.
 ///
