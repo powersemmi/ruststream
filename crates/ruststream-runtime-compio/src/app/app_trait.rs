@@ -12,10 +12,44 @@ use crate::{Cores, Described, HandlerMetadata};
 use super::{AppInfo, RunningApp, RustStream, RustStreamError};
 
 mod sealed {
-    /// Closes [`App`](super::App) to [`RustStream`](super::RustStream).
-    pub trait Sealed {}
+    #[cfg(feature = "testing")]
+    use crate::{InProcessStart, RunningApp, RustStreamError};
 
+    /// Closes [`App`](super::App) to [`RustStream`](super::RustStream), and carries what the test
+    /// harness needs from an app a builder hands it as `impl App`.
+    pub trait Sealed {
+        /// The state the app's handlers read, which the test harness is typed by.
+        #[cfg(feature = "testing")]
+        type State: Send + Sync + 'static;
+
+        /// Starts the app in process on the calling runtime.
+        #[cfg(feature = "testing")]
+        fn start_in_process(
+            self,
+            start: InProcessStart<Self::State>,
+        ) -> impl Future<Output = Result<RunningApp, RustStreamError>>;
+    }
+
+    #[cfg(not(feature = "testing"))]
     impl<Layers, State, Pipeline, Phase> Sealed for super::RustStream<Layers, State, Pipeline, Phase> {}
+
+    // The inherent method shares the name; spelling the type makes the call delegate to it.
+    #[cfg(feature = "testing")]
+    #[allow(clippy::use_self)]
+    impl<Layers: Send, State, Pipeline, Phase> Sealed
+        for super::RustStream<Layers, State, Pipeline, Phase>
+    where
+        State: Send + Sync + 'static,
+    {
+        type State = State;
+
+        fn start_in_process(
+            self,
+            start: InProcessStart<State>,
+        ) -> impl Future<Output = Result<RunningApp, RustStreamError>> {
+            super::RustStream::start_in_process(self, start)
+        }
+    }
 }
 
 /// The functional surface of a built [`RustStream`] service: run it, and read the metadata the

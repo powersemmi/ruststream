@@ -14,6 +14,8 @@ mod run;
 mod scope;
 mod service;
 mod teardown;
+#[cfg(feature = "testing")]
+mod testing;
 
 pub use app_trait::App;
 #[doc(hidden)]
@@ -30,6 +32,9 @@ pub use scope::BrokerScope;
 pub use scope::{ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup};
 pub use service::RegisteredBroker;
 pub use service::{RustStream, Setup, Wired};
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use testing::{Harness, InProcessError, InProcessStart, StateSource};
 
 use std::sync::Arc;
 
@@ -50,6 +55,10 @@ pub struct Launch {
     /// The cores of this mount, one per worker or lane, as [`Layout`](crate::dispatch::Layout)
     /// placed them.
     pub cores: Vec<usize>,
+    /// The hooks of the harness the app runs under, where a test drives it: each mount records
+    /// its deliveries there.
+    #[cfg(feature = "testing")]
+    pub harness: Option<Harness>,
 }
 
 /// A registration deferred until the app runs.

@@ -14,6 +14,8 @@ use compio::runtime;
 use futures::future::{self, Either};
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "testing")]
+use crate::ConnectedLifecycle;
 use crate::bindable::Bound;
 use crate::dispatch::{Fabric, Layout};
 use crate::time;
@@ -148,7 +150,9 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase>
     where
         Signal: Future<Output = ()>,
     {
-        let running = self.start_on(layout, stop, fabric).await?;
+        let running = self
+            .start_on(layout, stop, fabric, Wiring::production())
+            .await?;
         let stopping = running.stopping();
         if let Either::Right(((), _)) = future::select(pin!(shutdown), pin!(stopping)).await {
             running.say_why_it_stops();
@@ -204,15 +208,17 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
     pub async fn start(self) -> Result<RunningApp, RustStreamError> {
         let layout = self.layout(1)?;
         let stop = Stop::new(self.subscription_end);
-        self.start_on(layout, stop, Fabric::open(1)).await
+        self.start_on(layout, stop, Fabric::open(1), Wiring::production())
+            .await
     }
 
     /// The startup sequence on core 0, over the cores `layout` was planned for.
-    async fn start_on(
+    pub(super) async fn start_on(
         self,
         layout: Layout,
         stop: Stop,
         fabric: Fabric,
+        wiring: Wiring<State>,
     ) -> Result<RunningApp, RustStreamError> {
         let Self {
             info,
@@ -237,8 +243,8 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             "starting service",
         );
 
-        let state = produce_state(state_init).await?;
-        let connected = connect_brokers(brokers).await?;
+        #[cfg_attr(not(feature = "testing"), allow(unused_variables))]
+        let (state, connected, harness) = connect_wired(wiring, state_init, brokers).await?;
 
         let health = HealthReport::new();
         // Core 0 serves its own mailbox beside the app, as every other core does for its own.
@@ -258,6 +264,8 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
                 stop: &stop,
                 fabric: &fabric,
                 health: &health,
+                #[cfg(feature = "testing")]
+                harness,
             },
             &mut handles,
         )
@@ -350,6 +358,19 @@ impl RunningApp {
         } else {
             info!(target: "ruststream::lifecycle", "the process was asked to end");
         }
+    }
+
+    /// The brokers the app connected, in registration order, with their labels: what the test
+    /// harness addresses by type.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn connected(
+        &self,
+    ) -> impl Iterator<Item = (Option<&str>, &(dyn ConnectedLifecycle + 'static))> {
+        self.teardown
+            .brokers
+            .iter()
+            .map(|entry| (entry.label.as_deref(), &*entry.lifecycle))
     }
 
     /// Hands out a [`HealthProbe`]: a cheap, cloneable view of the service's lifecycle state for
@@ -452,6 +473,75 @@ struct Placed<'app> {
     stop: &'app Stop,
     fabric: &'app Fabric,
     health: &'app HealthReport,
+    /// The hooks of the harness the app runs under, where a test drives it.
+    #[cfg(feature = "testing")]
+    harness: HarnessSlot,
+}
+
+/// How the brokers connect and the state is made: as production does, or, under a test, in
+/// process.
+#[cfg(feature = "testing")]
+pub(super) enum Wiring<State> {
+    Production,
+    InProcess(super::InProcessStart<State>),
+}
+
+#[cfg(feature = "testing")]
+impl<State> Wiring<State> {
+    pub(super) const fn production() -> Self {
+        Self::Production
+    }
+}
+
+/// How the brokers connect and the state is made.
+#[cfg(not(feature = "testing"))]
+pub(super) struct Wiring<State>(std::marker::PhantomData<fn() -> State>);
+
+#[cfg(not(feature = "testing"))]
+impl<State> Wiring<State> {
+    pub(super) const fn production() -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
+/// What the harness the app runs under hands the mounts.
+#[cfg(feature = "testing")]
+type HarnessSlot = Option<super::Harness>;
+#[cfg(not(feature = "testing"))]
+type HarnessSlot = ();
+
+/// Produces the state and connects the brokers the way `wiring` says.
+#[cfg(feature = "testing")]
+async fn connect_wired<State>(
+    wiring: Wiring<State>,
+    state_init: StateInit<State>,
+    brokers: Vec<RegisteredBroker>,
+) -> Result<(Arc<State>, Vec<ConnectedEntry>, HarnessSlot), RustStreamError> {
+    match wiring {
+        Wiring::Production => Ok((
+            produce_state(state_init).await?,
+            connect_brokers(brokers).await?,
+            None,
+        )),
+        Wiring::InProcess(start) => {
+            let (state, connected, hooks) = start.connect(state_init, brokers).await?;
+            Ok((state, connected, Some(hooks)))
+        }
+    }
+}
+
+/// Produces the state and connects the brokers.
+#[cfg(not(feature = "testing"))]
+async fn connect_wired<State>(
+    _wiring: Wiring<State>,
+    state_init: StateInit<State>,
+    brokers: Vec<RegisteredBroker>,
+) -> Result<(Arc<State>, Vec<ConnectedEntry>, HarnessSlot), RustStreamError> {
+    Ok((
+        produce_state(state_init).await?,
+        connect_brokers(brokers).await?,
+        (),
+    ))
 }
 
 /// Produces the application state through the `on_startup` producer chain, once, before any
@@ -500,6 +590,8 @@ async fn start_subscribers<State: Send + Sync>(
             stop: placed.stop.clone(),
             fabric: placed.fabric.clone(),
             cores: placed.layout.cores(index).to_vec(),
+            #[cfg(feature = "testing")]
+            harness: placed.harness.clone(),
         };
         let handle = (mounted.start)(Arc::clone(state), launch)
             .await
@@ -579,7 +671,7 @@ async fn unwind_started(
 
 /// Shuts down the brokers a failed startup had already connected, in reverse connect order,
 /// logging shutdown failures instead of returning them.
-async fn unwind_connected(brokers: Vec<ConnectedEntry>) {
+pub(super) async fn unwind_connected(brokers: Vec<ConnectedEntry>) {
     for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
         let name = lifecycle.name();
         match lifecycle.shutdown().await {

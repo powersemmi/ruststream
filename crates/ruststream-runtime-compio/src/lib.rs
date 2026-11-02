@@ -36,6 +36,9 @@ pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, RunningApp, RustStream, RustStreamError,
     Setup, SubscriptionCount, SubscriptionEnd, Wired,
 };
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use app::{Harness, InProcessError, InProcessStart, StateSource};
 #[doc(hidden)]
 pub use app::{
     Launch, MountRoutes, Mounted, ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup,
@@ -54,4 +57,11 @@ pub use yield_now::{YieldNow, yield_now};
 #[doc(hidden)]
 pub mod testing {
     pub use crate::virtual_clock::VirtualClock;
+    use crate::virtual_clock::armed;
+
+    /// How many timers are armed on the calling thread's virtual clock.
+    #[must_use]
+    pub fn armed_timers() -> usize {
+        armed()
+    }
 }

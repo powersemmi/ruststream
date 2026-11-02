@@ -23,7 +23,18 @@ use crate::{SubscriptionEnd, Tasks};
 
 use super::include::MountRoutes;
 use super::scope::BrokerScope;
-use super::{AppInfo, LifecycleHook, LifecyclePhase, Mounted, StateInit};
+use super::{AppInfo, Launch, LifecycleHook, LifecyclePhase, Mounted, StateInit};
+
+/// The delivery context of a mount: recorded into the harness where a test drives the app.
+#[cfg_attr(not(feature = "testing"), allow(unused_variables))]
+fn scope_delivery(launch: &Launch, scope_id: usize) -> ScopeDelivery {
+    let scope = ScopeDelivery::new();
+    #[cfg(feature = "testing")]
+    if let Some(hooks) = &launch.harness {
+        return scope.with_harness(Arc::clone(&hooks.0), scope_id, 0);
+    }
+    scope
+}
 
 /// The top-level application object.
 ///
@@ -616,10 +627,13 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         for ((bound, workers), meta) in starters.into_iter().zip(handlers) {
             let slot = Arc::clone(&slot);
             let tasks = self.continuations.clone();
-            let scope_delivery = Arc::new(ScopeDelivery::new());
+            // The index this broker will occupy once pushed below: the harness records the
+            // scope's deliveries under it.
+            let scope_id = self.brokers.len();
             self.starters.push(Mounted {
                 workers,
                 start: Box::new(move |state, launch| {
+                    let scope_delivery = Arc::new(scope_delivery(&launch, scope_id));
                     let connected = slot
                         .lock()
                         .expect("connected slot mutex poisoned")

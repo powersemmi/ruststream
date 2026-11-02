@@ -76,6 +76,11 @@ fn with<Out>(step: impl FnOnce(&mut Timeline) -> Out) -> Option<Out> {
         .flatten()
 }
 
+/// How many timers are armed on this thread's timeline: none where no lease is held.
+pub(crate) fn armed() -> usize {
+    with(|timeline| timeline.timers.len()).unwrap_or(0)
+}
+
 /// The virtual time, where this thread holds a lease.
 pub(crate) fn now() -> Option<Instant> {
     with(|timeline| timeline.now())
