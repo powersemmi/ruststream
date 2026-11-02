@@ -811,7 +811,9 @@ where
     // its native delayed redelivery: `TestApp::advance` then fires it and counts it before it
     // drives the reaction, so a test sees the copy rather than a race.
     #[cfg(all(feature = "testing", feature = "tokio"))]
-    if let Some(coordinator) = delivery.hooks.coordinator() {
+    if let Some(coordinator) = delivery.hooks.coordinator()
+        && coordinator.times_on_tokio()
+    {
         coordinator.schedule_redelivery_future(delay, republish(true).map(drop));
         return Ok(());
     }
