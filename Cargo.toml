@@ -1267,6 +1267,12 @@ name = "middleware"
 harness = false
 required-features = ["memory", "json", "macros", "tokio"]
 
+# The compio runner on one core: instructions per delivery, and no allocation after the start.
+[[bench]]
+name = "consume_compio"
+harness = false
+required-features = ["compio", "memory", "macros", "json"]
+
 # The embedded app without `alloc`: instructions per delivery, and zero allocations.
 [[bench]]
 name = "embedded_idle_no_alloc"

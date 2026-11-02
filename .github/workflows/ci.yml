@@ -177,6 +177,7 @@ jobs:
           cargo clippy --locked --workspace $EMBASSY_TESTS_EXCLUDE --lib --bins --tests --examples \
             --all-features -- -D warnings
           cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+          cargo check --locked --bench consume_compio --no-default-features --features compio,memory,macros,json
 
       # The embassy runtime alone, as a device service builds it: the facade with the embassy
       # set, where every target that needs tokio names it and drops out, then the embedded runner
@@ -474,7 +475,9 @@ jobs:
       - name: cargo check (benchmarks)
         env:
           CARGO_BUILD_WARNINGS: deny
-        run: cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+        run: |
+          cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+          cargo check --locked --bench consume_compio --no-default-features --features compio,memory,macros,json
 
       # The `DefaultCodec` fallback aliases (cbor, then msgpack) are cfg'd out whenever `json` is
       # on, so neither the workspace build nor the workspace tests ever compile them. Build
@@ -681,7 +684,9 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "beta"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-beta
-        run: cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+        run: |
+          cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+          cargo check --locked --bench consume_compio --no-default-features --features compio,memory,macros,json
 
       - name: cargo test (beta)
         if: "!cancelled() && steps.stable.outcome == 'success'"
@@ -709,7 +714,9 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-floor
-        run: cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+        run: |
+          cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+          cargo check --locked --bench consume_compio --no-default-features --features compio,memory,macros,json
 
       - name: cargo test (1.95)
         if: "!cancelled() && steps.stable.outcome == 'success'"
