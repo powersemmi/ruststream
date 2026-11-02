@@ -189,16 +189,7 @@ mod tests {
     #[cfg(ruststream_alloc)]
     use alloc::sync::Arc;
 
-    use core::convert::Infallible;
-    use core::future::ready;
-
-    use futures::{Stream, stream};
-    use ruststream_core::{
-        AckError, BrokerMoves, ConnectedBroker, Headers, IncomingMessage, Settle, Subscriber,
-        SubscriptionSource,
-    };
-
-    use super::{borrowed, handle_of, subscription_name, subscription_name_of};
+    use super::{borrowed, handle_of, subscription_name};
 
     #[test]
     fn a_name_that_fits_is_kept_whole() {
@@ -226,111 +217,132 @@ mod tests {
         assert_eq!(err.room, 64);
     }
 
-    /// A subject written as one literal, past the room a built name has.
-    const LITERAL: &str = "plant/line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-sensors/temperature";
-
-    /// A connected broker that opens nothing: a name is all these tests ask about.
-    struct Idle;
-
-    impl ConnectedBroker for Idle {
-        type Error = Infallible;
-        type Closed = ();
-
-        fn shutdown(self) -> impl Future<Output = Result<(), Infallible>> {
-            ready(Ok(()))
-        }
-    }
-
-    /// The subscriber of the descriptors below; none is ever opened.
-    struct Silent;
-
-    impl Subscriber for Silent {
-        type Message = Never;
-        type Error = Infallible;
-
-        fn stream(&mut self) -> impl Stream<Item = Result<Never, Infallible>> + '_ {
-            stream::pending()
-        }
-    }
-
-    /// The message type of `Silent`; none is ever yielded.
-    struct Never;
-
-    impl IncomingMessage for Never {
-        fn payload(&self) -> &[u8] {
-            &[]
-        }
-
-        fn headers(&self) -> &Headers {
-            unreachable!("no delivery is ever yielded")
-        }
-    }
-
-    impl Settle for Never {
-        fn ack(self) -> impl Future<Output = Result<(), AckError>> {
-            ready(Ok(()))
-        }
-
-        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
-            ready(Ok(()))
-        }
-    }
-
-    /// A descriptor whose name is a literal of the program and says so.
-    struct Literal(&'static str);
-
-    impl SubscriptionSource<Idle> for Literal {
-        type Subscriber = Silent;
-        type Copies = BrokerMoves;
-
-        fn name(&self) -> &str {
-            self.0
-        }
-
-        fn static_name(&self) -> Option<&'static str> {
-            Some(self.0)
-        }
-
-        fn subscribe(self, _connected: &Idle) -> impl Future<Output = Result<Silent, Infallible>> {
-            ready(Ok(Silent))
-        }
-    }
-
-    /// A descriptor whose name was built at run time, so it cannot say it is static.
-    struct Built(&'static str);
-
-    impl SubscriptionSource<Idle> for Built {
-        type Subscriber = Silent;
-        type Copies = BrokerMoves;
-
-        fn name(&self) -> &str {
-            self.0
-        }
-
-        fn subscribe(self, _connected: &Idle) -> impl Future<Output = Result<Silent, Infallible>> {
-            ready(Ok(Silent))
-        }
-    }
-
-    #[test]
-    fn a_static_name_past_the_room_is_held_whole() {
-        let name =
-            subscription_name_of::<Idle, _>(&Literal(LITERAL)).expect("a literal is held whole");
-        assert_eq!(&*name, LITERAL);
-    }
-
-    #[test]
-    fn a_built_name_that_fits_is_copied() {
-        let name = subscription_name_of::<Idle, _>(&Built("orders")).expect("the name fits");
-        assert_eq!(&*name, "orders");
-    }
-
+    /// Descriptors only a build without `alloc` tells apart: with `alloc` every name is copied
+    /// into a counted string, whatever its length.
     #[cfg(not(ruststream_alloc))]
-    #[test]
-    fn a_built_name_past_the_room_is_refused_with_its_length() {
-        let err =
-            subscription_name_of::<Idle, _>(&Built(LITERAL)).expect_err("built, and too long");
-        assert_eq!(err.length, LITERAL.len());
-        assert_eq!(err.room, 64);
+    mod descriptors {
+        use core::convert::Infallible;
+        use core::future::ready;
+
+        use futures::{Stream, stream};
+        use ruststream_core::{
+            AckError, BrokerMoves, ConnectedBroker, Headers, IncomingMessage, Settle, Subscriber,
+            SubscriptionSource,
+        };
+
+        use super::super::subscription_name_of;
+
+        /// A subject written as one literal, past the room a built name has.
+        const LITERAL: &str = "plant/line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-sensors/temperature";
+
+        /// A connected broker that opens nothing: a name is all these tests ask about.
+        struct Idle;
+
+        impl ConnectedBroker for Idle {
+            type Error = Infallible;
+            type Closed = ();
+
+            fn shutdown(self) -> impl Future<Output = Result<(), Infallible>> {
+                ready(Ok(()))
+            }
+        }
+
+        /// The subscriber of the descriptors below; none is ever opened.
+        struct Silent;
+
+        impl Subscriber for Silent {
+            type Message = Never;
+            type Error = Infallible;
+
+            fn stream(&mut self) -> impl Stream<Item = Result<Never, Infallible>> + '_ {
+                stream::pending()
+            }
+        }
+
+        /// The message type of `Silent`; none is ever yielded.
+        struct Never;
+
+        impl IncomingMessage for Never {
+            fn payload(&self) -> &[u8] {
+                &[]
+            }
+
+            fn headers(&self) -> &Headers {
+                unreachable!("no delivery is ever yielded")
+            }
+        }
+
+        impl Settle for Never {
+            fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+                ready(Ok(()))
+            }
+
+            fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+                ready(Ok(()))
+            }
+        }
+
+        /// A descriptor whose name is a literal of the program and says so.
+        struct Literal(&'static str);
+
+        impl SubscriptionSource<Idle> for Literal {
+            type Subscriber = Silent;
+            type Copies = BrokerMoves;
+
+            fn name(&self) -> &str {
+                self.0
+            }
+
+            fn static_name(&self) -> Option<&'static str> {
+                Some(self.0)
+            }
+
+            fn subscribe(
+                self,
+                _connected: &Idle,
+            ) -> impl Future<Output = Result<Silent, Infallible>> {
+                ready(Ok(Silent))
+            }
+        }
+
+        /// A descriptor whose name was built at run time, so it cannot say it is static.
+        struct Built(&'static str);
+
+        impl SubscriptionSource<Idle> for Built {
+            type Subscriber = Silent;
+            type Copies = BrokerMoves;
+
+            fn name(&self) -> &str {
+                self.0
+            }
+
+            fn subscribe(
+                self,
+                _connected: &Idle,
+            ) -> impl Future<Output = Result<Silent, Infallible>> {
+                ready(Ok(Silent))
+            }
+        }
+
+        #[test]
+        fn a_static_name_past_the_room_is_held_whole() {
+            let name = subscription_name_of::<Idle, _>(&Literal(LITERAL))
+                .expect("a literal is held whole");
+            assert_eq!(&*name, LITERAL);
+        }
+
+        #[test]
+        fn a_built_name_that_fits_is_copied() {
+            let name = subscription_name_of::<Idle, _>(&Built("orders")).expect("the name fits");
+            assert_eq!(&*name, "orders");
+        }
+
+        #[test]
+        fn a_built_name_past_the_room_is_refused_with_its_length() {
+            let err =
+                subscription_name_of::<Idle, _>(&Built(LITERAL)).expect_err("built, and too long");
+            assert_eq!(err.length, LITERAL.len());
+            assert_eq!(err.room, 64);
+        }
     }
 }
