@@ -114,6 +114,13 @@ name = "embedded_batch_retry"
 path = "tests/embedded_batch_retry.rs"
 required-features = ["embassy", "json"]
 
+# The destination a batch handler's mount names for its retry copies, through the embedded
+# `TestApp`.
+[[test]]
+name = "embedded_batch_out_retry"
+path = "tests/embedded_batch_out_retry.rs"
+required-features = ["embassy", "json"]
+
 # A cap on delayed retries of a device service: the runtime's copies spend it, then the delivery
 # goes to the dead-letter destination, through the embedded `TestApp`.
 [[test]]
