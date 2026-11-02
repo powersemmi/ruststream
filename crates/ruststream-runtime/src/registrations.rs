@@ -181,6 +181,8 @@ impl<'registrations, Gate, Work, Error, const SLOTS: usize>
 
 #[cfg(test)]
 mod tests {
+    use std::format;
+
     use super::{Entry, REGISTRATIONS, Registrations, RegistrationsFull};
 
     #[test]
@@ -231,7 +233,12 @@ mod tests {
             ],
         );
 
-        assert!(matches!(table.vacancy(), Err(RegistrationsFull)));
+        let full = table.vacancy().err().expect("the table is full");
+        assert_eq!(full, RegistrationsFull);
+        assert_eq!(
+            format!("{full}"),
+            "the delivery holds no more post-settle registrations"
+        );
         assert_eq!(table.len(), 3);
         assert_eq!(table.take_for(ACK).as_slice(), ["a", "b", "c"]);
     }

@@ -83,6 +83,7 @@ impl<Store: Storage> Future for InlineFuture<'_, Store> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
     use alloc::rc::Rc;
     use core::cell::Cell;
     use core::future::ready;
@@ -90,6 +91,7 @@ mod tests {
     use core::task::{Context, Poll, Waker};
 
     use allocation_counter::measure;
+    use futures::FutureExt;
 
     use super::{CONTINUATION_ROOM, Continuation, InlineFuture, Room};
 
@@ -136,28 +138,34 @@ mod tests {
         }
     }
 
+    /// A future that holds `guard` until it is dropped or has run.
+    // Why: the guard counts its drops through an `Rc`, which a continuation of one task may hold.
+    #[allow(clippy::future_not_send)]
+    fn holding(guard: Guard) -> impl Future<Output = ()> {
+        ready(guard).map(drop)
+    }
+
     #[test]
     fn a_capture_is_dropped_once_whether_or_not_the_future_ran() {
         let drops = Rc::new(Cell::new(0));
 
-        let unpolled = InlineFuture::<Room<CONTINUATION_ROOM>>::new({
-            let guard = Guard(Rc::clone(&drops));
-            async move {
-                let _guard = guard;
-            }
-        });
+        let unpolled =
+            InlineFuture::<Room<CONTINUATION_ROOM>>::new(holding(Guard(Rc::clone(&drops))));
         drop(unpolled);
         assert_eq!(drops.get(), 1);
 
-        let mut ran = pin!(InlineFuture::<Room<CONTINUATION_ROOM>>::new({
-            let guard = Guard(Rc::clone(&drops));
-            async move {
-                let _guard = guard;
-            }
-        }));
+        let mut ran = pin!(InlineFuture::<Room<CONTINUATION_ROOM>>::new(holding(
+            Guard(Rc::clone(&drops))
+        )));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(ran.as_mut().poll(&mut cx).is_ready());
         assert_eq!(drops.get(), 2);
+    }
+
+    #[test]
+    fn a_future_prints_without_its_state() {
+        let work = InlineFuture::<Room<CONTINUATION_ROOM>>::new(ready(()));
+        assert_eq!(format!("{work:?}"), "InlineFuture { .. }");
     }
 
     #[test]

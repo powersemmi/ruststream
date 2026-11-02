@@ -564,4 +564,32 @@ mod tests {
 
         assert_eq!(reached.load(Ordering::SeqCst), 2);
     }
+
+    /// The failure of a batch publish reads as the error that failed it, whichever message it
+    /// belongs to.
+    #[test]
+    fn a_failure_of_a_batch_publish_reads_as_its_shared_cause_before_and_after_it_is_taken_apart() {
+        let shown = Arc::new(Mutex::new(Vec::new()));
+        let record = Arc::clone(&shown);
+        let hook = ErrorHook::new(move |failures: Failures| {
+            for failed in failures {
+                let seen = failed.error().to_string();
+                let (cause, _message) = failed.into_parts();
+                let mut shown = record.lock().unwrap();
+                shown.push(seen);
+                shown.push(cause.to_string());
+            }
+            async {}
+        });
+        let messages = vec![
+            FailedMessage::new("a", Some(CopiedPayload::new()), HeaderSet::new()),
+            FailedMessage::new("b", Some(CopiedPayload::new()), HeaderSet::new()),
+        ];
+
+        hook.react_all(Box::new(Layered(io::Error::other("root"))), messages)
+            .now_or_never()
+            .expect("ready");
+
+        assert_eq!(*shown.lock().unwrap(), ["layered"; 4]);
+    }
 }
