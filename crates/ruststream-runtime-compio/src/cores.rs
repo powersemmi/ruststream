@@ -359,6 +359,7 @@ fn require_driver(runtime: Runtime, required: bool) -> io::Result<Runtime> {
 /// # Panics
 ///
 /// Panics outside a compio runtime.
+#[cfg(any(test, feature = "testing"))]
 pub(crate) fn require_current_driver(required: bool) -> io::Result<()> {
     refuse_fallback(Runtime::with_current(Runtime::driver_type), required)
 }
