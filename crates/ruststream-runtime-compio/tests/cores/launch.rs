@@ -5,7 +5,9 @@ use std::convert::Infallible;
 use std::fs;
 use std::io;
 use std::num::NonZeroUsize;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, ThreadId};
 
 use futures::StreamExt;
@@ -217,14 +219,12 @@ fn the_cores_are_as_many_as_the_process_may_use() {
 #[test]
 fn a_panicking_main_core_stops_the_others_and_the_panic_goes_on() {
     let stop = Stop::default();
-    let others_stopped = Mutex::new(false);
-    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let others_stopped = AtomicBool::new(false);
+    let unwound = catch_unwind(AssertUnwindSafe(|| {
         cores(3).unpinned().run(&stop, async |core, stop| {
-            if core.is_main() {
-                panic!("the main core broke");
-            }
+            assert!(!core.is_main(), "the main core broke");
             stop.cancelled().await;
-            *others_stopped.lock().expect("flag") = true;
+            others_stopped.store(true, Ordering::SeqCst);
             Ok::<(), Infallible>(())
         })
     }));
@@ -233,7 +233,7 @@ fn a_panicking_main_core_stops_the_others_and_the_panic_goes_on() {
     assert_eq!(payload.downcast_ref::<&str>(), Some(&"the main core broke"));
     assert!(stop.is_cancelled());
     assert!(
-        *others_stopped.lock().expect("flag"),
+        others_stopped.load(Ordering::SeqCst),
         "the other cores were stopped and joined first"
     );
 }

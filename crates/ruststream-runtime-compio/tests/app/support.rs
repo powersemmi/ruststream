@@ -5,13 +5,14 @@ use std::convert::Infallible;
 use std::error::Error;
 use std::fmt;
 use std::future::ready;
+use std::panic::panic_any;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
 use compio::time::timeout;
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use futures::future::Either;
+use futures::future::{Either, select};
 use futures::{Stream, StreamExt};
 use ruststream_core::{
     AckError, BrokerMoves, HeaderMap, IncomingMessage, Settle, Subscriber, SubscriptionSource,
@@ -24,6 +25,7 @@ use ruststream_runtime::{
     Context, Deserialized, Handle, HandlerOutcome, Input, IntoSource, SoloDeserialized,
 };
 use ruststream_runtime_compio::test_runtime;
+use ruststream_runtime_compio::time::sleep;
 use std::pin::pin;
 
 /// What happened, in order, as the services under test report it.
@@ -282,7 +284,7 @@ impl Subscriber for Open {
 
     fn stream(&mut self) -> impl Stream<Item = Result<Mail, Infallible>> + Send + '_ {
         if self.explode && self.mute_explosion {
-            std::panic::panic_any(7_u8);
+            panic_any(7_u8);
         }
         assert!(!self.explode, "the client library broke");
         self.inbox
@@ -350,8 +352,8 @@ pub(crate) fn on_runtime<Out>(test: impl Future<Output = Out>) -> Out {
 /// What `signal` yields, or `None` once ten seconds pass, so a delivery that never comes ends a
 /// run's signal instead of hanging it. The future is `Send`, which a run's signal must be.
 pub(crate) async fn within<Out>(signal: impl Future<Output = Out> + Send) -> Option<Out> {
-    let late = ruststream_runtime_compio::time::sleep(Duration::from_secs(10));
-    match futures::future::select(pin!(signal), pin!(late)).await {
+    let late = sleep(Duration::from_secs(10));
+    match select(pin!(signal), pin!(late)).await {
         Either::Left((out, _)) => Some(out),
         Either::Right(_) => None,
     }

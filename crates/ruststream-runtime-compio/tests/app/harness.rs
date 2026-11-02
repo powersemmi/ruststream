@@ -2,6 +2,7 @@
 //! refusals it makes before and while the brokers connect.
 
 use std::error::Error;
+use std::future::ready;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -19,8 +20,8 @@ impl Broker for Remote {
     type Error = io::Error;
     type Connected = <LocalMemoryBroker<8> as Broker>::Connected;
 
-    async fn connect(self) -> Result<Self::Connected, Self::Error> {
-        Err(io::Error::other("no server in a test"))
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
+        ready(Err(io::Error::other("no server in a test")))
     }
 }
 

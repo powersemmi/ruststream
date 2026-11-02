@@ -2,13 +2,14 @@
 //! a router, and the app-global layer that wraps both.
 
 use std::convert::Infallible;
-use std::future::ready;
+use std::future::{pending, ready};
 use std::io;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
+use futures::channel::mpsc;
 use ruststream_core::{BytesMut, OutgoingMessage, Publisher};
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
@@ -127,7 +128,7 @@ fn a_router_mounted_on_the_scope_serves_its_handlers_under_the_global_layer() {
 
 #[test]
 fn a_scope_startup_publish_reaches_the_subscription_the_scope_opened() {
-    let (seen, mut heard) = futures::channel::mpsc::unbounded();
+    let (seen, mut heard) = mpsc::unbounded();
     let got = Arc::new(Mutex::new(None));
     let slot = Arc::clone(&got);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(
@@ -177,7 +178,7 @@ fn a_scope_startup_publish_that_fails_aborts_the_start() {
     );
 
     let failure = app
-        .run_until(one_core(), std::future::pending())
+        .run_until(one_core(), pending())
         .expect_err("the hook failed");
 
     assert!(

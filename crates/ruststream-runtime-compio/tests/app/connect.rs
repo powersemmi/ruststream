@@ -1,6 +1,7 @@
 //! The brokers connect in registration order: one that refuses leaves the ones already connected
 //! shut down, and a connected service pairs a bound publisher for a task beside it.
 
+use std::future::ready;
 use std::sync::{Arc, Mutex};
 
 use ruststream_core::{
@@ -45,8 +46,8 @@ impl Broker for Unreachable {
     type Error = LocalMemoryError;
     type Connected = ConnectedLocalMemoryBroker<8>;
 
-    async fn connect(self) -> Result<Self::Connected, Self::Error> {
-        Err(LocalMemoryError::ShutDown)
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
+        ready(Err(LocalMemoryError::ShutDown))
     }
 }
 
@@ -105,8 +106,8 @@ impl Broker for Clinging {
     type Error = LocalMemoryError;
     type Connected = ClingingConnected;
 
-    async fn connect(self) -> Result<Self::Connected, Self::Error> {
-        Ok(ClingingConnected)
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
+        ready(Ok(ClingingConnected))
     }
 }
 
@@ -120,8 +121,8 @@ impl ConnectedBroker for ClingingConnected {
     type Error = LocalMemoryError;
     type Closed = ();
 
-    async fn shutdown(self) -> Result<(), Self::Error> {
-        Err(LocalMemoryError::ShutDown)
+    fn shutdown(self) -> impl Future<Output = Result<(), Self::Error>> {
+        ready(Err(LocalMemoryError::ShutDown))
     }
 }
 
