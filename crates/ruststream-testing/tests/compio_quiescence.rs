@@ -7,6 +7,8 @@
 use std::error::Error;
 use std::future;
 use std::str::from_utf8;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use compio::runtime::Runtime;
@@ -160,6 +162,32 @@ fn a_handler_that_waits_on_nothing_stalls_the_settle() -> Result<(), Box<dyn Err
             matches!(settled, Err(TestError::Stalled)),
             "settle returned {settled:?}"
         );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_call_hook_runs_before_the_publish_that_caused_the_call_returns() -> Result<(), Box<dyn Error>>
+{
+    Runtime::new()?.block_on(async {
+        let tb = TestApp::start(app()).await?;
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hooked);
+        tb.broker::<Bus>()
+            .subscriber("chain")
+            .on_call(async move |calls| {
+                calls
+                    .assert_called(seen.fetch_add(1, Ordering::SeqCst) + 1)
+                    .settled(HandlerOutcome::ack());
+            });
+
+        tb.broker::<Bus>()
+            .message(&Sent(b"0".to_vec()))
+            .to("chain")
+            .publish()
+            .await?;
+        assert_eq!(hooked.load(Ordering::SeqCst), 1);
+        tb.shutdown().await?;
         Ok(())
     })
 }

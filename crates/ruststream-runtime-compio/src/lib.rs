@@ -60,8 +60,14 @@ pub use yield_now::{YieldNow, yield_now};
 #[doc(hidden)]
 pub mod testing {
     pub use crate::quiescence::{Quiescence, Runnable};
+    use crate::spawn::spawn;
     pub use crate::virtual_clock::VirtualClock;
     use crate::virtual_clock::armed;
+
+    /// Starts `work` on this thread's runtime as a task the harness follows, and lets it run on.
+    pub fn spawn_detached(work: impl Future<Output = ()> + 'static) {
+        spawn(work).detach();
+    }
 
     /// How many timers are armed on the calling thread's virtual clock.
     #[must_use]

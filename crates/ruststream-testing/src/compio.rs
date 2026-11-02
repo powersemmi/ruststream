@@ -17,7 +17,9 @@ use futures::future::{self, Either};
 use ruststream_runtime::ConnectedLifecycle;
 use ruststream_runtime::OutSlot;
 use ruststream_runtime::testing::{Coordinator, PublishedAssertions, TestError, Within};
-use ruststream_runtime_compio::testing::{Quiescence, Runnable, VirtualClock, armed_timers};
+use ruststream_runtime_compio::testing::{
+    Quiescence, Runnable, VirtualClock, armed_timers, spawn_detached,
+};
 use ruststream_runtime_compio::{
     App, InProcessError, InProcessStart, RunningApp, RustStreamError, StateSource, yield_now,
 };
@@ -215,7 +217,7 @@ impl TestApp {
             // Work the app holds that waits on the clock runs to its end: the clock moves from
             // one armed deadline to the next until the app has stopped.
             loop {
-                let idle = pin!(idle(&runnable));
+                let idle = pin!(idle(&coordinator, &runnable));
                 match future::select(shutdown.as_mut(), idle).await {
                     Either::Left((stopped, _)) => break stopped,
                     Either::Right(((), _)) => {
@@ -293,6 +295,7 @@ pub(crate) async fn settled(
     let mut drive: Option<Pin<Box<_>>> = None;
     let settled = loop {
         yield_now().await;
+        run_hooks(coordinator);
         // The budget is read before `drive` is: both measure from the same step, so `drive` would
         // report the same exhaustion, with however many deliveries ran in this turn on top.
         if coordinator.exhausted() {
@@ -322,10 +325,19 @@ pub(crate) async fn settled(
     settled
 }
 
+/// Starts, as tasks the harness follows, the hooks the dispatches handed over: a dispatch waits for
+/// its hooks, so they run on the app's runtime beside it.
+fn run_hooks(coordinator: &Coordinator) {
+    for pending in coordinator.hooks().take_pending() {
+        spawn_detached(pending.into_future(coordinator.clone()));
+    }
+}
+
 /// Resolves once no task of the app's runtime is runnable, after the harness has yielded to them.
-async fn idle(runnable: &Runnable) {
+async fn idle(coordinator: &Coordinator, runnable: &Runnable) {
     loop {
         yield_now().await;
+        run_hooks(coordinator);
         if runnable.count() == 0 {
             return;
         }
