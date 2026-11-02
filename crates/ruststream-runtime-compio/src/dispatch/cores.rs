@@ -1,7 +1,8 @@
 //! Which core each part of a subscription runs on: the placement table made at startup, and the
 //! mailbox through which core 0 starts a lane on another core.
 
-use std::fmt::Write;
+use std::fmt::{self, Debug, Formatter, Write};
+use std::iter;
 use std::sync::{Arc, Mutex};
 
 use compio::runtime::JoinHandle;
@@ -79,7 +80,7 @@ impl Layout {
                 mounts: named,
             });
         }
-        let shared: Vec<usize> = std::iter::once(0).chain(1 + asked..count).collect();
+        let shared: Vec<usize> = iter::once(0).chain(1 + asked..count).collect();
         let mut dedicated = 1;
         let mut cursor = 0;
         let placed = mounts
@@ -93,13 +94,13 @@ impl Layout {
                     dedicated += wanted;
                     held
                 } else {
-                    (0..wanted)
-                        .map(|_| {
-                            let core = shared[cursor % shared.len()];
-                            cursor += 1;
-                            core
-                        })
-                        .collect()
+                    iter::repeat_with(|| {
+                        let core = shared[cursor % shared.len()];
+                        cursor += 1;
+                        core
+                    })
+                    .take(wanted)
+                    .collect()
                 }
             })
             .collect();
@@ -138,8 +139,8 @@ pub struct Fabric {
     inboxes: Arc<Mutex<Vec<Option<UnboundedReceiver<Job>>>>>,
 }
 
-impl std::fmt::Debug for Fabric {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for Fabric {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Fabric")
             .field("cores", &self.senders.len())
             .finish_non_exhaustive()
@@ -150,12 +151,12 @@ impl Fabric {
     /// The mailboxes of `count` cores.
     #[must_use]
     pub fn open(count: usize) -> Self {
-        let (senders, inboxes): (Vec<_>, Vec<_>) = (0..count.max(1))
-            .map(|_| {
-                let (sender, inbox) = mpsc::unbounded();
-                (sender, Some(inbox))
-            })
-            .unzip();
+        let (senders, inboxes): (Vec<_>, Vec<_>) = iter::repeat_with(|| {
+            let (sender, inbox) = mpsc::unbounded();
+            (sender, Some(inbox))
+        })
+        .take(count.max(1))
+        .unzip();
         Self {
             senders: senders.into(),
             inboxes: Arc::new(Mutex::new(inboxes)),

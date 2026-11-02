@@ -1,7 +1,7 @@
 //! The doubles and the launcher the dispatch tests share.
 
 use std::convert::Infallible;
-use std::future::ready;
+use std::future::{Ready, ready};
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -10,6 +10,8 @@ use std::thread::{self, ThreadId};
 use std::time::Duration;
 
 use bytes::Bytes;
+use compio::runtime::spawn;
+use compio::time::timeout;
 use futures::channel::mpsc;
 use futures::{Stream, StreamExt};
 use ruststream_core::{AckError, HeaderMap, IncomingMessage, Settle, Subscriber};
@@ -153,7 +155,7 @@ pub(crate) struct Seen {
 /// A handler that reports each delivery to the test and waits for nothing.
 pub(crate) fn reporting(
     seen: mpsc::UnboundedSender<Seen>,
-) -> Arc<Reporting<impl Fn(&Msg) -> std::future::Ready<()> + Send + Sync>> {
+) -> Arc<Reporting<impl Fn(&Msg) -> Ready<()> + Send + Sync>> {
     Arc::new(Reporting(move |msg: &Msg| {
         let _ = seen.unbounded_send(Seen {
             position: msg.position(),
@@ -192,11 +194,11 @@ where
     Out: Send,
     Main: AsyncFnOnce(Fabric, Stop, Tasks) -> Out + Send,
 {
-    on_cores_stopping(count, Stop::default(), main)
+    on_cores_stopping(count, &Stop::default(), main)
 }
 
 /// [`on_cores`] under a stop signal the test made, to choose what a stream that ends does.
-pub(crate) fn on_cores_stopping<Out, Main>(count: usize, stop: Stop, main: Main) -> Out
+pub(crate) fn on_cores_stopping<Out, Main>(count: usize, stop: &Stop, main: Main) -> Out
 where
     Out: Send,
     Main: AsyncFnOnce(Fabric, Stop, Tasks) -> Out + Send,
@@ -207,9 +209,9 @@ where
     let outs = Cores::new(nonzero(count))
         .unpinned()
         .without_signals()
-        .run(&stop, async |core, stop| {
+        .run(stop, async |core, stop| {
             if core.is_main() {
-                let serving = compio::runtime::spawn({
+                let serving = spawn({
                     let (fabric, stop) = (fabric.clone(), stop.clone());
                     async move { fabric.serve(0, &stop).await }
                 });
@@ -219,7 +221,7 @@ where
                     .take()
                     .expect("core 0 runs once");
                 // A scenario that deadlocks fails here rather than hanging the run.
-                let out = compio::time::timeout(
+                let out = timeout(
                     Duration::from_secs(10),
                     main(fabric.clone(), stop.clone(), tasks.clone()),
                 )

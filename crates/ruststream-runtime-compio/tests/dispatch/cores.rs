@@ -58,8 +58,8 @@ fn the_stream_of_a_worker_mount_is_read_on_core_zero_only() {
         drop(looped);
         (polled, thread::current().id())
     });
-    let polled = polled.lock().expect("lock");
-    assert!(!polled.is_empty());
+    let polled = polled.lock().expect("lock").clone();
+    polled.first().expect("the stream was polled");
     assert!(
         polled.iter().all(|thread| *thread == home),
         "the stream was polled off core 0"

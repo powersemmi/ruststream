@@ -76,10 +76,11 @@ where
     Ok((feed, Crew(crew)))
 }
 
-/// Spawns a task that drives `subscriber` through `handler` with `workers.count()` lanes: lanes
-/// over the shared cores for `workers(n)`, lanes of their own for `threads(n)`, `cores` naming
-/// where each runs (see [`Layout`](super::Layout)). With `by_key` the lane is picked by hashing
-/// the delivery's key on the loop's core.
+/// Spawns a task that drives `subscriber` through `handler` with `workers.count()` lanes.
+///
+/// The lanes run over the shared cores for `workers(n)` and on cores of their own for
+/// `threads(n)`, `cores` naming where each runs (see [`Layout`](super::Layout)). With `by_key`
+/// the lane is picked by hashing the delivery's key on the loop's core.
 ///
 /// A sequential policy is [`spawn_dispatch`]. On shutdown the stream stops being polled and the
 /// lanes drain what their rings hold; dropping the returned handle drops the rings, and the lanes

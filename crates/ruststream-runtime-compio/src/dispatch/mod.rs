@@ -33,9 +33,11 @@ pub use batch::spawn_batch_dispatch;
 pub use cores::{Fabric, Layout, LayoutError, Mount, StartLaneError};
 pub use workers::spawn_dispatch_workers;
 
-/// What one subscription's loop dispatches under: the shared body's delivery context and the
-/// runner it hands leftovers to, with the registration's retry route in its concrete type, kept
-/// in the one allocation a subscription makes for its context.
+/// What one subscription's loop dispatches under.
+///
+/// It holds the shared body's delivery context and the runner it hands leftovers to, with the
+/// registration's retry route in its concrete type, kept in the one allocation a subscription
+/// makes for its context.
 #[derive(Debug)]
 pub struct Hosted<C, Retry> {
     /// The delivery context.
@@ -139,7 +141,6 @@ impl<Items: Stream> Stream for YieldingStream<Items> {
 ///
 /// The task ends when its handle is dropped; the caller holds it for the life of the
 /// subscription. Call it from core 0, which receives every subscription.
-#[must_use]
 pub fn spawn_dispatch<S, H, C, St, Retry>(
     subscriber: S,
     handler: Arc<H>,

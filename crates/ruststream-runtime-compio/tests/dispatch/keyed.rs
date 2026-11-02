@@ -1,6 +1,6 @@
 //! `by_key`: core 0 hashes the key and hands the delivery to the lane the key maps to.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use futures::channel::mpsc;
@@ -57,7 +57,7 @@ fn a_key_keeps_its_order_and_its_core_across_workers() {
         drop(looped);
         seen
     });
-    let mut by_key: HashMap<_, Vec<_>> = HashMap::new();
+    let mut by_key: BTreeMap<_, Vec<_>> = BTreeMap::new();
     for seen in &seen {
         by_key
             .entry(seen.key.clone())

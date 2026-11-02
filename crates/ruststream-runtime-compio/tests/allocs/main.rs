@@ -6,8 +6,10 @@
 
 use std::convert::Infallible;
 use std::future::ready;
-use std::sync::Arc;
+use std::iter;
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use allocation_counter::measure;
@@ -67,7 +69,7 @@ impl Subscriber for Backlog {
 struct Counting {
     handled: AtomicUsize,
     total: usize,
-    last: std::sync::Mutex<Option<oneshot::Sender<()>>>,
+    last: Mutex<Option<oneshot::Sender<()>>>,
 }
 
 impl Handler<Msg, (), ()> for Counting {
@@ -99,28 +101,27 @@ fn allocations_of(total: usize, workers: Workers, keyed: bool) -> u64 {
     let fabric = Fabric::open(count);
     let stop = Stop::default();
     let key: Option<&'static [u8]> = keyed.then_some(&b"k"[..]);
-    let backlog: Vec<Msg> = (0..total)
-        .map(|_| Msg {
-            headers: HeaderMap::new(),
-            key,
-        })
-        .collect();
+    let backlog: Vec<Msg> = iter::repeat_with(|| Msg {
+        headers: HeaderMap::new(),
+        key,
+    })
+    .take(total)
+    .collect();
     let (last, finished) = oneshot::channel();
     let handler = Arc::new(Counting {
         handled: AtomicUsize::new(0),
         total,
-        last: std::sync::Mutex::new(Some(last)),
+        last: Mutex::new(Some(last)),
     });
     thread::scope(|scope| {
-        let others: Vec<_> = (1..count)
-            .map(|core| {
-                let (fabric, stop) = (fabric.clone(), stop.clone());
-                scope.spawn(move || {
-                    let runtime = Runtime::new().expect("a runtime");
-                    measure(|| runtime.block_on(fabric.serve(core, &stop))).count_total
-                })
-            })
-            .collect();
+        let mut others = Vec::new();
+        for core in 1..count {
+            let (fabric, stop) = (fabric.clone(), stop.clone());
+            others.push(scope.spawn(move || {
+                let runtime = Runtime::new().expect("a runtime");
+                measure(|| runtime.block_on(fabric.serve(core, &stop))).count_total
+            }));
+        }
         let runtime = Runtime::new().expect("a runtime");
         let main = measure(|| {
             runtime.block_on(async {
@@ -172,7 +173,7 @@ fn per_delivery(workers: Workers, keyed: bool) -> f64 {
 
 #[test]
 fn a_delivery_allocates_nothing_on_core_zero_or_across_the_hand_off() {
-    let two = std::num::NonZeroUsize::new(2).expect("two");
+    let two = NonZeroUsize::new(2).expect("two");
     let sequential = per_delivery(Workers::sequential(), false);
     let threads = per_delivery(Workers::threads(two), false);
     let keyed = per_delivery(Workers::threads_keyed(two), true);

@@ -1,8 +1,11 @@
 //! A mount without `workers` or `threads`: the loop runs on core 0 and yields after each delivery.
 
+use std::future::ready;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
+use compio::runtime::spawn;
 use futures::channel::mpsc;
 
 use crate::support::{self, Msg, channel, collect, failure, hosted, on_cores, reporting};
@@ -58,7 +61,7 @@ fn a_task_of_the_core_runs_between_deliveries_of_a_handler_that_never_waits() {
         }
         let (seen, mut reports) = mpsc::unbounded();
         let (ran, mut ran_at) = mpsc::unbounded();
-        let counted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::new(AtomicUsize::new(0));
         let handler = {
             let counted = Arc::clone(&counted);
             Arc::new(support::Reporting(move |msg: &Msg| {
@@ -66,14 +69,13 @@ fn a_task_of_the_core_runs_between_deliveries_of_a_handler_that_never_waits() {
                 let _ = seen.unbounded_send(position);
                 if position == 0 {
                     let (ran, counted) = (ran.clone(), Arc::clone(&counted));
-                    compio::runtime::spawn(async move {
-                        let _ =
-                            ran.unbounded_send(counted.load(std::sync::atomic::Ordering::SeqCst));
+                    spawn(async move {
+                        let _ = ran.unbounded_send(counted.load(Ordering::SeqCst));
                     })
                     .detach();
                 }
-                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                std::future::ready(())
+                counted.fetch_add(1, Ordering::SeqCst);
+                ready(())
             }))
         };
         let looped = spawn_dispatch(
@@ -85,12 +87,12 @@ fn a_task_of_the_core_runs_between_deliveries_of_a_handler_that_never_waits() {
             hosted(tasks),
             failure(&stop),
         );
-        let mut handled = 0;
-        while handled < 200 {
+        let mut seen_count = 0;
+        while seen_count < 200 {
             futures::StreamExt::next(&mut reports)
                 .await
                 .expect("reports");
-            handled += 1;
+            seen_count += 1;
         }
         drop(looped);
         futures::StreamExt::next(&mut ran_at)

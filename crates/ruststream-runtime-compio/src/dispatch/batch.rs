@@ -20,9 +20,10 @@ use super::workers::{read_then_join, start_lanes};
 use super::{Fabric, Hosted, Shared, StartLaneError};
 use crate::{Stop, yield_now};
 
-/// Spawns a task that drives `subscriber` through a batch `handler`, one
-/// [`BatchSubscriber::batches`] item per invocation, until `stop` is raised or the stream
-/// terminates. The handler owns the batch's deliveries and settles each of them.
+/// Spawns a task that drives `subscriber` through a batch `handler`, one batch per invocation.
+///
+/// It runs until `stop` is raised or the stream terminates. The handler owns the batch's
+/// deliveries and settles each of them; the items are those of [`BatchSubscriber::batches`].
 ///
 /// With a non-sequential `workers` policy the batches are handed to lanes on `cores`, as whole
 /// batches through the rings, each lane with a decode and an encode buffer of its own; keyed lanes

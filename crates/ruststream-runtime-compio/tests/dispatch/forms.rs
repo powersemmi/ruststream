@@ -1,10 +1,12 @@
 //! What every loop a subscription can run under does at the edges of its stream: an error in it,
 //! the end of it, and the shutdown, each form on its own cores.
 
+use std::mem;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
+use std::thread;
 
 use compio::runtime::JoinHandle;
 use futures::channel::mpsc;
@@ -81,7 +83,7 @@ impl Scripted {
             Tail::Ends => stream::empty().left_stream(),
             Tail::Waits => stream::pending().right_stream(),
         };
-        stream::iter(std::mem::take(&mut self.items)).chain(tail)
+        stream::iter(mem::take(&mut self.items)).chain(tail)
     }
 }
 
@@ -157,7 +159,7 @@ impl BatchHandler<Vec<Msg>, (), ()> for ReportingBatches {
                 let _ = seen.unbounded_send(Seen {
                     position: msg.position(),
                     key: msg.key.clone(),
-                    thread: std::thread::current().id(),
+                    thread: thread::current().id(),
                 });
                 msg.ack().await.expect("the test delivery settles");
             }
@@ -327,7 +329,7 @@ fn shutdown_wakes_a_loop_parked_on_an_empty_subscription() {
 /// Runs the loop until it ends on its own under `end`, and hands back the stop it ran on.
 fn ended_under(shape: Shape, form: Workers, end: StreamEnd) -> Stop {
     let stop = Stop::new(end);
-    on_cores_stopping(3, stop.clone(), async |fabric, stop, tasks| {
+    on_cores_stopping(3, &stop, async |fabric, stop, tasks| {
         let (seen, _arrived) = mpsc::unbounded();
         start(
             shape,

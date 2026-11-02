@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
+use compio::runtime::spawn;
 use event_listener::Event;
 use futures::StreamExt;
 use futures::channel::mpsc;
@@ -84,12 +85,12 @@ fn workers_three_have_three_deliveries_in_flight_at_once() {
             feed.unbounded_send(Msg::numbered(position, None))
                 .expect("the loop reads");
         }
-        let mut handled = Vec::new();
+        let mut order = Vec::new();
         for _ in 0..3 {
-            handled.push(reports.next().await.expect("reports"));
+            order.push(reports.next().await.expect("reports"));
         }
         drop(looped);
-        handled
+        order
     });
     let mut handled = handled;
     handled.sort_unstable();
@@ -135,7 +136,7 @@ fn threads_two_on_three_cores_run_on_cores_one_and_two_only() {
             let here = here.clone();
             fabric
                 .run_on(core, "probe", move || {
-                    compio::runtime::spawn(async move {
+                    spawn(async move {
                         let _ = here.unbounded_send((core, thread::current().id()));
                     })
                 })
