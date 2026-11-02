@@ -106,15 +106,15 @@ impl Shutdown {
         if self.is_cancelled() || self.state.stopping.load(Ordering::Relaxed) {
             return;
         }
-        match self.state.on_end {
-            SubscriptionEnd::Log => debug!(
+        if self.state.on_end == SubscriptionEnd::FailFast {
+            self.signal(subscription, "the subscription's stream ended");
+        } else {
+            // `Log`, and any end the enum may name later, is logged and the service goes on.
+            debug!(
                 target: "ruststream::dispatch",
                 subscription = %subscription,
                 "subscriber stream ended",
-            ),
-            SubscriptionEnd::FailFast => {
-                self.signal(subscription, "the subscription's stream ended");
-            }
+            );
         }
     }
 

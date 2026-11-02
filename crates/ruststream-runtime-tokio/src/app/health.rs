@@ -9,59 +9,9 @@
 use std::future::pending;
 
 use ruststream_runtime::{HealthState, SubscriptionCount};
-use tokio::sync::watch;
 
-/// What a subscription's stream ending while the service runs does, set with
-/// [`RustStream::on_subscription_end`](super::RustStream::on_subscription_end).
-///
-/// A stream can end without a shutdown: the server cancels a consumer when its queue is deleted,
-/// a broker's reconnection policy gives up, or a broker is configured not to reconnect. An end
-/// during shutdown is part of the shutdown and is never reported.
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(feature = "json")]
-/// # mod demo {
-/// use ruststream::memory::prelude::*;
-/// use ruststream::runtime::SubscriptionEnd;
-/// use serde::Deserialize;
-///
-/// #[derive(Deserialize)]
-/// struct Order {
-///     id: u64,
-/// }
-///
-/// #[subscriber("orders")]
-/// async fn accept(order: &Order) -> HandlerOutcome {
-///     tracing::info!(order.id, "accepted");
-///     HandlerOutcome::ack()
-/// }
-///
-/// /// The service is useless without its queue, so it stops when the queue stops.
-/// pub fn app() -> impl App {
-///     RustStream::new(AppInfo::new("orders", "0.1.0"))
-///         .on_subscription_end(SubscriptionEnd::FailFast)
-///         .with_broker(MemoryBroker::new(), |b| {
-///             b.include(accept)
-///         })
-/// }
-/// # }
-/// # fn main() {}
-/// ```
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SubscriptionEnd {
-    /// The loop logs the end and exits; the rest of the service runs on. The subscription leaves
-    /// the active count of [`HealthProbe::subscriptions`].
-    #[default]
-    Log,
-    /// The end is a fail-fast failure: an error naming the subscription, a graceful shutdown,
-    /// [`run`](super::RustStream::run) returning
-    /// [`RustStreamError::Dispatch`](super::RustStreamError::Dispatch), and the probe reporting
-    /// [`HealthState::Failed`].
-    FailFast,
-}
+pub use ruststream_runtime::SubscriptionEnd;
+use tokio::sync::watch;
 
 /// What the probe reads: the lifecycle state and the subscription count, one value, so a wake-up
 /// covers both.

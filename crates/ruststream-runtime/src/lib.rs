@@ -215,7 +215,7 @@ pub use handle::{
 pub use handler::IntoOutcome;
 pub use handler::{ContinuationFuture, Handler, HandlerOutcome};
 #[cfg(ruststream_alloc)]
-pub use health_state::{HealthState, SubscriptionCount};
+pub use health_state::{HealthState, SubscriptionCount, SubscriptionEnd};
 #[cfg(ruststream_alloc)]
 #[doc(hidden)]
 pub use host::Copying;
