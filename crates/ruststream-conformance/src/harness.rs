@@ -41,9 +41,11 @@ use ruststream_runtime_tokio::{AppInfo, RustStream};
 use tokio::{runtime, sync::oneshot, time::timeout};
 
 mod local;
+mod local_readiness;
 mod routing;
 
 pub use local::{local_lifecycle, local_refused_publish_returns_message, run_local_suite};
+pub use local_readiness::local_readiness;
 
 pub(crate) use routing::unknown_backlog;
 use routing::{

@@ -156,7 +156,7 @@ pub use context::{After, AfterError, AfterThen, Context};
 #[doc(hidden)]
 pub use dispatch::{
     Delivery, HeadersAtOnce, HeadersOnDemand, LendHeaders, Lent, Slot as DeliverySlot, Turn,
-    dispatch, placed, run_batch, run_sequential,
+    dispatch, idle, placed, run_batch, run_sequential,
 };
 #[cfg(feature = "alloc")]
 pub use dispatch::{Placement, RETRY_COUNT_HEADER, Workers};

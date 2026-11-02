@@ -46,6 +46,8 @@ tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "ti
 # suite against the in-memory broker through it. A path dependency without a version is dropped
 # on publish.
 ruststream = { path = "../..", features = ["macros", "memory", "json", "testing", "conformance"] }
+# The readiness suite is proved against the local bus, whose stream ends on shutdown.
+ruststream-memory = { path = "../ruststream-memory", features = ["embassy", "testing"] }
 
 [lints]
 workspace = true

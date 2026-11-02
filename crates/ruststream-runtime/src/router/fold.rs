@@ -366,7 +366,7 @@ where
         // and cannot be named in the opened list.
         let handler = BlanketLayer::apply::<Sub::Message, Cx, State, _>(&self.layers, self.handler);
         run_sequential(
-            Cooperative(self.subscriber),
+            Cooperative::new(self.subscriber),
             handler,
             signal,
             self.name,
@@ -443,9 +443,12 @@ where
         Host: Detach,
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
+        // A batch subscriber declares no probe: its lane is polled on every wake, so the bound
+        // always yields.
         let mut stream = pin!(Bounded::new(
             self.subscriber.batches(self.batch_size),
-            YIELD_AFTER
+            YIELD_AFTER,
+            ()
         ));
         let mut cancelled = pin!(signal.cancelled());
         // One slot, one taken batch, one decode buffer and one encode buffer for the whole loop,

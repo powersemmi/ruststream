@@ -29,6 +29,12 @@ Each rule names the trait it concerns; the rustdoc of that trait is the referenc
   whose client holds `Rc` or `RefCell` implements all of them as they are and serves the embedded
   runner; a build with both runtime features takes the stricter bound, so it does not compile
   next to tokio. A delivery implements `IncomingMessage` (the accessors) and `Settle`.
+- A broker on a channel or a socket (a device broker) returns a probe from `Subscriber::ready_hint`:
+  a `ReadyHint` handle on the state its stream reads, taken before the stream opens. `may_be_ready`
+  is `true` whenever the next poll could return an item, an error or the end, and the stream
+  registers its waker whenever it returns `Pending`. The embedded app skips the poll of an idle
+  subscription while the probe says `false`; the constant `true` is legal and gains nothing. Run
+  `harness::local_readiness` beside `run_local_suite` to hold the probe to this.
 - Implement `Subscribe` on the **connected** form for the by-name `#[subscriber("topic")]` form,
   and ship a `SubscriptionSource<Connected<B>>` descriptor for broker-specific options (even a
   parameter-less broker ships one). Give the descriptor a constructor and derive `Clone`; add

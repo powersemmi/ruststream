@@ -31,6 +31,10 @@ Depth:
    `Settle::nack(self, requeue)` consume the delivery; a transport without acks answers
    `AckError::Unsupported`. Override `redelivery_count(&self) -> Option<u64>` where the transport
    counts deliveries (the first delivery answers 1). The trait has no error type of its own.
+   A device broker whose deliveries wait in a channel or a socket returns a `ReadyHint` from
+   `Subscriber::ready_hint` (`may_be_ready` is `true` whenever the next poll could yield, the end
+   after a shutdown included), so the embedded app skips the poll of an idle subscription;
+   `harness::local_readiness` holds it to that.
 3. **Subscribing.** `Subscribe` on the connected form for `#[subscriber("name")]`, and a
    descriptor implementing `SubscriptionSource<Connected>` for the broker's own options. Both
    declare `type Copies`: `AddressedCopies` (implement `RedeliveryAddressed` on the descriptor),

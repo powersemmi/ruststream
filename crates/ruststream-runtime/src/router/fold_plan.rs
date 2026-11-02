@@ -110,7 +110,7 @@ impl<Sub, Body, Cx> OneTaskRoute<Sub, Body, Cx> {
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
         run_sequential(
-            Cooperative(self.subscriber),
+            Cooperative::new(self.subscriber),
             self.handler,
             signal,
             self.name,

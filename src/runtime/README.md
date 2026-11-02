@@ -226,3 +226,7 @@ re-exported in this module. A delayed retry waits in a store the mount sizes wit
 `retry_capacity`; a retry that finds the store full is a failed publish like any other, with its
 own error, and the handler's `.error` continuation is told (see
 [`HandlerOutcome::error`](crate::runtime::HandlerOutcome::error)).
+The embedded app is one task that joins every subscription, so it polls each idle subscription on
+every wake. A subscriber whose broker keeps its deliveries in a channel or a socket returns a
+[`ReadyHint`](crate::ReadyHint) from `Subscriber::ready_hint`, and the app polls its subscription
+only while the hint says a delivery may be ready; the local memory bus does.

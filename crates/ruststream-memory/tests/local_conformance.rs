@@ -36,3 +36,15 @@ async fn the_local_bus_returns_the_message_of_a_refused_publish() {
     )
     .await;
 }
+
+// The closures stay: their bounds are higher-ranked, as above.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "current_thread")]
+async fn the_local_bus_keeps_the_readiness_contract() {
+    harness::local_readiness(
+        LocalMemoryBroker::<16>::new,
+        |name| LocalMemorySource::new(name),
+        |connected: &ConnectedLocalMemoryBroker<16>| connected.publisher(),
+    )
+    .await;
+}
