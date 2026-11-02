@@ -24,6 +24,8 @@ use tokio::runtime::{Builder, Runtime};
 use ruststream_asyncapi as asyncapi;
 #[cfg(feature = "logging")]
 use ruststream_observability::logging;
+#[cfg(feature = "asyncapi")]
+use ruststream_runtime_tokio::AppDescription;
 use ruststream_runtime_tokio::{App, RustStreamError};
 
 /// Errors surfaced by the generated CLI entry point.
@@ -300,7 +302,7 @@ fn parse_asyncapi(args: &[String]) -> Result<Command, CliError> {
 
 #[cfg(feature = "asyncapi")]
 fn generate_spec<A: App>(app: &A, out: Option<&str>, yaml: bool) -> Result<(), CliError> {
-    let spec = asyncapi::build_spec(app);
+    let spec = asyncapi::build_spec(&AppDescription(app));
     let text = if yaml {
         spec.to_yaml().map_err(CliError::SerializeYaml)?
     } else {

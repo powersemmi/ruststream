@@ -96,5 +96,58 @@
 //! [tag]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/service-info/tag/
 //! [external-docs]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/service-info/external-docs/
 
+use ruststream_asyncapi as asyncapi;
+use ruststream_runtime_tokio::AppDescription;
+
+use crate::runtime::App;
+
 #[doc(inline)]
 pub use ruststream_asyncapi::*;
+
+/// Builds an [`AsyncAPI`](Spec) 3.1.0 document from the app `main` runs.
+///
+/// Each registered subscriber becomes a channel (addressed by its name), a `receive` operation,
+/// and a message component named after the handler's input type.
+///
+/// # Examples
+///
+/// ```
+/// # mod demo {
+/// use std::error::Error;
+/// use std::fs;
+///
+/// use ruststream::asyncapi::build_spec;
+/// use ruststream::memory::prelude::*;
+/// use ruststream::schemars::JsonSchema;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize, JsonSchema)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn accept(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "accepted");
+///     HandlerOutcome::ack()
+/// }
+///
+/// pub fn app() -> impl App {
+///     RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(accept)
+///     })
+/// }
+///
+/// /// Writes the document the service publishes next to its code, from the app `main` runs.
+/// pub fn write_document() -> Result<(), Box<dyn Error>> {
+///     let spec = build_spec(&app());
+///     fs::write("asyncapi.json", spec.to_json()?)?;
+///     Ok(())
+/// }
+/// # }
+/// # fn main() {}
+/// ```
+#[must_use]
+pub fn build_spec<A: App>(app: &A) -> Spec {
+    asyncapi::build_spec(&AppDescription(app))
+}

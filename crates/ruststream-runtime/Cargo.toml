@@ -73,8 +73,7 @@ log = ["ruststream-core/log"]
 defmt = ["ruststream-core/defmt"]
 # The app's runtime as a handler reaches it (`MainRuntime`), for the runner built on Tokio.
 tokio = ["std", "dep:tokio", "ruststream-core/send"]
-# The runner built on compio. Fork F1 (powersemmi/ruststream#620): whether this also turns on
-# `ruststream-core/send` is undecided, so the feature carries `std` alone.
+# The items the compio runner shares with the other runners.
 compio = ["std"]
 poll-diagnostics = ["std", "dep:quanta"]
 

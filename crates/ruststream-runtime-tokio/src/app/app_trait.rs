@@ -73,7 +73,7 @@ mod sealed {
     note = "an EmbeddedApp runs on embassy: await `EmbeddedApp::run(&CONTROL)` in an embassy task; \
             the CLI, MainRuntime, metrics and OTel run on the tokio runtime"
 )]
-pub trait App: Described + sealed::Sealed + Sized {
+pub trait App: sealed::Sealed + Sized {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`), then shuts down gracefully.
     ///
     /// # Errors
@@ -100,6 +100,16 @@ pub trait App: Described + sealed::Sealed + Sized {
     /// Returns [`RustStreamError`] if the state producer or an `after_startup` hook fails, a
     /// broker fails to connect, or a subscription fails to open.
     fn start(self) -> impl Future<Output = Result<RunningApp, RustStreamError>>;
+
+    /// The service metadata (title, version, description): the `AsyncAPI` `info` object.
+    fn info(&self) -> &AppInfo;
+
+    /// The registered `AsyncAPI` servers, keyed by name.
+    fn servers(&self) -> &BTreeMap<String, ServerSpec>;
+
+    /// Metadata for every registered handler, in registration order: input to the `AsyncAPI`
+    /// generator.
+    fn handlers(&self) -> &[HandlerMetadata];
 }
 
 // `Pipeline: Send` is what makes the run futures `Send`: `run` consumes `self`, which holds the
@@ -127,6 +137,18 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
     fn start(self) -> impl Future<Output = Result<RunningApp, RustStreamError>> {
         RustStream::start(self)
     }
+
+    fn info(&self) -> &AppInfo {
+        RustStream::info(self)
+    }
+
+    fn servers(&self) -> &BTreeMap<String, ServerSpec> {
+        RustStream::servers(self)
+    }
+
+    fn handlers(&self) -> &[HandlerMetadata] {
+        RustStream::handlers(self)
+    }
 }
 
 // Spelled as in the `App` impl above: the calls delegate to the inherent methods of the same names.
@@ -148,5 +170,25 @@ impl<Layers, State, Pipeline, Phase> Described for RustStream<Layers, State, Pip
         if let Some(select) = self.logger {
             select();
         }
+    }
+}
+
+/// Presents any [`App`] as [`Described`], so a document builder over `Described` serves an app
+/// known only by its `impl App` type. The CLI and the facade's `build_spec` use it.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct AppDescription<'app, A>(pub &'app A);
+
+impl<A: App> Described for AppDescription<'_, A> {
+    fn info(&self) -> &AppInfo {
+        App::info(self.0)
+    }
+
+    fn servers(&self) -> &BTreeMap<String, ServerSpec> {
+        App::servers(self.0)
+    }
+
+    fn handlers(&self) -> &[HandlerMetadata] {
+        App::handlers(self.0)
     }
 }
