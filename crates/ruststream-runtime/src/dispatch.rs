@@ -537,7 +537,8 @@ fn record_call<C>(
 #[allow(clippy::too_many_arguments)]
 pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     handler: &H,
-    batch: Batch,
+    slot: &mut Batch,
+    taken: &mut H::Taken,
     scratch: &mut H::Scratch,
     encode: &mut BytesMut,
     name: &str,
@@ -550,7 +551,10 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     Signal: Halt,
     Host: SendHost<C>,
 {
-    let batch = H::take(batch);
+    // The broker filled `slot`; the exchange leaves it empty for the next batch, and the
+    // handler's own buffer holds this one.
+    H::load(taken, slot);
+    let batch = taken;
     // A batch spans many deliveries, so its context carries only subscription-scoped data, built
     // from its first delivery, or from the batch itself where the handler lends its values; the
     // shared app state is threaded the same way as on the single-message path. A batch with
@@ -573,8 +577,6 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     // the deliveries and a panic consumes them) to record the call the settle path never reached.
     // Only a harness reads that record, so a dispatch no harness watches captures nothing.
     #[cfg(feature = "testing")]
-    let mut batch = batch;
-    #[cfg(feature = "testing")]
     let unsettled = watcher.as_ref().map(|_| batch.unsettled());
     #[cfg(feature = "testing")]
     if let Some(coordinator) = &watcher {
@@ -587,16 +589,24 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
         harness_scope(delivery),
         observed!(
             delivery,
-            AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx, host).await })
-                .catch_unwind()
+            AssertUnwindSafe(async {
+                handler
+                    .handle_batch(&mut *batch, scratch, &mut ctx, host)
+                    .await;
+            })
+            .catch_unwind()
         ),
     )
     .await;
     #[cfg(all(feature = "std", not(feature = "testing")))]
     let result = observed!(
         delivery,
-        AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx, host).await })
-            .catch_unwind()
+        AssertUnwindSafe(async {
+            handler
+                .handle_batch(&mut *batch, scratch, &mut ctx, host)
+                .await;
+        })
+        .catch_unwind()
     )
     .await;
     // Without `std` a panic aborts, so the handler's future runs uncaught.
@@ -604,7 +614,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     let result: Result<(), Infallible> = {
         observed!(
             delivery,
-            handler.handle_batch(batch, scratch, &mut ctx, host)
+            handler.handle_batch(&mut *batch, scratch, &mut ctx, host)
         )
         .await;
         Ok(())
@@ -627,6 +637,9 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
                 panic = %reason,
                 "batch handler panicked",
             );
+            // What the panic left unsettled is dropped, so the worker's storage serves the next
+            // batch.
+            batch.discard();
             #[cfg(feature = "testing")]
             if let (Some(coordinator), Some(deliveries)) = (&watcher, unsettled) {
                 due_calls.extend(record_call(

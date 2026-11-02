@@ -9,6 +9,9 @@
 //! Registrations are documented by default, so every message type here derives `JsonSchema`:
 //! a suite mounting one of them is not asking to be the file that opts documentation out.
 
+use std::future::poll_fn;
+use std::pin::Pin;
+use std::task::{Context, Poll, ready};
 #[cfg(feature = "testing")]
 use std::time::Duration;
 
@@ -151,4 +154,60 @@ pub(crate) async fn expect_id<Log: LogMode>(
     assert_eq!(seen.len(), 1, "expected one publish on {name}");
     let event: Event = serde_json::from_slice(seen[0].payload()).expect("decodes");
     assert_eq!(event.id, id, "the event published on {name}");
+}
+
+/// The next batch a stream fills a fresh slot with, or `None` where the subscription ended: the
+/// slot a service never sees, lent for one fill the way the runtime lends it.
+#[allow(dead_code)]
+pub(crate) async fn filled<Message, Fill>(
+    stream: &mut Pin<&mut Fill>,
+) -> Option<Result<Vec<Message>, Fill::Error>>
+where
+    Fill: ruststream::BatchStream<Vec<Message>>,
+{
+    let mut slot = Vec::new();
+    let step = poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot)).await;
+    step.map(|filled| filled.map(|()| slot))
+}
+
+/// A batch stream whose messages are read into another type as they are filled: a broker that
+/// wraps the bus's deliveries in its own.
+#[allow(dead_code)]
+pub(crate) struct Reading<Inner, From, To> {
+    inner: Pin<Box<Inner>>,
+    lent: Vec<From>,
+    read: fn(From) -> To,
+}
+
+#[allow(dead_code)]
+impl<Inner, From, To> Reading<Inner, From, To> {
+    /// Fills `slot`s with what `inner` fills, each message passed through `read`.
+    pub(crate) fn new(inner: Inner, read: fn(From) -> To) -> Self {
+        Self {
+            inner: Box::pin(inner),
+            lent: Vec::new(),
+            read,
+        }
+    }
+}
+
+// Boxed and plain owned parts only; nothing is pinned in place.
+impl<Inner, From, To> Unpin for Reading<Inner, From, To> {}
+
+impl<Inner, From, To> ruststream::BatchStream<Vec<To>> for Reading<Inner, From, To>
+where
+    Inner: ruststream::BatchStream<Vec<From>>,
+{
+    type Error = Inner::Error;
+
+    fn poll_fill(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        slot: &mut Vec<To>,
+    ) -> Poll<Option<Result<(), Self::Error>>> {
+        let this = &mut *self;
+        let step = ready!(this.inner.as_mut().poll_fill(cx, &mut this.lent));
+        slot.extend(this.lent.drain(..).map(this.read));
+        Poll::Ready(step)
+    }
 }

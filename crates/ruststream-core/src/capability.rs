@@ -7,8 +7,6 @@
 use core::any::type_name;
 use core::{error::Error as StdError, num::NonZeroUsize, time::Duration};
 
-use futures_core::Stream;
-
 use crate::subscription::copy_path::Sealed as CopyPathDeclares;
 use crate::{
     ConnectedBroker, CopyPath, DeclareRetryError, HeaderMap, IncomingMessage, MaybeSend,
@@ -25,6 +23,10 @@ use crate::{
 /// batch the broker delivered: the runtime never splits or merges one.
 ///
 /// # Implementing it
+///
+/// The runtime lends the stream a [`BatchSlot`] to fill (see [`BatchStream::poll_fill`]) and takes
+/// it back drained, so the broker pushes each message into the slot it is given and builds no
+/// container of its own.
 ///
 /// The mount site names one number, the batch size, and the runtime passes it to
 /// [`batches`](Self::batches) unchanged. Everything else about how a batch forms (a block
@@ -63,14 +65,16 @@ use crate::{
                     `BatchSubscriber` and `Buffered`)"
 )]
 pub trait BatchSubscriber: Subscriber {
-    /// Container yielded by [`batches`]. Implementations choose between
-    /// [`Vec`](alloc::vec::Vec), custom iterators, or anything else that yields the underlying
-    /// [`Subscriber::Message`].
+    /// Where one batch is collected: the slot the runtime lends [`batches`] to fill. The runtime
+    /// allocates one per worker when the subscription starts and reuses it for every batch, so a
+    /// batch costs no allocation. A `Vec` of the subscriber's messages is a slot; a batch type of
+    /// the broker's own implements [`BatchSlot`].
     ///
     /// [`batches`]: Self::batches
-    type Batch: IntoIterator<Item = <Self as Subscriber>::Message> + MaybeSend;
+    type Batch: BatchSlot<Message = <Self as Subscriber>::Message>;
 
-    /// Returns a stream of batches of at most `size` messages.
+    /// Returns the stream that collects batches of at most `size` messages into the slots the
+    /// runtime lends it.
     ///
     /// `size` is the one parameter the framework passes down: it comes from the registration's
     /// [`batch(n)`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.SubscriberSettings.html#method.batch),
@@ -92,7 +96,7 @@ pub trait BatchSubscriber: Subscriber {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + MaybeSend + '_;
+    ) -> impl BatchStream<Self::Batch, Error = <Self as Subscriber>::Error> + MaybeSend + '_;
 }
 
 /// A subscriber whose position in a replayable log can be moved.
@@ -615,8 +619,10 @@ pub trait Subscribe: ConnectedBroker {
     }
 }
 
+mod batch;
 mod carries;
 mod server;
 
+pub use batch::{BatchSlot, BatchStream};
 pub use carries::{Carries, CarriesBatch};
 pub use server::{ApiKeyLocation, DescribeServer, HttpApiKeyLocation, SecurityScheme, ServerSpec};

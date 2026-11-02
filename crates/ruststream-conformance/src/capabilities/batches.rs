@@ -5,6 +5,7 @@ use std::{fmt, num::NonZeroUsize};
 use futures::{Stream, StreamExt};
 use tokio::time::timeout;
 
+use super::slots::Reused;
 use super::{
     DEFAULT_TIMEOUT, REDELIVERY_TIMEOUT, SeekPosition, SubscriberMessage, ack_or_unsupported,
     collect_batched, collect_batches, expect_no_batch, nack_requeue, payloads, publish_all, within,
@@ -29,6 +30,10 @@ use ruststream_core::{
 /// dedicated thread) settles all the same: the requeued element comes back. A transport that
 /// answers a requeue with [`AckError::Unsupported`](ruststream_core::AckError::Unsupported) passes both with
 /// nothing coming back.
+///
+/// The stream is driven the way the runtime drives it: one slot is lent to every fill and drained
+/// before the next. A batch never holds more than the size the stream was opened with, a failed
+/// fill leaves the slot empty, and a subscription that ended leaves it untouched.
 ///
 /// The settling runtime is handed the delivered messages, so they are `'static`.
 ///
@@ -97,7 +102,8 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     }
 
     let mut received = Vec::new();
-    let mut stream = std::pin::pin!(subscriber.batches(BATCH));
+    let batches = std::pin::pin!(subscriber.batches(BATCH));
+    let mut stream = Reused::<_, <Src::Subscriber as BatchSubscriber>::Batch>::new(batches, BATCH);
     while received.len() < COUNT as usize {
         let batch = timeout(DEFAULT_TIMEOUT, stream.next())
             .await
@@ -107,12 +113,6 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 
         let batch: Vec<_> = batch.into_iter().collect();
         assert!(!batch.is_empty(), "a yielded batch must not be empty");
-        assert!(
-            batch.len() <= BATCH.get(),
-            "a batch must never carry more than the size it was opened with: got {}, asked {}",
-            batch.len(),
-            BATCH,
-        );
         for msg in batch {
             received.push(msg.payload().to_vec());
             ack_or_unsupported(msg, "batches").await;
@@ -344,7 +344,8 @@ pub async fn batch_seeking<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     let sent: [&[u8]; 5] = [&[0], &[1], &[2], &[3], &[4]];
     publish_all(&publisher, &subject, &sent).await;
 
-    let mut stream = std::pin::pin!(subscriber.batches(BATCH));
+    let batches = std::pin::pin!(subscriber.batches(BATCH));
+    let mut stream = Reused::<_, <Src::Subscriber as BatchSubscriber>::Batch>::new(batches, BATCH);
     let delivered = collect_batched(
         &mut stream,
         sent.len(),

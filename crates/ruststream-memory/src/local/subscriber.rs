@@ -12,7 +12,7 @@ use core::task::{Context, Poll};
 
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, AddressedCopies, BatchSubscriber, FromName, HeaderMap, IncomingMessage,
+    AckError, AddressedCopies, BatchStream, BatchSubscriber, FromName, HeaderMap, IncomingMessage,
     RedeliveryAddress, RedeliveryAddressed, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
@@ -223,7 +223,7 @@ impl<const CAP: usize> BatchSubscriber for LocalMemorySubscriber<CAP> {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, Self::Error>> + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = Self::Error> + '_ {
         Batches {
             subscriber: self,
             size,
@@ -256,10 +256,14 @@ struct Batches<'a, const CAP: usize> {
     size: NonZeroUsize,
 }
 
-impl<const CAP: usize> Stream for Batches<'_, CAP> {
-    type Item = Result<Vec<LocalMemoryMessage<CAP>>, Infallible>;
+impl<const CAP: usize> BatchStream<Vec<LocalMemoryMessage<CAP>>> for Batches<'_, CAP> {
+    type Error = Infallible;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_fill(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        slot: &mut Vec<LocalMemoryMessage<CAP>>,
+    ) -> Poll<Option<Result<(), Infallible>>> {
         let subscriber = self.subscriber;
         let Poll::Ready(first) = subscriber.subscription.poll_next(cx) else {
             return Poll::Pending;
@@ -267,16 +271,14 @@ impl<const CAP: usize> Stream for Batches<'_, CAP> {
         let Some(first) = first else {
             return Poll::Ready(None);
         };
-        // At most the capacity waits in the queue, so a batch never grows past it.
-        let mut batch = Vec::with_capacity(self.size.get().min(CAP));
-        batch.push(subscriber.message(first));
-        while batch.len() < self.size.get() {
+        slot.push(subscriber.message(first));
+        while slot.len() < self.size.get() {
             let Some(next) = subscriber.subscription.try_next() else {
                 break;
             };
-            batch.push(subscriber.message(next));
+            slot.push(subscriber.message(next));
         }
-        Poll::Ready(Some(Ok(batch)))
+        Poll::Ready(Some(Ok(())))
     }
 }
 
@@ -424,6 +426,7 @@ impl<const CAP: usize> Settle for LocalMemoryMessage<CAP> {
 
 #[cfg(test)]
 mod tests {
+    use core::future::poll_fn;
     use core::pin::pin;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -442,7 +445,7 @@ mod tests {
 
     use super::*;
     use crate::local::LocalMemoryBroker;
-    use crate::local::drive::{ended, waiting};
+    use crate::local::drive::waiting;
 
     async fn open(name: &str) -> (ConnectedLocalMemoryBroker<4>, LocalMemorySubscriber<4>) {
         let connected = LocalMemoryBroker::<4>::new().connect().await.unwrap();
@@ -565,6 +568,20 @@ mod tests {
         });
     }
 
+    /// The next batch the stream fills a fresh slot with, or `None` where the subscription ended.
+    /// A stream with nothing waiting fails the test rather than hanging it.
+    fn filled<S>(stream: &mut Pin<&mut S>) -> Option<Vec<LocalMemoryMessage<4>>>
+    where
+        S: BatchStream<Vec<LocalMemoryMessage<4>>>,
+    {
+        let mut slot = Vec::new();
+        let Some(step) = poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot)).now_or_never()
+        else {
+            panic!("the stream has nothing waiting");
+        };
+        step.map(|_| slot)
+    }
+
     #[test]
     fn a_batch_takes_what_waits_up_to_its_size() {
         block_on(async {
@@ -573,15 +590,15 @@ mod tests {
                 publish(&connected, "cmd", payload).await;
             }
             let mut batches = pin!(subscriber.batches(NonZeroUsize::new(2).unwrap()));
-            let first = waiting(&mut batches).unwrap();
-            let second = waiting(&mut batches).unwrap();
+            let first = filled(&mut batches).unwrap();
+            let second = filled(&mut batches).unwrap();
             let sizes = [first.len(), second.len()];
             for delivery in first.into_iter().chain(second) {
                 delivery.ack().await.unwrap();
             }
             assert_eq!(sizes, [2, 1]);
             connected.shutdown().await.unwrap();
-            assert!(ended(&mut batches));
+            assert!(filled(&mut batches).is_none());
         });
     }
 

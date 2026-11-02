@@ -22,8 +22,8 @@ use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
 use ruststream::testing::TestApp;
 use ruststream::{
-    AddressedCopies, BatchSubscriber, BufferedSubscriber, RedeliveryAddress, RedeliveryAddressed,
-    Seekable, Subscribe, Subscriber, SubscriptionSource,
+    AddressedCopies, BatchStream, BatchSubscriber, BufferedSubscriber, RedeliveryAddress,
+    RedeliveryAddressed, Seekable, Subscribe, Subscriber, SubscriptionSource,
 };
 use serde::{Deserialize, Serialize};
 
@@ -54,7 +54,7 @@ impl BatchSubscriber for TrickleSubscriber {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, Self::Error>> + Send + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = Self::Error> + Send + '_ {
         self.0.batches(size)
     }
 }

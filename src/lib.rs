@@ -180,9 +180,9 @@ pub use ruststream_core::{
     RedeliveryAddressed, RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
 };
 pub use ruststream_core::{
-    ApiKeyLocation, BatchSubscriber, Carries, CarriesBatch, DescribeServer, HttpApiKeyLocation,
-    OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker,
-    ServerSpec, Subscribe, Transaction, TransactionalPublisher,
+    ApiKeyLocation, BatchSlot, BatchStream, BatchSubscriber, Carries, CarriesBatch, DescribeServer,
+    HttpApiKeyLocation, OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme,
+    Seekable, Seeker, ServerSpec, Subscribe, Transaction, TransactionalPublisher,
 };
 pub use ruststream_core::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
 pub use ruststream_core::{Broker, Connected, ConnectedBroker};

@@ -268,10 +268,13 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 /// # mod db_queue {
 /// #     // The broker crate's side: its broker, its descriptor, its deliveries and pages of rows.
 /// #     use std::num::NonZeroUsize;
+/// #     use std::pin::Pin;
+/// #     use std::task::{Context, Poll};
 /// #     use futures::Stream;
 /// #     use ruststream::memory::{ConnectedMemoryBroker, MemoryError};
 /// #     use ruststream::runtime::{Input, SoloCarried};
-/// #     use ruststream::{AckError, AddressedCopies, BatchSubscriber, Carries, CarriesBatch};
+/// #     use ruststream::{AckError, AddressedCopies, BatchSlot, BatchStream, BatchSubscriber};
+/// #     use ruststream::{Carries, CarriesBatch};
 /// #     use ruststream::{HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed, Settle};
 /// #     use ruststream::{Subscriber, SubscriptionSource};
 /// #     use super::SendEmail;
@@ -310,8 +313,16 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 /// #     impl BatchSubscriber for Claims {
 /// #         type Batch = Page;
 /// #         fn batches(&mut self, _: NonZeroUsize)
-/// #             -> impl Stream<Item = Result<Page, MemoryError>> + Send + '_ {
-/// #             futures::stream::empty()
+/// #             -> impl BatchStream<Page, Error = MemoryError> + Send + '_ {
+/// #             NoPages
+/// #         }
+/// #     }
+/// #     struct NoPages;
+/// #     impl BatchStream<Page> for NoPages {
+/// #         type Error = MemoryError;
+/// #         fn poll_fill(self: Pin<&mut Self>, _: &mut Context<'_>, _: &mut Page)
+/// #             -> Poll<Option<Result<(), MemoryError>>> {
+/// #             Poll::Ready(None)
 /// #         }
 /// #     }
 /// #     impl Carries<SendEmail> for Claimed {
@@ -321,10 +332,15 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 /// #         type Item = SendEmail;
 /// #         fn carried(&self) -> &[SendEmail] { &self.rows }
 /// #     }
-/// #     impl IntoIterator for Page {
-/// #         type Item = Claimed;
-/// #         type IntoIter = std::vec::IntoIter<Claimed>;
-/// #         fn into_iter(self) -> Self::IntoIter { self.claims.into_iter() }
+/// #     impl BatchSlot for Page {
+/// #         type Message = Claimed;
+/// #         fn with_capacity(size: NonZeroUsize) -> Self {
+/// #             Page { rows: Vec::with_capacity(size.get()), claims: Vec::with_capacity(size.get()) }
+/// #         }
+/// #         fn drain(&mut self) -> impl Iterator<Item = Claimed> + '_ {
+/// #             self.rows.clear();
+/// #             self.claims.drain(..)
+/// #         }
 /// #     }
 /// #     impl IncomingMessage for Claimed {
 /// #         fn payload(&self) -> &[u8] { &self.bytes }

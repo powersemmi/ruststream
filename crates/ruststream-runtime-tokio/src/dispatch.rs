@@ -8,10 +8,10 @@ use std::sync::Arc;
 use std::task::Poll;
 
 use bytes::BytesMut;
-use futures::Stream;
 use tokio::task::{JoinError, JoinHandle};
 use tracing::error;
 
+use ruststream_core::{BatchSlot, BatchStream};
 use ruststream_runtime::DeliverySlot as Slot;
 use ruststream_runtime::{
     BatchHandler, DispatchFailure, Handler, HeadersOnDemand, Placement, RetryCopies, Turn, Workers,
@@ -263,9 +263,11 @@ async fn batch_loop<S, H, C, St, Retry>(
     // batch the handler sees.
     let mut stream = std::pin::pin!(subscriber.batches(batch_size));
     let mut cancelled = std::pin::pin!(shutdown.cancelled());
-    // One decode buffer for the whole loop: every batch borrows the same one, so the slice a
-    // handler reads is allocated once for the subscription. The encode buffer beside it is the
-    // same bargain on the way out.
+    // One slot, one taken batch and one decode buffer for the whole loop: every batch borrows the
+    // same ones, so what a batch is collected and read in is allocated once for the subscription.
+    // The encode buffer beside them is the same bargain on the way out.
+    let mut slot = <S::Batch as BatchSlot>::with_capacity(batch_size);
+    let mut taken = <H as BatchHandler<S::Batch, C, St>>::taken(batch_size);
     let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
     let mut encode = BytesMut::new();
     loop {
@@ -274,19 +276,20 @@ async fn batch_loop<S, H, C, St, Retry>(
         }
         // The stream first, the token only where the stream has nothing: see `turn_into`, whose
         // wait this is.
-        let pulled = poll_fn(|cx| match stream.as_mut().poll_next(cx) {
+        let pulled = poll_fn(|cx| match stream.as_mut().poll_fill(cx, &mut slot) {
             Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
             Poll::Ready(None) => Poll::Ready(Turn::Ended),
             Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
         })
         .await;
         match pulled {
-            Turn::Delivery(Ok(batch)) => {
+            Turn::Delivery(Ok(())) => {
                 // Turbofish: the adapter handlers are generic over the batch context, so the
                 // spawn's own parameter names it.
                 run_batch::<_, _, C, _, _, _>(
                     &shared.handler,
-                    batch,
+                    &mut slot,
+                    &mut taken,
                     &mut scratch,
                     &mut encode,
                     &shared.name,
@@ -298,6 +301,9 @@ async fn batch_loop<S, H, C, St, Retry>(
                 .await;
             }
             Turn::Delivery(Err(err)) => {
+                // A failed fill leaves the slot empty; draining it keeps that true of a broker
+                // that left a message behind.
+                slot.drain().for_each(drop);
                 error!(
                     target: "ruststream::dispatch",
                     error = %err,
@@ -344,16 +350,24 @@ where
         hosted,
         failure,
     });
-    let threads = Threads::start(&shared.name, workers.count().get(), false, |own| {
+    let count = workers.count().get();
+    // A slot per place a batch can wait: a full ring and a batch in hand for each thread, and the
+    // one being filled.
+    let most = count * (threads::RING + 1) + 1;
+    let stock = slots::Stock::<S::Batch>::new(most);
+    let threads = Threads::start(&shared.name, count, false, |own| {
         let shared = Arc::clone(&shared);
+        let stock = Arc::clone(&stock);
         let delivery = shared.hosted.delivery.on_thread();
         let host = on_thread(&shared.hosted.host, own);
+        let mut taken = <H as BatchHandler<S::Batch, C, St>>::taken(batch_size);
         let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
         let mut encode = BytesMut::new();
-        async move |batch: S::Batch| {
+        async move |mut slot: S::Batch| {
             run_batch::<_, _, C, _, _, _>(
                 &shared.handler,
-                batch,
+                &mut slot,
+                &mut taken,
                 &mut scratch,
                 &mut encode,
                 &shared.name,
@@ -363,6 +377,7 @@ where
                 &shared.failure,
             )
             .await;
+            stock.give(slot);
         }
     })?;
     let consuming = shutdown.consuming();
@@ -370,7 +385,7 @@ where
         let _consuming = consuming;
         threads
             .feed(
-                subscriber.batches(batch_size),
+                slots::Filled::new(subscriber.batches(batch_size), stock, batch_size, most),
                 &shared.name,
                 &shutdown,
                 |_| None,
@@ -383,6 +398,7 @@ mod batch_pool;
 #[cfg(test)]
 mod fixtures;
 mod pool;
+mod slots;
 #[cfg(test)]
 mod tests;
 mod threads;

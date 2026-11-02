@@ -24,9 +24,10 @@ use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::{Channel, Receiver};
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, BatchSubscriber, Broker, BrokerMoves, ConnectedBroker, DefaultPublish, HeaderMap,
-    IfSend, IncomingMessage, Lend, OutgoingMessage, PairError, PublishMessageError, PublishOutcome,
-    PublishPolicy, Publisher, Settle, Subscriber, SubscriptionSource,
+    AckError, BatchSlot, BatchStream, BatchSubscriber, Broker, BrokerMoves, ConnectedBroker,
+    DefaultPublish, HeaderMap, IfSend, IncomingMessage, Lend, OutgoingMessage, PairError,
+    PublishMessageError, PublishOutcome, PublishPolicy, Publisher, Settle, Subscriber,
+    SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -156,16 +157,33 @@ impl Stream for Deliveries<'_> {
 // A batch is the frames waiting when the first one arrives, up to the size the registration
 // asked for, held inline: taking one allocates nothing.
 impl BatchSubscriber for FrameSubscriber {
-    type Batch = heapless::Vec<FrameDelivery, DEPTH>;
+    type Batch = FrameBatch;
 
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, Infallible>> + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = Infallible> + '_ {
         Bursts {
             subscriber: self,
             size,
         }
+    }
+}
+
+/// The slot a [`FrameSubscriber`] collects a batch in: the frames, held inline, with the room of
+/// the whole channel whatever size the registration asked for.
+#[derive(Debug, Default)]
+pub struct FrameBatch(heapless::Vec<FrameDelivery, DEPTH>);
+
+impl BatchSlot for FrameBatch {
+    type Message = FrameDelivery;
+
+    fn with_capacity(_size: NonZeroUsize) -> Self {
+        Self::default()
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = FrameDelivery> + '_ {
+        self.0.drain(..)
     }
 }
 
@@ -176,23 +194,26 @@ struct Bursts<'a> {
     size: NonZeroUsize,
 }
 
-impl Stream for Bursts<'_> {
-    type Item = Result<heapless::Vec<FrameDelivery, DEPTH>, Infallible>;
+impl BatchStream<FrameBatch> for Bursts<'_> {
+    type Error = Infallible;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_fill(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        slot: &mut FrameBatch,
+    ) -> Poll<Option<Result<(), Infallible>>> {
         let subscriber = self.subscriber;
         let limit = self.size.get().min(DEPTH);
         subscriber.receiver.poll_receive(cx).map(|first| {
-            let mut batch = heapless::Vec::new();
             let mut next = Some(first);
             while let Some(frame) = next {
-                // The limit is at most the channel's depth, which is the batch's capacity.
-                let _ = batch.push(subscriber.delivery(frame));
-                next = (batch.len() < limit)
+                // The limit is at most the channel's depth, which is the slot's capacity.
+                let _ = slot.0.push(subscriber.delivery(frame));
+                next = (slot.0.len() < limit)
                     .then(|| subscriber.receiver.try_receive().ok())
                     .flatten();
             }
-            Some(Ok(batch))
+            Some(Ok(()))
         })
     }
 }

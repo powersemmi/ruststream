@@ -32,8 +32,9 @@ use ruststream::memory::{
 use ruststream::runtime::{BrokerScope, MountChain, MountRoutes};
 use ruststream::testing::TestApp;
 use ruststream::{
-    AckError, AddressedCopies, BatchSubscriber, RedeliveryAddress, RedeliveryAddressed, Seekable,
-    SerializeHeadersError, Settle, Subscribe, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, BatchStream, BatchSubscriber, RedeliveryAddress,
+    RedeliveryAddressed, Seekable, SerializeHeadersError, Settle, Subscribe, Subscriber,
+    SubscriptionSource,
 };
 use serde::{Deserialize, Serialize};
 
@@ -90,10 +91,8 @@ impl<Log: LogMode> BatchSubscriber for ClaimSubscriber<Log> {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Vec<Claim<Log>>, Infallible>> + Send + '_ {
-        self.0
-            .batches(size)
-            .map(|page| page.map(|page| page.into_iter().map(Claim::read).collect()))
+    ) -> impl BatchStream<Vec<Claim<Log>>, Error = Infallible> + Send + '_ {
+        common::Reading::new(self.0.batches(size), Claim::read)
     }
 }
 

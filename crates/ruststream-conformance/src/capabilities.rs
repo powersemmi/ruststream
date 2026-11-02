@@ -63,6 +63,7 @@ mod batches;
 mod carries;
 mod request_reply;
 mod seeking;
+mod slots;
 mod transactions;
 
 pub use batches::{batch_seeking, batches};

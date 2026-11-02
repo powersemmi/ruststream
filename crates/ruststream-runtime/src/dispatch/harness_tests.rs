@@ -7,14 +7,16 @@ use alloc::vec::Vec;
 use core::convert::Infallible;
 use core::future::ready;
 use core::num::NonZeroUsize;
+use core::pin::Pin;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use core::task::{Context as TaskContext, Poll};
 
 use bytes::BytesMut;
 use futures::{Stream, stream};
 use tokio_util::task::TaskTracker;
 
 use super::{Delivery, DispatchFailure, run_batch};
-use crate::batch::CarriedBatch;
+use crate::batch::{BatchHandler, CarriedBatch};
 use crate::context::Context;
 use crate::failure::FailurePolicies;
 use crate::handler::HandlerOutcome;
@@ -22,8 +24,8 @@ use crate::testing::coordinator::Coordinator;
 use crate::testkit::Shutdown;
 use crate::testkit::Tracked;
 use crate::{
-    AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, NamedCopies, Settle,
-    Subscriber, SubscriptionSource,
+    AckError, BatchSlot, BatchStream, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage,
+    NamedCopies, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream::memory::{ConnectedMemoryBroker, MemoryError};
 
@@ -75,12 +77,19 @@ impl CarriesBatch<Counted> for Page {
     }
 }
 
-impl IntoIterator for Page {
-    type Item = Claim;
-    type IntoIter = vec::IntoIter<Claim>;
+impl BatchSlot for Page {
+    type Message = Claim;
 
-    fn into_iter(self) -> Self::IntoIter {
-        self.claims.into_iter()
+    fn with_capacity(size: NonZeroUsize) -> Self {
+        Self {
+            values: Vec::with_capacity(size.get()),
+            claims: Vec::with_capacity(size.get()),
+        }
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = Claim> + '_ {
+        self.values.clear();
+        self.claims.drain(..)
     }
 }
 
@@ -121,25 +130,48 @@ impl BatchSubscriber for PageSubscriber {
     fn batches(
         &mut self,
         _size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Page, Infallible>> + Send + '_ {
-        stream::empty()
+    ) -> impl BatchStream<Page, Error = Infallible> + Send + '_ {
+        NoPages
     }
+}
+
+/// The batch stream of a subscription that never delivers.
+struct NoPages;
+
+impl BatchStream<Page> for NoPages {
+    type Error = Infallible;
+
+    fn poll_fill(
+        self: Pin<&mut Self>,
+        _cx: &mut TaskContext<'_>,
+        _slot: &mut Page,
+    ) -> Poll<Option<Result<(), Infallible>>> {
+        Poll::Ready(None)
+    }
+}
+
+/// A worker's taken batch for `handler`, sized for one delivery.
+fn taken_for<Handler: BatchHandler<Page, (), ()>>(_handler: &Handler) -> Handler::Taken {
+    Handler::taken(NonZeroUsize::MIN)
 }
 
 /// Dispatches one page of two counted values to a body that reads the slice and acks it, and
 /// reports how many clones of the values the dispatch made.
 async fn clones_made_dispatching(delivery: &Delivery<()>) -> usize {
     let clones = Arc::new(AtomicUsize::new(0));
-    let page = Page {
+    let mut page = Page {
         values: vec![Counted(Arc::clone(&clones)), Counted(Arc::clone(&clones))],
         claims: vec![Claim(HeaderMap::new()), Claim(HeaderMap::new())],
     };
     let handler = CarriedBatch::<Pages, ConnectedMemoryBroker, Counted, _>::over(
         |_values: &[Counted], _ctx: &mut Context| ready(HandlerOutcome::ack()),
     );
+    let handler = Arc::new(handler);
+    let mut taken = taken_for(&handler);
     run_batch(
-        &Arc::new(handler),
-        page,
+        &handler,
+        &mut page,
+        &mut taken,
         &mut (),
         &mut BytesMut::new(),
         "pages",

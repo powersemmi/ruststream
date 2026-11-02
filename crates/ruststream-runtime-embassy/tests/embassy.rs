@@ -604,8 +604,8 @@ async fn check_the_bursts(app: &App) {
 
     assert_eq!(taken, (1, 3, 3), "batches, readings, acks of one burst");
     passed("a batch subscription takes a burst as one batch and acks it");
-    // The form's own: the batch's deliveries collected, and the vector of values built from
-    // them, as on the multi-thread runner. The second batch is the steady state: what the first
+    // The form's own: the vector of values built from the batch's deliveries, as on the
+    // multi-thread runner. The second batch is the steady state: what the first
     // initialized once is not on it.
     if INSTRUMENTED_BODY {
         // The harness's and OpenTelemetry's records ride every batch of such a build.
@@ -675,9 +675,9 @@ async fn check_the_slot(app: &App) {
     passed("a publish through a lending slot allocates nothing");
 }
 
-/// What one batch of the self-deserializing form allocates on any runner: the deliveries it
-/// collects and the values it builds from them.
-const BATCH_ALLOCATIONS: usize = 2;
+/// What one batch of the self-deserializing form allocates on any runner: the values it builds
+/// from the deliveries, which ride the storage the loop keeps.
+const BATCH_ALLOCATIONS: usize = 1;
 
 fn main() {
     static PROBE: StaticCell<Probe> = StaticCell::new();

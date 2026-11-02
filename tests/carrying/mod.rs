@@ -27,12 +27,13 @@ use std::convert::Infallible;
 use std::future::ready;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
+use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll, ready};
 use std::time::Duration;
-use std::vec::IntoIter;
 
-use futures::{Stream, StreamExt, stream};
+use futures::{Stream, StreamExt};
 use ruststream::codec::CodecError;
 use ruststream::memory::{
     ConnectedMemoryBroker, Discarding, LogMode, MemoryError, MemoryMessage, MemorySeeker,
@@ -40,12 +41,11 @@ use ruststream::memory::{
 };
 use ruststream::runtime::{Input, IntoSource, SoloCarried};
 use ruststream::{
-    AckError, AddressedCopies, BatchSubscriber, BuildBatchContext, Carries, CarriesBatch, CopyPath,
-    Field, HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed, Seekable, Settle,
-    Subscribe, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, BatchSlot, BatchStream, BatchSubscriber, BuildBatchContext, Carries,
+    CarriesBatch, CopyPath, Field, HeaderMap, IncomingMessage, RedeliveryAddress,
+    RedeliveryAddressed, Seekable, Settle, Subscribe, Subscriber, SubscriptionSource,
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tokio::task::yield_now;
 
 /// The value a delivery carries: the service's own struct, with no serde model.
 #[derive(Debug, Clone, PartialEq, Eq, schemars::JsonSchema)]
@@ -254,39 +254,96 @@ impl<Log: LogMode> BatchSubscriber for RowSubscriber<Log> {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<RowBatch<Log>, Self::Error>> + Send + '_ {
+    ) -> impl BatchStream<RowBatch<Log>, Error = Self::Error> + Send + '_ {
         let fault = self.fault;
-        if fault == Fault::EmptyPages {
-            return stream::repeat(())
-                .then(async move |()| {
-                    yield_now().await;
-                    Ok(RowBatch {
-                        rows: Vec::new(),
-                        deliveries: Vec::new(),
-                    })
-                })
-                .boxed();
-        }
-        if fault == Fault::OneInFlight {
-            let pages = self.inner.batches(NonZeroUsize::MIN).boxed();
-            let in_flight = Arc::new(Semaphore::new(1));
-            return stream::unfold((pages, in_flight), async move |(mut pages, in_flight)| {
-                let slot = Arc::clone(&in_flight).acquire_owned().await.ok()?;
-                let page = pages.next().await?;
-                let page = page.map(|page| RowBatch::read(page, Fault::OneInFlight).holding(slot));
-                Some((page, (pages, in_flight)))
-            })
-            .boxed();
-        }
-        let size = if fault == Fault::OnePerPage {
+        let size = if matches!(fault, Fault::OnePerPage | Fault::OneInFlight) {
             NonZeroUsize::MIN
         } else {
             size
         };
-        self.inner
-            .batches(size)
-            .map(move |batch| batch.map(|page| RowBatch::read(page, fault)))
-            .boxed()
+        Pages {
+            inner: Box::pin(self.inner.batches(size)),
+            lent: Vec::new(),
+            fault,
+            in_flight: Arc::new(Semaphore::new(1)),
+            acquiring: None,
+            held: None,
+            yielded: false,
+        }
+    }
+}
+
+type Acquiring = Pin<Box<dyn Future<Output = Option<OwnedSemaphorePermit>> + Send>>;
+
+/// The bus's pages, read as rows into the slot the runtime lends.
+struct Pages<Inner, Log> {
+    inner: Pin<Box<Inner>>,
+    /// The bus's own slot, emptied into the page.
+    lent: Vec<MemoryMessage<Log>>,
+    fault: Fault,
+    in_flight: Arc<Semaphore>,
+    /// The wait for the subscription's one place, where a page holds it until it is settled.
+    acquiring: Option<Acquiring>,
+    held: Option<OwnedSemaphorePermit>,
+    /// Whether the page that is empty by fault already yielded to the scheduler.
+    yielded: bool,
+}
+
+impl<Inner, Log> Unpin for Pages<Inner, Log> {}
+
+impl<Inner, Log: LogMode> Pages<Inner, Log>
+where
+    Inner: BatchStream<Vec<MemoryMessage<Log>>, Error = Infallible>,
+{
+    fn poll_page(
+        &mut self,
+        cx: &mut TaskContext<'_>,
+        slot: &mut RowBatch<Log>,
+    ) -> Poll<Option<Result<(), Infallible>>> {
+        if self.fault == Fault::EmptyPages {
+            // A page with nothing in it, each after one turn of the scheduler.
+            if !self.yielded {
+                self.yielded = true;
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+            self.yielded = false;
+            return Poll::Ready(Some(Ok(())));
+        }
+        if self.fault == Fault::OneInFlight && self.held.is_none() {
+            let in_flight = Arc::clone(&self.in_flight);
+            let acquiring = self.acquiring.get_or_insert_with(|| {
+                Box::pin(async move { in_flight.acquire_owned().await.ok() })
+            });
+            let Some(permit) = ready!(acquiring.as_mut().poll(cx)) else {
+                return Poll::Ready(None);
+            };
+            self.acquiring = None;
+            self.held = Some(permit);
+        }
+        let step = ready!(self.inner.as_mut().poll_fill(cx, &mut self.lent));
+        if matches!(step, Some(Ok(()))) {
+            slot.fill(self.lent.drain(..), self.fault);
+            if let Some(permit) = self.held.take() {
+                slot.holding(permit);
+            }
+        }
+        Poll::Ready(step)
+    }
+}
+
+impl<Inner, Log: LogMode> BatchStream<RowBatch<Log>> for Pages<Inner, Log>
+where
+    Inner: BatchStream<Vec<MemoryMessage<Log>>, Error = Infallible>,
+{
+    type Error = Infallible;
+
+    fn poll_fill(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        slot: &mut RowBatch<Log>,
+    ) -> Poll<Option<Result<(), Infallible>>> {
+        self.get_mut().poll_page(cx, slot)
     }
 }
 
@@ -388,9 +445,8 @@ pub(crate) struct RowBatch<Log = Discarding> {
 }
 
 impl<Log: LogMode> RowBatch<Log> {
-    fn read(page: Vec<MemoryMessage<Log>>, fault: Fault) -> Self {
-        let mut rows = Vec::with_capacity(page.len());
-        let mut deliveries = Vec::with_capacity(page.len());
+    /// Reads a page into the slot, the rows apart from the deliveries.
+    fn fill(&mut self, page: impl Iterator<Item = MemoryMessage<Log>>, fault: Fault) {
         let mut gone = Vec::new();
         for inner in page {
             let error = reported(inner.payload());
@@ -403,8 +459,8 @@ impl<Log: LogMode> RowBatch<Log> {
             };
             match row {
                 Some(row) => {
-                    rows.push(row);
-                    deliveries.push(RowDelivery {
+                    self.rows.push(row);
+                    self.deliveries.push(RowDelivery {
                         inner,
                         row: None,
                         fault,
@@ -413,7 +469,7 @@ impl<Log: LogMode> RowBatch<Log> {
                     });
                 }
                 None if fault == Fault::GoneFirst => {
-                    deliveries.push(RowDelivery {
+                    self.deliveries.push(RowDelivery {
                         inner,
                         row: None,
                         fault,
@@ -430,24 +486,28 @@ impl<Log: LogMode> RowBatch<Log> {
                 }),
             }
         }
+        self.place(gone, fault);
+    }
+
+    /// Puts the deliveries whose row is gone after the rest, and the page's own fault on its rows.
+    fn place(&mut self, gone: Vec<RowDelivery<Log>>, fault: Fault) {
         if fault == Fault::PlaceholderForGone {
-            rows.extend(gone.iter().map(|_| Row::new(0, "placeholder")));
+            self.rows
+                .extend(gone.iter().map(|_| Row::new(0, "placeholder")));
         }
-        deliveries.extend(gone);
+        self.deliveries.extend(gone);
         match fault {
-            Fault::ReversedPage => rows.reverse(),
-            Fault::ExtraRow => rows.push(Row::new(0, "extra")),
+            Fault::ReversedPage => self.rows.reverse(),
+            Fault::ExtraRow => self.rows.push(Row::new(0, "extra")),
             _ => {}
         }
-        Self { rows, deliveries }
     }
 
     /// The same page, its one delivery holding the subscription's slot until it is settled.
-    fn holding(mut self, slot: OwnedSemaphorePermit) -> Self {
+    fn holding(&mut self, slot: OwnedSemaphorePermit) {
         if let Some(delivery) = self.deliveries.first_mut() {
             delivery.slot = Some(slot);
         }
-        self
     }
 }
 
@@ -459,12 +519,20 @@ impl<Log> CarriesBatch<Row> for RowBatch<Log> {
     }
 }
 
-impl<Log> IntoIterator for RowBatch<Log> {
-    type Item = RowDelivery<Log>;
-    type IntoIter = IntoIter<RowDelivery<Log>>;
+impl<Log: LogMode> BatchSlot for RowBatch<Log> {
+    type Message = RowDelivery<Log>;
 
-    fn into_iter(self) -> Self::IntoIter {
-        self.deliveries.into_iter()
+    fn with_capacity(size: NonZeroUsize) -> Self {
+        Self {
+            rows: Vec::with_capacity(size.get()),
+            deliveries: Vec::with_capacity(size.get()),
+        }
+    }
+
+    // The rows go with the deliveries: a drained page holds nothing for the next one.
+    fn drain(&mut self) -> impl Iterator<Item = RowDelivery<Log>> + '_ {
+        self.rows.clear();
+        self.deliveries.drain(..)
     }
 }
 

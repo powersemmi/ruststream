@@ -11,6 +11,7 @@ use std::time::Duration;
 use futures::{Stream, StreamExt};
 use tokio::time::timeout;
 
+use super::slots::Handed;
 use super::{
     DEFAULT_TIMEOUT, REDELIVERY_TIMEOUT, SubscriberMessage, ack_or_unsupported, expect_within,
     nack_requeue, within,
@@ -18,8 +19,9 @@ use super::{
 use crate::helpers::unique_subject;
 use crate::lifecycle::shutdown_within;
 use ruststream_core::{
-    AckError, AddressedCopies, BatchSubscriber, BrokerMoves, Carries, CarriesBatch, Connected,
-    NamedCopies, OutgoingMessage, Publisher, SendBroker, Settle, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, BatchSlot, BatchSubscriber, BrokerMoves, Carries, CarriesBatch,
+    Connected, NamedCopies, OutgoingMessage, Publisher, SendBroker, Settle, Subscriber,
+    SubscriptionSource,
 };
 
 /// How many rounds the batch suite gives the broker to put two waiting values in one batch.
@@ -314,11 +316,14 @@ pub async fn carries<
 ///
 /// ```no_run
 /// # mod demo {
+/// # use std::convert::Infallible;
 /// # use std::future::Future;
 /// # use std::num::NonZeroUsize;
+/// # use std::pin::Pin;
+/// # use std::task::{Context, Poll, ready};
 /// # use futures::{Stream, StreamExt};
 /// # use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryMessage, MemorySubscriber};
-/// # use ruststream::{AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, Settle, PublishMessageError};
+/// # use ruststream::{AckError, BatchSlot, BatchStream, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, Settle, PublishMessageError};
 /// # use ruststream::{NamedCopies, Subscribe, Subscriber, SubscriptionSource};
 /// # #[derive(Debug, Clone, PartialEq)]
 /// # pub struct Row(pub String);
@@ -343,28 +348,45 @@ pub async fn carries<
 /// # impl BatchSubscriber for RowSubscriber {
 /// #     type Batch = Page;
 /// #     fn batches(&mut self, size: NonZeroUsize)
-/// #         -> impl Stream<Item = Result<Page, Self::Error>> + Send + '_ {
-/// #         self.0.batches(size).map(|one| one.map(|page| {
-/// #             let (mut rows, mut kept, mut gone) = (Vec::new(), Vec::new(), Vec::new());
-/// #             for msg in page {
-/// #                 match std::str::from_utf8(msg.payload()).ok().filter(|t| *t != "gone") {
-/// #                     Some(text) => { rows.push(Row(text.to_owned())); kept.push(msg) }
-/// #                     None => gone.push(msg),
-/// #                 }
+/// #         -> impl BatchStream<Page, Error = Self::Error> + Send + '_ {
+/// #         Reading { inner: Box::pin(self.0.batches(size)), lent: Vec::new() }
+/// #     }
+/// # }
+/// # pub struct Reading<Inner> { inner: Pin<Box<Inner>>, lent: Vec<MemoryMessage> }
+/// # impl<Inner> Unpin for Reading<Inner> {}
+/// # impl<Inner> BatchStream<Page> for Reading<Inner>
+/// # where
+/// #     Inner: BatchStream<Vec<MemoryMessage>, Error = Infallible>,
+/// # {
+/// #     type Error = Infallible;
+/// #     fn poll_fill(mut self: Pin<&mut Self>, cx: &mut Context<'_>, slot: &mut Page)
+/// #         -> Poll<Option<Result<(), Infallible>>> {
+/// #         let this = &mut *self;
+/// #         let step = ready!(this.inner.as_mut().poll_fill(cx, &mut this.lent));
+/// #         let mut gone = Vec::new();
+/// #         for msg in this.lent.drain(..) {
+/// #             match std::str::from_utf8(msg.payload()).ok().filter(|t| *t != "gone") {
+/// #                 Some(text) => { slot.rows.push(Row(text.to_owned())); slot.deliveries.push(msg) }
+/// #                 None => gone.push(msg),
 /// #             }
-/// #             kept.extend(gone);
-/// #             Page { rows, deliveries: kept }
-/// #         }))
+/// #         }
+/// #         slot.deliveries.extend(gone);
+/// #         Poll::Ready(step)
 /// #     }
 /// # }
 /// # impl CarriesBatch<Row> for Page {
 /// #     type Item = Row;
 /// #     fn carried(&self) -> &[Row] { &self.rows }
 /// # }
-/// # impl IntoIterator for Page {
-/// #     type Item = MemoryMessage;
-/// #     type IntoIter = std::vec::IntoIter<MemoryMessage>;
-/// #     fn into_iter(self) -> Self::IntoIter { self.deliveries.into_iter() }
+/// # impl BatchSlot for Page {
+/// #     type Message = MemoryMessage;
+/// #     fn with_capacity(size: NonZeroUsize) -> Self {
+/// #         Page { rows: Vec::with_capacity(size.get()), deliveries: Vec::with_capacity(size.get()) }
+/// #     }
+/// #     fn drain(&mut self) -> impl Iterator<Item = MemoryMessage> + '_ {
+/// #         self.rows.clear();
+/// #         self.deliveries.drain(..)
+/// #     }
 /// # }
 /// use ruststream::conformance::capabilities;
 /// use ruststream::memory::MemoryBroker;
@@ -461,7 +483,8 @@ pub async fn carries_batch<
         .await
         .expect("publishing a value failed");
     }
-    let mut stream = std::pin::pin!(subscriber.batches(BATCH));
+    let batches = std::pin::pin!(subscriber.batches(BATCH));
+    let mut stream = Handed::<_, <Src::Subscriber as BatchSubscriber>::Batch>::new(batches, BATCH);
     let mut unseen: Vec<&Value> = values.iter().collect();
     while !unseen.is_empty() {
         let (lent, deliveries) = next_page(
@@ -588,7 +611,7 @@ async fn a_batch_copy_lends_the_value<
     Publish: AsyncFn(&Conn, &str, &Value) -> Result<(), PublishError>,
     PublishError: fmt::Debug,
     S: Stream<Item = Result<Batch, E>> + Unpin,
-    Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
+    Batch: CarriesBatch<Value> + BatchSlot<Message = M>,
     M: Settle,
     E: fmt::Debug,
     Value: PartialEq + Clone + fmt::Debug,
@@ -660,7 +683,7 @@ async fn pages_keep_their_order<Conn, Value, Publish, PublishError, S, Batch, M,
     Publish: AsyncFn(&Conn, &str, &Value) -> Result<(), PublishError>,
     PublishError: fmt::Debug,
     S: Stream<Item = Result<Batch, E>> + Unpin,
-    Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
+    Batch: CarriesBatch<Value> + BatchSlot<Message = M>,
     M: Settle,
     E: fmt::Debug,
     Value: PartialEq + Clone + fmt::Debug,
@@ -765,7 +788,7 @@ async fn values_go_before_deliveries_without_one<
     Gone: AsyncFn(&Conn, &str) -> Result<(), GoneError>,
     GoneError: fmt::Debug,
     S: Stream<Item = Result<Batch, E>> + Unpin,
-    Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
+    Batch: CarriesBatch<Value> + BatchSlot<Message = M>,
     M: Settle,
     E: fmt::Debug,
     Value: PartialEq + Clone + fmt::Debug,
@@ -865,7 +888,7 @@ async fn next_page<S, Batch, M, E, Value>(
 ) -> (Vec<Value>, Vec<M>)
 where
     S: Stream<Item = Result<Batch, E>> + Unpin,
-    Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
+    Batch: CarriesBatch<Value> + BatchSlot<Message = M>,
     E: fmt::Debug,
     Value: Clone + fmt::Debug,
 {
@@ -874,8 +897,9 @@ where
         .unwrap_or_else(|_| panic!("{label}: nothing arrived within {within:?}; {expected}"))
         .unwrap_or_else(|| panic!("{label}: the batch stream ended; {expected}"))
         .unwrap_or_else(|err| panic!("{label}: the batch stream yielded an error: {err:?}"));
+    let mut batch = batch;
     let lent = batch.carried().to_vec();
-    let deliveries: Vec<M> = batch.into_iter().collect();
+    let deliveries: Vec<M> = batch.drain().collect();
     assert!(
         !deliveries.is_empty(),
         "{label}: a yielded batch must not be empty; {expected}",
