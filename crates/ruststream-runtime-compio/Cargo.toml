@@ -45,6 +45,10 @@ ruststream-memory = { workspace = true, features = ["std", "embassy", "alloc"] }
 # Counts the allocations of the thread a closure runs on, so a test reads what a sleep or a delivery
 # costs.
 allocation-counter = "0.8.1"
+# The app-level tests are a service's code: they import the facade and ride its compio `TestApp`. A
+# path dependency without a version is dropped on publish.
+ruststream = { path = "../..", default-features = false, features = ["compio", "macros", "memory", "json", "testing"] }
+serde = { version = "1", features = ["derive"] }
 
 [lints]
 workspace = true

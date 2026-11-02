@@ -204,3 +204,36 @@ fn a_run_that_ends_cleanly_returns_ok_with_the_stop_raised() {
     outcome.expect("a clean stop");
     assert!(stop.is_cancelled());
 }
+
+#[test]
+fn the_cores_are_as_many_as_the_process_may_use() {
+    let available = Cores::available();
+    assert_eq!(
+        available.count(),
+        thread::available_parallelism().expect("the host reports its CPUs")
+    );
+}
+
+#[test]
+fn a_panicking_main_core_stops_the_others_and_the_panic_goes_on() {
+    let stop = Stop::default();
+    let others_stopped = Mutex::new(false);
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        cores(3).unpinned().run(&stop, async |core, stop| {
+            if core.is_main() {
+                panic!("the main core broke");
+            }
+            stop.cancelled().await;
+            *others_stopped.lock().expect("flag") = true;
+            Ok::<(), Infallible>(())
+        })
+    }));
+
+    let payload = unwound.expect_err("the panic of core 0 reaches the caller");
+    assert_eq!(payload.downcast_ref::<&str>(), Some(&"the main core broke"));
+    assert!(stop.is_cancelled());
+    assert!(
+        *others_stopped.lock().expect("flag"),
+        "the other cores were stopped and joined first"
+    );
+}

@@ -7,12 +7,13 @@ use std::future::ready;
 use std::num::NonZeroUsize;
 
 use ruststream_core::ServerSpec;
+use ruststream_memory::local::LocalMemoryBroker;
 use ruststream_memory::{MemoryBroker, MemorySource};
 use ruststream_runtime::{
     AppInfo, Context, Described, Deserialized, Handle, HandlerOutcome, Input, SoloDeserialized,
     Workers, subscriber,
 };
-use ruststream_runtime_compio::{App, RustStream};
+use ruststream_runtime_compio::{App, Cores, RustStream, RustStreamError};
 
 /// A reading: the delivery's bytes, decoded by no codec.
 struct Reading<'a>(#[allow(dead_code)] &'a [u8]);
@@ -142,4 +143,39 @@ fn an_opaque_app_reads_the_metadata_without_an_import() {
     assert_eq!(app.info().title, "orders");
     assert!(app.servers().is_empty());
     assert!(app.handlers().is_empty());
+}
+
+/// An app on the broker that needs no reactor, which the tests below run.
+fn local_app() -> impl App {
+    RustStream::new(AppInfo::new("local", "0.1.0")).register_broker(LocalMemoryBroker::<8>::new())
+}
+
+/// Serves any app until its shutdown signal, the way a generic launcher holds it.
+fn serve_until_told<A: App>(app: A) -> Result<(), RustStreamError> {
+    app.run_until(
+        Cores::new(nonzero(1)).unpinned().without_signals(),
+        ready(()),
+    )
+}
+
+#[test]
+fn an_app_behind_the_trait_runs_until_its_signal() {
+    serve_until_told(local_app()).expect("the run ends cleanly");
+}
+
+#[test]
+fn an_app_behind_the_trait_starts_and_shuts_down() {
+    super::support::on_runtime(async {
+        let running = local_app().start().await.expect("the service starts");
+        running.shutdown().await.expect("a clean shutdown");
+    });
+}
+
+#[test]
+fn an_app_is_shown_with_its_title_and_what_it_mounts() {
+    let shown = format!("{:?}", orders());
+    assert!(
+        shown.contains("orders") && shown.contains("handlers: 1"),
+        "{shown}"
+    );
 }

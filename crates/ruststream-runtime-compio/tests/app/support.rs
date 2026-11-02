@@ -11,6 +11,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use compio::time::timeout;
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use futures::future::Either;
 use futures::{Stream, StreamExt};
 use ruststream_core::{
     AckError, BrokerMoves, HeaderMap, IncomingMessage, Settle, Subscriber, SubscriptionSource,
@@ -23,6 +24,7 @@ use ruststream_runtime::{
     Context, Deserialized, Handle, HandlerOutcome, Input, IntoSource, SoloDeserialized,
 };
 use ruststream_runtime_compio::test_runtime;
+use std::pin::pin;
 
 /// What happened, in order, as the services under test report it.
 #[derive(Clone, Default)]
@@ -84,6 +86,33 @@ impl Settle for Mail {
 
     fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         ready(Ok(()))
+    }
+}
+
+/// A subscription handed to the mount ready-made, which a router or `handle` takes, and the test's
+/// end of it.
+pub(crate) fn direct() -> (Direct, Line) {
+    let (post, inbox) = mpsc::unbounded();
+    let (settled, acked) = mpsc::unbounded();
+    (
+        Direct(Some(inbox)),
+        Line {
+            post: Some(post),
+            settled,
+            acked,
+        },
+    )
+}
+
+/// An open subscription that reads what the test posts.
+pub(crate) struct Direct(Option<UnboundedReceiver<Mail>>);
+
+impl Subscriber for Direct {
+    type Message = Mail;
+    type Error = Infallible;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Mail, Infallible>> + Send + '_ {
+        self.0.take().expect("the stream is opened once").map(Ok)
     }
 }
 
@@ -150,6 +179,7 @@ pub(crate) struct Wire {
     log: Log,
     refuse: bool,
     explode: bool,
+    mute_explosion: bool,
 }
 
 /// A wire named `name`, and the test's end of it. `log` hears when the subscription opens and
@@ -164,6 +194,7 @@ pub(crate) fn wire(name: &'static str, log: &Log) -> (Wire, Line) {
             log: log.clone(),
             refuse: false,
             explode: false,
+            mute_explosion: false,
         },
         Line {
             post: Some(post),
@@ -177,6 +208,13 @@ impl Wire {
     /// The stream of the wire panics when the loop opens it, as a client library with a bug does.
     pub(crate) fn exploding(mut self) -> Self {
         self.explode = true;
+        self
+    }
+
+    /// The stream of the wire panics with a payload that carries no text.
+    pub(crate) fn exploding_without_a_word(mut self) -> Self {
+        self.explode = true;
+        self.mute_explosion = true;
         self
     }
 
@@ -216,6 +254,7 @@ impl SubscriptionSource<ConnectedLocalMemoryBroker<8>> for Wire {
                 name: self.name,
                 inbox: self.inbox.lock().expect("the inbox").take(),
                 explode: self.explode,
+                mute_explosion: self.mute_explosion,
                 log: self.log,
             })
         })
@@ -227,6 +266,7 @@ pub(crate) struct Open {
     name: &'static str,
     inbox: Option<UnboundedReceiver<Mail>>,
     explode: bool,
+    mute_explosion: bool,
     log: Log,
 }
 
@@ -241,6 +281,9 @@ impl Subscriber for Open {
     type Error = Infallible;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Mail, Infallible>> + Send + '_ {
+        if self.explode && self.mute_explosion {
+            std::panic::panic_any(7_u8);
+        }
         assert!(!self.explode, "the client library broke");
         self.inbox
             .take()
@@ -302,4 +345,14 @@ pub(crate) fn on_runtime<Out>(test: impl Future<Output = Out>) -> Out {
             .await
             .expect("the scenario finished in time")
     })
+}
+
+/// What `signal` yields, or `None` once ten seconds pass, so a delivery that never comes ends a
+/// run's signal instead of hanging it. The future is `Send`, which a run's signal must be.
+pub(crate) async fn within<Out>(signal: impl Future<Output = Out> + Send) -> Option<Out> {
+    let late = ruststream_runtime_compio::time::sleep(Duration::from_secs(10));
+    match futures::future::select(pin!(signal), pin!(late)).await {
+        Either::Left((out, _)) => Some(out),
+        Either::Right(_) => None,
+    }
 }

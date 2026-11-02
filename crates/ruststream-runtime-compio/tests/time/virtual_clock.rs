@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use compio::runtime;
 use ruststream_runtime::Clock;
-use ruststream_runtime_compio::testing::VirtualClock;
+use ruststream_runtime_compio::testing::{self, VirtualClock};
 use ruststream_runtime_compio::{CompioClock, test_runtime, time, yield_now};
 
 /// Runs `test` on a fresh compio runtime with the virtual clock held.
@@ -157,4 +157,26 @@ fn without_a_lease_the_wall_clock_runs() {
 fn a_second_lease_on_one_thread_is_refused() {
     let _first = VirtualClock::take();
     let _second = VirtualClock::take();
+}
+
+#[test]
+fn the_armed_timers_are_the_sleeps_the_clock_has_not_reached() {
+    on_virtual_clock(async |clock| {
+        let _short = sleeper(Duration::from_secs(1));
+        let _long = sleeper(Duration::from_secs(9));
+        yield_now().await;
+        assert_eq!(testing::armed_timers(), 2);
+
+        clock.advance(Duration::from_secs(1));
+        yield_now().await;
+        assert_eq!(testing::armed_timers(), 1);
+    });
+}
+
+#[test]
+fn a_sleep_is_shown_with_its_deadline() {
+    on_virtual_clock(async |_clock| {
+        let sleep = time::sleep(Duration::from_secs(3));
+        assert!(format!("{sleep:?}").starts_with("Sleep { deadline:"));
+    });
 }

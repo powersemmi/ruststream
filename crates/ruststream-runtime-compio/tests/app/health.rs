@@ -267,3 +267,23 @@ fn a_subscription_that_panics_outside_its_handler_fails_the_run_fast() {
         other => panic!("expected the loop's panic, got {other:?}"),
     }
 }
+
+#[test]
+fn a_subscription_that_panics_without_a_message_is_still_named_as_a_failed_task() {
+    let log = Log::default();
+    let (orders, _line) = wire("orders", &log);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(LocalMemoryBroker::<8>::new(), |b| {
+            b.include(subscriber(orders.exploding_without_a_word(), On(accept)).build())
+        });
+
+    let cores = Cores::new(NonZeroUsize::MIN).without_signals();
+    let error = app
+        .run_until(cores, time::sleep(SIGNAL_AFTER))
+        .expect_err("a panic in the subscription's loop fails the service");
+
+    match error {
+        RustStreamError::Join(reason) => assert_eq!(reason, "the task panicked"),
+        other => panic!("expected the loop's panic, got {other:?}"),
+    }
+}

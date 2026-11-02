@@ -90,3 +90,8 @@ fn a_worker_mailed_to_a_core_that_never_started_does_not_hold_the_teardown() {
         "the teardown waits for a worker no core will ever start"
     );
 }
+
+#[test]
+fn a_fabric_is_shown_with_the_count_of_its_cores() {
+    assert!(format!("{:?}", Fabric::open(3)).contains("cores: 3"));
+}
