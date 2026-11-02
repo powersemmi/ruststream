@@ -277,3 +277,9 @@ required-features = ["embassy", "json"]
 name = "embedded_retry_startup"
 path = "tests/embedded_retry_startup.rs"
 required-features = ["embassy", "json"]
+
+# The tokio `TestApp` reports a reaction that never settles, with the deliveries it counted.
+[[test]]
+name = "tokio_quiescence"
+path = "tests/tokio_quiescence.rs"
+required-features = ["tokio", "json"]

@@ -73,6 +73,33 @@ fn a_handler_that_retries_forever_fails_the_publish_that_set_it_off() {
 }
 
 #[test]
+fn the_count_a_runaway_publish_reports_is_the_deliveries_of_that_step() {
+    let outcome = block_on(async {
+        let tb = TestApp::start(app(Bus::new()))
+            .await
+            .map_err(|source| PublishError::Publish {
+                source,
+                message: None,
+            })?;
+        // Seven deliveries settle first; they are not part of the runaway step.
+        for _ in 0..7 {
+            tb.broker::<Bus>().message(&Note(b"n")).publish().await?;
+        }
+        tb.broker::<Bus>().message(&Sent(b"go")).publish().await
+    });
+    assert!(
+        matches!(
+            outcome,
+            Err(PublishError::Publish {
+                source: TestError::NotQuiescent { processed: 10_000 },
+                ..
+            })
+        ),
+        "the publish returned {outcome:?}",
+    );
+}
+
+#[test]
 fn many_settled_steps_do_not_spend_the_budget_of_the_next() -> Result<(), Box<dyn Error>> {
     block_on(async {
         let tb = TestApp::start(app(Bus::new())).await?;

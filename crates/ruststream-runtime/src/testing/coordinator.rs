@@ -350,6 +350,16 @@ impl Coordinator {
         );
     }
 
+    /// How many deliveries were dispatched in the current step.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn step_processed(&self) -> usize {
+        self.inner
+            .processed
+            .load(Ordering::SeqCst)
+            .saturating_sub(self.inner.step_from.load(Ordering::SeqCst))
+    }
+
     /// Whether `max_steps` deliveries were dispatched in this step and one is still in flight: the
     /// reaction does not converge. A broker whose app runs inside the test's own future stops handing out
     /// deliveries once this holds, so the step that polls the app returns and reports it.
@@ -383,10 +393,8 @@ impl Coordinator {
             if self.inner.in_flight.load(Ordering::SeqCst) == 0 {
                 return Ok(());
             }
-            let processed = self.inner.processed.load(Ordering::SeqCst);
-            if processed.saturating_sub(self.inner.step_from.load(Ordering::SeqCst))
-                >= self.inner.max_steps
-            {
+            let processed = self.step_processed();
+            if processed >= self.inner.max_steps {
                 return Err(TestError::NotQuiescent { processed });
             }
             notified.await;

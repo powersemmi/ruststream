@@ -277,7 +277,7 @@ fn a_shutdown_of_a_handler_that_waits_on_the_clock_forever_fails() -> Result<(),
 
         let stopped = tb.shutdown().await;
         assert!(
-            matches!(stopped, Err(TestError::NotQuiescent { .. })),
+            matches!(stopped, Err(TestError::KeptRunning { .. })),
             "a handler that re-arms its timer forever keeps the app from stopping: {stopped:?}"
         );
         Ok(())
@@ -299,7 +299,7 @@ fn a_shutdown_of_a_handler_that_keeps_waking_itself_fails() -> Result<(), Box<dy
             matches!(
                 published,
                 Err(PublishError::Publish {
-                    source: TestError::NotQuiescent { .. },
+                    source: TestError::KeptRunning { .. },
                     ..
                 })
             ),
@@ -308,7 +308,7 @@ fn a_shutdown_of_a_handler_that_keeps_waking_itself_fails() -> Result<(), Box<dy
 
         let stopped = tb.shutdown().await;
         assert!(
-            matches!(stopped, Err(TestError::NotQuiescent { .. })),
+            matches!(stopped, Err(TestError::KeptRunning { .. })),
             "the spinning handler keeps the app from stopping: {stopped:?}"
         );
         Ok(())
@@ -889,7 +889,7 @@ fn a_start_that_keeps_retrying_on_the_clock_fails() {
     ));
     let err = started.expect_err("the connection never ends, so the start fails");
     assert!(
-        matches!(err, TestError::NotQuiescent { .. }),
+        matches!(err, TestError::KeptRunning { .. }),
         "a connection that re-arms its timer forever is not quiescent: {err:?}"
     );
 }

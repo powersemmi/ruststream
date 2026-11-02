@@ -26,6 +26,14 @@ pub enum TestError {
         /// How many deliveries were dispatched before the harness gave up.
         processed: usize,
     },
+    /// The app never went idle: a task of it stayed runnable (re-armed its timer, woke itself,
+    /// yielded in a loop) for as many turns as the harness allows a wait, so the wait could not
+    /// end.
+    #[error("the app did not go idle within {turns} turns: a task of it stayed runnable")]
+    KeptRunning {
+        /// How many turns the harness gave the wait before it gave up.
+        turns: usize,
+    },
     /// A live reaction did not settle before the deadline: a subscription had not handled what was
     /// published to a destination it reads, or a redelivery that fell due, or a handler was still
     /// running.
