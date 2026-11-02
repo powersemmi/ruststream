@@ -101,8 +101,7 @@ fn registration_of<C: TestableBroker + 'static>(
     connected: &C,
 ) -> Option<&'static TestableRegistration> {
     let connected: &dyn Any = connected;
-    inventory::iter::<TestableRegistration>
-        .into_iter()
+    TestableRegistration::registered()
         .find(|registration| registration.resolve(connected).is_some())
 }
 

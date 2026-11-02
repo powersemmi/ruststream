@@ -463,16 +463,17 @@ impl TestableRegistration {
     #[doc(hidden)]
     #[must_use]
     pub fn lookup(broker: TypeId) -> Option<&'static Self> {
-        inventory::iter::<Self>
-            .into_iter()
-            .find(|registration| registration.registers(broker))
-            .or_else(|| {
-                let enrolled = ENROLLED.lock().unwrap_or_else(PoisonError::into_inner);
-                enrolled
-                    .iter()
-                    .copied()
-                    .find(|registration| registration.registers(broker))
-            })
+        Self::registered().find(|registration| registration.registers(broker))
+    }
+
+    /// Every registration: those listed at link time, then those enrolled so far.
+    #[doc(hidden)]
+    pub fn registered() -> impl Iterator<Item = &'static Self> {
+        let enrolled = ENROLLED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        inventory::iter::<Self>.into_iter().chain(enrolled)
     }
 
     /// Enrolls the broker type `B` for [`lookup`](Self::lookup), once per type.

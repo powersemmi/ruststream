@@ -105,3 +105,21 @@ fn the_device_runs_the_same_handlers() -> Result<(), Box<dyn Error>> {
         Ok(())
     })
 }
+
+/// A server that keeps a local bus of its own capacity, on tokio.
+fn local_server() -> RustStream {
+    RustStream::new(AppInfo::new("levels", "0.1.0"))
+        .with_broker(LocalMemoryBroker::<3>::new(), |b| b.include(on_reading))
+}
+
+#[tokio::test]
+async fn the_server_runs_a_local_bus_of_any_capacity() -> Result<(), Box<dyn Error>> {
+    let tb = TestApp::start(local_server()).await?;
+    let bus = tb.broker::<LocalMemoryBroker<3>>();
+    bus.message(&Sent(b"42")).to("readings").publish().await?;
+
+    bus.subscriber("readings")
+        .assert_called(1)
+        .settled(HandlerOutcome::ack());
+    Ok(())
+}

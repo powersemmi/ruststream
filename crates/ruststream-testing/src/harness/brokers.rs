@@ -51,11 +51,10 @@ fn same_names(destination: &str, subscriptions: &[&str]) -> Vec<usize> {
 }
 
 /// The registration of the broker type `broker`, or `None` when no crate registered one with
-/// [`register_testable_broker!`](crate::register_testable_broker).
+/// [`register_testable_broker!`](crate::register_testable_broker) and the type did not enroll
+/// itself.
 pub(super) fn registration_of(broker: TypeId) -> Option<&'static TestableRegistration> {
-    inventory::iter::<TestableRegistration>
-        .into_iter()
-        .find(|registration| registration.registers(broker))
+    TestableRegistration::lookup(broker)
 }
 
 /// Borrowed view of the app's brokers handed to a [`TestApp::with_state`] builder, so it can wire a
