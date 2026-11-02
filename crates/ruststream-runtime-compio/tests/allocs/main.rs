@@ -14,7 +14,7 @@ use std::thread;
 use std::time::Duration;
 
 use allocation_counter::measure;
-use compio::runtime::{self, Runtime};
+use compio::runtime;
 use futures::channel::oneshot;
 use futures::{Stream, stream};
 use ruststream_core::{AckError, HeaderMap, IncomingMessage, Settle, Subscriber};
@@ -22,7 +22,7 @@ use ruststream_runtime::{
     Context, Delivery, DispatchFailure, FailurePolicies, Handler, HandlerOutcome, NoRetry, Workers,
 };
 use ruststream_runtime_compio::dispatch::{Fabric, Hosted, Layout, Mount, spawn_dispatch_workers};
-use ruststream_runtime_compio::{Stop, Tasks, time};
+use ruststream_runtime_compio::{Stop, Tasks, test_runtime, time};
 
 /// What a hand-off to another core may cost per delivery: compio's cross-thread wake queue takes a
 /// block of 31 slots for every 31 wakes, and a delivery wakes a parked core at most once.
@@ -126,11 +126,11 @@ fn allocations_of(total: usize, workers: Workers, keyed: bool, timer_pending: bo
         for core in 1..count {
             let (fabric, stop) = (fabric.clone(), stop.clone());
             others.push(scope.spawn(move || {
-                let runtime = Runtime::new().expect("a runtime");
+                let runtime = test_runtime().expect("a runtime");
                 measure(|| runtime.block_on(fabric.serve(core, &stop))).count_total
             }));
         }
-        let runtime = Runtime::new().expect("a runtime");
+        let runtime = test_runtime().expect("a runtime");
         let main = measure(|| {
             runtime.block_on(async {
                 if timer_pending {

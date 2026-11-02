@@ -5,13 +5,13 @@ use std::pin::pin;
 use std::rc::Rc;
 use std::task::Poll;
 
-use compio::runtime::{self, Runtime};
+use compio::runtime;
 use futures::poll;
 use ruststream_runtime::{Halt, ShutdownWait};
-use ruststream_runtime_compio::{Stop, SubscriptionEnd, yield_now};
+use ruststream_runtime_compio::{Stop, SubscriptionEnd, test_runtime, yield_now};
 
 fn on_runtime(test: impl Future<Output = ()>) {
-    Runtime::new().expect("a compio runtime").block_on(test);
+    test_runtime().expect("a compio runtime").block_on(test);
 }
 
 #[test]

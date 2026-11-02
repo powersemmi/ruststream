@@ -6,8 +6,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use compio::runtime::{self, Runtime};
-use ruststream_runtime_compio::yield_now;
+use compio::runtime;
+use ruststream_runtime_compio::{test_runtime, yield_now};
 
 /// A task that never waits on anything but its own yields.
 async fn busy(name: char, turns: usize, log: Rc<RefCell<String>>) {
@@ -20,7 +20,7 @@ async fn busy(name: char, turns: usize, log: Rc<RefCell<String>>) {
 #[test]
 fn a_busy_task_gives_the_others_a_turn_after_each_yield() {
     let log = Rc::new(RefCell::new(String::new()));
-    Runtime::new().expect("a compio runtime").block_on(async {
+    test_runtime().expect("a compio runtime").block_on(async {
         let a = runtime::spawn(busy('a', 3, Rc::clone(&log)));
         let b = runtime::spawn(busy('b', 3, Rc::clone(&log)));
         a.await.expect("a ends");
@@ -31,7 +31,7 @@ fn a_busy_task_gives_the_others_a_turn_after_each_yield() {
 
 #[test]
 fn a_yield_ends_after_one_turn() {
-    Runtime::new().expect("a compio runtime").block_on(async {
+    test_runtime().expect("a compio runtime").block_on(async {
         // Alone on the core, the task is polled again at once.
         yield_now().await;
     });

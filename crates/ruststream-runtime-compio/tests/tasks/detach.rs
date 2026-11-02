@@ -4,13 +4,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use compio::runtime::Runtime;
 use ruststream_runtime::Detach;
 use ruststream_runtime_compio::testing::VirtualClock;
-use ruststream_runtime_compio::{Tasks, yield_now};
+use ruststream_runtime_compio::{Tasks, test_runtime, yield_now};
 
 fn on_virtual_clock(test: impl FnOnce(VirtualClock) -> Box<dyn Future<Output = ()>>) {
-    let runtime = Runtime::new().expect("a compio runtime");
+    let runtime = test_runtime().expect("a compio runtime");
     let clock = VirtualClock::take();
     runtime.block_on(Box::into_pin(test(clock)));
 }

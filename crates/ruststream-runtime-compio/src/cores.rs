@@ -334,8 +334,12 @@ pub(crate) fn build_runtime(_core: usize, cpu: Option<usize>) -> io::Result<Runt
     }
     let runtime = builder.build()?;
     // One environment read per runtime built, at startup; nothing runs per message.
-    let required = env::var_os(REQUIRE_IO_URING).is_some_and(|value| value == "1");
-    require_driver(runtime, required)
+    require_driver(runtime, io_uring_required())
+}
+
+/// Whether the environment switch asks for `io_uring`.
+pub(crate) fn io_uring_required() -> bool {
+    env::var_os(REQUIRE_IO_URING).is_some_and(|value| value == "1")
 }
 
 /// The environment switch that makes a runtime on the polling driver a startup failure. A CI job
@@ -346,13 +350,26 @@ pub(crate) const REQUIRE_IO_URING: &str = "RUSTSTREAM_COMPIO_REQUIRE_IO_URING";
 /// `runtime`, or the error naming the switch and the driver where `required` and the runtime is
 /// not on `io_uring`.
 fn require_driver(runtime: Runtime, required: bool) -> io::Result<Runtime> {
-    let driver = runtime.driver_type();
+    refuse_fallback(runtime.driver_type(), required)?;
+    Ok(runtime)
+}
+
+/// The same check for the runtime the calling thread is inside of, which a test built itself.
+///
+/// # Panics
+///
+/// Panics outside a compio runtime.
+pub(crate) fn require_current_driver(required: bool) -> io::Result<()> {
+    refuse_fallback(Runtime::with_current(Runtime::driver_type), required)
+}
+
+fn refuse_fallback(driver: DriverType, required: bool) -> io::Result<()> {
     if required && cfg!(target_os = "linux") && driver != DriverType::IoUring {
         return Err(io::Error::other(format!(
             "{REQUIRE_IO_URING} is set, but the runtime came up on the {driver:?} driver"
         )));
     }
-    Ok(runtime)
+    Ok(())
 }
 
 /// One core: its runtime, pinned and made current, running the core's future to its end.
@@ -441,7 +458,10 @@ mod tests {
 
     use ruststream_runtime::ShutdownWait;
 
-    use super::{CoresError, DriverType, Pinning, REQUIRE_IO_URING, build_runtime, require_driver};
+    use super::{
+        CoresError, DriverType, Pinning, REQUIRE_IO_URING, build_runtime, require_current_driver,
+        require_driver,
+    };
     use crate::{Cores, Stop};
 
     // A host that refuses an io_uring (a container profile that blocks it, a kernel without it,
@@ -477,6 +497,26 @@ mod tests {
         assert!(message.contains(REQUIRE_IO_URING), "{message}");
         assert!(message.contains("Poll"), "{message}");
         assert!(require_driver(polling(), false).is_ok());
+    }
+
+    // The check of a runtime a test built itself, from inside its `block_on`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_required_io_uring_refuses_the_current_runtime_on_the_polling_driver() {
+        let mut proactor = ProactorBuilder::new();
+        proactor.driver_type(DriverType::Poll);
+        let runtime = RuntimeBuilder::new()
+            .with_proactor(proactor)
+            .build()
+            .expect("the runtime builds");
+        runtime.block_on(async {
+            let message = require_current_driver(true)
+                .expect_err("the polling driver is refused")
+                .to_string();
+            assert!(message.contains(REQUIRE_IO_URING), "{message}");
+            assert!(message.contains("Poll"), "{message}");
+            assert!(require_current_driver(false).is_ok());
+        });
     }
 
     // The cores that keep their runtimes until core 0's teardown wait for a signal of core 0; when

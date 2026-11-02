@@ -17,6 +17,10 @@ use ruststream_core::*;
 #[allow(clippy::wildcard_imports)]
 use ruststream_runtime::*;
 
+use std::io;
+
+use compio::runtime::Runtime;
+
 mod app;
 mod clock;
 mod cores;
@@ -53,10 +57,23 @@ pub use stop::{Cancelled, Stop};
 pub use tasks::Tasks;
 pub use yield_now::{YieldNow, yield_now};
 
+/// A runtime for a test: the launcher's runtime build for an unpinned core, so
+/// `RUSTSTREAM_COMPIO_REQUIRE_IO_URING=1` turns a fallback to the polling driver into an error.
+///
+/// # Errors
+///
+/// As the launcher: the runtime could not be built, or the switch is set and it is not on
+/// `io_uring`.
+#[doc(hidden)]
+pub fn test_runtime() -> io::Result<Runtime> {
+    cores::build_runtime(0, None)
+}
+
 /// The virtual clock the test harness moves.
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 pub mod testing {
+    use crate::cores::{io_uring_required, require_current_driver};
     pub use crate::quiescence::{Quiescence, Runnable};
     use crate::spawn::spawn;
     pub use crate::virtual_clock::VirtualClock;
@@ -65,6 +82,18 @@ pub mod testing {
     /// Starts `work` on this thread's runtime as a task the harness follows, and lets it run on.
     pub fn spawn_detached(work: impl Future<Output = ()> + 'static) {
         spawn(work).detach();
+    }
+
+    /// Panics where `RUSTSTREAM_COMPIO_REQUIRE_IO_URING=1` is set and the runtime the calling
+    /// thread is inside of came up on a driver other than `io_uring` (Linux).
+    ///
+    /// # Panics
+    ///
+    /// As described, and outside a compio runtime.
+    pub fn require_io_uring() {
+        if let Err(refusal) = require_current_driver(io_uring_required()) {
+            panic!("{refusal}");
+        }
     }
 
     /// How many timers are armed on the calling thread's virtual clock.

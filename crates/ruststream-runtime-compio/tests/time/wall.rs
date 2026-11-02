@@ -8,12 +8,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use allocation_counter::measure;
-use compio::runtime::Runtime;
 use compio::time::sleep as compio_sleep;
 use futures::task::noop_waker_ref;
 use ruststream_runtime::Clock;
-use ruststream_runtime_compio::CompioClock;
 use ruststream_runtime_compio::time::{self, Sleep};
+use ruststream_runtime_compio::{CompioClock, test_runtime};
 
 const DELAY: Duration = Duration::from_millis(30);
 
@@ -34,7 +33,7 @@ fn a_sleep_made_on_one_thread_completes_on_the_core_that_polls_it() {
     let sleep = time::sleep(DELAY);
     let started = Instant::now();
     thread::spawn(move || {
-        Runtime::new().expect("a compio runtime").block_on(sleep);
+        test_runtime().expect("a compio runtime").block_on(sleep);
     })
     .join()
     .expect("the core ended");
@@ -49,7 +48,7 @@ fn a_sleep_armed_on_one_core_completes_on_another() {
     let started = Instant::now();
 
     let first = thread::spawn(move || {
-        Runtime::new()
+        test_runtime()
             .expect("a compio runtime")
             .block_on(async move {
                 let mut sleep = time::sleep(DELAY);
@@ -64,7 +63,7 @@ fn a_sleep_armed_on_one_core_completes_on_another() {
     });
     wait_armed.recv().expect("the first core armed its sleep");
     let sleep = from_first.recv().expect("the sleep was handed over");
-    Runtime::new().expect("a compio runtime").block_on(sleep);
+    test_runtime().expect("a compio runtime").block_on(sleep);
     assert!(started.elapsed() >= DELAY, "the sleep ended early");
     done.send(()).expect("the first core waits");
     first.join().expect("the first core ended");
@@ -75,18 +74,18 @@ fn a_sleep_outlives_the_runtime_that_armed_it() {
     let mut sleep = time::sleep(DELAY);
     let started = Instant::now();
     {
-        let runtime = Runtime::new().expect("a compio runtime");
+        let runtime = test_runtime().expect("a compio runtime");
         runtime.block_on(async {
             assert!(poll_once(&mut sleep).is_pending());
         });
     }
-    Runtime::new().expect("a compio runtime").block_on(sleep);
+    test_runtime().expect("a compio runtime").block_on(sleep);
     assert!(started.elapsed() >= DELAY, "the sleep ended early");
 }
 
 #[test]
 fn a_dropped_sleep_does_not_hold_back_the_next() {
-    Runtime::new().expect("a compio runtime").block_on(async {
+    test_runtime().expect("a compio runtime").block_on(async {
         let mut dropped = time::sleep(Duration::from_millis(5));
         assert!(poll_once(&mut dropped).is_pending());
         drop(dropped);
@@ -108,7 +107,7 @@ fn allocations_after_warm_up(mut arm: impl FnMut()) -> u64 {
 #[test]
 fn timers_armed_together_cost_no_allocation_once_the_wheel_has_grown() {
     const COUNT: usize = 1000;
-    Runtime::new().expect("a compio runtime").block_on(async {
+    test_runtime().expect("a compio runtime").block_on(async {
         let deadline = Instant::now() + DELAY;
         let mut sleeps: Vec<Sleep> = iter::repeat_with(|| CompioClock.sleep_until(deadline))
             .take(COUNT)
@@ -128,7 +127,7 @@ fn timers_armed_together_cost_no_allocation_once_the_wheel_has_grown() {
 
 #[test]
 fn a_sleep_in_turn_costs_what_one_timer_of_compio_costs() {
-    let runtime = Runtime::new().expect("a compio runtime");
+    let runtime = test_runtime().expect("a compio runtime");
     // Allocations of `count` sleeps in turn, one by one, as `sleep` makes them.
     let cost = |count: u32, sleep: fn(Duration) -> Pin<Box<dyn Future<Output = ()>>>| {
         measure(|| {
@@ -158,7 +157,7 @@ fn a_sleep_in_turn_costs_what_one_timer_of_compio_costs() {
 
 #[test]
 fn a_dropped_sleep_leaves_its_room_for_the_next() {
-    Runtime::new().expect("a compio runtime").block_on(async {
+    test_runtime().expect("a compio runtime").block_on(async {
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut sleeps: Vec<Sleep> = Vec::with_capacity(10_000);
         let allocated = allocations_after_warm_up(|| {
@@ -175,7 +174,7 @@ fn a_dropped_sleep_leaves_its_room_for_the_next() {
 #[test]
 fn a_thread_that_makes_a_second_runtime_gets_a_working_timer_again() {
     for _ in 0..3 {
-        let runtime = Runtime::new().expect("a compio runtime");
+        let runtime = test_runtime().expect("a compio runtime");
         let started = Instant::now();
         runtime.block_on(async {
             // A cancelled timer leaves a free slot behind, which the next runtime must not inherit.
@@ -191,10 +190,10 @@ fn a_thread_that_makes_a_second_runtime_gets_a_working_timer_again() {
 #[test]
 fn a_sleep_of_an_ended_runtime_does_not_cancel_the_timer_of_the_next() {
     let mut old = time::sleep(Duration::from_secs(60));
-    Runtime::new()
+    test_runtime()
         .expect("a compio runtime")
         .block_on(async { assert!(poll_once(&mut old).is_pending()) });
-    Runtime::new().expect("a compio runtime").block_on(async {
+    test_runtime().expect("a compio runtime").block_on(async {
         let mut fresh = time::sleep(DELAY);
         assert!(poll_once(&mut fresh).is_pending());
         // The old sleep gave up its place on the ended runtime; the new timer is not its place.
@@ -210,7 +209,7 @@ fn a_sleep_polled_after_its_core_is_gone_goes_on_where_it_is_polled() {
     let (armed, from_core) = mpsc::channel::<Sleep>();
     let started = Instant::now();
     thread::spawn(move || {
-        Runtime::new()
+        test_runtime()
             .expect("a compio runtime")
             .block_on(async move {
                 let mut sleep = time::sleep(DELAY);
@@ -221,17 +220,17 @@ fn a_sleep_polled_after_its_core_is_gone_goes_on_where_it_is_polled() {
     .join()
     .expect("the core ended");
     let sleep = from_core.recv().expect("the sleep was handed over");
-    Runtime::new().expect("a compio runtime").block_on(sleep);
+    test_runtime().expect("a compio runtime").block_on(sleep);
     assert!(started.elapsed() >= DELAY, "the sleep ended early");
 }
 
 #[test]
 fn a_sleep_of_an_ended_runtime_stays_pending_once_the_next_runtime_has_slept() {
     let mut old = time::sleep(Duration::from_secs(60));
-    Runtime::new()
+    test_runtime()
         .expect("a compio runtime")
         .block_on(async { assert!(poll_once(&mut old).is_pending()) });
-    Runtime::new().expect("a compio runtime").block_on(async {
+    test_runtime().expect("a compio runtime").block_on(async {
         // The new runtime takes the thread's wheel before the old sleep is polled again.
         time::sleep(Duration::from_millis(1)).await;
         assert!(

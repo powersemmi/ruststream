@@ -4,17 +4,17 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use compio::runtime::{self, Runtime};
+use compio::runtime;
 use ruststream_runtime::Clock;
 use ruststream_runtime_compio::testing::VirtualClock;
-use ruststream_runtime_compio::{CompioClock, time, yield_now};
+use ruststream_runtime_compio::{CompioClock, test_runtime, time, yield_now};
 
 /// Runs `test` on a fresh compio runtime with the virtual clock held.
 fn on_virtual_clock<Test>(test: impl FnOnce(VirtualClock) -> Test)
 where
     Test: Future<Output = ()>,
 {
-    let runtime = Runtime::new().expect("a compio runtime");
+    let runtime = test_runtime().expect("a compio runtime");
     let clock = VirtualClock::take();
     runtime.block_on(test(clock));
 }
@@ -143,7 +143,7 @@ fn a_dropped_sleep_leaves_no_timer_behind() {
 
 #[test]
 fn without_a_lease_the_wall_clock_runs() {
-    let runtime = Runtime::new().expect("a compio runtime");
+    let runtime = test_runtime().expect("a compio runtime");
     runtime.block_on(async {
         let started = Instant::now();
         time::sleep(Duration::from_millis(20)).await;

@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use compio::runtime::Runtime;
 use compio::time::timeout;
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use futures::{Stream, StreamExt};
@@ -23,6 +22,7 @@ use ruststream_memory::local::{
 use ruststream_runtime::{
     Context, Deserialized, Handle, HandlerOutcome, Input, IntoSource, SoloDeserialized,
 };
+use ruststream_runtime_compio::test_runtime;
 
 /// What happened, in order, as the services under test report it.
 #[derive(Clone, Default)]
@@ -286,7 +286,7 @@ where
 
 /// Runs `test` on a compio runtime of its own, and fails it if it takes longer than ten seconds.
 pub(crate) fn on_runtime<Out>(test: impl Future<Output = Out>) -> Out {
-    Runtime::new().expect("a runtime").block_on(async {
+    test_runtime().expect("a runtime").block_on(async {
         timeout(Duration::from_secs(10), test)
             .await
             .expect("the scenario finished in time")

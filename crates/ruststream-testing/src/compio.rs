@@ -18,7 +18,7 @@ use ruststream_runtime::ConnectedLifecycle;
 use ruststream_runtime::OutSlot;
 use ruststream_runtime::testing::{Coordinator, PublishedAssertions, TestError, Within};
 use ruststream_runtime_compio::testing::{
-    Quiescence, Runnable, VirtualClock, armed_timers, spawn_detached,
+    Quiescence, Runnable, VirtualClock, armed_timers, require_io_uring, spawn_detached,
 };
 use ruststream_runtime_compio::{
     App, InProcessError, InProcessStart, RunningApp, RustStreamError, StateSource, yield_now,
@@ -125,7 +125,9 @@ impl TestApp {
     ///
     /// # Panics
     ///
-    /// Panics if another `TestApp` is alive on this thread: the clock is one per thread.
+    /// Panics if another `TestApp` is alive on this thread: the clock is one per thread. Also
+    /// panics where `RUSTSTREAM_COMPIO_REQUIRE_IO_URING=1` is set and the test's runtime is not
+    /// on `io_uring` (Linux).
     ///
     /// # Examples
     ///
@@ -160,6 +162,8 @@ impl TestApp {
     }
 
     async fn run<A: App>(app: A, state: StateSource<A::State>) -> Result<Self, TestError> {
+        // The test built this runtime itself, so a fallback to polling is caught here.
+        require_io_uring();
         // Taken before the app starts, so every task of its startup is followed.
         let quiescence = Quiescence::take();
         let clock = VirtualClock::take();
