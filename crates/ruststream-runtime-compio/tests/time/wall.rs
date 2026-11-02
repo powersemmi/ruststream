@@ -171,3 +171,56 @@ fn a_dropped_sleep_leaves_its_room_for_the_next() {
         assert_eq!(allocated, 0, "dropped sleeps kept growing the wheel");
     });
 }
+
+#[test]
+fn a_thread_that_makes_a_second_runtime_gets_a_working_timer_again() {
+    for _ in 0..3 {
+        let runtime = Runtime::new().expect("a compio runtime");
+        let started = Instant::now();
+        runtime.block_on(async {
+            // A cancelled timer leaves a free slot behind, which the next runtime must not inherit.
+            let mut dropped = time::sleep(Duration::from_secs(60));
+            assert!(poll_once(&mut dropped).is_pending());
+            drop(dropped);
+            time::sleep(DELAY).await;
+        });
+        assert!(started.elapsed() >= DELAY, "the sleep ended early");
+    }
+}
+
+#[test]
+fn a_sleep_of_an_ended_runtime_does_not_cancel_the_timer_of_the_next() {
+    let mut old = time::sleep(Duration::from_secs(60));
+    Runtime::new()
+        .expect("a compio runtime")
+        .block_on(async { assert!(poll_once(&mut old).is_pending()) });
+    Runtime::new().expect("a compio runtime").block_on(async {
+        let mut fresh = time::sleep(DELAY);
+        assert!(poll_once(&mut fresh).is_pending());
+        // The old sleep gave up its place on the ended runtime; the new timer is not its place.
+        drop(old);
+        let started = Instant::now();
+        fresh.await;
+        assert!(started.elapsed() >= DELAY, "the sleep ended early");
+    });
+}
+
+#[test]
+fn a_sleep_polled_after_its_core_is_gone_goes_on_where_it_is_polled() {
+    let (armed, from_core) = mpsc::channel::<Sleep>();
+    let started = Instant::now();
+    thread::spawn(move || {
+        Runtime::new()
+            .expect("a compio runtime")
+            .block_on(async move {
+                let mut sleep = time::sleep(DELAY);
+                assert!(poll_once(&mut sleep).is_pending());
+                armed.send(sleep).expect("the test waits");
+            });
+    })
+    .join()
+    .expect("the core ended");
+    let sleep = from_core.recv().expect("the sleep was handed over");
+    Runtime::new().expect("a compio runtime").block_on(sleep);
+    assert!(started.elapsed() >= DELAY, "the sleep ended early");
+}

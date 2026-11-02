@@ -7,7 +7,6 @@
 
 use std::fmt;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -39,7 +38,7 @@ enum State {
     /// Not polled yet.
     Fresh,
     /// A timer in the wheel of the core that polled the sleep first.
-    Wall(Arc<Wheel>, Key),
+    Wall(&'static Wheel, Key),
     /// A timer on the thread's virtual timeline.
     #[cfg(feature = "testing")]
     Virtual(TimerKey),

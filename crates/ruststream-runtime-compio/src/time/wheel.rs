@@ -16,12 +16,12 @@
 //! its first sleep. The driver waits on one compio timer at a time, which costs what compio's
 //! own timer costs (two `BTreeMap` node allocations per timer that is armed alone and fires).
 
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::mem;
 use std::pin::{Pin, pin};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
@@ -31,7 +31,7 @@ use futures::{FutureExt, select_biased};
 
 thread_local! {
     /// The wheel of the runtime this thread runs, once a sleep needed it.
-    static WHEEL: RefCell<Option<Arc<Wheel>>> = const { RefCell::new(None) };
+    static WHEEL: Cell<Option<&'static Wheel>> = const { Cell::new(None) };
 }
 
 /// Stale heap entries a wheel tolerates before it counts them against the live ones.
@@ -40,6 +40,8 @@ const SWEEP_FLOOR: usize = 64;
 /// One armed timer: its slot, and which use of the slot it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Key {
+    /// Which driver the timer was armed under: a timer of an earlier one is gone with it.
+    epoch: u64,
     slot: usize,
     generation: u64,
 }
@@ -81,19 +83,24 @@ struct Timers {
     driver: Option<Waker>,
     /// An earlier timer was armed since the driver last looked.
     earlier: bool,
-    /// The driver task is gone with its runtime.
-    orphaned: bool,
+    /// A driver task runs the wheel; it is gone when its runtime ends.
+    driven: bool,
+    /// Counts the drivers that ended, so a key never reaches a slot a later driver reused.
+    epoch: u64,
 }
 
 impl Timers {
     fn is_armed(&self, key: &Key) -> bool {
-        self.slots
-            .get(key.slot)
-            .is_some_and(|slot| slot.armed && slot.generation == key.generation)
+        key.epoch == self.epoch
+            && self
+                .slots
+                .get(key.slot)
+                .is_some_and(|slot| slot.armed && slot.generation == key.generation)
     }
 
     fn is_live(&self, entry: &Entry) -> bool {
         self.is_armed(&Key {
+            epoch: self.epoch,
             slot: entry.slot,
             generation: entry.generation,
         })
@@ -119,23 +126,30 @@ pub(super) struct Wheel {
 }
 
 impl Wheel {
-    /// The wheel of the runtime this thread runs, made with its driver task on the first call.
+    /// The wheel of this thread, with a driver task on the runtime the thread runs now.
+    ///
+    /// The wheel is made on the thread's first sleep and lives as long as the process: one per
+    /// thread that ever slept. A runtime that ended leaves it without a driver, and the next
+    /// call gives it a driver on the new runtime.
     ///
     /// # Panics
     ///
     /// Panics when the thread runs no compio runtime, as compio's own timers do.
-    pub(super) fn current() -> Arc<Self> {
-        WHEEL.with_borrow_mut(|slot| {
-            if let Some(wheel) = slot
-                && !wheel.lock().orphaned
-            {
-                return Arc::clone(wheel);
-            }
-            let wheel = Arc::new(Self::default());
-            runtime::spawn(drive(Arc::clone(&wheel))).detach();
-            *slot = Some(Arc::clone(&wheel));
+    pub(super) fn current() -> &'static Self {
+        let wheel = WHEEL.get().unwrap_or_else(|| {
+            let wheel: &'static Self = Box::leak(Box::default());
+            WHEEL.set(Some(wheel));
             wheel
-        })
+        });
+        if wheel.take_driver_seat() {
+            runtime::spawn(drive(wheel)).detach();
+        }
+        wheel
+    }
+
+    /// Marks the wheel driven; `false` while a driver still runs it.
+    fn take_driver_seat(&self) -> bool {
+        !mem::replace(&mut self.lock().driven, true)
     }
 
     fn lock(&self) -> MutexGuard<'_, Timers> {
@@ -157,6 +171,7 @@ impl Wheel {
         place.armed = true;
         place.waker = Some(waker.clone());
         let generation = place.generation;
+        let epoch = timers.epoch;
         let earliest = timers
             .heap
             .peek()
@@ -177,13 +192,17 @@ impl Wheel {
         if let Some(driver) = driver {
             driver.wake();
         }
-        Some(Key { slot, generation })
+        Some(Key {
+            epoch,
+            slot,
+            generation,
+        })
     }
 
     /// Polls an armed timer, keeping `waker` as the one to wake.
     pub(super) fn poll(&self, key: &Key, waker: &Waker) -> Status {
         let mut timers = self.lock();
-        if timers.orphaned {
+        if !timers.driven {
             return Status::Orphaned;
         }
         if !timers.is_armed(key) {
@@ -220,17 +239,21 @@ impl Wheel {
 }
 
 /// Marks the wheel orphaned when its driver task is dropped with the runtime.
-struct Orphan(Arc<Wheel>);
+struct Orphan(&'static Wheel);
 
 impl Drop for Orphan {
     fn drop(&mut self) {
-        let timers = {
+        let gone = {
             let mut timers = self.0.lock();
-            timers.orphaned = true;
-            timers.driver = None;
-            (mem::take(&mut timers.slots), mem::take(&mut timers.heap))
+            // A fresh state: the free list and the counters pointed into the slots that go.
+            let next = Timers {
+                epoch: timers.epoch + 1,
+                ..Timers::default()
+            };
+            mem::replace(&mut *timers, next)
         };
-        drop(timers);
+        // Outside the lock: dropping a waker may run a destructor of its task.
+        drop(gone);
     }
 }
 
@@ -260,8 +283,8 @@ impl Future for Earlier<'_> {
 // Why: the task waits on a compio timer, which belongs to its core; it is spawned there and never
 // moves.
 #[allow(clippy::future_not_send)]
-async fn drive(wheel: Arc<Wheel>) {
-    let _orphan = Orphan(Arc::clone(&wheel));
+async fn drive(wheel: &'static Wheel) {
+    let _orphan = Orphan(wheel);
     let mut due: Vec<Waker> = Vec::new();
     // compio's timer map frees its node when its last timer goes, so the next timer would allocate
     // one again. A timer that never fires keeps the node, and every timer after it fits in it.
@@ -292,7 +315,7 @@ async fn drive(wheel: Arc<Wheel>) {
         }
         // Cleared, not drained: the buffer keeps its room for the next round.
         due.clear();
-        let mut earlier = pin!(Earlier(&wheel).fuse());
+        let mut earlier = pin!(Earlier(wheel).fuse());
         match next {
             Some(deadline) => {
                 let mut passed = pin!(sleep_until(deadline).fuse());
