@@ -13,9 +13,7 @@ use super::TestApp;
 /// The registration of the broker type `broker`, or `None` when no crate registered one with
 /// [`register_testable_broker!`](crate::register_testable_broker).
 pub(super) fn registration_of(broker: TypeId) -> Option<&'static TestableRegistration> {
-    inventory::iter::<TestableRegistration>
-        .into_iter()
-        .find(|registration| registration.registers(broker))
+    TestableRegistration::lookup(broker)
 }
 
 /// The app's brokers, connected in process, handed to the state a test builds with

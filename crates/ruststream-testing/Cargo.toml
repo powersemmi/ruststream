@@ -339,3 +339,10 @@ required-features = ["compio", "json"]
 name = "compio_startup"
 path = "tests/compio_startup.rs"
 required-features = ["compio", "json"]
+
+# A local memory broker of any capacity through the compio `TestApp`, and a broker type with no
+# in-process mode.
+[[test]]
+name = "compio_capacity"
+path = "tests/compio_capacity.rs"
+required-features = ["compio", "json"]

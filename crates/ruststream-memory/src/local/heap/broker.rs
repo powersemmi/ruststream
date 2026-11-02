@@ -14,7 +14,11 @@ use ruststream_core::{
     Take,
 };
 #[cfg(feature = "testing")]
-use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, TestableBroker};
+use ruststream_core::{IfSend, SendBroker};
+#[cfg(feature = "testing")]
+use ruststream_runtime::testing::{
+    Backlog, Coordinator, InProcess, TestableBroker, TestableRegistration,
+};
 use thiserror::Error;
 
 use super::LocalMemorySubscriber;
@@ -115,6 +119,8 @@ impl<const CAP: usize> LocalMemoryBroker<CAP> {
                  above zero",
             );
         }
+        #[cfg(feature = "testing")]
+        <IfSend<Enrolling, NotEnrolling> as Enrol<Self>>::enrol();
         Self {
             bus: Sharing::new(Bus::new()),
         }
@@ -486,17 +492,36 @@ impl<const CAP: usize> InProcess for LocalMemoryBroker<CAP> {
 }
 
 // The harness finds a broker by the type the app was built on, and a capacity is part of the
-// type: the capacities a service names are registered one by one, the powers of two a queue is
-// sized by.
+// type, so no list of capacities can be written down in advance: a broker enrolls the type it was
+// built as, from its constructor. Only a build with the `send` feature can enroll, as only such a
+// broker runs on the runners that look types up.
 #[cfg(feature = "testing")]
-macro_rules! register_capacities {
-    ($($capacity:literal),+) => {
-        $(ruststream_runtime::register_testable_broker!(LocalMemoryBroker<$capacity>);)+
-    };
+trait Enrol<Bus> {
+    fn enrol();
 }
 
 #[cfg(feature = "testing")]
-register_capacities!(1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024);
+struct Enrolling;
+
+#[cfg(feature = "testing")]
+struct NotEnrolling;
+
+#[cfg(feature = "testing")]
+impl<Bus> Enrol<Bus> for Enrolling
+where
+    Bus: InProcess + SendBroker,
+    Bus::Connected: TestableBroker + DefaultPublish,
+    <<Bus::Connected as DefaultPublish>::Policy as PublishPolicy<Bus::Connected>>::Live: Publisher,
+{
+    fn enrol() {
+        TestableRegistration::enroll::<Bus>();
+    }
+}
+
+#[cfg(feature = "testing")]
+impl<Bus> Enrol<Bus> for NotEnrolling {
+    fn enrol() {}
+}
 
 #[cfg(feature = "testing")]
 impl<const CAP: usize> TestableBroker for ConnectedLocalMemoryBroker<CAP> {
