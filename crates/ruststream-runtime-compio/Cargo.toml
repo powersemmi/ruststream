@@ -24,7 +24,9 @@ testing = ["ruststream-runtime/testing"]
 ruststream-core = { workspace = true, features = ["std"] }
 ruststream-runtime = { workspace = true, features = ["compio"] }
 bytes = { workspace = true, features = ["std"] }
-compio.workspace = true
+# `polling` is the driver a host falls back to when it refuses an io_uring (a container profile that
+# blocks it, an old kernel, no memory for the ring).
+compio = { workspace = true, features = ["polling"] }
 crossbeam-queue.workspace = true
 event-listener.workspace = true
 futures = { workspace = true, features = ["std", "async-await"] }

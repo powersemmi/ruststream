@@ -368,7 +368,28 @@ async fn raise_on_signal(stop: Stop) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use compio::driver::{DriverType, ProactorBuilder};
+    use compio::runtime::RuntimeBuilder;
+    use compio::time::sleep;
+
     use super::Pinning;
+
+    // A host that refuses an io_uring (a container profile that blocks it, a kernel without it,
+    // no memory for the ring) is served by the polling driver, so the driver must be compiled in.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_polling_driver_is_there_for_a_host_that_refuses_io_uring() {
+        let mut proactor = ProactorBuilder::new();
+        proactor.driver_type(DriverType::Poll);
+        let runtime = RuntimeBuilder::new()
+            .with_proactor(proactor)
+            .build()
+            .expect("the runtime builds");
+        assert_eq!(runtime.driver_type(), DriverType::Poll);
+        runtime.block_on(async { sleep(Duration::from_millis(1)).await });
+    }
 
     #[test]
     fn each_core_takes_its_own_allowed_cpu() {
