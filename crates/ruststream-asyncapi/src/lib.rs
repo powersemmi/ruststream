@@ -22,8 +22,9 @@ pub use spec::{
 };
 pub use viewer::{ViewerOptions, render_viewer_html};
 
-use ruststream_core::Tag;
 use ruststream_runtime::Described;
+
+use ruststream_core::Tag;
 use ruststream_runtime::OutgoingKind;
 
 use operations::{add_outgoing, add_receive, send_operation_id};

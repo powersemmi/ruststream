@@ -10,8 +10,6 @@ mod service;
 mod teardown;
 
 pub use app_trait::App;
-#[doc(hidden)]
-pub use app_trait::AppDescription;
 pub(crate) use health::HealthReport;
 pub use health::{HealthProbe, SubscriptionEnd};
 #[doc(hidden)]

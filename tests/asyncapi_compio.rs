@@ -12,7 +12,7 @@ use ruststream::asyncapi;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::compio;
-use ruststream::runtime::{AppInfo, RustStream};
+use ruststream::runtime::{App, AppInfo, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -39,26 +39,32 @@ fn server() -> ServerSpec {
     ServerSpec::new("mem://local", "memory")
 }
 
-fn tokio_json() -> String {
-    let app = RustStream::new(info())
+/// The app as a tokio service's `main` builds it: known only as `impl App`.
+fn tokio_app() -> impl App {
+    RustStream::new(info())
         .server("mem", server())
         .with_broker_codec(MemoryBroker::new(), JsonCodec, |b| {
             b.include(orders).include(returns)
-        });
-    asyncapi::build_spec(&app)
+        })
+}
+
+/// The same app as a compio service's `main` builds it.
+fn compio_app() -> impl compio::App {
+    compio::RustStream::new(info())
+        .server("mem", server())
+        .with_broker_codec(MemoryBroker::new(), JsonCodec, |b| {
+            b.include(orders).include(returns)
+        })
+}
+
+fn tokio_json() -> String {
+    asyncapi::build_spec(&tokio_app())
         .to_json()
         .expect("the document serializes")
 }
 
 fn compio_json() -> String {
-    let app = compio::RustStream::new(info())
-        .server("mem", server())
-        .with_broker_codec(MemoryBroker::new(), JsonCodec, |b| {
-            b.include(orders).include(returns)
-        });
-    // `ruststream::asyncapi::build_spec` takes the tokio app; the generator under it reads any
-    // described app, the compio one included, as `asyncapi gen` does.
-    ruststream_asyncapi::build_spec(&app)
+    asyncapi::build_spec(&compio_app())
         .to_json()
         .expect("the document serializes")
 }

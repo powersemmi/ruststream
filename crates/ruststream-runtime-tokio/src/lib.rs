@@ -28,8 +28,6 @@ mod sink;
 mod testkit;
 pub mod time;
 
-#[doc(hidden)]
-pub use app::AppDescription;
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 pub use app::TestParts;

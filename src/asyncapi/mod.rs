@@ -97,14 +97,47 @@
 //! [external-docs]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/service-info/external-docs/
 
 use ruststream_asyncapi as asyncapi;
-use ruststream_runtime_tokio::AppDescription;
-
-use crate::runtime::App;
+use ruststream_runtime::Described;
 
 #[doc(inline)]
 pub use ruststream_asyncapi::*;
 
-/// Builds an [`AsyncAPI`](Spec) 3.1.0 document from the app `main` runs.
+/// A built service the document is read from: the app of the tokio runner or of the compio one,
+/// known by its concrete type or only as `impl App`.
+///
+/// It carries no methods of its own, so importing it does not shadow the app's `info`,
+/// `servers` and `handlers`.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "compio")]
+/// # mod demo {
+/// use ruststream::asyncapi::{DescribedApp, Spec, build_spec};
+/// use ruststream::memory::MemoryBroker;
+/// use ruststream::runtime::compio::{App, AppInfo, RustStream};
+///
+/// /// The app a compio service's `main` runs.
+/// pub fn app() -> impl App {
+///     RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(MemoryBroker::new(), |b| b)
+/// }
+///
+/// /// The document of any service, whichever runner it runs on.
+/// pub fn document(app: &impl DescribedApp) -> Spec {
+///     build_spec(app)
+/// }
+///
+/// pub fn compio_document() -> Spec {
+///     document(&app())
+/// }
+/// # }
+/// # fn main() {}
+/// ```
+pub trait DescribedApp: Described {}
+
+impl<A: Described> DescribedApp for A {}
+
+/// Builds an [`AsyncAPI`](Spec) 3.1.0 document from the app `main` runs, on either runner.
 ///
 /// Each registered subscriber becomes a channel (addressed by its name), a `receive` operation,
 /// and a message component named after the handler's input type.
@@ -148,6 +181,6 @@ pub use ruststream_asyncapi::*;
 /// # fn main() {}
 /// ```
 #[must_use]
-pub fn build_spec<A: App>(app: &A) -> Spec {
-    asyncapi::build_spec(&AppDescription(app))
+pub fn build_spec<A: DescribedApp>(app: &A) -> Spec {
+    asyncapi::build_spec(app)
 }

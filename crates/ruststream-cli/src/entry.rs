@@ -10,7 +10,7 @@ use tokio::runtime::{Builder, Runtime};
 
 #[cfg(feature = "logging")]
 use ruststream_observability::logging;
-use ruststream_runtime_tokio::{App, AppDescription};
+use ruststream_runtime_tokio::App;
 
 use crate::{CliError, Command, generate_spec, parse, report};
 
@@ -190,9 +190,7 @@ where
             runtime.block_on(app.run())?;
             Ok(())
         }
-        Command::AsyncApiGen { out, yaml } => {
-            generate_spec(&AppDescription(&build()), out.as_deref(), yaml)
-        }
+        Command::AsyncApiGen { out, yaml } => generate_spec(&build(), out.as_deref(), yaml),
     }
 }
 

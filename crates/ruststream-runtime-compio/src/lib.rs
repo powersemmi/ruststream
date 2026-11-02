@@ -33,8 +33,6 @@ pub mod time;
 mod virtual_clock;
 mod yield_now;
 
-#[doc(hidden)]
-pub use app::AppDescription;
 pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, RunningApp, RustStream, RustStreamError,
     Setup, SubscriptionCount, SubscriptionEnd, Wired,

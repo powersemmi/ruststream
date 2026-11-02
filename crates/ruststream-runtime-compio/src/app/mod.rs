@@ -18,8 +18,6 @@ mod teardown;
 mod testing;
 
 pub use app_trait::App;
-#[doc(hidden)]
-pub use app_trait::AppDescription;
 pub use health::HealthProbe;
 pub use run::RunningApp;
 pub use ruststream_runtime::{HealthState, SubscriptionCount, SubscriptionEnd};

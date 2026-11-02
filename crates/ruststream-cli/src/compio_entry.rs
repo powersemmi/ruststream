@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 #[cfg(feature = "logging")]
 use ruststream_observability::logging;
-use ruststream_runtime_compio::{App, AppDescription, Cores};
+use ruststream_runtime_compio::{App, Cores};
 
 use crate::{CliError, Command, generate_spec, parse, report};
 
@@ -70,9 +70,7 @@ where
             build().run(cores)?;
             Ok(())
         }
-        Command::AsyncApiGen { out, yaml } => {
-            generate_spec(&AppDescription(&build()), out.as_deref(), yaml)
-        }
+        Command::AsyncApiGen { out, yaml } => generate_spec(&build(), out.as_deref(), yaml),
     }
 }
 

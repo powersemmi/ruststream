@@ -15,6 +15,7 @@ mod log_capture;
 
 mod app_cli_coverage;
 mod app_dispatch;
+mod app_methods;
 mod app_start;
 mod app_trait;
 mod asyncapi;

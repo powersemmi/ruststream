@@ -73,7 +73,7 @@ mod sealed {
     note = "an EmbeddedApp runs on embassy: await `EmbeddedApp::run(&CONTROL)` in an embassy task; \
             the CLI, MainRuntime, metrics and OTel run on the tokio runtime"
 )]
-pub trait App: sealed::Sealed + Sized {
+pub trait App: sealed::Sealed + Described + Sized {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`), then shuts down gracefully.
     ///
     /// # Errors
@@ -170,25 +170,5 @@ impl<Layers, State, Pipeline, Phase> Described for RustStream<Layers, State, Pip
         if let Some(select) = self.logger {
             select();
         }
-    }
-}
-
-/// Presents any [`App`] as [`Described`], so a document builder over `Described` serves an app
-/// known only by its `impl App` type. The CLI and the facade's `build_spec` use it.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
-pub struct AppDescription<'app, A>(pub &'app A);
-
-impl<A: App> Described for AppDescription<'_, A> {
-    fn info(&self) -> &AppInfo {
-        App::info(self.0)
-    }
-
-    fn servers(&self) -> &BTreeMap<String, ServerSpec> {
-        App::servers(self.0)
-    }
-
-    fn handlers(&self) -> &[HandlerMetadata] {
-        App::handlers(self.0)
     }
 }
