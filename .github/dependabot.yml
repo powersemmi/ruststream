@@ -12,6 +12,11 @@ updates:
         update-types:
           - minor
           - patch
+    # hash32 follows the major release heapless depends on: a newer one would compile a second
+    # copy beside the one heapless brings.
+    ignore:
+      - dependency-name: hash32
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 10
 
   - package-ecosystem: github-actions
