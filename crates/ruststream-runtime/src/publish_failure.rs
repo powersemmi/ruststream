@@ -435,7 +435,8 @@ impl Refusal {
     ///
     /// `lent` takes the bytes a lending publisher was shown, given where they were: the caller
     /// that owns them moves them out instead of copying. A refusal with no message (the client
-    /// consumed the buffer) yields one with no bytes.
+    /// consumed the buffer), or whose lent bytes `lent` could not return whole, yields a message
+    /// with no bytes.
     #[must_use]
     pub fn into_message(
         self,
@@ -449,12 +450,17 @@ impl Refusal {
                 headers,
             }) => {
                 let payload = match payload {
-                    KeptPayload::Owned(bytes) => bytes,
-                    KeptPayload::Lent { addr, len } => lent(addr, len),
+                    KeptPayload::Owned(bytes) => Some(bytes),
+                    // Fewer bytes than were lent means the owner could not keep them (a copy
+                    // has a fixed room without `alloc`): the message then has no bytes, so a
+                    // republish is refused rather than sent short.
+                    KeptPayload::Lent { addr, len } => {
+                        Some(lent(addr, len)).filter(|kept| kept.len() == len)
+                    }
                 };
                 FailedMessage {
                     destination: sent.unwrap_or_else(|| destination_name(destination)),
-                    payload: Some(payload),
+                    payload,
                     headers,
                 }
             }

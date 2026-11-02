@@ -28,7 +28,9 @@ use ruststream::runtime::{
     WireBytes,
 };
 use ruststream::testing::embedded::TestApp;
-use ruststream::{BufferFull, Deserialized, EncodeBuf, Outgoing, Serialized, subscriber};
+use ruststream::{
+    BufferFull, Deserialized, EncodeBuf, Outgoing, PayloadBuf, Serialized, subscriber,
+};
 
 /// Fails an allocation made while the harness polls the app.
 #[global_allocator]
@@ -518,6 +520,81 @@ fn a_continuation_on_keyed_lanes_finishes_once_the_clock_reaches_it() -> Result<
 {
     block_on(async {
         assert_eq!(continuations_finished(keyed_slow_app).await?, 1);
+        Ok(())
+    })
+}
+
+/// A bus of one-message subscriptions whose messages carry up to 512 bytes.
+type WideTight = LocalMemoryBroker<1, 512>;
+
+/// The tight wide board's bus, this test's own.
+static WIDE_TIGHT_BUS: LocalMemoryBus<1, 512> = LocalMemoryBus::new();
+
+/// A reading, to the destination the stuck handler holds.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "readings")]
+struct Reading(&'static [u8]);
+
+/// Holds its delivery for an hour of the clock, so the readings subscription stays full.
+#[subscriber(LocalMemorySource::new("readings"))]
+async fn on_held(reading: &Job<'_>) -> HandlerOutcome {
+    let _ = reading.0;
+    embassy_time::Timer::after(embassy_time::Duration::from_secs(3600)).await;
+    HandlerOutcome::ack()
+}
+
+/// Answers every poll with the readings, and counts the refused answers whose bytes it can no
+/// longer read.
+#[subscriber(LocalMemorySource::new("poll"), reply)]
+async fn on_pressed_poll(poll: &Job<'_>, ctx: &mut Context<'_, (), Counter>) -> Large {
+    let _ = poll.0;
+    let unreadable = ctx.state().clone();
+    if let Ok(after) = ctx.after(HandlerOutcome::ack()) {
+        after.error(async move |failures: &Failures| {
+            for failed in failures.iter() {
+                if failed.message().wire_bytes(&mut PayloadBuf::new()).is_err() {
+                    unreadable.0.set(unreadable.0.get() + 1);
+                }
+            }
+        });
+    }
+    Large
+}
+
+fn pressed_poll_app(bus: WideTight) -> EmbeddedApp<impl Mounts<State = Counter>> {
+    EmbeddedApp::new()
+        .with_state(Counter::default())
+        .with_broker(bus, |b| {
+            b.include(on_held)
+                .include(on_pressed_poll)
+                .out_reply(LocalMemoryPublish)
+                .encode_capacity::<512>()
+        })
+}
+
+#[test]
+fn a_refused_reply_too_large_to_keep_reaches_the_error_continuation_without_bytes()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let unreadable = Counter::default();
+        let shared = unreadable.clone();
+        let tb = TestApp::with_state(
+            pressed_poll_app(WideTight::new(&WIDE_TIGHT_BUS)),
+            move |_| shared,
+        )
+        .await?;
+        tb.broker::<WideTight>()
+            .message(&Reading(b"1"))
+            .publish()
+            .await?;
+        tb.broker::<WideTight>()
+            .message(&Poll(b"?"))
+            .publish()
+            .await?;
+        tb.advance(Duration::from_secs(1)).await?;
+
+        assert_eq!(unreadable.0.get(), 1, "failures that kept no bytes");
+        tb.shutdown().await?;
         Ok(())
     })
 }
