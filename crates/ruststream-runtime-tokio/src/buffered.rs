@@ -34,9 +34,11 @@ const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
 /// A [`SubscriptionSource`] adapter that buffers the wrapped source's subscriber into a
 /// [`BatchSubscriber`].
 ///
-/// A batch closes when it holds the size the registration asked for, or once
-/// [`max_wait`](Self::max_wait) has elapsed after its first delivery, whichever comes first; an
-/// idle subscription waits indefinitely for that first delivery. The default deadline is 10 ms.
+/// A batch closes when it holds the size the registration asked for, or when no further delivery
+/// is ready and [`max_wait`](Self::max_wait) has elapsed after its first delivery. Deliveries that
+/// are already ready join the batch without a wait, up to its size, so `max_wait` bounds the time a
+/// partial batch spends waiting, not the time spent taking ready deliveries. An idle subscription
+/// waits indefinitely for the first delivery. The default deadline is 10 ms.
 ///
 /// Under the `testing` harness, injecting through `tb.message(&value).publish()` drives the whole
 /// reaction to a standstill before it returns, which closes the batch: one call per message yields
