@@ -369,3 +369,45 @@ async fn a_refused_reply_reaches_error_with_the_destination_a_transform_named() 
 
     assert_eq!(seen.log.lock().expect("log").destinations, ["inbox-7"]);
 }
+
+/// An answer that carries its own bytes, which leave as they are.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "blobs")]
+struct Blob(Vec<u8>);
+
+#[subscriber("ask-blob", reply)]
+async fn ask_blob(job: &Job, ctx: &mut Context, State(seen): State<Arc<Mutex<Log>>>) -> Blob {
+    ctx.after(HandlerOutcome::ack())
+        .error(async move |failures: Failures| {
+            for failed in failures {
+                record(&seen, &failed);
+            }
+        });
+    Blob(job.id.to_be_bytes().to_vec())
+}
+
+/// A refused reply that carries its own bytes reaches `.error` with those bytes.
+#[tokio::test(start_paused = true)]
+async fn a_refused_reply_of_a_value_s_own_bytes_reaches_error_with_them() {
+    let seen = Seen::default();
+    let startup = seen.clone();
+    let app = RustStream::new(AppInfo::new("failed", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(startup))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(ask_blob).out_reply(StampingDownPublish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.broker::<MemoryBroker>()
+        .message(&Job { id: 8 })
+        .to("ask-blob")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    assert_eq!(
+        seen.log.lock().expect("log").payloads,
+        [8_u32.to_be_bytes().to_vec()],
+    );
+}
