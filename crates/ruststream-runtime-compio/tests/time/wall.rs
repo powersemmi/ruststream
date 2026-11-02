@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use allocation_counter::measure;
 use compio::runtime::Runtime;
+use compio::time::sleep as compio_sleep;
 use futures::task::noop_waker_ref;
 use ruststream_runtime::Clock;
 use ruststream_runtime_compio::CompioClock;
@@ -95,29 +96,78 @@ fn a_dropped_sleep_does_not_hold_back_the_next() {
     });
 }
 
+/// Runs `arm` once to size what the wheel keeps, then again under the counter.
+fn allocations_after_warm_up(mut arm: impl FnMut()) -> u64 {
+    // Each round leaves cancelled entries behind, so the heap reaches its size after a few.
+    for _ in 0..3 {
+        arm();
+    }
+    measure(arm).count_total
+}
+
 #[test]
-fn timers_armed_together_cost_less_than_an_allocation_each() {
+fn timers_armed_together_cost_no_allocation_once_the_wheel_has_grown() {
     const COUNT: usize = 1000;
     Runtime::new().expect("a compio runtime").block_on(async {
-        // The first sleep starts what the core keeps for timers; the measure is the steady state.
-        time::sleep(Duration::from_millis(1)).await;
         let deadline = Instant::now() + DELAY;
         let mut sleeps: Vec<Sleep> = iter::repeat_with(|| CompioClock.sleep_until(deadline))
             .take(COUNT)
             .collect();
-        let costs = measure(|| {
+        let allocated = allocations_after_warm_up(|| {
             for sleep in &mut sleeps {
                 assert!(poll_once(sleep).is_pending());
             }
+            // Dropping and making them again frees every slot for the next round.
+            for sleep in &mut sleeps {
+                *sleep = CompioClock.sleep_until(deadline);
+            }
         });
-        assert!(
-            costs.count_total < u64::try_from(COUNT / 4).expect("a small count"),
-            "arming {COUNT} sleeps allocated {} times",
-            costs.count_total,
-        );
-        time::sleep(DELAY).await;
-        for sleep in &mut sleeps {
-            assert!(poll_once(sleep).is_ready());
-        }
+        assert_eq!(allocated, 0, "arming {COUNT} sleeps allocated");
+    });
+}
+
+#[test]
+fn a_sleep_in_turn_costs_what_one_timer_of_compio_costs() {
+    let runtime = Runtime::new().expect("a compio runtime");
+    // Allocations of `count` sleeps in turn, one by one, as `sleep` makes them.
+    let cost = |count: u32, sleep: fn(Duration) -> Pin<Box<dyn Future<Output = ()>>>| {
+        measure(|| {
+            runtime.block_on(async {
+                for _ in 0..count {
+                    sleep(Duration::from_micros(20)).await;
+                }
+            });
+        })
+        .count_total
+    };
+    // The box is the probe's own, so it is subtracted by running both sides through it.
+    let ours: fn(Duration) -> Pin<Box<dyn Future<Output = ()>>> =
+        |delay| Box::pin(time::sleep(delay));
+    let compio: fn(Duration) -> Pin<Box<dyn Future<Output = ()>>> =
+        |delay| Box::pin(compio_sleep(delay));
+    cost(1, ours);
+    cost(1, compio);
+    let ours_per_sleep = cost(1010, ours) - cost(10, ours);
+    let compio_per_sleep = cost(1010, compio) - cost(10, compio);
+    // A few allocations of the run itself are not a cost per sleep.
+    assert!(
+        ours_per_sleep <= compio_per_sleep + 8,
+        "1000 sleeps allocated {ours_per_sleep} times, compio's own {compio_per_sleep}",
+    );
+}
+
+#[test]
+fn a_dropped_sleep_leaves_its_room_for_the_next() {
+    Runtime::new().expect("a compio runtime").block_on(async {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut sleeps: Vec<Sleep> = Vec::with_capacity(10_000);
+        let allocated = allocations_after_warm_up(|| {
+            sleeps.extend(iter::repeat_with(|| CompioClock.sleep_until(deadline)).take(10_000));
+            for sleep in &mut sleeps {
+                assert!(poll_once(sleep).is_pending());
+            }
+            sleeps.clear();
+        });
+        assert_eq!(allocated, 0, "dropped sleeps kept growing the wheel");
     });
 }

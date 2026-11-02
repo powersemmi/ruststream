@@ -1,17 +1,24 @@
-//! The timers of one core on the wall clock: a map of deadlines the core's driver task fires.
+//! The timers of one core on the wall clock: a heap of deadlines the core's driver task fires.
 //!
 //! compio's own timers belong to the runtime that made them and cannot leave its thread, so a
 //! [`Sleep`](super::Sleep) built on them would not be `Send`. The wheel is the part of a timer that
 //! can: a sleep holds a reference to the wheel of the core that first polled it and a key into
-//! it, and the driver task of that core, which owns the one compio timer the wheel needs at a time,
-//! wakes the sleeps that fell due. Nothing in a sleep is tied to a thread.
+//! it, and the driver task of that core wakes the sleeps that fell due. Nothing in a sleep is tied
+//! to a thread.
 //!
-//! Cost: arming is one lock and one `BTreeMap` node (shared, like compio's, by up to eleven
-//! timers), cancelling and each poll after the first one lock. The wheel and its driver task are
-//! made once per core, on its first sleep.
+//! The deadlines sit in a binary heap and the wakers in a slab of reusable slots. A cancelled
+//! sleep frees its slot at once and leaves its heap entry to be skipped when it surfaces, or swept
+//! when such entries outnumber the live ones.
+//!
+//! Cost: arming is one lock, one heap push and one slot, and cancelling one lock and one slot; each
+//! poll after the first is one lock. Once the heap and the slab have grown to the number of sleeps
+//! a core keeps, none of it allocates. The wheel and its driver task are made once per core, on
+//! its first sleep. The driver waits on one compio timer at a time, which costs what compio's
+//! own timer costs (two `BTreeMap` node allocations per timer that is armed alone and fires).
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::mem;
 use std::pin::{Pin, pin};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -27,11 +34,14 @@ thread_local! {
     static WHEEL: RefCell<Option<Arc<Wheel>>> = const { RefCell::new(None) };
 }
 
-/// One armed timer: ordered by its deadline, then by the order it was armed in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// Stale heap entries a wheel tolerates before it counts them against the live ones.
+const SWEEP_FLOOR: usize = 64;
+
+/// One armed timer: its slot, and which use of the slot it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Key {
-    deadline: Instant,
-    serial: u64,
+    slot: usize,
+    generation: u64,
 }
 
 /// What a poll of an armed timer found.
@@ -44,16 +54,62 @@ pub(super) enum Status {
     Orphaned,
 }
 
+/// The waker of one timer; a slot is reused by the next timer once it is free.
+#[derive(Debug, Default)]
+struct Slot {
+    generation: u64,
+    waker: Option<Waker>,
+    armed: bool,
+}
+
+/// The place of a timer in the heap, ordered by its deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Entry {
+    deadline: Instant,
+    slot: usize,
+    generation: u64,
+}
+
 #[derive(Debug, Default)]
 struct Timers {
-    next_serial: u64,
-    armed: BTreeMap<Key, Option<Waker>>,
+    slots: Vec<Slot>,
+    free: Vec<usize>,
+    heap: BinaryHeap<Reverse<Entry>>,
+    /// Heap entries whose timer is gone.
+    stale: usize,
     /// The driver task, parked until a timer earlier than the one it waits for is armed.
     driver: Option<Waker>,
     /// An earlier timer was armed since the driver last looked.
     earlier: bool,
     /// The driver task is gone with its runtime.
     orphaned: bool,
+}
+
+impl Timers {
+    fn is_armed(&self, key: &Key) -> bool {
+        self.slots
+            .get(key.slot)
+            .is_some_and(|slot| slot.armed && slot.generation == key.generation)
+    }
+
+    fn is_live(&self, entry: &Entry) -> bool {
+        self.is_armed(&Key {
+            slot: entry.slot,
+            generation: entry.generation,
+        })
+    }
+
+    /// Drops the entries of cancelled timers once they outnumber the live ones.
+    fn sweep(&mut self) {
+        let live = self.slots.len() - self.free.len();
+        if self.stale <= SWEEP_FLOOR.max(live) {
+            return;
+        }
+        let mut heap = mem::take(&mut self.heap);
+        heap.retain(|Reverse(entry)| self.is_live(entry));
+        self.heap = heap;
+        self.stale = 0;
+    }
 }
 
 /// The timers of one core.
@@ -92,16 +148,24 @@ impl Wheel {
             return None;
         }
         let mut timers = self.lock();
-        let key = Key {
-            deadline,
-            serial: timers.next_serial,
-        };
-        timers.next_serial += 1;
+        let slot = timers.free.pop().unwrap_or_else(|| {
+            timers.slots.push(Slot::default());
+            timers.slots.len() - 1
+        });
+        let place = &mut timers.slots[slot];
+        place.generation += 1;
+        place.armed = true;
+        place.waker = Some(waker.clone());
+        let generation = place.generation;
         let earliest = timers
-            .armed
-            .first_key_value()
-            .is_none_or(|(first, _)| key < *first);
-        timers.armed.insert(key, Some(waker.clone()));
+            .heap
+            .peek()
+            .is_none_or(|Reverse(first)| deadline < first.deadline);
+        timers.heap.push(Reverse(Entry {
+            deadline,
+            slot,
+            generation,
+        }));
         let driver = if earliest {
             timers.earlier = true;
             timers.driver.take()
@@ -113,7 +177,7 @@ impl Wheel {
         if let Some(driver) = driver {
             driver.wake();
         }
-        Some(key)
+        Some(Key { slot, generation })
     }
 
     /// Polls an armed timer, keeping `waker` as the one to wake.
@@ -122,19 +186,36 @@ impl Wheel {
         if timers.orphaned {
             return Status::Orphaned;
         }
-        timers.armed.get_mut(key).map_or(Status::Ready, |slot| {
-            if !slot.as_ref().is_some_and(|armed| armed.will_wake(waker)) {
-                *slot = Some(waker.clone());
-            }
-            Status::Pending
-        })
+        if !timers.is_armed(key) {
+            return Status::Ready;
+        }
+        let slot = &mut timers.slots[key.slot];
+        if !slot
+            .waker
+            .as_ref()
+            .is_some_and(|armed| armed.will_wake(waker))
+        {
+            slot.waker = Some(waker.clone());
+        }
+        drop(timers);
+        Status::Pending
     }
 
-    /// Takes a timer off the wheel: its sleep was dropped before it fired.
+    /// Frees the slot of a timer: its sleep was dropped before it fired.
     pub(super) fn cancel(&self, key: &Key) {
-        let removed = self.lock().armed.remove(key);
+        let mut timers = self.lock();
+        if !timers.is_armed(key) {
+            return;
+        }
+        let slot = &mut timers.slots[key.slot];
+        slot.armed = false;
+        let waker = slot.waker.take();
+        timers.free.push(key.slot);
+        timers.stale += 1;
+        timers.sweep();
+        drop(timers);
         // A waker dropped outside the lock may run a destructor of the task.
-        drop(removed);
+        drop(waker);
     }
 }
 
@@ -143,13 +224,13 @@ struct Orphan(Arc<Wheel>);
 
 impl Drop for Orphan {
     fn drop(&mut self) {
-        let armed = {
+        let timers = {
             let mut timers = self.0.lock();
             timers.orphaned = true;
             timers.driver = None;
-            mem::take(&mut timers.armed)
+            (mem::take(&mut timers.slots), mem::take(&mut timers.heap))
         };
-        drop(armed);
+        drop(timers);
     }
 }
 
@@ -182,18 +263,29 @@ impl Future for Earlier<'_> {
 async fn drive(wheel: Arc<Wheel>) {
     let _orphan = Orphan(Arc::clone(&wheel));
     let mut due: Vec<Waker> = Vec::new();
+    // compio's timer map frees its node when its last timer goes, so the next timer would allocate
+    // one again. A timer that never fires keeps the node, and every timer after it fits in it.
+
     loop {
         let next = {
             let mut timers = wheel.lock();
             let now = Instant::now();
-            while let Some(first) = timers.armed.first_entry() {
-                if first.key().deadline > now {
+            while let Some(&Reverse(first)) = timers.heap.peek() {
+                if first.deadline > now {
                     break;
                 }
-                due.extend(first.remove());
+                timers.heap.pop();
+                if timers.is_live(&first) {
+                    let slot = &mut timers.slots[first.slot];
+                    slot.armed = false;
+                    due.extend(slot.waker.take());
+                    timers.free.push(first.slot);
+                } else {
+                    timers.stale -= 1;
+                }
             }
             timers.earlier = false;
-            timers.armed.first_key_value().map(|(key, _)| key.deadline)
+            timers.heap.peek().map(|Reverse(first)| first.deadline)
         };
         for waker in &due {
             waker.wake_by_ref();
@@ -209,7 +301,11 @@ async fn drive(wheel: Arc<Wheel>) {
                     () = earlier => {},
                 }
             }
-            None => earlier.await,
+            None => {
+                select_biased! {
+                    () = earlier => {},
+                }
+            }
         }
     }
 }
