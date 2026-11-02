@@ -198,7 +198,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "asyncapi")]
+    use std::env;
+    #[cfg(feature = "asyncapi")]
+    use std::fs;
     use std::io;
+    #[cfg(feature = "asyncapi")]
+    use std::process;
     use std::process::ExitCode;
 
     use ruststream::memory::MemoryBroker;
@@ -263,14 +269,13 @@ mod tests {
     #[cfg(feature = "asyncapi")]
     #[test]
     fn a_tokio_app_generates_its_spec_through_the_neutral_generator() {
-        let out =
-            std::env::temp_dir().join(format!("ruststream-cli-{}-tokio.json", std::process::id()));
+        let out = env::temp_dir().join(format!("ruststream-cli-{}-tokio.json", process::id()));
         let path = out.to_str().expect("utf-8 temp path").to_owned();
         execute_default(&args(&["asyncapi", "gen", "-o", path.as_str()]), demo_app)
             .expect("the spec must be written");
-        let text = std::fs::read_to_string(&out).expect("the spec file exists");
+        let text = fs::read_to_string(&out).expect("the spec file exists");
         assert!(text.contains("cli-demo"));
-        std::fs::remove_file(&out).expect("cleanup");
+        fs::remove_file(&out).expect("cleanup");
     }
 
     #[cfg(not(feature = "asyncapi"))]
