@@ -546,9 +546,35 @@ impl Coordinator {
     /// redelivery due to it by now.
     fn owed(&self, subscriptions: &[LiveSubscription], routing: Routing<'_>) -> Option<Unsettled> {
         let now = Instant::now();
+        // The handled counts are read before the publishes: a handler records its publishes
+        // before it records itself, so a handler counted here has its publishes counted below.
+        // The other order lets a handler run to its end between the two reads, and its publish
+        // is then owed to nobody.
+        let handled = self.handled(subscriptions);
         let mut expected = self.routed_publishes(subscriptions, routing);
         self.add_due_redeliveries(subscriptions, now, &mut expected);
-        self.first_unsettled(subscriptions, expected)
+        Self::first_unsettled(subscriptions, &handled, expected)
+    }
+
+    /// How many deliveries each subscription has handled, in `subscriptions` order.
+    fn handled(&self, subscriptions: &[LiveSubscription]) -> Vec<usize> {
+        let records = self
+            .inner
+            .records
+            .lock()
+            .expect("coordinator records mutex poisoned");
+        // Counted by identity, not by name: two subscriptions reporting one name each owe the
+        // publish, and one handling it settles nothing for the other.
+        subscriptions
+            .iter()
+            .map(|subscription| {
+                records
+                    .iter()
+                    .filter(|record| record.subscription == subscription.id)
+                    .map(|record| record.deliveries.len())
+                    .sum()
+            })
+            .collect()
     }
 
     /// How many recorded publishes each subscription is owed, in `subscriptions` order: a publish
@@ -609,32 +635,19 @@ impl Coordinator {
 
     /// The first subscription that has handled fewer deliveries than `expected` says it is owed.
     fn first_unsettled(
-        &self,
         subscriptions: &[LiveSubscription],
+        handled: &[usize],
         expected: Vec<usize>,
     ) -> Option<Unsettled> {
-        let records = self
-            .inner
-            .records
-            .lock()
-            .expect("coordinator records mutex poisoned");
-        subscriptions
-            .iter()
-            .zip(expected)
-            .find_map(|(subscription, expected)| {
-                // Counted by identity, not by name: two subscriptions reporting one name each owe
-                // the publish, and one handling it settles nothing for the other.
-                let handled = records
-                    .iter()
-                    .filter(|record| record.subscription == subscription.id)
-                    .map(|record| record.deliveries.len())
-                    .sum::<usize>();
+        subscriptions.iter().zip(handled).zip(expected).find_map(
+            |((subscription, &handled), expected)| {
                 (handled < expected).then(|| Unsettled {
                     subscription: subscription.name.clone(),
                     handled,
                     expected,
                 })
-            })
+            },
+        )
     }
 
     /// Waits until every subscription in `subscriptions` has handled what it is owed and no
@@ -750,6 +763,7 @@ mod tests {
     use alloc::boxed::Box;
     use alloc::format;
     use bytes::Bytes;
+    use std::thread;
 
     use super::*;
     use crate::HandlerResult;
@@ -1016,5 +1030,63 @@ mod tests {
         drive
             .await
             .expect("the reaction settles once the copy is handled");
+    }
+
+    /// A handler publishes and finishes while a settle reads what is owed: the settle must not
+    /// pair the publishes it read before the handler ran with the records it read after, or it
+    /// returns without the subscription the handler's publish is owed to.
+    #[test]
+    fn a_publish_made_while_owed_is_read_is_not_missed() {
+        const ROUNDS: usize = 3000;
+        let routing = |_: usize, destination: &str, names: &[&str]| -> Vec<usize> {
+            exact(destination, names)
+        };
+        for round in 0..ROUNDS {
+            let coordinator = Coordinator::new(16);
+            let subscriptions = mounted(&[(0, "inbox"), (0, "orders")]);
+            // The test's publish to the relay is recorded; the relay has not run yet.
+            let started = coordinator.test_publish_started();
+            drop(coordinator.record_published(
+                0,
+                RawMessage::new("inbox", b"{}".as_slice()),
+                started,
+            ));
+            let relay = {
+                let coordinator = coordinator.clone();
+                let relay_subscription = subscriptions[0].clone();
+                let orders = subscriptions[1].clone();
+                thread::spawn(move || {
+                    coordinator.enqueued();
+                    let started = coordinator.test_publish_started();
+                    // The relay's publish to `orders`, recorded before the relay is recorded.
+                    drop(coordinator.record_published(
+                        0,
+                        RawMessage::new("orders", b"{}".as_slice()),
+                        started,
+                    ));
+                    coordinator.record(handled(&relay_subscription));
+                    coordinator.consumed();
+                    // The slow subscription takes its time, as a buffered one does.
+                    thread::yield_now();
+                    coordinator.enqueued();
+                    thread::sleep(Duration::from_micros(300));
+                    coordinator.record(handled(&orders));
+                    coordinator.consumed();
+                })
+            };
+            while !relay.is_finished() {
+                // The inbox is owed a handled delivery, so a settle that finds nothing owed read
+                // the relay as handled, and the relay's publish then owes `orders` a delivery.
+                if coordinator.owed(&subscriptions, &routing).is_none() {
+                    let orders_handled =
+                        coordinator.with_records(0, "orders", Within::ALL, |records| records.len());
+                    assert_eq!(
+                        orders_handled, 1,
+                        "round {round}: settled before `orders` handled the relay's publish",
+                    );
+                }
+            }
+            relay.join().expect("the relay thread finishes");
+        }
     }
 }
