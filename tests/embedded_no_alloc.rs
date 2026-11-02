@@ -551,7 +551,7 @@ async fn on_pressed_poll(poll: &Job<'_>, ctx: &mut Context<'_, (), Counter>) -> 
     let unreadable = ctx.state().clone();
     if let Ok(after) = ctx.after(HandlerOutcome::ack()) {
         after.error(async move |failures: &Failures| {
-            for failed in failures.iter() {
+            for failed in failures {
                 if failed.message().wire_bytes(&mut PayloadBuf::new()).is_err() {
                     unreadable.0.set(unreadable.0.get() + 1);
                 }
