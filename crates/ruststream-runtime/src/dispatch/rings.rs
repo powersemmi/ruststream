@@ -451,10 +451,10 @@ impl<Item> Feed<Item> {
                         report(name, &stuck);
                         break;
                     }
-                    if self.rings[index].push(item).is_err() {
-                        // Only the loop fills a ring, and it pushes only after it saw room.
-                        unreachable!("the loop pushes only after it saw room");
-                    }
+                    // Only the loop fills a ring, and it pushes only after it saw room.
+                    self.rings[index]
+                        .push(item)
+                        .unwrap_or_else(|_| unreachable!("the loop pushes only after it saw room"));
                     self.signals.pushed(index);
                 }
                 Turn::Delivery(Err(err)) => {
@@ -513,6 +513,7 @@ fn report(name: &str, stuck: &Stuck) {
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
+    use std::format;
     use std::sync::Mutex;
     use std::thread;
 
@@ -699,6 +700,25 @@ mod tests {
         for thread in started {
             thread.join().expect("the started thread ends");
         }
+    }
+
+    /// The rings and the threads show in a log by what tells them apart.
+    #[test]
+    fn the_feed_and_a_drain_are_shown_with_their_counts() {
+        let mut drains = Vec::new();
+        let feed = open::<u32, _>(2, true, |drain| {
+            drains.push(drain);
+            Ok::<_, Infallible>(())
+        })
+        .expect("the rings open");
+
+        let shown = format!("{feed:?}");
+        assert!(
+            shown.contains("rings: 2") && shown.contains("keyed: true"),
+            "{shown}"
+        );
+        let shown = format!("{:?}", drains[1]);
+        assert!(shown.contains("index: 1"), "{shown}");
     }
 
     /// The thread is below the thread count for any key, and one key always lands on one thread.
