@@ -35,6 +35,10 @@ thiserror = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+# The compile-fail snapshots.
+trybuild = "1"
+# The broker the builder tests mount handlers on.
+ruststream-memory = { workspace = true, features = ["std"] }
 # Counts the allocations of the thread a closure runs on, so a test reads what a sleep or a delivery
 # costs.
 allocation-counter = "0.8.1"

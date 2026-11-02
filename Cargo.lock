@@ -2123,9 +2123,11 @@ dependencies = [
  "futures",
  "pin-project-lite",
  "ruststream-core",
+ "ruststream-memory",
  "ruststream-runtime",
  "thiserror",
  "tracing",
+ "trybuild",
 ]
 
 [[package]]
