@@ -13,15 +13,15 @@ struct Stub {
 }
 
 impl Described for Stub {
-    fn info(&self) -> &AppInfo {
+    fn described_info(&self) -> &AppInfo {
         &self.info
     }
 
-    fn servers(&self) -> &BTreeMap<String, ServerSpec> {
+    fn described_servers(&self) -> &BTreeMap<String, ServerSpec> {
         &self.servers
     }
 
-    fn handlers(&self) -> &[HandlerMetadata] {
+    fn described_handlers(&self) -> &[HandlerMetadata] {
         &[]
     }
 }

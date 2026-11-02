@@ -154,15 +154,15 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
 // Spelled as in the `App` impl above: the calls delegate to the inherent methods of the same names.
 #[allow(clippy::use_self)]
 impl<Layers, State, Pipeline, Phase> Described for RustStream<Layers, State, Pipeline, Phase> {
-    fn info(&self) -> &AppInfo {
+    fn described_info(&self) -> &AppInfo {
         RustStream::info(self)
     }
 
-    fn servers(&self) -> &BTreeMap<String, ServerSpec> {
+    fn described_servers(&self) -> &BTreeMap<String, ServerSpec> {
         RustStream::servers(self)
     }
 
-    fn handlers(&self) -> &[HandlerMetadata] {
+    fn described_handlers(&self) -> &[HandlerMetadata] {
         RustStream::handlers(self)
     }
 

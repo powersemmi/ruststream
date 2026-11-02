@@ -80,16 +80,16 @@ use spec::ASYNCAPI_VERSION;
 pub fn build_spec<A: Described>(app: &A) -> Spec {
     // The generator's warnings go where the app's would: the app's own selection, if any.
     app.select_logger();
-    let contact = app.info().contact.clone();
+    let contact = app.described_info().contact.clone();
     let info = Info {
-        title: app.info().title.clone(),
-        version: app.info().version.clone(),
-        description: app.info().description.clone(),
-        terms_of_service: app.info().terms_of_service.clone(),
+        title: app.described_info().title.clone(),
+        version: app.described_info().version.clone(),
+        description: app.described_info().description.clone(),
+        terms_of_service: app.described_info().terms_of_service.clone(),
         contact: (!contact.is_empty()).then_some(contact),
-        license: app.info().license.clone(),
-        tags: app.info().tags.clone(),
-        external_docs: app.info().external_docs.clone(),
+        license: app.described_info().license.clone(),
+        tags: app.described_info().tags.clone(),
+        external_docs: app.described_info().external_docs.clone(),
     };
 
     let (servers, security_schemes) = build_servers(app);
@@ -98,7 +98,7 @@ pub fn build_spec<A: Described>(app: &A) -> Spec {
     let mut operations = BTreeMap::new();
     let mut messages = BTreeMap::new();
 
-    for handler in app.handlers() {
+    for handler in app.described_handlers() {
         let server = resolve_server(handler.server.as_deref(), &servers);
         let on_servers = server
             .map(|name| vec![Reference::new(format!("#/servers/{name}"))])
@@ -164,7 +164,7 @@ pub fn build_spec<A: Described>(app: &A) -> Spec {
 
     Spec {
         asyncapi: ASYNCAPI_VERSION.to_owned(),
-        id: app.info().id.clone(),
+        id: app.described_info().id.clone(),
         info,
         servers,
         default_content_type,

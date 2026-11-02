@@ -16,7 +16,7 @@ pub(super) fn build_servers<A: Described>(
 ) -> (BTreeMap<String, Server>, BTreeMap<String, Value>) {
     let mut security_schemes = BTreeMap::new();
     let servers = app
-        .servers()
+        .described_servers()
         .iter()
         .map(|(name, spec)| {
             let security = spec

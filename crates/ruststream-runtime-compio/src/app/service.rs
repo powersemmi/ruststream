@@ -704,15 +704,15 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
 }
 
 impl<Layers, State, Pipeline, Phase> Described for RustStream<Layers, State, Pipeline, Phase> {
-    fn info(&self) -> &AppInfo {
+    fn described_info(&self) -> &AppInfo {
         &self.info
     }
 
-    fn servers(&self) -> &BTreeMap<String, ServerSpec> {
+    fn described_servers(&self) -> &BTreeMap<String, ServerSpec> {
         &self.servers
     }
 
-    fn handlers(&self) -> &[HandlerMetadata] {
+    fn described_handlers(&self) -> &[HandlerMetadata] {
         &self.handlers
     }
 }

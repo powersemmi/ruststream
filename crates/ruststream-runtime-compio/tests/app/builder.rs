@@ -12,7 +12,7 @@ use ruststream_runtime::{
     AppInfo, Context, Described, Deserialized, Handle, HandlerOutcome, Input, SoloDeserialized,
     Workers, subscriber,
 };
-use ruststream_runtime_compio::RustStream;
+use ruststream_runtime_compio::{App, RustStream};
 
 /// A reading: the delivery's bytes, decoded by no codec.
 struct Reading<'a>(#[allow(dead_code)] &'a [u8]);
@@ -88,9 +88,12 @@ fn the_info_and_the_servers_reach_described() {
         .server("main", ServerSpec::new("localhost:4222", "nats"))
         .register_broker(MemoryBroker::new());
     let described: &dyn Described = &app;
-    assert_eq!(described.info().title, "orders");
-    assert_eq!(described.servers().keys().collect::<Vec<_>>(), ["main"]);
-    assert!(described.handlers().is_empty());
+    assert_eq!(described.described_info().title, "orders");
+    assert_eq!(
+        described.described_servers().keys().collect::<Vec<_>>(),
+        ["main"]
+    );
+    assert!(described.described_handlers().is_empty());
 }
 
 #[test]
@@ -111,4 +114,32 @@ fn threads_mounts_past_the_cores_fail_naming_the_mounts() {
         text.contains("`ledger`: 2") && text.contains("`mail`: 2"),
         "{text}"
     );
+}
+
+/// The title, the server names and the handler count of any app.
+fn summary<A: App>(app: &A) -> (String, usize, usize) {
+    (
+        app.info().title.clone(),
+        app.servers().len(),
+        app.handlers().len(),
+    )
+}
+
+/// A service whose composed type stays hidden behind `impl App`.
+fn hidden_app() -> impl App {
+    RustStream::new(AppInfo::new("orders", "0.1.0")).register_broker(MemoryBroker::new())
+}
+
+#[test]
+fn a_generic_bound_reads_the_metadata() {
+    assert_eq!(summary(&hidden_app()), ("orders".to_owned(), 0, 0));
+}
+
+#[test]
+fn an_opaque_app_reads_the_metadata_without_an_import() {
+    let app = hidden_app();
+
+    assert_eq!(app.info().title, "orders");
+    assert!(app.servers().is_empty());
+    assert!(app.handlers().is_empty());
 }
