@@ -23,16 +23,20 @@ testing = ["ruststream-runtime/testing"]
 [dependencies]
 ruststream-core = { workspace = true, features = ["std"] }
 ruststream-runtime = { workspace = true, features = ["compio"] }
+bytes = { workspace = true, features = ["std"] }
 compio.workspace = true
+crossbeam-queue.workspace = true
 event-listener.workspace = true
 futures = { workspace = true, features = ["std", "async-await"] }
 # Finds the CPUs the process may run on, so a restricted cgroup is pinned inside its own set.
 core_affinity = "0.8.3"
+pin-project-lite.workspace = true
 thiserror = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-# Counts this thread's allocations, so a test reads what a sleep costs.
+# Counts the allocations of the thread a closure runs on, so a test reads what a sleep or a delivery
+# costs.
 allocation-counter = "0.8.1"
 
 [lints]

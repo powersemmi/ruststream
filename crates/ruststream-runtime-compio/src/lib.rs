@@ -9,6 +9,8 @@
 
 mod clock;
 mod cores;
+#[doc(hidden)]
+pub mod dispatch;
 mod stop;
 mod tasks;
 pub mod time;

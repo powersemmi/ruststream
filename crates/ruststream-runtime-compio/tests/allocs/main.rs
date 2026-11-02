@@ -1,0 +1,194 @@
+//! What a delivery costs in allocations on core 0 and across the hand-off to another core.
+//!
+//! Each core is a thread whose whole run is measured; running the same scenario with two
+//! backlogs leaves, in the difference, what the extra deliveries cost. One test in this binary:
+//! the measured threads are started by hand, the subject being the threads' work.
+
+use std::convert::Infallible;
+use std::future::ready;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
+
+use allocation_counter::measure;
+use compio::runtime::Runtime;
+use futures::channel::oneshot;
+use futures::{Stream, stream};
+use ruststream_core::{AckError, HeaderMap, IncomingMessage, Settle, Subscriber};
+use ruststream_runtime::{
+    Context, Delivery, DispatchFailure, FailurePolicies, Handler, HandlerOutcome, NoRetry, Workers,
+};
+use ruststream_runtime_compio::dispatch::{Fabric, Hosted, Layout, Mount, spawn_dispatch_workers};
+use ruststream_runtime_compio::{Stop, Tasks};
+
+struct Msg {
+    headers: HeaderMap,
+    key: Option<&'static [u8]>,
+}
+
+impl IncomingMessage for Msg {
+    fn payload(&self) -> &[u8] {
+        b"payload"
+    }
+
+    fn headers(&self) -> &HeaderMap {
+        &self.headers
+    }
+
+    fn partition_key(&self) -> Option<&[u8]> {
+        self.key
+    }
+}
+
+impl Settle for Msg {
+    fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+        ready(Ok(()))
+    }
+
+    fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+        ready(Ok(()))
+    }
+}
+
+/// A backlog made before the measuring starts, then silence.
+struct Backlog(Option<Vec<Msg>>);
+
+impl Subscriber for Backlog {
+    type Message = Msg;
+    type Error = Infallible;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Msg, Infallible>> + Send + '_ {
+        let backlog = self.0.take().expect("opened once").into_iter().map(Ok);
+        futures::StreamExt::chain(stream::iter(backlog), stream::pending())
+    }
+}
+
+/// Counts deliveries and says so once the last one is handled.
+struct Counting {
+    handled: AtomicUsize,
+    total: usize,
+    last: std::sync::Mutex<Option<oneshot::Sender<()>>>,
+}
+
+impl Handler<Msg, (), ()> for Counting {
+    fn handle(
+        &self,
+        _msg: &Msg,
+        _ctx: &mut Context<'_, (), ()>,
+    ) -> impl Future<Output = HandlerOutcome> + Send {
+        if self.handled.fetch_add(1, Ordering::Relaxed) + 1 == self.total
+            && let Some(last) = self.last.lock().ok().and_then(|mut last| last.take())
+        {
+            let _ = last.send(());
+        }
+        ready(HandlerOutcome::ack())
+    }
+}
+
+/// Every allocation the cores of a run made while `total` deliveries went through `workers`.
+fn allocations_of(total: usize, workers: Workers, keyed: bool) -> u64 {
+    let count = 3;
+    let layout = Layout::plan(
+        count,
+        &[Mount {
+            name: "orders",
+            workers,
+        }],
+    )
+    .expect("fits");
+    let fabric = Fabric::open(count);
+    let stop = Stop::default();
+    let key: Option<&'static [u8]> = keyed.then_some(&b"k"[..]);
+    let backlog: Vec<Msg> = (0..total)
+        .map(|_| Msg {
+            headers: HeaderMap::new(),
+            key,
+        })
+        .collect();
+    let (last, finished) = oneshot::channel();
+    let handler = Arc::new(Counting {
+        handled: AtomicUsize::new(0),
+        total,
+        last: std::sync::Mutex::new(Some(last)),
+    });
+    thread::scope(|scope| {
+        let others: Vec<_> = (1..count)
+            .map(|core| {
+                let (fabric, stop) = (fabric.clone(), stop.clone());
+                scope.spawn(move || {
+                    let runtime = Runtime::new().expect("a runtime");
+                    measure(|| runtime.block_on(fabric.serve(core, &stop))).count_total
+                })
+            })
+            .collect();
+        let runtime = Runtime::new().expect("a runtime");
+        let main = measure(|| {
+            runtime.block_on(async {
+                let looped = spawn_dispatch_workers(
+                    Backlog(Some(backlog)),
+                    handler,
+                    stop.clone(),
+                    Arc::from("orders"),
+                    Arc::new(()),
+                    Arc::new(Hosted::<(), NoRetry>::new(
+                        Delivery::unscoped(),
+                        None,
+                        Tasks::default(),
+                    )),
+                    DispatchFailure::new(FailurePolicies::default(), stop.clone()),
+                    workers,
+                    &fabric,
+                    layout.cores(0),
+                )
+                .expect("the lanes start");
+                finished.await.expect("the last delivery is handled");
+                stop.cancel();
+                drop(looped);
+            });
+        })
+        .count_total;
+        others
+            .into_iter()
+            .map(|core| core.join().expect("a core"))
+            .sum::<u64>()
+            + main
+    })
+}
+
+/// The allocations the extra deliveries of a longer run cost, per delivery.
+fn per_delivery(workers: Workers, keyed: bool) -> f64 {
+    const SHORT: usize = 2_000;
+    const LONG: usize = 6_000;
+    // A first run warms the allocator and the thread machinery out of the comparison.
+    let _ = allocations_of(SHORT, workers, keyed);
+    let short = allocations_of(SHORT, workers, keyed);
+    let long = allocations_of(LONG, workers, keyed);
+    println!("{workers:?}: {short} allocations for {SHORT}, {long} for {LONG}");
+    #[allow(clippy::cast_precision_loss)]
+    {
+        (long as f64 - short as f64) / (LONG - SHORT) as f64
+    }
+}
+
+#[test]
+fn a_delivery_allocates_nothing_on_core_zero_or_across_the_hand_off() {
+    let two = std::num::NonZeroUsize::new(2).expect("two");
+    let sequential = per_delivery(Workers::sequential(), false);
+    let threads = per_delivery(Workers::threads(two), false);
+    let keyed = per_delivery(Workers::threads_keyed(two), true);
+    println!(
+        "per delivery: sequential {sequential}, threads(2) {threads}, threads(2) by_key {keyed}"
+    );
+    assert!(
+        sequential < 0.01,
+        "sequential allocates {sequential} per delivery"
+    );
+    assert!(
+        threads < 0.01,
+        "threads(2) allocates {threads} per delivery"
+    );
+    assert!(
+        keyed < 0.01,
+        "threads(2, by_key) allocates {keyed} per delivery"
+    );
+}

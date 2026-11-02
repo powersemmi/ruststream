@@ -2115,10 +2115,13 @@ name = "ruststream-runtime-compio"
 version = "0.8.0"
 dependencies = [
  "allocation-counter",
+ "bytes",
  "compio",
  "core_affinity",
+ "crossbeam-queue",
  "event-listener",
  "futures",
+ "pin-project-lite",
  "ruststream-core",
  "ruststream-runtime",
  "thiserror",
