@@ -86,6 +86,9 @@ mod tests {
     use ruststream_memory::local::LocalMemoryBroker;
     use ruststream_runtime_compio::{App, AppInfo, Cores, RustStream, RustStreamError, yield_now};
 
+    #[cfg(unix)]
+    use rusty_fork::rusty_fork_test;
+
     use super::{cores_of, execute};
     use crate::{CliError, report};
 
@@ -145,34 +148,38 @@ mod tests {
         assert_eq!(code_of(Err(err)), format!("{:?}", ExitCode::FAILURE));
     }
 
-    /// `kill` sends the signal from the hook, once the cores are up and the signal is watched.
+    // The signal reaches the whole process: the test runs in a child process of its own, so the
+    // tests running beside it in this binary never receive it.
     #[cfg(unix)]
-    #[test]
-    fn run_serves_until_the_termination_signal_then_returns_cleanly() {
-        let reached = Arc::new(AtomicBool::new(false));
-        let seen = Arc::clone(&reached);
-        let build = move || {
-            RustStream::new(AppInfo::new("cli-serving", "0.1.0"))
-                .after_startup(async move |_state: Arc<()>| {
-                    // The signal listener is a task of this runtime: let it register first.
-                    for _ in 0..8 {
-                        yield_now().await;
-                    }
-                    seen.store(true, Ordering::Relaxed);
-                    let sent = Command::new("kill")
-                        .args(["-s", "TERM", &process::id().to_string()])
-                        .status()
-                        .expect("kill runs");
-                    assert!(sent.success());
-                    Ok::<_, Infallible>(())
-                })
-                .register_broker(LocalMemoryBroker::<8>::new())
-        };
-        execute(&args(&["run"]), one_core(), build).expect("the signal ends the run cleanly");
-        assert!(
-            reached.load(Ordering::Relaxed),
-            "the service started before it was stopped"
-        );
+    rusty_fork_test! {
+        /// `kill` sends the signal from the hook, once the cores are up and the signal is watched.
+        #[test]
+        fn run_serves_until_the_termination_signal_then_returns_cleanly() {
+            let reached = Arc::new(AtomicBool::new(false));
+            let seen = Arc::clone(&reached);
+            let build = move || {
+                RustStream::new(AppInfo::new("cli-serving", "0.1.0"))
+                    .after_startup(async move |_state: Arc<()>| {
+                        // The signal listener is a task of this runtime: let it register first.
+                        for _ in 0..8 {
+                            yield_now().await;
+                        }
+                        seen.store(true, Ordering::Relaxed);
+                        let sent = Command::new("kill")
+                            .args(["-s", "TERM", &process::id().to_string()])
+                            .status()
+                            .expect("kill runs");
+                        assert!(sent.success());
+                        Ok::<_, Infallible>(())
+                    })
+                    .register_broker(LocalMemoryBroker::<8>::new())
+            };
+            execute(&args(&["run"]), one_core(), build).expect("the signal ends the run cleanly");
+            assert!(
+                reached.load(Ordering::Relaxed),
+                "the service started before it was stopped"
+            );
+        }
     }
 
     #[cfg(feature = "asyncapi")]

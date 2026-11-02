@@ -53,6 +53,8 @@ ruststream = { path = "../..", features = ["macros", "memory", "json", "compio"]
 ruststream-runtime-embassy.workspace = true
 ruststream-memory = { workspace = true, features = ["embassy", "alloc"] }
 trybuild = "1"
+# Runs the termination-signal test in a child process: the signal reaches the whole process.
+rusty-fork = "0.3.1"
 
 [lints]
 workspace = true
