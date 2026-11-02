@@ -1682,6 +1682,7 @@ dependencies = [
  "clap",
  "ruststream",
  "ruststream-asyncapi",
+ "ruststream-core",
  "ruststream-memory",
  "ruststream-observability",
  "ruststream-runtime",

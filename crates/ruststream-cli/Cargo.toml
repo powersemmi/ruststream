@@ -16,6 +16,8 @@ readme = "../../README.md"
 all-features = true
 
 [features]
+# The tokio entry point: `run_main`, `run_main_on`, `AppRuntime` and the run error of a tokio app.
+tokio = ["dep:tokio", "dep:ruststream-runtime-tokio"]
 # The `asyncapi gen` subcommand of a service.
 asyncapi = ["dep:ruststream-asyncapi", "dep:serde_json", "dep:serde_norway"]
 # The console logger a service's entry point installs.
@@ -25,17 +27,18 @@ tool = ["dep:clap", "dep:anyhow"]
 
 [dependencies]
 ruststream-runtime = { workspace = true, features = ["std"] }
-ruststream-runtime-tokio.workspace = true
+ruststream-runtime-tokio = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
-tokio.workspace = true
+tokio = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true, features = ["std"] }
 serde_norway = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 
 [dev-dependencies]
+ruststream-core.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_norway = "0.9"

@@ -1200,7 +1200,7 @@ ruststream-memory = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }
 ruststream-testing = { workspace = true, optional = true }
-ruststream-cli = { workspace = true, optional = true }
+ruststream-cli = { workspace = true, optional = true, features = ["tokio"] }
 ruststream-conformance = { workspace = true, optional = true }
 ruststream-macros = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
