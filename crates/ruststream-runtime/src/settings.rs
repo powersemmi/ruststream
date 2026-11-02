@@ -1095,3 +1095,42 @@ mod fixed_tests {
         named_size(&Stub.name("orders").batch::<4>());
     }
 }
+
+#[cfg(test)]
+mod fixed_marker_tests {
+    use core::hash::{Hash, Hasher};
+
+    use super::Fixed;
+
+    /// A size that is none of `Clone`, `Eq`, `Hash` or `Default`: the marker must not ask for
+    /// what its size does not offer.
+    struct Bare;
+
+    /// A hasher that records whether anything was fed to it.
+    #[derive(Default)]
+    struct Fed(bool);
+
+    impl Hasher for Fed {
+        fn finish(&self) -> u64 {
+            0
+        }
+
+        fn write(&mut self, _bytes: &[u8]) {
+            self.0 = true;
+        }
+    }
+
+    #[test]
+    fn a_marker_of_any_size_is_copy_default_equal_and_hashes_to_nothing() {
+        let marker = Fixed::<Bare>::default();
+        let copy = marker;
+        #[allow(clippy::clone_on_copy)] // the impl under test is `Clone`, not the `Copy` one
+        let cloned = marker.clone();
+        let mut hasher = Fed::default();
+        marker.hash(&mut hasher);
+
+        assert!(marker == copy);
+        assert!(marker == cloned);
+        assert!(!hasher.0, "a marker carries no state to hash");
+    }
+}
