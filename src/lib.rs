@@ -264,7 +264,10 @@ pub mod diagnostics {
 }
 
 // The bus is the runtime's: the tokio one, or the local one on embassy.
-#[cfg(all(feature = "memory", any(feature = "tokio", feature = "embassy")))]
+#[cfg(all(
+    feature = "memory",
+    any(feature = "tokio", feature = "embassy", feature = "compio")
+))]
 pub mod memory;
 
 pub mod runtime;

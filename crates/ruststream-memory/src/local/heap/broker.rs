@@ -485,6 +485,19 @@ impl<const CAP: usize> InProcess for LocalMemoryBroker<CAP> {
     }
 }
 
+// The harness finds a broker by the type the app was built on, and a capacity is part of the
+// type: the capacities a service names are registered one by one, the powers of two a queue is
+// sized by.
+#[cfg(feature = "testing")]
+macro_rules! register_capacities {
+    ($($capacity:literal),+) => {
+        $(ruststream_runtime::register_testable_broker!(LocalMemoryBroker<$capacity>);)+
+    };
+}
+
+#[cfg(feature = "testing")]
+register_capacities!(1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024);
+
 #[cfg(feature = "testing")]
 impl<const CAP: usize> TestableBroker for ConnectedLocalMemoryBroker<CAP> {
     fn install_coordinator(&self, coordinator: Coordinator) {

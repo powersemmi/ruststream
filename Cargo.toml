@@ -1122,7 +1122,8 @@ compio = [
     "dep:ruststream-runtime-compio",
     "dep:ruststream-cli",
     "ruststream-cli/compio",
-    "ruststream-memory?/embassy",
+    "ruststream-memory?/local",
+    "ruststream-testing?/compio",
 ]
 # The loggers an app selects with `.logger(..)`; each feature compiles its logger into the crates
 # that report, and nothing is reported until the app selects one. The tokio runner turns `tracing`
