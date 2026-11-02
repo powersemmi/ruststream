@@ -3,7 +3,7 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::fmt;
-use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
+use ruststream_core::{IfSend, MaybeSend, MaybeSendSync, MaybeSync};
 
 use super::{Outgoing, PublishFut};
 use crate::lifecycle::BoxError;
@@ -183,12 +183,10 @@ pub trait PublishDynLayer: MaybeSendSync {
     ) -> PublishFut<'a>;
 }
 
-#[cfg(feature = "tokio")]
-type PublishTail<'a> = Box<dyn for<'o> FnOnce(&'a mut Outgoing<'o>) -> PublishFut<'a> + Send + 'a>;
-
-// See the `tokio` form: without the feature the continuation carries no `Send`.
-#[cfg(not(feature = "tokio"))]
-type PublishTail<'a> = Box<dyn for<'o> FnOnce(&'a mut Outgoing<'o>) -> PublishFut<'a> + 'a>;
+type PublishTail<'a> = IfSend<
+    Box<dyn for<'o> FnOnce(&'a mut Outgoing<'o>) -> PublishFut<'a> + Send + 'a>,
+    Box<dyn for<'o> FnOnce(&'a mut Outgoing<'o>) -> PublishFut<'a> + 'a>,
+>;
 
 /// A cursor over the rest of a [`PublishDynStack`], ending in the surrounding static pipeline.
 ///

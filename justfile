@@ -60,6 +60,9 @@ check:
     # no codec feature at all; only encoding and decoding may demand one.
     cargo check --workspace --exclude ruststream-no-std-probe --no-default-features \
         --features testing,memory,macros
+    # The core's `send` feature is additive: a build that enables it without the Tokio runner (any
+    # crate may) takes the `Send` bounds in every boxed future of the runtime as well.
+    cargo check -p ruststream-runtime --features ruststream-core/send
     cargo check -p ruststream-no-std-probe
     # The contract builds without `std`, for a Cortex-M4F with an allocator and for a Cortex-M0+,
     # which has no compare-and-swap: there `bytes` takes `extra-platforms`, and the library build

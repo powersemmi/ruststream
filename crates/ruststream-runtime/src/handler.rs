@@ -6,25 +6,22 @@ use core::{convert::Infallible, fmt, pin::Pin, time::Duration};
 
 use super::context::Context;
 use crate::publish_failure::{ErrorHook, Failures};
-pub(crate) use ruststream_core::{MaybeSend, MaybeSendSync};
+pub(crate) use ruststream_core::{IfSend, MaybeSend, MaybeSendSync};
 
 /// A boxed, owned continuation run after a message is settled: what a [`HandlerOutcome`] hands
 /// the dispatcher, and what the dispatcher hands the runner's host.
 ///
-/// With the runtime crate's `tokio` feature it is `Send`, because the Tokio runner may poll it on
+/// Where the core's `send` feature is on it is `Send`, because a multi-thread runner may poll it on
 /// any worker thread. Without it the box carries no `Send`, so a continuation on a device runner
 /// may hold the local bus's publisher or an `Rc`.
-#[cfg(feature = "tokio")]
 #[doc(hidden)]
-pub type Continuation = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
-
-/// See the `tokio` form: without the feature a continuation is not required to be `Send`.
-#[cfg(not(feature = "tokio"))]
-#[doc(hidden)]
-pub type Continuation = Pin<Box<dyn Future<Output = ()> + 'static>>;
+pub type Continuation = IfSend<
+    Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
+    Pin<Box<dyn Future<Output = ()> + 'static>>,
+>;
 
 /// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: `Send` where the
-/// runtime crate's `tokio` feature is on.
+/// core's `send` feature is on, any `'static` future otherwise.
 ///
 /// # Examples
 ///
@@ -52,51 +49,14 @@ pub type Continuation = Pin<Box<dyn Future<Output = ()> + 'static>>;
 /// # }
 /// # fn main() {}
 /// ```
-#[cfg(feature = "tokio")]
 #[diagnostic::on_unimplemented(
     message = "the continuation `{Self}` must be `Send` to run on the Tokio runner",
     label = "this continuation holds a value that is not `Send`",
     note = "a continuation runs on a worker thread of the Tokio runner; keep a non-`Send` value out of it, or build for the embedded runtime alone"
 )]
-pub trait ContinuationFuture: Future<Output = ()> + Send + 'static {}
+pub trait ContinuationFuture: Future<Output = ()> + MaybeSend + 'static {}
 
-#[cfg(feature = "tokio")]
-impl<Work: Future<Output = ()> + Send + 'static> ContinuationFuture for Work {}
-
-/// A future a [`HandlerOutcome`] or a context hook can keep as its continuation: any
-/// `'static` future where the runtime crate's `tokio` feature is off.
-///
-/// # Examples
-///
-/// A handler leaves a continuation that publishes a receipt once the ack is through:
-///
-/// ```
-/// # #[cfg(feature = "json")]
-/// # mod demo {
-/// use ruststream::prelude::*;
-/// use serde::Deserialize;
-///
-/// #[derive(Deserialize)]
-/// struct Order {
-///     id: u64,
-/// }
-///
-/// async fn send_receipt(_id: u64) {}
-///
-/// #[subscriber("orders")]
-/// async fn accept(order: &Order) -> HandlerOutcome {
-///     let id = order.id;
-///     // `and_after` takes any `ContinuationFuture`: a plain `async` block is one.
-///     HandlerOutcome::ack().and_after(async move { send_receipt(id).await })
-/// }
-/// # }
-/// # fn main() {}
-/// ```
-#[cfg(not(feature = "tokio"))]
-pub trait ContinuationFuture: Future<Output = ()> + 'static {}
-
-#[cfg(not(feature = "tokio"))]
-impl<Work: Future<Output = ()> + 'static> ContinuationFuture for Work {}
+impl<Work: Future<Output = ()> + MaybeSend + 'static> ContinuationFuture for Work {}
 
 /// The broker status half of a [`HandlerOutcome`].
 ///

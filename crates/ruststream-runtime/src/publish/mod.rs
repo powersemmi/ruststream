@@ -11,18 +11,17 @@ use alloc::boxed::Box;
 use core::pin::Pin;
 
 use crate::lifecycle::BoxError;
+use ruststream_core::IfSend;
 pub use crate::outgoing::{Outgoing, OutgoingName};
 pub use crate::wire::{Serialized, WireBytes};
 
 // The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
 // The static pipeline returns unboxed RPITIT futures; only the opt-in runtime-composed list
 // pays this allocation.
-#[cfg(feature = "tokio")]
-pub(super) type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>;
-
-// See the `tokio` form: without the feature the future carries no `Send`.
-#[cfg(not(feature = "tokio"))]
-pub(super) type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + 'a>>;
+pub(super) type PublishFut<'a> = IfSend<
+    Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>,
+    Pin<Box<dyn Future<Output = Result<(), BoxError>> + 'a>>,
+>;
 
 mod sealed {
     /// Seals [`ReplyPublisher`](super::ReplyPublisher): the reply-publishing strategies are the

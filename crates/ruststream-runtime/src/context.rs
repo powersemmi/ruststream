@@ -30,17 +30,13 @@ use crate::host::Halt;
 #[cfg(feature = "tokio")]
 use crate::main_runtime::MainRuntime;
 use crate::publish_failure::{ErrorHook, Failures, Reaction};
+use ruststream_core::IfSend;
 #[cfg(feature = "testing")]
 use ruststream_core::MaybeSendSync;
 
-/// What a context reads the headers through: `Sync` with the `tokio` feature, because the
+/// What a context reads the headers through: `Sync` where the core's `send` feature is on, because the
 /// context then crosses threads; a bare reference without it.
-#[cfg(feature = "tokio")]
-type SourceRef<'a> = &'a (dyn HeaderSource + Sync);
-
-/// See the `tokio` form.
-#[cfg(not(feature = "tokio"))]
-type SourceRef<'a> = &'a dyn HeaderSource;
+type SourceRef<'a> = IfSend<&'a (dyn HeaderSource + Sync), &'a dyn HeaderSource>;
 
 /// Where one delivery's header map comes from.
 ///

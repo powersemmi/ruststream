@@ -7,7 +7,6 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::{self, Vec};
 use bytes::{Bytes, BytesMut};
-#[cfg(not(feature = "tokio"))]
 use core::cell::RefCell;
 use core::error::Error as StdError;
 use core::fmt;
@@ -20,7 +19,7 @@ use futures::FutureExt;
 use futures::future::join;
 #[cfg(feature = "std")]
 use std::panic::resume_unwind;
-#[cfg(feature = "tokio")]
+#[cfg(feature = "std")]
 use std::sync::{Mutex, PoisonError};
 use thiserror::Error;
 use tracing::warn;
@@ -28,6 +27,7 @@ use tracing::warn;
 use crate::handler::{Continuation, ContinuationFuture, MaybeSend};
 use crate::lifecycle::BoxError;
 use crate::publish::SinkRefusal;
+use ruststream_core::IfSend;
 use crate::{
     CallerName, HeaderMap, MessageHeaders, MessageWire, NoHeaders, Outgoing, OutgoingDestination,
     OutgoingFor, PayloadForm, PublishMessageError, Serialized, SerializedWire, WireBytes,
@@ -550,15 +550,8 @@ impl ExactSizeIterator for Failures {}
 
 impl FusedIterator for Failures {}
 
-/// The `.error` closure, erased: `Send` where the runtime crate's `tokio` feature is on.
-#[cfg(feature = "tokio")]
+/// The `.error` closure, erased: `Send` where the core's `send` feature is on.
 trait Reactor: MaybeSend {
-    fn react(self: Box<Self>, failures: Failures) -> Continuation;
-}
-
-/// See the `tokio` form: without the feature the closure carries no `Send`.
-#[cfg(not(feature = "tokio"))]
-trait Reactor {
     fn react(self: Box<Self>, failures: Failures) -> Continuation;
 }
 
@@ -577,35 +570,54 @@ where
     }
 }
 
-/// A value shared by the elements of a batch and changed under a lock held for the change alone.
-/// Under Tokio the lock is a mutex, which keeps the value shareable without it being `Sync`;
-/// without `Send` a cell suffices.
-#[cfg(feature = "tokio")]
-struct Lock<Value>(Mutex<Value>);
+/// How a value is changed under a lock held for the change alone.
+trait Guarded<Value> {
+    fn guard(value: Value) -> Self;
 
-#[cfg(feature = "tokio")]
-impl<Value> Lock<Value> {
-    const fn new(value: Value) -> Self {
-        Self(Mutex::new(value))
+    fn with<Out>(&self, change: impl FnOnce(&mut Value) -> Out) -> Out;
+}
+
+#[cfg(feature = "std")]
+impl<Value> Guarded<Value> for Mutex<Value> {
+    fn guard(value: Value) -> Self {
+        Self::new(value)
     }
 
     fn with<Out>(&self, change: impl FnOnce(&mut Value) -> Out) -> Out {
-        change(&mut self.0.lock().unwrap_or_else(PoisonError::into_inner))
+        change(&mut self.lock().unwrap_or_else(PoisonError::into_inner))
     }
 }
 
-/// See the `tokio` form.
-#[cfg(not(feature = "tokio"))]
-struct Lock<Value>(RefCell<Value>);
-
-#[cfg(not(feature = "tokio"))]
-impl<Value> Lock<Value> {
-    const fn new(value: Value) -> Self {
-        Self(RefCell::new(value))
+impl<Value> Guarded<Value> for RefCell<Value> {
+    fn guard(value: Value) -> Self {
+        Self::new(value)
     }
 
     fn with<Out>(&self, change: impl FnOnce(&mut Value) -> Out) -> Out {
-        change(&mut self.0.borrow_mut())
+        change(&mut self.borrow_mut())
+    }
+}
+
+/// The lock of a shared value: a mutex where the core's `send` feature is on, which keeps the
+/// value shareable without it being `Sync`; a cell otherwise. The choice follows the feature as
+/// the build unifies it, so it agrees with the `Send` bounds of the contract.
+#[cfg(feature = "std")]
+type Exclusive<Value> = Mutex<Value>;
+
+/// See the `std` form: a build without `std` has no mutex, and a cell is all it can name.
+#[cfg(not(feature = "std"))]
+type Exclusive<Value> = RefCell<Value>;
+
+/// A value shared by the elements of a batch and changed under a lock held for the change alone.
+struct Lock<Value>(IfSend<Exclusive<Value>, RefCell<Value>>);
+
+impl<Value> Lock<Value> {
+    fn new(value: Value) -> Self {
+        Self(<IfSend<Exclusive<Value>, RefCell<Value>> as Guarded<Value>>::guard(value))
+    }
+
+    fn with<Out>(&self, change: impl FnOnce(&mut Value) -> Out) -> Out {
+        Guarded::with(&self.0, change)
     }
 }
 

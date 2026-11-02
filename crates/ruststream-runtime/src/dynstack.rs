@@ -13,19 +13,17 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::{fmt, pin::Pin};
-use ruststream_core::{MaybeSendSync, MaybeSync};
+use ruststream_core::{IfSend, MaybeSendSync, MaybeSync};
 
 use super::context::Context;
 use super::handler::{Handler, HandlerOutcome};
 use super::middleware::Layer;
 
 /// The erased future of one layer: `Send` where the runtime crate's `tokio` feature is on.
-#[cfg(feature = "tokio")]
-type BoxFut<'a> = Pin<Box<dyn Future<Output = HandlerOutcome> + Send + 'a>>;
-
-/// See the `tokio` form: without the feature a handler's future carries no `Send`.
-#[cfg(not(feature = "tokio"))]
-type BoxFut<'a> = Pin<Box<dyn Future<Output = HandlerOutcome> + 'a>>;
+type BoxFut<'a> = IfSend<
+    Pin<Box<dyn Future<Output = HandlerOutcome> + Send + 'a>>,
+    Pin<Box<dyn Future<Output = HandlerOutcome> + 'a>>,
+>;
 
 /// The wrapped handler at the end of the chain, erased so [`Next`] need not carry its type.
 trait ErasedHandler<I>: MaybeSendSync {
