@@ -19,13 +19,7 @@ Core 0 owns the brokers and receives every subscription.
 A sequential subscription is handled on core 0.
 A subscription with `workers(n)` or `threads(n)` hands its deliveries to lanes on other cores, and `by_key` keeps the deliveries of one key on one lane.
 
-The feature is `compio`, and it adds up with `tokio` and `embassy`:
-
-```toml
-ruststream = { version = "0.8", default-features = false, features = ["compio", "memory", "macros", "json"] }
-```
-
-The runner builds on compio 0.20.0-beta.1 and moves to compio 0.20 when it ships.
+The feature is `compio`. The runner builds on compio 0.20.0-beta.1 and moves to compio 0.20 when it ships.
 
 ## Example
 
@@ -50,6 +44,16 @@ A handler reads the core it runs on with `Core::current()`; the confirmation car
 `cores = 4` runs four cores; without it the app runs on every core the process may use.
 The binary reads its first argument as a command, as on tokio: `run`, or no argument, runs the service until `SIGINT` or `SIGTERM`, and `asyncapi gen` prints the AsyncAPI document.
 The manual tab writes the `main` the attribute generates, a call to [`run_main`](api:ruststream::runtime::compio::run_main) with the core count.
+
+## Enabling it
+
+`tokio` can be enabled beside `compio`; a service that runs on compio alone turns the defaults off:
+
+```toml
+ruststream = { version = "0.8", default-features = false, features = ["compio", "memory", "macros", "json"] }
+```
+
+On `compio` alone the in-process bus is `LocalMemoryBroker<N>` from `ruststream::memory::local`, and the items a service names come from `ruststream::runtime::compio`.
 
 ## Placement across cores
 
