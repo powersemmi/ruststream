@@ -1,8 +1,8 @@
 //! Reply wirings: how a handler's return value reaches a publisher.
 
-use core::error::Error as StdError;
+use alloc::vec::Vec;
+use bytes::Bytes;
 use core::fmt;
-
 use serde::Serialize;
 use tracing::warn;
 
@@ -12,45 +12,104 @@ use super::{
 use crate::codec::Codec;
 use crate::lifecycle::BoxError;
 use crate::publish::sealed::Sealed;
-use crate::{PayloadForm, Publisher, TransactionalPublisher};
+use crate::publish_failure::{FailedMessage, Refusal};
+use crate::{HeaderMap, PayloadForm, Publisher, TransactionalPublisher};
 
-/// Why a batch of replies did not leave whole, and how many of them had left before it failed.
+/// A batch whose replies did not all go out: the cause, and which replies were lost.
 ///
-/// Machinery of the batch dispatch; never named directly.
+/// A reply the publisher refused comes back with the message that was sent; the replies that
+/// were never attempted, or that a transaction aborted, are lost with it. Machinery; never named
+/// directly.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct PublishBatchError {
-    sent: usize,
-    error: BoxError,
+pub struct BatchRefusal {
+    /// The first reply that did not go out.
+    lost_from: usize,
+    /// The refused reply and what came back for it, when a publish was refused.
+    refused: Option<(usize, Refusal)>,
+    /// The cause when no single reply was refused: the transaction could not begin or commit.
+    error: Option<BoxError>,
 }
 
-impl PublishBatchError {
-    fn new(sent: usize, error: BoxError) -> Self {
-        Self { sent, error }
+impl BatchRefusal {
+    /// The refusal of the reply at `index`, with every reply from `lost_from` on lost.
+    fn at(index: usize, lost_from: usize, refusal: Refusal) -> Self {
+        Self {
+            lost_from,
+            refused: Some((index, refusal)),
+            error: None,
+        }
     }
 
-    /// How many replies, from the front of the batch, were published before the failure.
-    #[must_use]
-    pub const fn sent(&self) -> usize {
-        self.sent
+    /// A failure of the batch as a whole, which loses every reply.
+    fn whole(error: BoxError) -> Self {
+        Self {
+            lost_from: 0,
+            refused: None,
+            error: Some(error),
+        }
     }
 
-    /// The error of the publish that failed.
-    #[must_use]
-    pub fn into_error(self) -> BoxError {
-        self.error
+    /// The cause alone.
+    pub(crate) fn into_error(self) -> BoxError {
+        match (self.refused, self.error) {
+            (Some((_, refusal)), _) => refusal.into_error(),
+            (None, Some(error)) => error,
+            (None, None) => BoxError::from("a batch reply was refused"),
+        }
+    }
+
+    /// The cause and the replies that did not go out, as messages for `name`.
+    ///
+    /// The refused reply is the message that was sent, with `lent` taking the bytes a lending
+    /// publisher was shown; the others are encoded again with `encode`, because nothing of them
+    /// was handed to a publisher that kept it.
+    pub(crate) fn into_lost<T>(
+        self,
+        name: &str,
+        replies: &[T],
+        encode: impl Fn(&T) -> Bytes,
+        lent: impl FnOnce(usize, usize) -> Bytes,
+    ) -> (BoxError, Vec<FailedMessage>) {
+        let Self {
+            lost_from,
+            refused,
+            error,
+        } = self;
+        let (refused_at, refusal) = match refused {
+            Some((index, refusal)) => (Some(index), Some(refusal)),
+            None => (None, None),
+        };
+        let mut sent = refusal.map(|refusal| refusal.into_message(name, lent));
+        let mut cause = error;
+        let lost = replies
+            .iter()
+            .enumerate()
+            .skip(lost_from)
+            .map(|(index, reply)| {
+                if Some(index) == refused_at
+                    && let Some((error, message)) = sent.take()
+                {
+                    cause = Some(error);
+                    return message;
+                }
+                FailedMessage::new(name, Some(encode(reply)), HeaderMap::new())
+            })
+            .collect();
+        (
+            cause.unwrap_or_else(|| BoxError::from("a batch reply was refused")),
+            lost,
+        )
     }
 }
 
-impl fmt::Display for PublishBatchError {
+impl fmt::Display for BatchRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.error, f)
-    }
-}
-
-impl StdError for PublishBatchError {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        Some(&*self.error)
+        match (&self.refused, &self.error) {
+            (Some((_, refusal)), _) => fmt::Display::fmt(refusal, f),
+            (None, Some(error)) => fmt::Display::fmt(error, f),
+            (None, None) => f.write_str("a batch reply was refused"),
+        }
     }
 }
 
@@ -83,7 +142,7 @@ pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         encode: <Self::Payload as PayloadForm>::Encode<'a>,
-    ) -> impl Future<Output = Result<(), PublishBatchError>> + Send
+    ) -> impl Future<Output = Result<(), BatchRefusal>> + Send
     where
         T: Serialize + Sync,
         PP: PublishPipeline;
@@ -113,16 +172,16 @@ where
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         mut encode: <P::Payload as PayloadForm>::Encode<'a>,
-    ) -> Result<(), PublishBatchError>
+    ) -> Result<(), BatchRefusal>
     where
         T: Serialize + Sync,
         PP: PublishPipeline,
     {
-        for (sent, reply) in replies.iter().enumerate() {
+        for (index, reply) in replies.iter().enumerate() {
             let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
             self.publish_batched(name, reply, pipeline, cx, slot)
                 .await
-                .map_err(|error| PublishBatchError::new(sent, error))?;
+                .map_err(|refusal| BatchRefusal::at(index, index, refusal))?;
         }
         Ok(())
     }
@@ -152,29 +211,28 @@ where
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         mut encode: <P::Payload as PayloadForm>::Encode<'a>,
-    ) -> Result<(), PublishBatchError>
+    ) -> Result<(), BatchRefusal>
     where
         T: Serialize + Sync,
         PP: PublishPipeline,
     {
-        // The transaction aborts as a whole, so a failure leaves none of the replies sent.
-        let aborted = |error| PublishBatchError::new(0, error);
         let publisher = &self.inner.publisher;
         #[cfg(feature = "std")]
         let _turn = self.turn.lock().await;
         publisher
             .begin_transaction()
             .await
-            .map_err(|error| aborted(BoxError::from(error)))?;
-        for reply in replies {
+            .map_err(|err| BatchRefusal::whole(BoxError::from(err)))?;
+        for (index, reply) in replies.iter().enumerate() {
             let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
-            if let Err(err) = self
+            if let Err(refusal) = self
                 .inner
                 .publish_batched(name, reply, pipeline, cx, slot)
                 .await
             {
                 abort_quietly(publisher).await;
-                return Err(aborted(err));
+                // The transaction is aborted, so every reply of the batch is lost.
+                return Err(BatchRefusal::at(index, 0, refusal));
             }
         }
         // Per the TransactionalPublisher contract a failed commit closes the transaction, so
@@ -182,7 +240,7 @@ where
         publisher
             .commit()
             .await
-            .map_err(|error| aborted(BoxError::from(error)))
+            .map_err(|err| BatchRefusal::whole(BoxError::from(err)))
     }
 }
 

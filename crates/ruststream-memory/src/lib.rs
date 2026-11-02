@@ -63,7 +63,7 @@ use std::{
 #[cfg(feature = "std")]
 use bytes::Bytes;
 #[cfg(feature = "std")]
-use ruststream_core::{BytesMut, HeaderMap, OutgoingMessage};
+use ruststream_core::{BytesMut, HeaderMap, OutgoingMessage, PublishMessageError};
 #[cfg(feature = "testing")]
 #[cfg(feature = "std")]
 use ruststream_runtime::testing::Coordinator;
@@ -72,6 +72,48 @@ use tokio::sync::{Notify, mpsc};
 
 #[cfg(feature = "std")]
 type Sender = mpsc::UnboundedSender<MemoryDelivery>;
+
+/// The message a refused publish did not send, with the error that refused it.
+#[cfg(feature = "std")]
+struct Unsent {
+    error: MemoryError,
+    payload: Bytes,
+    headers: HeaderMap,
+}
+
+#[cfg(feature = "std")]
+impl Unsent {
+    /// The refusal as a publisher reports it, with the message handed back in the buffer it came
+    /// in.
+    fn returned(
+        self,
+        name: &str,
+    ) -> PublishMessageError<MemoryError, OutgoingMessage<'_, BytesMut>> {
+        self.returned_as(name, |error| error)
+    }
+
+    /// [`returned`](Self::returned) for a publisher that reports the bus's error as its own.
+    fn returned_as<Error>(
+        self,
+        name: &str,
+        map: impl FnOnce(MemoryError) -> Error,
+    ) -> PublishMessageError<Error, OutgoingMessage<'_, BytesMut>> {
+        let Self {
+            error,
+            payload,
+            headers,
+        } = self;
+        // The publish froze the buffer it was handed and the bus refused before sharing it, so
+        // the block is still unique and the buffer comes back without a copy.
+        let buffer = payload
+            .try_into_mut()
+            .unwrap_or_else(|shared| BytesMut::from(shared.as_ref()));
+        PublishMessageError::with_message(
+            map(error),
+            OutgoingMessage::with_payload(name, buffer).with_headers(headers),
+        )
+    }
+}
 
 /// A message a transaction holds until it settles.
 ///
@@ -382,12 +424,35 @@ impl MemoryState {
     /// nothing is recorded in the published log.
     // significant_drop_tightening misfires here: both guards drop at the end of the minimal
     // block right after their last use.
-    #[allow(clippy::significant_drop_tightening)]
     fn fanout(&self, name: &str, payload: Bytes, headers: HeaderMap) -> Result<(), MemoryError> {
+        self.fanout_unsent(name, payload, headers)
+            .map_err(|unsent| unsent.error)
+    }
+
+    /// [`fanout`](Self::fanout) for a publish that hands a refusal's message back: the refusal
+    /// carries the payload and the headers, boxed so a publish that works returns a pointer-sized
+    /// `Result` and pays nothing for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::ShutDown`] against a shut-down bus, with the message unsent.
+    // significant_drop_tightening misfires here: both guards drop at the end of the minimal
+    // block right after their last use.
+    #[allow(clippy::significant_drop_tightening)]
+    fn fanout_unsent(
+        &self,
+        name: &str,
+        payload: Bytes,
+        headers: HeaderMap,
+    ) -> Result<(), Box<Unsent>> {
         {
             let bus = self.lock_bus();
             let Bus::Live(registry) = &*bus else {
-                return Err(MemoryError::ShutDown);
+                return Err(Box::new(Unsent {
+                    error: MemoryError::ShutDown,
+                    payload,
+                    headers,
+                }));
             };
             // A discarding broker takes neither the log lock nor a position: nothing can ask
             // for a replay, so the publish is the fanout alone.

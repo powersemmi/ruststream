@@ -55,6 +55,7 @@ mod fixtures {
     use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
     use crate::{OwnedTransactions, PairError, PublishPolicy};
     use ruststream::memory::{ConnectedMemoryBroker, MemoryTransaction};
+    use ruststream_core::{PublishMessageError, PublishOutcome};
 
     /// A value JSON cannot encode: an object key must be a string, and this map's are
     /// tuples. Encoding one is a real codec failure, not a stubbed one.
@@ -63,7 +64,7 @@ mod fixtures {
     }
 
     /// The failure the rigged publisher reports.
-    #[derive(Debug, Error)]
+    #[derive(Debug, Clone, Error)]
     #[error("the rigged publisher refused")]
     pub(super) struct RiggedError;
 
@@ -74,6 +75,7 @@ mod fixtures {
         pub(super) fail_begin: bool,
         pub(super) fail_commit: bool,
         pub(super) fail_abort: bool,
+        pub(super) refusal: Option<RiggedError>,
         pub(super) published: Arc<AtomicUsize>,
         pub(super) aborted: Arc<AtomicUsize>,
     }
@@ -90,13 +92,15 @@ mod fixtures {
         type Error = RiggedError;
         type Options = ();
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            _msg: OutgoingMessage<'_, &[u8]>,
+            msg: OutgoingMessage<'msg, &'msg [u8]>,
             _options: Option<&Self::Options>,
-        ) -> impl Future<Output = Result<(), Self::Error>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
             self.published.fetch_add(1, Ordering::SeqCst);
-            ready(Ok(()))
+            ready(self.refusal.as_ref().map_or(Ok(()), |error| {
+                Err(PublishMessageError::with_message(error.clone(), msg))
+            }))
         }
     }
 
@@ -181,6 +185,7 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
     use core::future::{pending, ready};
 
     use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
+    use ruststream_core::PublishOutcome;
 
     #[derive(Clone)]
     struct PendingCommit;
@@ -190,11 +195,11 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
         type Error = Infallible;
         type Options = ();
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            _msg: OutgoingMessage<'_, &[u8]>,
+            _msg: OutgoingMessage<'msg, &'msg [u8]>,
             _options: Option<&Self::Options>,
-        ) -> impl Future<Output = Result<(), Self::Error>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
             ready(Ok(()))
         }
     }
@@ -254,7 +259,7 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
     impl PublishDynLayer for Mark {
         fn on_publish<'a>(
             &'a self,
-            out: &'a mut Outgoing<'a>,
+            out: &'a mut Outgoing<'_>,
             next: PublishDynNext<'a>,
         ) -> PublishFut<'a> {
             self.0.fetch_add(self.1, Ordering::SeqCst);
@@ -314,7 +319,7 @@ async fn the_pipeline_cursors_render_their_position() {
     impl PublishLayer for Record {
         fn on_publish<'a, N: PublishPipeline, P: Publisher>(
             &'a self,
-            out: &'a mut Outgoing<'a>,
+            out: &'a mut Outgoing<'_>,
             next: PublishNext<'a, N, P>,
         ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
             self.0.lock().unwrap().push(format!("{next:?}"));
@@ -325,7 +330,7 @@ async fn the_pipeline_cursors_render_their_position() {
     impl PublishDynLayer for Record {
         fn on_publish<'a>(
             &'a self,
-            out: &'a mut Outgoing<'a>,
+            out: &'a mut Outgoing<'_>,
             next: PublishDynNext<'a>,
         ) -> PublishFut<'a> {
             self.0.lock().unwrap().push(format!("{next:?}"));
@@ -771,6 +776,54 @@ async fn a_scoped_publish_reports_an_encode_failure_without_settling() {
     scope.abort().await.expect("abort failed");
 }
 
+/// A message the transaction refuses comes back inside the error, with the bytes that were
+/// encoded for it.
+#[cfg(feature = "json")]
+#[tokio::test]
+async fn a_scoped_publish_returns_the_message_the_transaction_refused() {
+    use fixtures::{Rigged, RiggedError};
+
+    let publisher = Rigged {
+        refusal: Some(RiggedError),
+        ..Rigged::default()
+    };
+    let mut scope = publisher.begin().await.expect("begin failed");
+
+    let err = scope
+        .publish("out", &3_u32)
+        .await
+        .expect_err("the transaction refuses the message");
+
+    let TransactionPublishError::Publish { message, .. } = err else {
+        panic!("a broker rejection is the publish arm");
+    };
+    let message = message.expect("the transaction gave the message back");
+    assert_eq!(message.destination(), "out");
+    assert_eq!(message.payload().map(AsRef::as_ref), Some(&b"3"[..]));
+    scope.abort().await.expect("abort failed");
+}
+
+/// A raw bytes publish the sink refuses returns the bytes the caller passed.
+#[tokio::test]
+async fn a_refused_raw_publish_returns_the_bytes() {
+    use fixtures::{Rigged, RiggedError};
+
+    let publisher = Rigged {
+        refusal: Some(RiggedError),
+        ..Rigged::default()
+    };
+
+    let err = raw_of(&publisher, b"raw bytes")
+        .to("unit.raw")
+        .publish()
+        .await
+        .expect_err("the sink refuses the message");
+
+    let unsent = err.unsent().expect("the sink gave the message back");
+    assert_eq!(unsent.destination(), "unit.raw");
+    assert_eq!(unsent.payload().map(AsRef::as_ref), Some(&b"raw bytes"[..]));
+}
+
 /// An owned transaction encodes with the publisher's codec, keeps its buffer private, and
 /// discards it on abort.
 #[cfg(feature = "json")]
@@ -884,6 +937,7 @@ async fn the_options_position_starts_empty_and_reaches_the_sink() {
     use std::sync::Mutex;
 
     use crate::{Lend, OutgoingMessage, Publisher};
+    use ruststream_core::PublishOutcome;
 
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
     struct Settings {
@@ -899,11 +953,11 @@ async fn the_options_position_starts_empty_and_reaches_the_sink() {
         type Error = Infallible;
         type Options = Settings;
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            _msg: OutgoingMessage<'_, &[u8]>,
+            _msg: OutgoingMessage<'msg, &'msg [u8]>,
             options: Option<&Settings>,
-        ) -> impl Future<Output = Result<(), Infallible>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, Infallible, Lend>> {
             self.0
                 .lock()
                 .expect("the recording publisher's mutex is poisoned")
@@ -954,6 +1008,7 @@ async fn concurrent_batches_take_the_transaction_in_turn() {
     use tokio::task::yield_now;
 
     use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
+    use ruststream_core::PublishOutcome;
 
     #[derive(Debug, Error)]
     #[error("a transaction is already open")]
@@ -970,11 +1025,11 @@ async fn concurrent_batches_take_the_transaction_in_turn() {
         type Error = Busy;
         type Options = ();
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            _msg: OutgoingMessage<'_, &[u8]>,
+            _msg: OutgoingMessage<'msg, &'msg [u8]>,
             _options: Option<&Self::Options>,
-        ) -> impl Future<Output = Result<(), Self::Error>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Lend>> {
             ready(Ok(()))
         }
     }

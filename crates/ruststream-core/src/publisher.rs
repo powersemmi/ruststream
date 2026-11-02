@@ -1,9 +1,11 @@
 //! The [`Publisher`] trait and its declaration-side counterpart, [`PublishPolicy`].
 
 use alloc::boxed::Box;
+use alloc::string::String;
 use core::error::Error as StdError;
+use core::fmt;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use thiserror::Error;
 
 #[cfg(feature = "asyncapi")]
@@ -33,7 +35,7 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 /// ```
 /// use std::io;
 ///
-/// use ruststream::{Lend, OutgoingMessage, Publisher};
+/// use ruststream::{Lend, OutgoingMessage, Publisher, PublishOutcome, PublishMessageError};
 /// # #[derive(Clone)]
 /// # struct Socket;
 /// # impl Socket {
@@ -53,12 +55,14 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 ///     type Error = io::Error;
 ///     type Options = ();
 ///
-///     async fn publish(
+///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingMessage<'_, &[u8]>,
+///         msg: OutgoingMessage<'msg, &'msg [u8]>,
 ///         _options: Option<&()>,
-///     ) -> io::Result<()> {
-///         self.socket.send_frame(msg.name(), msg.payload()).await
+///     ) -> PublishOutcome<'msg, io::Error, Lend> {
+///         let sent = self.socket.send_frame(msg.name(), msg.payload()).await;
+///         // The frame was copied, so the refused message goes back as it came.
+///         sent.map_err(|err| PublishMessageError::with_message(err, msg))
 ///     }
 /// }
 /// ```
@@ -119,6 +123,21 @@ pub trait PayloadForm: sealed::Sealed {
     where
         T: Serialized;
 
+    /// What a refused publish keeps of the payload it got back: the bytes themselves where the
+    /// form owns them, and where they sit where the form lent them.
+    ///
+    /// A taking form was handed the buffer and gives it back, so it is frozen without a copy. A
+    /// lending form was handed a view, and the address and length are all that outlive the
+    /// borrow, so the caller that owns the bytes decides how to take them.
+    #[doc(hidden)]
+    fn kept(payload: Self::Form<'_>) -> KeptPayload;
+
+    /// Puts back into `out` what a refused publish returned, so the stage that owns `out` reads
+    /// the message that was really sent: the buffer a taking form was handed, and nothing for a
+    /// lending one, whose bytes never left `out`.
+    #[doc(hidden)]
+    fn restored(kept: KeptPayload, out: &mut Outgoing<'_>);
+
     /// A message in this form, put back on the publish pipeline for the stages above the leaf.
     #[doc(hidden)]
     fn rebuilt<'a>(
@@ -133,7 +152,7 @@ pub trait PayloadForm: sealed::Sealed {
     /// wrote and a lending one the bytes where they are; either way the map the transforms
     /// filled moves into the message rather than being cloned into it.
     #[doc(hidden)]
-    fn leaving<'a>(out: &'a mut Outgoing<'a>) -> OutgoingMessage<'a, Self::Form<'a>>;
+    fn leaving<'a>(out: &'a mut Outgoing<'_>) -> OutgoingMessage<'a, Self::Form<'a>>;
 
     /// What a stage that owns its [`Outgoing`] has to keep alive for the length of the publish
     /// it hands on: a destination it owns, and - only where the transport reads the payload -
@@ -154,6 +173,31 @@ pub trait PayloadForm: sealed::Sealed {
         out: Outgoing<'a>,
         spent: &'a mut Self::Spent,
     ) -> OutgoingMessage<'a, Self::Form<'a>>;
+
+    /// Settles what a refused publish kept of the payload, once the stage that spent the message
+    /// takes back what it kept alive for the send.
+    ///
+    /// Bytes a lending transport was shown that sit in the buffer the stage wrote are moved out of
+    /// it whole, with no copy; bytes anywhere else stay where they were, for the caller that
+    /// lent them.
+    #[doc(hidden)]
+    fn reclaimed(spent: &mut Self::Spent, kept: &mut KeptPayload);
+}
+
+/// The payload of a refused publish, as [`PayloadForm::kept`] leaves it.
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum KeptPayload {
+    /// The bytes, owned: a taking transport gave its buffer back.
+    Owned(Bytes),
+    /// The bytes a lending transport was shown, which stay where they were: their address and
+    /// length.
+    Lent {
+        /// Where the bytes start.
+        addr: usize,
+        /// How many there are.
+        len: usize,
+    },
 }
 
 /// A value and the codec that encodes it, as the publish path hands them to
@@ -187,7 +231,7 @@ pub trait PayloadEncode {
 /// ```
 /// use std::io;
 ///
-/// use ruststream::{Lend, OutgoingMessage, Publisher};
+/// use ruststream::{Lend, OutgoingMessage, Publisher, PublishOutcome, PublishMessageError};
 /// # #[derive(Clone)]
 /// # struct Connection;
 /// # impl Connection {
@@ -208,12 +252,14 @@ pub trait PayloadEncode {
 ///     type Error = io::Error;
 ///     type Options = ();
 ///
-///     async fn publish(
+///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingMessage<'_, &[u8]>,
+///         msg: OutgoingMessage<'msg, &'msg [u8]>,
 ///         _options: Option<&()>,
-///     ) -> io::Result<()> {
-///         self.connection.write(msg.name(), msg.payload()).await
+///     ) -> PublishOutcome<'msg, io::Error, Lend> {
+///         let written = self.connection.write(msg.name(), msg.payload()).await;
+///         // The client only read the bytes, so the refused message goes back as it came.
+///         written.map_err(|err| PublishMessageError::with_message(err, msg))
 ///     }
 /// }
 /// ```
@@ -231,7 +277,7 @@ pub struct Lend;
 /// ```
 /// use std::io;
 ///
-/// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take};
+/// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
 /// # #[derive(Clone)]
 /// # struct Producer;
 /// # impl Producer {
@@ -252,13 +298,17 @@ pub struct Lend;
 ///     type Error = io::Error;
 ///     type Options = ();
 ///
-///     async fn publish(
+///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingMessage<'_, BytesMut>,
+///         msg: OutgoingMessage<'msg, BytesMut>,
 ///         _options: Option<&()>,
-///     ) -> io::Result<()> {
+///     ) -> PublishOutcome<'msg, io::Error, Take> {
 ///         let topic = msg.name();
-///         self.producer.send(topic, msg.into_payload().freeze()).await
+///         self.producer
+///             .send(topic, msg.into_payload().freeze())
+///             .await
+///             // The client consumed the buffer, so the refusal has no message to return.
+///             .map_err(PublishMessageError::new)
 ///     }
 /// }
 /// ```
@@ -275,7 +325,7 @@ pub struct Take;
 /// # Examples
 ///
 /// ```
-/// use ruststream::{HeaderMap, OutgoingFor, Publisher};
+/// use ruststream::{HeaderMap, OutgoingFor, Publisher, PublishOutcome};
 ///
 /// // A handle that forwards every publish to the publisher it wraps, whichever form that one
 /// // declared.
@@ -287,11 +337,11 @@ pub struct Take;
 ///     type Error = P::Error;
 ///     type Options = P::Options;
 ///
-///     async fn publish(
+///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingFor<'_, Self::Payload>,
+///         msg: OutgoingFor<'msg, Self::Payload>,
 ///         options: Option<&Self::Options>,
-///     ) -> Result<(), Self::Error> {
+///     ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
 ///         self.0.publish(msg, options).await
 ///     }
 ///
@@ -301,6 +351,278 @@ pub struct Take;
 /// }
 /// ```
 pub type OutgoingFor<'a, Form> = OutgoingMessage<'a, <Form as PayloadForm>::Form<'a>>;
+
+/// What a [`Publisher::publish`] returns: nothing on success, and on failure the broker's error
+/// with the message it did not send.
+///
+/// `Form` is the publisher's [`Payload`](Publisher::Payload) declaration. A broker author writes
+/// it as the return type of `publish`, naming the lifetime of the message it was handed.
+pub type PublishOutcome<'msg, Error, Form> =
+    Result<(), PublishMessageError<Error, OutgoingFor<'msg, Form>>>;
+
+/// A refused publish: the broker's own error, and the message it did not send when the client
+/// gave it back.
+///
+/// The message is `None` only where the client consumed a [`Take`] buffer and did not return it.
+/// Everything a publisher is handed by reference comes back: the destination and the headers
+/// are never consumed by a client that fails, and a [`Lend`] payload is only borrowed. Success
+/// carries nothing extra, so a publish that works costs what it did before.
+///
+/// The error converts into this type with [`From`], so `Err(error.into())` and `?` on a
+/// client call whose error is `Self::Error` hand the broker's error over with no message.
+/// [`with_message`](Self::with_message) is the form for a client that returns the message.
+///
+/// # Examples
+///
+/// A broker author's `publish` that hands the message back when its client refuses it:
+///
+/// ```
+/// use std::io;
+///
+/// use ruststream::{BytesMut, OutgoingMessage, PublishMessageError, PublishOutcome, Publisher, Take};
+/// # #[derive(Clone)]
+/// # struct Producer;
+/// # impl Producer {
+/// #     // A client that gives the buffer back when its queue is full.
+/// #     async fn try_send(&self, _topic: &str, payload: BytesMut) -> Result<(), (io::Error, BytesMut)> {
+/// #         Err((io::Error::other("queue full"), payload))
+/// #     }
+/// # }
+///
+/// #[derive(Clone)]
+/// struct QueuedPublisher {
+///     producer: Producer,
+/// }
+///
+/// impl Publisher for QueuedPublisher {
+///     type Payload = Take;
+///     type Error = io::Error;
+///     type Options = ();
+///
+///     async fn publish<'msg>(
+///         &self,
+///         msg: OutgoingMessage<'msg, BytesMut>,
+///         _options: Option<&()>,
+///     ) -> PublishOutcome<'msg, io::Error, Take> {
+///         let (name, payload, headers) = msg.into_parts();
+///         match self.producer.try_send(name, payload).await {
+///             Ok(()) => Ok(()),
+///             Err((error, payload)) => {
+///                 let unsent = OutgoingMessage::with_payload(name, payload).with_headers(headers);
+///                 Err(PublishMessageError::with_message(error, unsent))
+///             }
+///         }
+///     }
+/// }
+/// ```
+pub struct PublishMessageError<Error, Message> {
+    error: Error,
+    // Boxed so the outcome of a publish that went out stays the size of the error: the message
+    // is moved into the box only on a refusal, which is off the hot path.
+    message: Option<Box<Message>>,
+}
+
+impl<Error, Message> PublishMessageError<Error, Message> {
+    /// A refusal whose message the client did not give back.
+    #[must_use]
+    pub const fn new(error: Error) -> Self {
+        Self {
+            error,
+            message: None,
+        }
+    }
+
+    /// A refusal that returns the message it did not send.
+    #[must_use]
+    pub fn with_message(error: Error, message: Message) -> Self {
+        Self {
+            error,
+            message: Some(Box::new(message)),
+        }
+    }
+
+    /// The broker's own error.
+    #[must_use]
+    pub const fn error(&self) -> &Error {
+        &self.error
+    }
+
+    /// The message the broker did not send, when the client gave it back.
+    #[must_use]
+    pub fn message(&self) -> Option<&Message> {
+        self.message.as_deref()
+    }
+
+    /// The broker's error, dropping the message.
+    #[must_use]
+    pub fn into_error(self) -> Error {
+        self.error
+    }
+
+    /// The message the broker did not send, dropping the error.
+    #[must_use]
+    pub fn into_message(self) -> Option<Message> {
+        self.message.map(|message| *message)
+    }
+
+    /// The error and the message, both owned.
+    #[must_use]
+    pub fn into_parts(self) -> (Error, Option<Message>) {
+        (self.error, self.message.map(|message| *message))
+    }
+
+    /// The same refusal over another message type, with no message.
+    ///
+    /// What a wrapper that sends a message it built itself uses: the message the inner publisher
+    /// returns is the wrapper's, not the caller's, so it is dropped and the error travels on.
+    #[must_use]
+    pub fn without_message<Other>(self) -> PublishMessageError<Error, Other> {
+        PublishMessageError::new(self.error)
+    }
+}
+
+impl<Error, Message> From<Error> for PublishMessageError<Error, Message> {
+    fn from(error: Error) -> Self {
+        Self::new(error)
+    }
+}
+
+impl<Error: fmt::Display, Message> fmt::Display for PublishMessageError<Error, Message> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+// Transparent over the error, and the message is left out: the form a `Take` publisher is handed
+// is a buffer of any size, and the error is logged far more often than the message is read.
+impl<Error: fmt::Debug, Message> fmt::Debug for PublishMessageError<Error, Message> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl<Error: StdError + 'static, Message> StdError for PublishMessageError<Error, Message> {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.error.source()
+    }
+}
+
+/// How a sink reports a message it did not send: the cause, and the message as it was to leave.
+///
+/// The message is owned, so it outlives the stages of the publish path that rewrote it: a payload
+/// a transform wrote into a buffer of the call moves out of that buffer, and a payload nothing
+/// rewrote stays with the caller that lent it. It is `None` only where the client consumed a
+/// [`Take`] buffer and did not return it. Machinery; a broker's publisher reports a
+/// [`PublishMessageError`] and the sinks of the runtime turn it into this.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct SinkRefusal<Error> {
+    error: Error,
+    unsent: Option<Box<UnsentMessage>>,
+}
+
+/// The message a refused publish handed back.
+#[derive(Debug)]
+struct UnsentMessage {
+    destination: String,
+    payload: KeptPayload,
+    headers: HeaderMap,
+}
+
+/// What a sink returns: nothing on success, and on failure the cause with the unsent message.
+#[doc(hidden)]
+pub type SinkOutcome<Error> = Result<(), SinkRefusal<Error>>;
+
+impl<Error> From<Error> for SinkRefusal<Error> {
+    fn from(error: Error) -> Self {
+        Self::new(error)
+    }
+}
+
+impl<Error> SinkRefusal<Error> {
+    /// A refusal that has no message to hand back.
+    #[must_use]
+    pub const fn new(error: Error) -> Self {
+        Self {
+            error,
+            unsent: None,
+        }
+    }
+
+    /// A refusal with the message that was to leave for `destination`.
+    #[must_use]
+    pub fn with_message(
+        error: Error,
+        destination: &str,
+        payload: KeptPayload,
+        headers: HeaderMap,
+    ) -> Self {
+        Self {
+            error,
+            unsent: Some(Box::new(UnsentMessage {
+                destination: String::from(destination),
+                payload,
+                headers,
+            })),
+        }
+    }
+
+    /// The refusal of a publisher in the form `Form`, with the message it returned.
+    #[must_use]
+    pub fn returned<Form: PayloadForm>(
+        failed: PublishMessageError<Error, OutgoingFor<'_, Form>>,
+    ) -> Self {
+        let (error, message) = failed.into_parts();
+        match message {
+            Some(message) => {
+                let (destination, payload, headers) = message.into_parts();
+                Self::with_message(error, destination, Form::kept(payload), headers)
+            }
+            None => Self::new(error),
+        }
+    }
+
+    /// The same refusal over another cause, the message kept.
+    #[must_use]
+    pub fn map_error<Other>(self, map: impl FnOnce(Error) -> Other) -> SinkRefusal<Other> {
+        SinkRefusal {
+            error: map(self.error),
+            unsent: self.unsent,
+        }
+    }
+
+    /// The cause.
+    #[must_use]
+    pub const fn error(&self) -> &Error {
+        &self.error
+    }
+
+    /// The cause, without the message.
+    #[must_use]
+    pub fn into_error(self) -> Error {
+        self.error
+    }
+
+    /// The refusal once the stage that spent the message takes back what it kept for the send:
+    /// the buffer a stage wrote moves into the message, and nothing is copied.
+    #[must_use]
+    pub fn reclaiming<Form: PayloadForm>(mut self, spent: &mut Form::Spent) -> Self {
+        if let Some(unsent) = &mut self.unsent {
+            Form::reclaimed(spent, &mut unsent.payload);
+        }
+        self
+    }
+
+    /// The cause and the message, taken apart: its destination, its payload as the sink kept it,
+    /// and its headers. `None` where the client consumed the buffer.
+    #[must_use]
+    pub fn into_parts(self) -> (Error, Option<(String, KeptPayload, HeaderMap)>) {
+        let unsent = self
+            .unsent
+            .map(|unsent| (unsent.destination, unsent.payload, unsent.headers));
+        (self.error, unsent)
+    }
+}
 
 mod sealed {
     /// Seals [`PayloadForm`](super::PayloadForm): a transport reads the payload or keeps it,
@@ -323,12 +645,16 @@ crate::__contract_twin! {
         /// # Examples
         ///
         /// ```
-        /// use ruststream::{OutgoingMessage, Publisher};
+        /// use ruststream::{OutgoingMessage, PublishMessageError, Publisher};
         ///
         /// async fn emit<P: Publisher>(publisher: &P) -> Result<(), P::Error> {
         ///     // Bytes the caller holds, in whichever form this publisher declared.
         ///     let msg = OutgoingMessage::new("orders.created", b"{}".as_slice());
-        ///     publisher.publish(msg, None).await
+        ///     // The refusal carries the unsent message; this caller only needs the error.
+        ///     publisher
+        ///         .publish(msg, None)
+        ///         .await
+        ///         .map_err(PublishMessageError::into_error)
         /// }
         /// ```
         ///
@@ -409,6 +735,7 @@ crate::__contract_twin! {
         /// use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublish, MemoryPublisher};
         /// use ruststream::runtime::{PublishBuilder, PublishExt, PublishSink};
         /// use ruststream::{
+        ///     PublishOutcome,
         ///     BytesMut, OutgoingMessage, Outgoing, PairError, PublishPolicy, Publisher, Serialized,
         ///     Take,
         /// };
@@ -446,11 +773,11 @@ crate::__contract_twin! {
         ///     type Error = MemoryError;
         ///     type Options = PriorityOptions;
         ///
-        ///     async fn publish(
+        ///     async fn publish<'msg>(
         ///         &self,
-        ///         msg: OutgoingMessage<'_, BytesMut>,
+        ///         msg: OutgoingMessage<'msg, BytesMut>,
         ///         options: Option<&Self::Options>,
-        ///     ) -> Result<(), Self::Error> {
+        ///     ) -> PublishOutcome<'msg, Self::Error, Take> {
         ///         let priority = options
         ///             .and_then(|options| options.priority)
         ///             .unwrap_or(self.default_priority);
@@ -527,10 +854,64 @@ crate::__contract_twin! {
         ///
         /// # Errors
         ///
-        /// Returns [`Self::Error`] when the broker rejects the message, the connection is lost, or
-        /// the operation times out.
-        fn publish(&self, msg: OutgoingFor<'_, Self::Payload>, options: Option<&Self::Options>)
-            -> [impl Future<Output = Result<(), Self::Error>> @send { + Send }];
+        /// Returns a [`PublishMessageError`] over [`Self::Error`] when the broker rejects the
+        /// message, the connection is lost, or the operation times out. It carries the message the
+        /// broker did not send: a [`Lend`] publisher always hands it back, and a [`Take`] publisher
+        /// hands it back when its client returns the buffer. A caller keeps it to try another
+        /// destination, as the error of an `Out` publish does for a handler.
+        ///
+        /// A broker author's `publish` that hands the message back:
+        ///
+        /// ```
+        /// use std::io;
+        ///
+        /// use ruststream::{Lend, OutgoingMessage, PublishMessageError, PublishOutcome, Publisher};
+        /// # #[derive(Clone)]
+        /// # struct Socket;
+        /// # impl Socket {
+        /// #     async fn write(&self, _subject: &str, _payload: &[u8]) -> io::Result<()> {
+        /// #         Err(io::Error::other("connection reset"))
+        /// #     }
+        /// # }
+        ///
+        /// #[derive(Clone)]
+        /// struct SocketPublisher {
+        ///     socket: Socket,
+        /// }
+        ///
+        /// impl Publisher for SocketPublisher {
+        ///     type Payload = Lend;
+        ///     type Error = io::Error;
+        ///     type Options = ();
+        ///
+        ///     async fn publish<'msg>(
+        ///         &self,
+        ///         msg: OutgoingMessage<'msg, &'msg [u8]>,
+        ///         _options: Option<&()>,
+        ///     ) -> PublishOutcome<'msg, io::Error, Lend> {
+        ///         let written = self.socket.write(msg.name(), msg.payload()).await;
+        ///         // The socket only read the bytes, so the refused message goes back whole.
+        ///         written.map_err(|error| PublishMessageError::with_message(error, msg))
+        ///     }
+        /// }
+        /// ```
+        fn publish(&self, msg: OutgoingFor<'msg, Self::Payload>, options: Option<&Self::Options>)
+            <'msg>
+            -> [impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> @send { + Send }];
+        /// [`publish`](Self::publish) with the refused message returned owned.
+        ///
+        /// Machinery of the runtime's own publish path: a broker never calls or overrides it.
+        ///
+        /// # Errors
+        ///
+        /// Returns the failure of [`publish`](Self::publish) with the message it did not send.
+        fn publish_kept(&self, msg: OutgoingFor<'_, Self::Payload>, options: Option<&Self::Options>)
+            -> [impl Future<Output = SinkOutcome<Self::Error>> @send { + Send }]
+        {
+            let sent = self.publish(msg, options);
+            async move { sent.await.map_err(SinkRefusal::returned::<Self::Payload>) }
+        }
+
 
         /// The headers this publisher contributes to every message it sends, underneath whatever
         /// the message itself names.
@@ -560,6 +941,7 @@ crate::__contract_twin! {
         /// ```
         /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         /// use ruststream::memory::MemoryBroker;
+        /// use ruststream::PublishOutcome;
         /// use ruststream::runtime::PublishExt;
         /// use ruststream::{HeaderMap, Outgoing, OutgoingFor, Publisher, Serialized};
         ///
@@ -572,11 +954,11 @@ crate::__contract_twin! {
         ///     type Error = P::Error;
         ///     type Options = P::Options;
         ///
-        ///     async fn publish(
+        ///     async fn publish<'msg>(
         ///         &self,
-        ///         msg: OutgoingFor<'_, Self::Payload>,
+        ///         msg: OutgoingFor<'msg, Self::Payload>,
         ///         options: Option<&Self::Options>,
-        ///     ) -> Result<(), Self::Error> {
+        ///     ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         ///         self.0.publish(msg, options).await
         ///     }
         ///
@@ -935,4 +1317,19 @@ impl PairError {
 pub trait DefaultPublish: ConnectedBroker {
     /// The broker's plain publish policy, constructible with its defaults.
     type Policy: PublishPolicy<Self> + Default + 'static;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::*;
+
+    #[test]
+    fn a_publish_that_went_out_returns_an_outcome_of_the_cause_alone() {
+        assert!(
+            size_of::<PublishOutcome<'_, io::Error, Take>>()
+                <= size_of::<io::Error>() + size_of::<usize>()
+        );
+    }
 }

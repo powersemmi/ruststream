@@ -92,7 +92,7 @@ impl CopyPathCheck for BrokerMoves {
 /// # use std::future::Future;
 /// # use futures::{Stream, StreamExt};
 /// # use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryMessage, MemorySubscriber};
-/// # use ruststream::{AckError, Carries, HeaderMap, IncomingMessage, NamedCopies, Settle, Subscribe};
+/// # use ruststream::{AckError, Carries, HeaderMap, IncomingMessage, NamedCopies, Settle, Subscribe, PublishMessageError};
 /// # use ruststream::{Subscriber, SubscriptionSource};
 /// # #[derive(Debug, Clone, PartialEq)]
 /// # pub struct Row(pub String);
@@ -143,11 +143,13 @@ impl CopyPathCheck for BrokerMoves {
 ///         ConnectedMemoryBroker::publisher,
 ///         async |connected: &ConnectedMemoryBroker, subject: &str, row: &Row| {
 ///             let msg = OutgoingMessage::new(subject, row.0.as_bytes());
-///             connected.publisher().publish(msg, None).await
+///             let sent = connected.publisher().publish(msg, None).await;
+///             sent.map_err(PublishMessageError::into_error)
 ///         },
 ///         async |connected: &ConnectedMemoryBroker, subject: &str| {
 ///             let msg = OutgoingMessage::new(subject, b"gone".as_slice());
-///             connected.publisher().publish(msg, None).await
+///             let sent = connected.publisher().publish(msg, None).await;
+///             sent.map_err(PublishMessageError::into_error)
 ///         },
 ///         &[Row("ann".to_owned()), Row("bob".to_owned())],
 ///     )
@@ -316,7 +318,7 @@ pub async fn carries<
 /// # use std::num::NonZeroUsize;
 /// # use futures::{Stream, StreamExt};
 /// # use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryMessage, MemorySubscriber};
-/// # use ruststream::{AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, Settle};
+/// # use ruststream::{AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, Settle, PublishMessageError};
 /// # use ruststream::{NamedCopies, Subscribe, Subscriber, SubscriptionSource};
 /// # #[derive(Debug, Clone, PartialEq)]
 /// # pub struct Row(pub String);
@@ -375,11 +377,13 @@ pub async fn carries<
 ///         ConnectedMemoryBroker::publisher,
 ///         async |connected: &ConnectedMemoryBroker, subject: &str, row: &Row| {
 ///             let msg = OutgoingMessage::new(subject, row.0.as_bytes());
-///             connected.publisher().publish(msg, None).await
+///             let sent = connected.publisher().publish(msg, None).await;
+///             sent.map_err(PublishMessageError::into_error)
 ///         },
 ///         async |connected: &ConnectedMemoryBroker, subject: &str| {
 ///             let msg = OutgoingMessage::new(subject, b"gone".as_slice());
-///             connected.publisher().publish(msg, None).await
+///             let sent = connected.publisher().publish(msg, None).await;
+///             sent.map_err(PublishMessageError::into_error)
 ///         },
 ///         &[Row("ann".to_owned()), Row("bob".to_owned())],
 ///     )

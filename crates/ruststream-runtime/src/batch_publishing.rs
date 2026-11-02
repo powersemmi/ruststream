@@ -14,7 +14,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::{any, fmt};
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use serde::Serialize;
 use tracing::warn;
 
@@ -31,9 +31,8 @@ use super::host::SendHost;
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
-use super::publish_failure::{FailedMessage, publish_done};
-use super::publishing::EncodeReply;
-use crate::HeaderMap;
+use super::publish_failure::publish_done;
+use super::publishing::{EncodeReply, lent_bytes};
 
 /// A batch subscriber definition that produces replies to publish.
 ///
@@ -264,22 +263,18 @@ where
                     let follow = match (sent, reaction) {
                         (Ok(()), reaction) => publish_done(reaction),
                         // The `.error` the context registered is told of every reply.
-                        (Err(err), Some(reaction)) => {
+                        (Err(refusal), Some(reaction)) => {
                             let codec = self.publisher.reply_codec();
-                            // A plain publish stops at the first failure: the replies before
-                            // it went out and are not lost.
-                            let sent = err.sent();
-                            let err = err.into_error();
-                            let lost = replies[sent..]
-                                .iter()
-                                .map(|reply| {
-                                    let bytes = reply.encoded_with(codec);
-                                    FailedMessage::new(name, bytes, HeaderMap::new())
-                                })
-                                .collect();
+                            let (err, lost) = refusal.into_lost(
+                                name,
+                                &replies,
+                                |reply| reply.encoded_with(codec),
+                                |addr, len| lent_bytes(encode, addr, len, Bytes::new),
+                            );
                             Some(reaction.failed_all(err, lost))
                         }
-                        (Err(err), None) => {
+                        (Err(refusal), None) => {
+                            let err = refusal.into_error();
                             warn!(
                                 target: "ruststream::dispatch",
                                 subscription = %subscription,

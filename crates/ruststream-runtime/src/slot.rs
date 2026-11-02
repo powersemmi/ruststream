@@ -27,7 +27,8 @@ use crate::publish::{DestinationUse, Names, Reads};
 use crate::testing::coordinator::{PipelinePublish, record_slot_publish};
 use crate::{
     CallerName, ConnectedBroker, FixedName, HeaderMap, NameTemplate, OutgoingDestination,
-    OutgoingFor, OwnedTransactions, Publisher, RequestReply, TransactionalPublisher,
+    OutgoingFor, OwnedTransactions, PublishOutcome, Publisher, RequestReply,
+    TransactionalPublisher,
 };
 
 mod position;
@@ -587,11 +588,11 @@ impl<P: Publisher, M: OutSlot> Publisher for SlotPublisher<P, M> {
     type Error = P::Error;
     type Options = P::Options;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         #[cfg(feature = "testing")]
         let hooks = record_slot_publish(M::NAME, &msg, options);
         let sent = self.inner.publish(msg, options).await;

@@ -9,7 +9,6 @@ use alloc::vec::{self, Vec};
 use bytes::{Bytes, BytesMut};
 #[cfg(not(feature = "tokio"))]
 use core::cell::RefCell;
-use core::convert::Infallible;
 use core::error::Error as StdError;
 use core::fmt;
 use core::iter::FusedIterator;
@@ -28,10 +27,19 @@ use tracing::warn;
 
 use crate::handler::{Continuation, ContinuationFuture, MaybeSend};
 use crate::lifecycle::BoxError;
+use crate::publish::SinkRefusal;
 use crate::{
-    CallerName, HeaderMap, MessageHeaders, MessageWire, NoHeaders, OutgoingDestination, Serialized,
-    SerializedWire, WireBytes,
+    CallerName, HeaderMap, MessageHeaders, MessageWire, NoHeaders, Outgoing, OutgoingDestination,
+    OutgoingFor, PayloadForm, PublishMessageError, Serialized, SerializedWire, WireBytes,
 };
+use ruststream_core::KeptPayload;
+
+/// The error of sending on a [`FailedMessage`] whose bytes are gone: the publisher that refused
+/// it consumed the buffer and gave nothing back, so there is no message left to send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("the failed message has no bytes to send: its publisher consumed them")]
+#[non_exhaustive]
+pub struct MissingPayloadError;
 
 /// The error of a retry copy the embedded runner has nowhere to hold: every record of the mount's
 /// store is taken.
@@ -59,6 +67,9 @@ impl NoFreeRecordError {
 /// The message a runtime publish failed to send: the destination it was bound for, its bytes and
 /// its headers.
 ///
+/// The bytes are `None` only where the publisher took the payload buffer and did not give it back;
+/// the destination and the headers the runtime held are then all there is.
+///
 /// A handler's `.error` continuation receives it inside a [`Failed`], beside the error. The runtime builds
 /// it only for an outcome that registered `.error`, so a failure nobody asked about copies
 /// nothing.
@@ -80,7 +91,8 @@ impl NoFreeRecordError {
 /// }
 ///
 /// fn record(order: u64, lost: &FailedMessage) {
-///     tracing::error!(order, destination = lost.destination(), bytes = lost.payload().len(), "retry lost");
+///     let bytes = lost.payload().map_or(0, |payload| payload.len());
+///     tracing::error!(order, destination = lost.destination(), bytes, "retry lost");
 /// }
 ///
 /// #[subscriber("orders")]
@@ -99,7 +111,7 @@ impl NoFreeRecordError {
 #[derive(Debug, Clone)]
 pub struct FailedMessage {
     destination: String,
-    payload: Bytes,
+    payload: Option<Bytes>,
     headers: HeaderMap,
 }
 
@@ -107,7 +119,7 @@ impl FailedMessage {
     /// A message bound for `destination`.
     #[doc(hidden)]
     #[must_use]
-    pub fn new(destination: &str, payload: Bytes, headers: HeaderMap) -> Self {
+    pub fn new(destination: &str, payload: Option<Bytes>, headers: HeaderMap) -> Self {
         Self {
             destination: destination.to_owned(),
             payload,
@@ -121,10 +133,11 @@ impl FailedMessage {
         &self.destination
     }
 
-    /// The message's bytes, as they were to leave.
+    /// The message's bytes, as they were to leave, or `None` when the publisher consumed the
+    /// buffer and did not give it back.
     #[must_use]
-    pub const fn payload(&self) -> &Bytes {
-        &self.payload
+    pub const fn payload(&self) -> Option<&Bytes> {
+        self.payload.as_ref()
     }
 
     /// The message's headers, the retry count included.
@@ -135,18 +148,22 @@ impl FailedMessage {
 
     /// Splits the message into its destination, bytes and headers.
     #[must_use]
-    pub fn into_parts(self) -> (String, Bytes, HeaderMap) {
+    pub fn into_parts(self) -> (String, Option<Bytes>, HeaderMap) {
         (self.destination, self.payload, self.headers)
     }
 }
 
 /// The message a runtime publish failed to send is a [`Serialized`] value: its bytes leave as they
-/// are, so another `Out` publishes it unchanged.
+/// are, so another `Out` publishes it unchanged. A message whose bytes the publisher consumed is
+/// refused with [`MissingPayloadError`] rather than sent empty.
 impl Serialized for FailedMessage {
-    type Error = Infallible;
+    type Error = MissingPayloadError;
 
-    fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
-        Ok(WireBytes::Own(&self.payload))
+    fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, MissingPayloadError> {
+        self.payload
+            .as_deref()
+            .map(WireBytes::Own)
+            .ok_or(MissingPayloadError)
     }
 }
 
@@ -165,6 +182,218 @@ impl OutgoingDestination for FailedMessage {
 // Its headers travel with it, as a map the call site hands over with `with_headers`.
 impl MessageHeaders for FailedMessage {
     type Contract = NoHeaders;
+}
+
+/// A publish the runtime made that failed, with whatever the publisher handed back.
+///
+/// The paths that publish for a handler (a reply, a retry copy, a dead-letter copy) return it, and
+/// the `.error` continuation's [`Failed`] is built from it: the message that comes back is the
+/// one that was sent, moved, with no copy made beforehand. Machinery; never named directly.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct Refusal {
+    error: BoxError,
+    // Boxed so a publish that went out returns a pointer-sized result through every layer of the
+    // reply and the copy; the message is moved into the box only on a refusal.
+    unsent: Option<Box<Unsent>>,
+}
+
+/// The message a refused publish handed back, as its owner reads it.
+#[derive(Debug)]
+struct Unsent {
+    // Where the message was sent, recorded only when a naming transform changed it from the
+    // destination the caller declared: the common refusal allocates no name of its own.
+    destination: Option<String>,
+    payload: KeptPayload,
+    headers: HeaderMap,
+}
+
+impl Refusal {
+    /// A refusal that carries no message.
+    #[must_use]
+    pub fn new(error: impl Into<BoxError>) -> Self {
+        Self {
+            error: error.into(),
+            unsent: None,
+        }
+    }
+
+    /// The refusal of a publish in the form `Form`, with the message the publisher returned.
+    ///
+    /// A lent payload stays where it was lent from; whoever owns the bytes resolves it in
+    /// [`into_message`](Self::into_message).
+    pub fn returned<Form: PayloadForm>(
+        failed: PublishMessageError<impl Into<BoxError>, OutgoingFor<'_, Form>>,
+    ) -> Self {
+        let (error, message) = failed.into_parts();
+        Self {
+            error: error.into(),
+            unsent: message.map(|message| {
+                let (_, payload, headers) = message.into_parts();
+                // Handed straight to the publisher: the destination is the one the caller named.
+                Box::new(Unsent {
+                    destination: None,
+                    payload: Form::kept(payload),
+                    headers,
+                })
+            }),
+        }
+    }
+
+    /// The refusal of a sink, whose message is already owned.
+    #[must_use]
+    pub(crate) fn from_sink<Error: Into<BoxError>>(refusal: SinkRefusal<Error>) -> Self {
+        let (error, unsent) = refusal.into_parts();
+        Self {
+            error: error.into(),
+            unsent: unsent.map(|(destination, payload, headers)| {
+                Box::new(Unsent {
+                    destination: Some(destination),
+                    payload,
+                    headers,
+                })
+            }),
+        }
+    }
+
+    /// Puts the message the publisher returned back into `out`, which then reads as the message
+    /// that was sent, and gives the cause.
+    ///
+    /// For a path that returns its error alone and keeps `out`: the stages above read the
+    /// message from `out` once the error reaches them. A refusal with no message leaves `out`
+    /// empty.
+    pub fn restore<Form: PayloadForm>(self, out: &mut Outgoing<'_>) -> BoxError {
+        if let Some(Unsent {
+            payload, headers, ..
+        }) = self.unsent.map(|unsent| *unsent)
+        {
+            Form::restored(payload, out);
+            *out.headers_mut() = headers;
+        } else {
+            // The client consumed the buffer: nothing of the message is left to read.
+            out.consume();
+        }
+        self.error
+    }
+
+    /// The refusal of a publish that failed with `error` while `out` held the message: what it
+    /// holds is the message that was sent, and moves into the refusal.
+    ///
+    /// A buffer the stages wrote moves as it is; bytes `out` only lends stay where they are, for
+    /// the owner of the lender to take in [`into_message`](Self::into_message).
+    pub fn of(error: BoxError, out: &mut Outgoing<'_>) -> Self {
+        if out.is_consumed() {
+            return Self::new(error);
+        }
+        let payload = out.take_owned_payload().map_or_else(
+            || KeptPayload::Lent {
+                addr: out.payload().as_ptr() as usize,
+                len: out.payload().len(),
+            },
+            KeptPayload::Owned,
+        );
+        Self {
+            error,
+            unsent: Some(Box::new(Unsent {
+                destination: None,
+                payload,
+                headers: mem::take(out.headers_mut()),
+            })),
+        }
+    }
+
+    /// Records that the message went to `sent` rather than the `declared` destination, as it
+    /// does when a naming transform redirected it. The name is copied only then.
+    #[must_use]
+    pub(crate) fn sent_to(mut self, declared: &str, sent: &str) -> Self {
+        if sent != declared
+            && let Some(unsent) = self.unsent.as_mut()
+        {
+            unsent.destination = Some(sent.to_owned());
+        }
+        self
+    }
+
+    /// The refusal as a sink reports it: the cause wrapped by `wrap`, and the message where it
+    /// was sent, `destination` unless the refusal recorded another.
+    #[must_use]
+    pub(crate) fn into_sink<Error>(
+        self,
+        destination: &str,
+        wrap: impl FnOnce(BoxError) -> Error,
+    ) -> SinkRefusal<Error> {
+        let error = wrap(self.error);
+        match self.unsent.map(|unsent| *unsent) {
+            Some(Unsent {
+                destination: sent,
+                payload,
+                headers,
+            }) => SinkRefusal::with_message(
+                error,
+                sent.as_deref().unwrap_or(destination),
+                payload,
+                headers,
+            ),
+            None => SinkRefusal::new(error),
+        }
+    }
+
+    /// The cause.
+    #[must_use]
+    pub fn error(&self) -> &BoxError {
+        &self.error
+    }
+
+    /// The cause, without the message.
+    #[must_use]
+    pub fn into_error(self) -> BoxError {
+        self.error
+    }
+
+    /// The cause and the message where it was sent: `destination`, unless the refusal recorded
+    /// another.
+    ///
+    /// `lent` takes the bytes a lending publisher was shown, given where they were: the caller
+    /// that owns them moves them out instead of copying. A refusal with no message (the client
+    /// consumed the buffer) yields one with no bytes.
+    #[must_use]
+    pub fn into_message(
+        self,
+        destination: &str,
+        lent: impl FnOnce(usize, usize) -> Bytes,
+    ) -> (BoxError, FailedMessage) {
+        let message = match self.unsent.map(|unsent| *unsent) {
+            Some(Unsent {
+                destination: sent,
+                payload,
+                headers,
+            }) => {
+                let payload = match payload {
+                    KeptPayload::Owned(bytes) => bytes,
+                    KeptPayload::Lent { addr, len } => lent(addr, len),
+                };
+                FailedMessage {
+                    destination: sent.unwrap_or_else(|| destination.to_owned()),
+                    payload: Some(payload),
+                    headers,
+                }
+            }
+            None => FailedMessage::new(destination, None, HeaderMap::new()),
+        };
+        (self.error, message)
+    }
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.error, f)
+    }
+}
+
+impl From<BoxError> for Refusal {
+    fn from(error: BoxError) -> Self {
+        Self::new(error)
+    }
 }
 
 /// One publish the runtime made for a delivery and that failed: its cause and the message that
@@ -197,7 +426,7 @@ impl MessageHeaders for FailedMessage {
 ///                 order = id,
 ///                 error = %failed.error(),
 ///                 destination = failed.message().destination(),
-///                 bytes = failed.message().payload().len(),
+///                 bytes = failed.message().payload().map_or(0, |payload| payload.len()),
 ///                 "the retry was lost",
 ///             );
 ///         }
@@ -588,10 +817,6 @@ pub struct Reaction(Box<Registered>);
 struct Registered {
     error: ErrorHook,
     then: Option<Continuation>,
-    /// The headers of the failed copy, kept here (boxed with the registration) so the task that
-    /// publishes the copy carries one pointer for them and nothing when no `.error` was set.
-    #[cfg(feature = "tokio")]
-    headers: HeaderMap,
 }
 
 impl fmt::Debug for Reaction {
@@ -604,28 +829,11 @@ impl Reaction {
     /// A reaction handing a failure to `error` and a success to `then`.
     #[must_use]
     pub fn new(error: ErrorHook, then: Option<Continuation>) -> Self {
-        Self(Box::new(Registered {
-            error,
-            then,
-            #[cfg(feature = "tokio")]
-            headers: HeaderMap::new(),
-        }))
+        Self(Box::new(Registered { error, then }))
     }
 
     /// The continuation registered beside `.error`, which a delivery that made no publish runs
     /// once it is settled.
-    /// Keeps the headers the failed copy carries, for the [`FailedMessage`] a failure builds.
-    #[cfg(feature = "tokio")]
-    pub(crate) fn hold_headers(&mut self, headers: HeaderMap) {
-        self.0.headers = headers;
-    }
-
-    /// Takes the headers kept with [`hold_headers`](Self::hold_headers).
-    #[cfg(feature = "tokio")]
-    pub(crate) fn take_headers(&mut self) -> HeaderMap {
-        mem::take(&mut self.0.headers)
-    }
-
     pub(crate) fn into_then(self) -> Option<Continuation> {
         self.0.then
     }
@@ -694,6 +902,11 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn a_publish_that_went_out_returns_a_result_of_the_cause_alone() {
+        assert!(size_of::<Result<(), Refusal>>() <= size_of::<BoxError>() + size_of::<usize>());
+    }
+
     /// An error whose source is the I/O error it wraps.
     #[derive(Debug)]
     struct Layered(io::Error);
@@ -713,7 +926,7 @@ mod tests {
     fn lost() -> (BoxError, FailedMessage) {
         (
             Box::new(io::Error::other("down")),
-            FailedMessage::new("dest", Bytes::new(), HeaderMap::new()),
+            FailedMessage::new("dest", Some(Bytes::new()), HeaderMap::new()),
         )
     }
 
@@ -738,13 +951,14 @@ mod tests {
 
     #[test]
     fn a_failed_message_splits_into_its_destination_bytes_and_headers() {
-        let message = FailedMessage::new("dest", Bytes::from_static(b"body"), HeaderMap::new());
+        let message =
+            FailedMessage::new("dest", Some(Bytes::from_static(b"body")), HeaderMap::new());
 
         let (destination, payload, headers) = message.into_parts();
 
         assert_eq!(
-            (destination.as_str(), payload.as_ref(), headers.len()),
-            ("dest", &b"body"[..], 0)
+            (destination.as_str(), payload.as_deref(), headers.len()),
+            ("dest", Some(&b"body"[..]), 0)
         );
     }
 
@@ -781,8 +995,8 @@ mod tests {
         });
         let cause = Layered(io::Error::other("root"));
         let messages = vec![
-            FailedMessage::new("a", Bytes::new(), HeaderMap::new()),
-            FailedMessage::new("b", Bytes::new(), HeaderMap::new()),
+            FailedMessage::new("a", Some(Bytes::new()), HeaderMap::new()),
+            FailedMessage::new("b", Some(Bytes::new()), HeaderMap::new()),
         ];
 
         hook.react_all(Box::new(cause), messages)
@@ -809,8 +1023,8 @@ mod tests {
             async {}
         });
         let messages = vec![
-            FailedMessage::new("a", Bytes::new(), HeaderMap::new()),
-            FailedMessage::new("b", Bytes::new(), HeaderMap::new()),
+            FailedMessage::new("a", Some(Bytes::new()), HeaderMap::new()),
+            FailedMessage::new("b", Some(Bytes::new()), HeaderMap::new()),
         ];
 
         hook.react_all(Box::new(Layered(io::Error::other("root"))), messages)

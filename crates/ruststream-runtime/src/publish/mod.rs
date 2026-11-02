@@ -59,8 +59,10 @@ pub use pipeline::{
     PublishPipeline, PublishStack,
 };
 pub use publisher::{Transactional, TypedPublisher};
-pub use reply::{PublishBatchError, ReplyPublisher};
-pub use sink::{CallCodec, LocalPublishSink, PublishCodec, PublishSink, UnnamedCodec};
+pub use reply::{BatchRefusal, ReplyPublisher};
+pub use sink::{
+    CallCodec, LocalPublishSink, PublishCodec, PublishSink, SinkOutcome, SinkRefusal, UnnamedCodec,
+};
 pub use transaction::{
     Admits, AnyDeclared, TransactionPublishError, TransactionScope, TypedTransaction,
 };

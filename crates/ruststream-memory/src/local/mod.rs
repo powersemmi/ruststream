@@ -31,7 +31,7 @@
 //!     let sensor = connected.publisher();
 //!     for celsius in [21u8, 22] {
 //!         let reading = OutgoingMessage::produced("sensors/temp", BytesMut::from(&[celsius][..]));
-//!         sensor.publish(reading, None).await?;
+//!         sensor.publish(reading, None).await.map_err(PublishMessageError::into_error)?;
 //!     }
 //!
 //!     let mut logged = Vec::new();
@@ -122,6 +122,6 @@ pub mod prelude {
     pub use ruststream_core::{
         AckError, Broker, BytesMut, ConnectedBroker, HeaderMap, IncomingMessage,
         LocalBatchSubscriber, LocalPublisher, LocalSettle, LocalSubscriber, OutgoingMessage,
-        PublishPolicy, Subscribe, SubscriptionSource,
+        PublishMessageError, PublishPolicy, Subscribe, SubscriptionSource,
     };
 }

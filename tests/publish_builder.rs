@@ -8,6 +8,7 @@
 ))]
 
 use ruststream::OutgoingFor;
+use ruststream::PublishOutcome;
 #[cfg(feature = "cbor")]
 use ruststream::codec::{CborCodec, Codec};
 use ruststream::memory::prelude::*;
@@ -299,11 +300,11 @@ impl<P: Publisher> Publisher for Tenanted<P> {
     type Error = P::Error;
     type Options = P::Options;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         self.0.publish(msg, options).await
     }
 
@@ -328,11 +329,11 @@ impl<T: Transaction> Transaction for Tagged<T> {
     type Error = T::Error;
     type Options = T::Options;
 
-    async fn publish(
+    async fn publish<'msg>(
         &mut self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         self.0.publish(msg, options).await
     }
 

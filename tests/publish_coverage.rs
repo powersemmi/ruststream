@@ -23,6 +23,7 @@ use ruststream::{OutgoingMessage, PairError, Take};
 use serde::Serialize;
 
 use common::{Order, Wire};
+use ruststream::{PublishMessageError, PublishOutcome};
 
 /// The reply publisher's refusal.
 #[derive(Debug)]
@@ -49,15 +50,18 @@ impl Publisher for FailsOnce {
     type Error = Rejected;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Take> {
         if self.armed.swap(false, Ordering::SeqCst) {
-            return Err(Rejected);
+            return Err(Rejected.into());
         }
-        self.inner.publish(msg, options).await.map_err(|_| Rejected)
+        self.inner
+            .publish(msg, options)
+            .await
+            .map_err(|_| PublishMessageError::new(Rejected))
     }
 }
 

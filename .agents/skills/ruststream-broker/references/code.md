@@ -52,7 +52,10 @@ The policy is pure declaration and constructible anywhere; `pair` turns it into 
 once, at startup.
 
 ```rust
-use ruststream::{DefaultPublish, OutgoingMessage, PairError, PublishPolicy, Publisher};
+use ruststream::{
+    DefaultPublish, OutgoingMessage, PairError, PublishMessageError, PublishOutcome, PublishPolicy,
+    Publisher,
+};
 
 /// The broker's per-message settings: every field optional, so a call carries only what it
 /// adjusted. Derive `Debug` and `PartialEq` too, and a test asserts `with_options(&MyOptions { .. })`.
@@ -94,18 +97,17 @@ impl Publisher for MyPublisher {
     type Options = MyOptions;
 
     /// Resolving the call's fields over the policy's is the first thing publish does.
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         options: Option<&MyOptions>,
-    ) -> Result<(), MyError> {
+    ) -> PublishOutcome<'msg, MyError, Lend> {
         let priority = options
             .and_then(|options| options.priority)
             .unwrap_or(self.default_priority);
-        self.client
-            .send(msg.name(), msg.payload(), priority)
-            .await
-            .map_err(MyError::publish)
+        let sent = self.client.send(msg.name(), msg.payload(), priority).await;
+        // A refusal hands the unsent message back, so the caller can send it elsewhere.
+        sent.map_err(|error| PublishMessageError::with_message(MyError::publish(error), msg))
     }
 }
 ```

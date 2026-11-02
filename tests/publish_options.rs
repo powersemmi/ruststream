@@ -27,6 +27,7 @@ use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{LocalPublishSink, Outgoing, PublishBuilder, SlotContext, for_batch};
 use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, PairError, Take};
+use ruststream::{PublishMessageError, PublishOutcome};
 
 /// The broker's per-message settings. Every field optional: what a call leaves unset keeps what
 /// the policy fixed. `Debug` and `PartialEq` are not part of the contract, they are what a test
@@ -83,11 +84,11 @@ impl Publisher for PriorityPublisher {
     type Error = MemoryError;
     type Options = PriorityOptions;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Take> {
         let priority = options
             .and_then(|options| options.priority)
             .unwrap_or(self.default_priority);
@@ -101,7 +102,10 @@ impl Publisher for PriorityPublisher {
         headers.insert("priority", priority.to_string());
         headers.insert("ttl", ttl.to_string());
         let stamped = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
-        self.inner.publish(stamped, None).await
+        self.inner
+            .publish(stamped, None)
+            .await
+            .map_err(PublishMessageError::without_message)
     }
 }
 

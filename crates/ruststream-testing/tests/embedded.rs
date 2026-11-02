@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use embassy_futures::{block_on, yield_now};
 use embassy_time::Timer;
+use ruststream::PublishMessageError;
 use ruststream::memory::local::prelude::{
     Broker, BytesMut, ConnectedLocalMemoryBroker, LocalMemoryBroker, LocalMemoryError,
     LocalMemoryPublish, LocalMemoryPublisher, LocalMemorySource, LocalPublisher, OutgoingMessage,
@@ -138,7 +139,13 @@ async fn bus_and_sensor() -> Result<(Bus, LocalMemoryPublisher<4>), LocalMemoryE
 /// Whether the bus refuses the sensor's publish because it was shut down.
 async fn bus_is_shut_down(sensor: &LocalMemoryPublisher<4>) -> bool {
     let reading = OutgoingMessage::produced("sensors/temp", BytesMut::from("21"));
-    sensor.publish(reading, None).await == Err(LocalMemoryError::ShutDown)
+    matches!(
+        sensor
+            .publish(reading, None)
+            .await
+            .map_err(PublishMessageError::into_error),
+        Err(LocalMemoryError::ShutDown)
+    )
 }
 
 #[ruststream::app(runtime = embassy)]
@@ -291,7 +298,10 @@ fn a_shutdown_of_a_handler_that_keeps_waking_itself_fails() -> Result<(), Box<dy
         assert!(
             matches!(
                 published,
-                Err(PublishError::Publish(TestError::NotQuiescent { .. }))
+                Err(PublishError::Publish {
+                    source: TestError::NotQuiescent { .. },
+                    ..
+                })
             ),
             "the spinning handler keeps the publish from settling: {published:?}"
         );

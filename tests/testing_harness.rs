@@ -189,7 +189,10 @@ async fn fail_fast_panic_shuts_down_and_blocks_further_publishes() {
             .to("orders")
             .publish()
             .await,
-        Err(PublishError::Publish(TestError::ShutDown))
+        Err(PublishError::Publish {
+            source: TestError::ShutDown,
+            ..
+        })
     ));
     // --8<-- [end:panic]
 }
@@ -244,7 +247,10 @@ async fn perpetual_requeue_hits_the_step_budget() {
     let result = tb.message(&Order { id: 1 }).to("loops").publish().await;
     assert!(matches!(
         result,
-        Err(PublishError::Publish(TestError::NotQuiescent { .. }))
+        Err(PublishError::Publish {
+            source: TestError::NotQuiescent { .. },
+            ..
+        })
     ));
     tb.shutdown().await.unwrap();
 }
@@ -503,7 +509,10 @@ async fn unscoped_publish_is_ambiguous_with_two_brokers() {
 
     assert!(matches!(
         tb.message(&Order { id: 1 }).to("orders").publish().await,
-        Err(PublishError::Publish(TestError::Ambiguous))
+        Err(PublishError::Publish {
+            source: TestError::Ambiguous,
+            ..
+        })
     ));
 }
 

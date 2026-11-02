@@ -12,7 +12,7 @@ use std::time::Duration;
 use carrying::{Fault, Row, Rows};
 use ruststream::conformance::capabilities;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher};
-use ruststream::{BrokerMoves, NamedCopies, OutgoingMessage, Publisher};
+use ruststream::{BrokerMoves, NamedCopies, OutgoingMessage, PublishMessageError, Publisher};
 use tokio::time::timeout;
 
 /// How long a check that must fail at once may run before the test calls it a hang.
@@ -47,6 +47,7 @@ async fn publish_row(
             None,
         )
         .await
+        .map_err(PublishMessageError::into_error)
 }
 
 /// Publishes one delivery whose row is gone by the time it is read.
@@ -55,6 +56,7 @@ async fn publish_gone(connected: &ConnectedMemoryBroker, subject: &str) -> Resul
         .publisher()
         .publish(OutgoingMessage::new(subject, b"gone".as_slice()), None)
         .await
+        .map_err(PublishMessageError::into_error)
 }
 
 /// The plain publisher, noting in `built` that a suite asked for one.

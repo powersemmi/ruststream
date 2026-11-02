@@ -11,6 +11,7 @@ use bytes::BytesMut;
 
 use crate::codec::CodecError;
 use crate::outgoing::{Outgoing, OutgoingName, Payload};
+use crate::publisher::KeptPayload;
 use crate::wire::{Serialized, WireBytes};
 use crate::{HeaderMap, Lend, OutgoingMessage, PayloadEncode, PayloadForm, Take};
 
@@ -72,16 +73,27 @@ impl PayloadForm for Lend {
     }
 
     #[inline]
+    fn kept(payload: &[u8]) -> KeptPayload {
+        KeptPayload::Lent {
+            addr: payload.as_ptr() as usize,
+            len: payload.len(),
+        }
+    }
+
+    #[inline]
+    fn restored(_kept: KeptPayload, _out: &mut Outgoing<'_>) {}
+
+    #[inline]
     fn rebuilt<'a>(name: OutgoingName<'a>, payload: &'a [u8], headers: HeaderMap) -> Outgoing<'a> {
         Outgoing::rebuilding(name, Payload::Lent(payload), headers)
     }
 
     #[inline]
-    fn leaving<'a>(out: &'a mut Outgoing<'a>) -> OutgoingMessage<'a, &'a [u8]> {
+    fn leaving<'a>(out: &'a mut Outgoing<'_>) -> OutgoingMessage<'a, &'a [u8]> {
         let headers = out.take_headers();
         // The mutable borrow ends here; what is left is read, and read for as long as the
         // message that leaves lives.
-        let out: &'a Outgoing<'a> = out;
+        let out: &'a Outgoing<'_> = out;
         OutgoingMessage::assembled(out.name(), out.payload(), headers)
     }
 
@@ -94,11 +106,22 @@ impl PayloadForm for Lend {
         let (kept_name, kept_buffer) = spent;
         let bytes = match payload {
             Payload::Lent(bytes) => bytes,
+            Payload::Consumed => &[],
             // A stage above wrote a buffer of its own; the transport only reads it, so it stays
             // with the caller until the publish is over.
             Payload::Owned(buf) => &**kept_buffer.insert(buf),
         };
         OutgoingMessage::assembled(kept(name, kept_name), bytes, headers)
+    }
+
+    #[inline]
+    fn reclaimed(spent: &mut Self::Spent, kept: &mut KeptPayload) {
+        if let (KeptPayload::Lent { addr, len }, Some(buffer)) = (&*kept, &mut spent.1)
+            && buffer.as_ptr() as usize == *addr
+            && buffer.len() == *len
+        {
+            *kept = KeptPayload::Owned(buffer.split().freeze());
+        }
     }
 }
 
@@ -155,12 +178,30 @@ impl PayloadForm for Take {
     }
 
     #[inline]
+    fn kept(payload: BytesMut) -> KeptPayload {
+        KeptPayload::Owned(payload.freeze())
+    }
+
+    #[inline]
+    fn restored(kept: KeptPayload, out: &mut Outgoing<'_>) {
+        if let KeptPayload::Owned(bytes) = kept {
+            // The buffer is the one the transport handed back, frozen and still unique, so it
+            // turns into a buffer again without a copy.
+            out.set_payload(
+                bytes
+                    .try_into_mut()
+                    .unwrap_or_else(|shared| BytesMut::from(&*shared)),
+            );
+        }
+    }
+
+    #[inline]
     fn rebuilt(name: OutgoingName<'_>, payload: BytesMut, headers: HeaderMap) -> Outgoing<'_> {
         Outgoing::rebuilding(name, Payload::Owned(payload), headers)
     }
 
     #[inline]
-    fn leaving<'a>(out: &'a mut Outgoing<'a>) -> OutgoingMessage<'a, BytesMut> {
+    fn leaving<'a>(out: &'a mut Outgoing<'_>) -> OutgoingMessage<'a, BytesMut> {
         let payload = out.take_payload();
         let headers = out.take_headers();
         OutgoingMessage::assembled(out.name(), payload, headers)
@@ -177,9 +218,13 @@ impl PayloadForm for Take {
         let payload = match payload {
             Payload::Lent(bytes) => BytesMut::from(bytes),
             Payload::Owned(buf) => buf,
+            Payload::Consumed => BytesMut::new(),
         };
         OutgoingMessage::assembled(kept(name, spent), payload, headers)
     }
+
+    #[inline]
+    fn reclaimed(_spent: &mut Self::Spent, _kept: &mut KeptPayload) {}
 }
 
 #[cfg(test)]

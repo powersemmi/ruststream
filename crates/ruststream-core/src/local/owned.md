@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::rc::Rc;
 
-use ruststream::LocalOwnedTransactions;
+use ruststream::{LocalOwnedTransactions, PublishOutcome};
 # use ruststream::{LocalPublisher, LocalTransaction, OutgoingFor, Take};
 
 # #[derive(Default)]
@@ -29,11 +29,11 @@ use ruststream::LocalOwnedTransactions;
 #     type Error = Infallible;
 #     type Options = ();
 #
-#     async fn publish(
+#     async fn publish<'msg>(
 #         &self,
-#         msg: OutgoingFor<'_, Take>,
+#         msg: OutgoingFor<'msg, Take>,
 #         _options: Option<&()>,
-#     ) -> Result<(), Infallible> {
+#     ) -> PublishOutcome<'msg, Infallible, Take> {
 #         self.client.queue.borrow_mut().push_back(msg.into_payload().to_vec());
 #         Ok(())
 #     }
@@ -49,11 +49,11 @@ use ruststream::LocalOwnedTransactions;
 #     type Error = Infallible;
 #     type Options = ();
 #
-#     async fn publish(
+#     async fn publish<'msg>(
 #         &mut self,
-#         msg: OutgoingFor<'_, Take>,
+#         msg: OutgoingFor<'msg, Take>,
 #         _options: Option<&()>,
-#     ) -> Result<(), Infallible> {
+#     ) -> PublishOutcome<'msg, Infallible, Take> {
 #         self.buffered.push(msg.into_payload().to_vec());
 #         Ok(())
 #     }

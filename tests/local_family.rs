@@ -12,6 +12,7 @@ use std::rc::Rc;
 use std::task::Poll;
 
 use futures::{Stream, StreamExt, stream};
+use ruststream::PublishOutcome;
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemoryPublisher, MemoryRequester,
     MemorySource, MemorySubscriber, MemoryTransaction, Retaining,
@@ -287,11 +288,11 @@ impl LocalPublisher for RcPublisher {
     type Error = Infallible;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Take>,
+        msg: OutgoingFor<'msg, Take>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), Infallible>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Infallible, Take>> {
         let (name, payload, _headers) = msg.into_parts();
         if let Some(queue) = self.state.queues.borrow_mut().get_mut(name) {
             queue.push_back(payload.to_vec());

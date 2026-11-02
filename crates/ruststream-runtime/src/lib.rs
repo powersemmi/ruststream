@@ -224,9 +224,11 @@ pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept};
 pub use main_runtime::MainRuntime;
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use publish_failure::{ErrorHook, Reaction, publish_done, publish_lost};
+pub use publish_failure::{ErrorHook, Reaction, Refusal, publish_done, publish_lost};
 #[cfg(feature = "alloc")]
-pub use publish_failure::{Failed, FailedMessage, Failures, NoFreeRecordError};
+pub use publish_failure::{
+    Failed, FailedMessage, Failures, MissingPayloadError, NoFreeRecordError,
+};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use slot::{BindSlotsBody, LocalBindSlotsBody};
@@ -287,12 +289,12 @@ pub use poll_diagnostics::{PollDiagnostics, PollReport};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use publish::{
-    AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, CodecSlotOpen,
+    AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, BatchRefusal, CodecSlotOpen,
     DestinationSettled, DestinationUse, Direct, Either, EncodeOutcome, FitsOffer, FitsTaken,
     InTransaction, LocalOutPipeline, LowerOutTransforms, MapReplyPolicy, NameReplyCodec,
     NamedDestinationSend, NamesDestination, NamingOffered, NamingUntaken, NarrowToUse,
-    PayloadError, PublishBatchError, PublishingDirectly, RawReplyWiring, ReplyPublisher,
-    ReplyWiring, SendOnlyPolicy, SlotStackUse, SlotTransforms, Transactional, TransactionalReply,
+    PayloadError, PublishingDirectly, RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy,
+    SinkOutcome, SinkRefusal, SlotStackUse, SlotTransforms, Transactional, TransactionalReply,
     TypedPublisher, WireBytes, WirePayload,
 };
 #[cfg(feature = "alloc")]

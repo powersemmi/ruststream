@@ -18,7 +18,7 @@ use bytes::{Bytes, BytesMut};
 use ruststream_core::{HeaderMap, LocalSettle};
 use ruststream_runtime::{
     Clock, Continuation, CopyPublisher, FailedMessage, KeptCopies, KeptDelivery, LocalDetach,
-    NoFreeRecordError, PrepareCopy, PrepareKept, Reaction, publish_done, publish_lost,
+    NoFreeRecordError, PrepareCopy, PrepareKept, Reaction, Refusal, publish_done, publish_lost,
 };
 
 use crate::clock::{EmbassyClock, Schedule};
@@ -231,30 +231,49 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> CopyStore<Path, CA
         let target = destination
             .as_deref()
             .unwrap_or_else(|| self.path.address());
-        let failed_headers = reaction.is_some().then(|| headers.clone());
         let sent = self
             .path
             .publish_copy(target, &payload, headers, options.as_ref())
             .await;
         let follow = match sent {
             Ok(()) => publish_done(reaction),
-            Err(err) => publish_lost(
-                reaction,
-                &self.subscription,
-                target,
-                self.input,
-                err,
-                || {
-                    FailedMessage::new(
-                        target,
-                        Bytes::copy_from_slice(&payload),
-                        failed_headers.unwrap_or_default(),
-                    )
-                },
-            ),
+            Err(refusal) => self.lost(reaction, target, refusal, |_, _| {
+                // The record is reused, so a lending publisher's bytes are copied.
+                Bytes::copy_from_slice(&payload)
+            }),
         };
         self.give_back(record, payload, destination);
         follow
+    }
+
+    /// Reports a copy the publisher refused. The message is read out of the refusal only for a
+    /// registered error: the publisher returns it, so nothing is copied for a copy nobody watches.
+    fn lost(
+        &self,
+        reaction: Option<Reaction>,
+        target: &str,
+        refusal: Refusal,
+        lent: impl FnOnce(usize, usize) -> Bytes,
+    ) -> Option<Continuation> {
+        if reaction.is_none() {
+            return publish_lost(
+                None,
+                &self.subscription,
+                target,
+                self.input,
+                refusal.into_error(),
+                || FailedMessage::new(target, None, HeaderMap::new()),
+            );
+        }
+        let (err, failed) = refusal.into_message(target, lent);
+        publish_lost(
+            reaction,
+            &self.subscription,
+            target,
+            self.input,
+            err,
+            || failed,
+        )
     }
 
     /// Frees `record`, keeping `payload`'s buffer for the next copy.
@@ -305,27 +324,13 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
         } = spilled;
         async move {
             let target = destination.unwrap_or_else(|| self.path.address());
-            let failed_headers = reaction.is_some().then(|| headers.clone());
             let sent = self
                 .path
                 .publish_copy(target, &payload, headers, options.as_ref())
                 .await;
             match sent {
                 Ok(()) => publish_done(reaction),
-                Err(err) => publish_lost(
-                    reaction,
-                    &self.subscription,
-                    target,
-                    self.input,
-                    err,
-                    || {
-                        FailedMessage::new(
-                            target,
-                            payload.freeze(),
-                            failed_headers.unwrap_or_default(),
-                        )
-                    },
-                ),
+                Err(refusal) => self.lost(reaction, target, refusal, |_, _| payload.freeze()),
             }
         }
     }
@@ -343,7 +348,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule> KeptCopies
             target,
             self.input,
             NoFreeRecordError::new(CAP).into(),
-            || FailedMessage::new(target, payload.unwrap_or_default(), headers),
+            || FailedMessage::new(target, payload, headers),
         )
     }
 
@@ -449,9 +454,9 @@ mod tests {
     use core::task::{Context, Poll, Waker};
     use core::time::Duration;
 
-    use ruststream_core::HeaderMap;
+    use ruststream_core::{HeaderMap, Lend, OutgoingMessage, PublishMessageError};
     use ruststream_runtime::{
-        BoxError, Clock, CopyPublisher, ErrorHook, Failures, KeptCopies, LocalDetach, Reaction,
+        Clock, CopyPublisher, ErrorHook, Failures, KeptCopies, LocalDetach, Reaction, Refusal,
     };
 
     // The store on embassy's clock polls embassy's timer, whose queue lives in the executor.
@@ -570,7 +575,7 @@ mod tests {
             payload: &[u8],
             _headers: HeaderMap,
             _options: Option<&()>,
-        ) -> impl Future<Output = Result<(), BoxError>> {
+        ) -> impl Future<Output = Result<(), Refusal>> {
             self.0
                 .borrow_mut()
                 .push((destination.into(), payload.to_vec()));
@@ -590,12 +595,17 @@ mod tests {
 
         fn publish_copy(
             &self,
-            _destination: &str,
-            _payload: &[u8],
-            _headers: HeaderMap,
+            destination: &str,
+            payload: &[u8],
+            headers: HeaderMap,
             _options: Option<&()>,
-        ) -> impl Future<Output = Result<(), BoxError>> {
-            ready(Err(BoxError::from("the subscription is full")))
+        ) -> impl Future<Output = Result<(), Refusal>> {
+            // A publisher answers a refusal with the message it was handed, as the broker
+            // crates' do.
+            let msg = OutgoingMessage::assembled(destination, payload, headers);
+            ready(Err(Refusal::returned::<Lend>(
+                PublishMessageError::with_message("the subscription is full", msg),
+            )))
         }
     }
 
@@ -720,10 +730,10 @@ mod tests {
             payload: &[u8],
             _headers: HeaderMap,
             _options: Option<&()>,
-        ) -> impl Future<Output = Result<(), BoxError>> {
+        ) -> impl Future<Output = Result<(), Refusal>> {
             if self.refusals.get() > 0 {
                 self.refusals.set(self.refusals.get() - 1);
-                return ready(Err(BoxError::from("the subscription is full")));
+                return ready(Err(Refusal::new("the subscription is full")));
             }
             self.sent
                 .0
@@ -810,7 +820,10 @@ mod tests {
                             failed.error().to_string(),
                             "no free record in the store of retry copies (capacity 1)"
                         );
-                        assert_eq!(failed.message().payload().as_ref(), b"a");
+                        assert_eq!(
+                            failed.message().payload().map(AsRef::as_ref),
+                            Some(&b"a"[..])
+                        );
                         assert_eq!(failed.message().destination(), "jobs");
                     }
                 }),
@@ -849,26 +862,27 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_publish_copies_the_message_only_for_a_registered_error() {
+    fn a_refused_copy_costs_a_registered_error_the_payload_and_nothing_else() {
         let plain = allocations_of_a_send(Refusing, false);
         let watched = allocations_of_a_send(Refusing, true);
-        assert!(
-            watched >= plain + 2,
-            "the failed message (payload and headers) is copied for the continuation alone: \
-             {plain} against {watched}"
+        assert_eq!(
+            watched,
+            plain + 3,
+            "the publisher hands the message back with its headers, so no header map is cloned; a \
+             registered error costs the payload the record lends, the destination of the failed \
+             message and the continuation that runs the error: {plain} against {watched}"
         );
     }
 
     #[test]
-    fn a_published_copy_costs_a_registered_reaction_one_header_map_and_no_payload() {
+    fn a_published_copy_costs_a_registered_reaction_nothing() {
         let sent = Recorded::default();
         let plain = allocations_of_a_send(&sent, false);
         let watched = allocations_of_a_send(&sent, true);
         assert_eq!(
-            watched,
-            plain + 1,
-            "a publish consumes the headers, so a registered reaction keeps one map; the payload \
-             is copied only once the publish failed"
+            watched, plain,
+            "a publish consumes the headers and nothing is cloned for a reaction: a refused \
+             publish returns the message instead"
         );
     }
 

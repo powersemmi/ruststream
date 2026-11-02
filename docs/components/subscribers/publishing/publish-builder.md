@@ -23,7 +23,8 @@ A broker adds steps of its own for its [per-message settings](./publish-options.
 
 `publish()` encodes the value and sends it, and returns [`PublishError`](api:ruststream::runtime::PublishError) on failure.
 `Encode` and `Serialize` mean the value did not encode, and a retry of the same value fails the same way.
-`Publish` carries the broker's own error.
+`Publish` carries the broker's own error and the message the broker did not send.
+[`unsent()`](api:ruststream::runtime::PublishError::unsent) returns that message, and another `Out` publishes it as it was.
 On a slot the message passes the slot's [transforms](./transforms/publish-transform.md) before the send, and the app's [publish layers](../middleware/publish-layer.md) where they apply.
 
 ## Example

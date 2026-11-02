@@ -256,7 +256,7 @@ mod tests {
                 target,
                 "Order",
                 io::Error::other("connection closed").into(),
-                || FailedMessage::new(target, Bytes::from_static(b"body"), HeaderMap::new()),
+                || FailedMessage::new(target, Some(Bytes::from_static(b"body")), HeaderMap::new()),
             )
         }
     }
@@ -296,7 +296,7 @@ mod tests {
                 "orders",
                 "Order",
                 NoFreeRecordError::new(self.room).into(),
-                || FailedMessage::new("orders", payload.unwrap_or_default(), HeaderMap::new()),
+                || FailedMessage::new("orders", payload, HeaderMap::new()),
             )
         }
 

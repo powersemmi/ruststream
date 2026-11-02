@@ -191,7 +191,8 @@ pub use ruststream_core::{
     NameTemplate, NoHeaders, OutgoingDestination, WithHeaders,
 };
 pub use ruststream_core::{
-    DefaultPublish, Lend, OutgoingFor, PairError, PayloadForm, PublishPolicy, Publisher, Take,
+    DefaultPublish, Lend, OutgoingFor, PairError, PayloadForm, PublishMessageError, PublishOutcome,
+    PublishPolicy, Publisher, Take,
 };
 pub use ruststream_core::{DeserializeHeadersError, SerializeHeadersError};
 pub use ruststream_core::{IncomingMessage, OutgoingMessage, RawMessage, Settle};

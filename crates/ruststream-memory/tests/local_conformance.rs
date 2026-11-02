@@ -4,6 +4,7 @@
 #![cfg(all(feature = "embassy", feature = "testing"))]
 
 use ruststream_conformance::harness;
+use ruststream_conformance::lifecycle::Unsent;
 use ruststream_memory::local::{ConnectedLocalMemoryBroker, LocalMemoryBroker, LocalMemorySource};
 
 #[tokio::test(flavor = "current_thread")]
@@ -20,6 +21,18 @@ async fn the_local_bus_passes_the_lifecycle() {
         LocalMemoryBroker::<16>::new,
         |name| LocalMemorySource::new(name),
         |connected: &ConnectedLocalMemoryBroker<16>| connected.publisher(),
+    )
+    .await;
+}
+
+// The closure stays: its bound is higher-ranked, as above.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "current_thread")]
+async fn the_local_bus_returns_the_message_of_a_refused_publish() {
+    harness::local_refused_publish_returns_message(
+        LocalMemoryBroker::<16>::new,
+        |connected: &ConnectedLocalMemoryBroker<16>| connected.publisher(),
+        Unsent::Returned,
     )
     .await;
 }

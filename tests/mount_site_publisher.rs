@@ -19,6 +19,7 @@ use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{Outgoing, PublishLayer, PublishNext, PublishPipeline};
 use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, PairError, Take};
+use ruststream::{PublishMessageError, PublishOutcome};
 
 /// The app-wide middleware: it stamps every publish the service makes.
 #[derive(Clone)]
@@ -27,7 +28,7 @@ struct AppStamp;
 impl PublishLayer for AppStamp {
     async fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishNext<'a, N, P>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         out.headers_mut().insert("x-app", b"1".to_vec());
@@ -125,15 +126,19 @@ impl Publisher for PrefixedPublisher {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Take> {
         let name = format!("{}{}", self.prefix, msg.name());
         let forwarded =
             OutgoingMessage::new(name.as_str(), msg.payload()).with_headers(msg.headers().clone());
-        self.inner.publish(forwarded, options).await
+        // The wrapper built the forwarded message, so the refusal carries none.
+        self.inner
+            .publish(forwarded, options)
+            .await
+            .map_err(PublishMessageError::without_message)
     }
 }
 

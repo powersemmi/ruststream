@@ -40,7 +40,8 @@ use super::{ConnectedLocalMemoryBroker, LocalMemoryError};
 ///     connected
 ///         .publisher()
 ///         .publish(OutgoingMessage::produced("sensors/temp", BytesMut::from(&[21u8][..])), None)
-///         .await?;
+///         .await
+///         .map_err(PublishMessageError::into_error)?;
 ///     let mut deliveries = core::pin::pin!(readings.stream());
 ///     let Some(Ok(reading)) = deliveries.next().await else {
 ///         unreachable!("the bus is open and its stream yields no error");
@@ -163,7 +164,8 @@ impl<const CAP: usize> RedeliveryAddressed<ConnectedLocalMemoryBroker<CAP>> for 
 ///     connected
 ///         .publisher()
 ///         .publish(OutgoingMessage::produced("actuator/cmd", BytesMut::from("open")), None)
-///         .await?;
+///         .await
+///         .map_err(PublishMessageError::into_error)?;
 ///     connected.shutdown().await?;
 ///     Ok::<_, LocalMemoryError>(commands(subscriber).await)
 /// })?;
@@ -298,6 +300,7 @@ impl<const CAP: usize> Stream for Batches<'_, CAP> {
 ///         .publisher()
 ///         .publish(OutgoingMessage::produced("actuator/cmd", BytesMut::from("open")), None)
 ///         .await
+///         .map_err(PublishMessageError::into_error)
 ///         .ok()?;
 ///     let mut deliveries = core::pin::pin!(commands.stream());
 ///     let busy = deliveries.next().await?.ok()?;

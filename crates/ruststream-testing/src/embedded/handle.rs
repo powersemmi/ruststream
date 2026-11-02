@@ -8,6 +8,7 @@ use std::pin::pin;
 use embassy_futures::poll_once;
 
 use ruststream_core::{Lend, OutgoingDestination, OutgoingMessage, RawMessage};
+use ruststream_runtime::SinkOutcome;
 use ruststream_runtime::testing::{
     PublishTarget, PublishedAssertions, RunBroker, SubscriberAssertions, TestError, attribute,
 };
@@ -68,7 +69,7 @@ impl LocalPublishSink for InjectSink<'_> {
         &mut self,
         msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> SinkOutcome<Self::Error> {
         let testable = self.broker.testable().ok_or(TestError::ShutDown)?;
         let coordinator = self.app.coordinator();
         // The test's own publish is part of the record: it tells a message the test put on a
@@ -88,7 +89,7 @@ impl LocalPublishSink for InjectSink<'_> {
         // this publish, as one registered on a subscriber does, and finishes when the test
         // advances the clock or shuts the app down.
         let _ = poll_once(pin!(hooks));
-        self.app.settle().await
+        self.app.settle().await.map_err(Into::into)
     }
 }
 

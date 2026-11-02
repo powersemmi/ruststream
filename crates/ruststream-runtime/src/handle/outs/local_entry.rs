@@ -9,12 +9,15 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::ops::Deref;
 
+#[cfg(feature = "testing")]
+use crate::PublishOutcome;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::Codec;
 use crate::inject::LocalFromStartup;
 use crate::metadata::OutgoingMessageMetadata;
 use crate::publish::{
-    HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, PublishBuilder, message_of,
+    HeadersUnset, LocalOutPipeline, LocalPublishSink, MessageBody, PublishBuilder, SinkOutcome,
+    message_of,
 };
 use crate::router::LocalPipeline;
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough};
@@ -126,7 +129,7 @@ where
         &mut self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = SinkOutcome<Self::Error>> {
         #[cfg(feature = "testing")]
         let slot: &LocalSlot<M, W, E, Pipe, Body> = self;
         #[cfg(feature = "testing")]
@@ -208,11 +211,11 @@ impl<M: OutSlot, W: LocalPublisher> LocalPublisher for Attributed<'_, M, W> {
 
     // The publisher's own future, which is `Send` exactly where the publisher's is.
     #[allow(clippy::future_not_send)]
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         let recorded = PipelinePublish::capture(&msg, options);
         let hooks = record_slot_publish(M::NAME, &msg, options);
         let sent = self.0.publish(msg, options).await;

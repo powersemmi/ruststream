@@ -49,10 +49,10 @@ async fn on_ask(ask: &Ask<'_>, ctx: &mut Context<'_, (), Lost>) -> Verdict {
         .error(async move |failures: Failures| {
             for failed in failures {
                 let (_error, message) = failed.into_parts();
-                lost.0
-                    .lock()
-                    .expect("the handlers never panic")
-                    .push((message.destination().to_owned(), message.payload().to_vec()));
+                lost.0.lock().expect("the handlers never panic").push((
+                    message.destination().to_owned(),
+                    message.payload().expect("the bytes").to_vec(),
+                ));
             }
         });
     let _ = ask.0;

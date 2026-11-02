@@ -12,7 +12,7 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
-use ruststream::LocalTransactionalPublisher;
+use ruststream::{LocalTransactionalPublisher, PublishOutcome};
 # use ruststream::{BytesMut, LocalPublisher, OutgoingFor, OutgoingMessage, Take};
 # #[derive(Default)]
 # struct Client {
@@ -30,11 +30,11 @@ use ruststream::LocalTransactionalPublisher;
 #     type Error = TransactionError;
 #     type Options = ();
 #
-#     async fn publish(
+#     async fn publish<'msg>(
 #         &self,
-#         msg: OutgoingFor<'_, Take>,
+#         msg: OutgoingFor<'msg, Take>,
 #         _options: Option<&()>,
-#     ) -> Result<(), TransactionError> {
+#     ) -> PublishOutcome<'msg, TransactionError, Take> {
 #         let payload = msg.into_payload().to_vec();
 #         match self.client.open.borrow_mut().as_mut() {
 #             Some(open) => open.push(payload),

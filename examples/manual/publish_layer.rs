@@ -54,7 +54,7 @@ struct Origin {
 impl PublishLayer for Origin {
     async fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishNext<'a, N, P>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         out.headers_mut().insert("origin", self.service);

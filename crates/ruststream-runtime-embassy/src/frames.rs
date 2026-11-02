@@ -25,7 +25,7 @@ use futures_core::Stream;
 use ruststream_core::{
     AckError, Broker, BrokerMoves, ConnectedBroker, DefaultPublish, HeaderMap, IncomingMessage,
     Lend, LocalBatchSubscriber, LocalPublisher, LocalSettle, LocalSubscriber, OutgoingMessage,
-    PairError, PublishPolicy, SubscriptionSource,
+    PairError, PublishMessageError, PublishOutcome, PublishPolicy, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -457,11 +457,11 @@ impl LocalPublisher for FramePublisher {
     type Error = FramePublishError;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), FramePublishError>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, FramePublishError, Lend>> {
         let sent = Frame::new(msg.payload())
             .ok_or(FramePublishError::TooLong)
             .and_then(|frame| {
@@ -469,7 +469,8 @@ impl LocalPublisher for FramePublisher {
                     .try_send(frame)
                     .map_err(|_| FramePublishError::Full)
             });
-        ready(sent)
+        // The frame holds a copy, so the refused message goes back as it came.
+        ready(sent.map_err(|error| PublishMessageError::with_message(error, msg)))
     }
 }
 
@@ -506,7 +507,13 @@ mod tests {
             let refused = replies
                 .publish(OutgoingMessage::new("replies", too_long.as_slice()), None)
                 .await;
-            assert_eq!(refused, Err(FramePublishError::TooLong));
+            let refused = refused.expect_err("a payload over the frame is refused");
+            assert_eq!(refused.error(), &FramePublishError::TooLong);
+            assert_eq!(
+                refused.message().map(OutgoingMessage::name),
+                Some("replies"),
+                "the refusal hands the unsent message back"
+            );
             assert_eq!(
                 FramePublishError::TooLong.to_string(),
                 "the payload is longer than 64 bytes"
@@ -520,7 +527,13 @@ mod tests {
             let full = replies
                 .publish(OutgoingMessage::new("replies", b"ok".as_slice()), None)
                 .await;
-            assert_eq!(full, Err(FramePublishError::Full));
+            let full = full.expect_err("a full channel refuses");
+            assert_eq!(full.error(), &FramePublishError::Full);
+            assert_eq!(
+                full.message().map(OutgoingMessage::payload),
+                Some(b"ok".as_slice()),
+                "the refusal hands the unsent message back"
+            );
             assert_eq!(
                 FramePublishError::Full.to_string(),
                 "the reply channel holds 4 frames"

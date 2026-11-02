@@ -21,6 +21,7 @@ use crate::lifecycle::BoxError;
 use crate::publish::{
     ForReply, PublishContext, PublishTransform, PublishTransformIdentity, PublishTransformStack,
 };
+use crate::publish_failure::Refusal;
 use crate::{
     AddressedCopies, Broker, BrokerMoves, Connected, DefaultPublish, HeaderMap, LocalPublisher,
     LocalSettle, NamedCopies, Outgoing, OutgoingMessage, PayloadForm, PublishPolicy, Reads,
@@ -49,7 +50,7 @@ pub trait CopyPublisher {
         payload: &[u8],
         headers: HeaderMap,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), BoxError>>;
+    ) -> impl Future<Output = Result<(), Refusal>>;
 }
 
 /// A copy path that prepares the copy of a delivery whose broker context is `Cx` while the
@@ -93,7 +94,7 @@ impl<Live: LocalPublisher, Stack> CopyPublisher for AddressedCopy<Live, Stack> {
         payload: &[u8],
         headers: HeaderMap,
         options: Option<&Live::Options>,
-    ) -> Result<(), BoxError> {
+    ) -> Result<(), Refusal> {
         // A transport that reads the bytes is lent the record's buffer; one that keeps them is
         // handed a copy of its own.
         let form = <Live::Payload as PayloadForm>::Form::from(payload);
@@ -101,7 +102,7 @@ impl<Live: LocalPublisher, Stack> CopyPublisher for AddressedCopy<Live, Stack> {
         self.live
             .publish(msg, options)
             .await
-            .map_err(BoxError::from)
+            .map_err(Refusal::returned::<Live::Payload>)
     }
 }
 
@@ -217,7 +218,7 @@ impl CopyPublisher for NoCopyPath {
         _payload: &[u8],
         _headers: HeaderMap,
         _options: Option<&()>,
-    ) -> Result<(), BoxError> {
+    ) -> Result<(), Refusal> {
         match *self {}
     }
 }
@@ -520,6 +521,7 @@ mod tests {
     use alloc::sync::Arc;
     use alloc::vec::Vec;
     use core::future::ready;
+    use ruststream_core::PublishOutcome;
     use std::io;
     use std::sync::Mutex;
 
@@ -553,11 +555,11 @@ mod tests {
         type Error = io::Error;
         type Options = Priority;
 
-        fn publish(
+        fn publish<'msg>(
             &self,
-            msg: OutgoingMessage<'_, &[u8]>,
+            msg: OutgoingMessage<'msg, &'msg [u8]>,
             options: Option<&Priority>,
-        ) -> impl Future<Output = Result<(), io::Error>> {
+        ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
             let (name, payload, headers) = msg.into_parts();
             self.sent.lock().expect("one test thread").push((
                 name.to_owned(),

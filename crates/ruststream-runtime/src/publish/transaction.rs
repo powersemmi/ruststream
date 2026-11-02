@@ -4,12 +4,14 @@ use core::fmt;
 use core::marker::PhantomData;
 
 use bytes::BytesMut;
+use ruststream_core::KeptPayload;
 use serde::Serialize;
 use thiserror::Error;
 use tracing::warn;
 
-use super::{HeadersUnset, MessageBody, PublishBuilder, PublishCodec, message_of};
+use super::{HeadersUnset, MessageBody, PublishBuilder, PublishCodec, SinkRefusal, message_of};
 use crate::codec::{CodecError, Encoding};
+use crate::publish_failure::FailedMessage;
 use crate::{
     OutgoingDestination, OutgoingMessage, OwnedTransactions, PayloadForm, Publisher, Transaction,
     TransactionalPublisher,
@@ -146,7 +148,8 @@ where
         self.publisher
             .publish(OutgoingMessage::with_payload(name, payload), None)
             .await
-            .map_err(TransactionPublishError::Publish)
+            .map_err(SinkRefusal::returned::<P::Payload>)
+            .map_err(|refusal| refused(refusal, &mut buf))
     }
 
     /// Commits the transaction: every publish issued through the scope becomes visible at once.
@@ -317,7 +320,8 @@ where
         self.txn
             .publish(OutgoingMessage::with_payload(name, payload), None)
             .await
-            .map_err(TransactionPublishError::Publish)
+            .map_err(SinkRefusal::returned::<Txn::Payload>)
+            .map_err(|refusal| refused(refusal, &mut buf))
     }
 
     /// Commits the transaction: the whole buffer becomes visible atomically, in publish order.
@@ -369,5 +373,27 @@ pub enum TransactionPublishError<E> {
     Encode(#[source] CodecError),
     /// The broker rejected the message.
     #[error("failed to publish inside the transaction")]
-    Publish(#[source] E),
+    Publish {
+        /// The broker's own error.
+        #[source]
+        source: E,
+        /// The message the transaction did not take, when it gave it back. It is a
+        /// [`Serialized`](crate::Serialized) value, so another `Out` publishes it unchanged.
+        message: Option<FailedMessage>,
+    },
+}
+
+/// The error of a refused transactional publish, with the message as it was to be sent.
+///
+/// `buf` is the scope's buffer for this publish: bytes a lending transaction was shown sit there.
+fn refused<E>(refusal: SinkRefusal<E>, buf: &mut BytesMut) -> TransactionPublishError<E> {
+    let (source, unsent) = refusal.into_parts();
+    let message = unsent.map(|(destination, payload, headers)| {
+        let payload = match payload {
+            KeptPayload::Owned(bytes) => bytes,
+            KeptPayload::Lent { .. } => buf.split().freeze(),
+        };
+        FailedMessage::new(&destination, Some(payload), headers)
+    });
+    TransactionPublishError::Publish { source, message }
 }

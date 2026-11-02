@@ -98,10 +98,10 @@ async fn on_capped(job: &Job<'_>, ctx: &mut Context<'_, (), Lost>) -> HandlerOut
     HandlerOutcome::retry_after(delay).error(async move |failures: Failures| {
         for failed in failures {
             let (_, message) = failed.into_parts();
-            lost.0
-                .lock()
-                .expect("the handlers never panic")
-                .push((message.destination().to_owned(), message.payload().to_vec()));
+            lost.0.lock().expect("the handlers never panic").push((
+                message.destination().to_owned(),
+                message.payload().expect("the bytes").to_vec(),
+            ));
         }
     })
 }

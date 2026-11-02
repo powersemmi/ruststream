@@ -119,7 +119,7 @@ impl RawMessage {
 /// ```
 /// use std::io;
 ///
-/// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take};
+/// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
 /// # #[derive(Clone)]
 /// # struct Client;
 /// # impl Client {
@@ -145,13 +145,17 @@ impl RawMessage {
 ///     type Error = io::Error;
 ///     type Options = ();
 ///
-///     async fn publish(
+///     async fn publish<'msg>(
 ///         &self,
-///         msg: OutgoingMessage<'_, BytesMut>,
+///         msg: OutgoingMessage<'msg, BytesMut>,
 ///         _options: Option<&()>,
-///     ) -> io::Result<()> {
+///     ) -> PublishOutcome<'msg, io::Error, Take> {
 ///         let (topic, payload, headers) = msg.into_parts();
-///         self.client.send(topic, payload.freeze(), headers).await
+///         self.client
+///             .send(topic, payload.freeze(), headers)
+///             .await
+///             // The client consumed the buffer, so the refusal has no message to return.
+///             .map_err(PublishMessageError::new)
 ///     }
 /// }
 /// ```
@@ -185,7 +189,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{BytesMut, OutgoingMessage, Publisher, Take};
+    /// use ruststream::{BytesMut, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
     ///
     /// /// A publisher that files every message under the tenant's namespace. The buffer the
     /// /// publish handed over moves across as it is, never downgraded to a borrow.
@@ -200,15 +204,19 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     ///     type Error = P::Error;
     ///     type Options = P::Options;
     ///
-    ///     async fn publish(
+    ///     async fn publish<'msg>(
     ///         &self,
-    ///         msg: OutgoingMessage<'_, BytesMut>,
+    ///         msg: OutgoingMessage<'msg, BytesMut>,
     ///         options: Option<&Self::Options>,
-    ///     ) -> Result<(), Self::Error> {
+    ///     ) -> PublishOutcome<'msg, Self::Error, Take> {
     ///         let name = format!("{}.{}", self.tenant, msg.name());
     ///         let (_, payload, headers) = msg.into_parts();
     ///         let renamed = OutgoingMessage::with_payload(&name, payload).with_headers(headers);
-    ///         self.inner.publish(renamed, options).await
+    ///         // The renamed message is this wrapper's own, so a refusal carries none back.
+    ///         self.inner
+    ///             .publish(renamed, options)
+    ///             .await
+    ///             .map_err(PublishMessageError::without_message)
     ///     }
     /// }
     /// ```
@@ -329,7 +337,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// ```
     /// use std::io;
     ///
-    /// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take};
+    /// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
     /// # #[derive(Clone)]
     /// # struct Client;
     /// # impl Client {
@@ -349,13 +357,17 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     ///     type Error = io::Error;
     ///     type Options = ();
     ///
-    ///     async fn publish(
+    ///     async fn publish<'msg>(
     ///         &self,
-    ///         msg: OutgoingMessage<'_, BytesMut>,
+    ///         msg: OutgoingMessage<'msg, BytesMut>,
     ///         _options: Option<&()>,
-    ///     ) -> io::Result<()> {
+    ///     ) -> PublishOutcome<'msg, io::Error, Take> {
     ///         let topic = msg.name();
-    ///         self.client.send(topic, msg.into_payload().freeze()).await
+    ///         self.client
+    ///             .send(topic, msg.into_payload().freeze())
+    ///             .await
+    ///             // The client consumed the buffer, so the refusal has no message to return.
+    ///             .map_err(PublishMessageError::new)
     ///     }
     /// }
     /// ```
@@ -388,7 +400,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// ```
     /// use std::io;
     ///
-    /// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take};
+    /// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take, PublishOutcome, PublishMessageError};
     /// # #[derive(Clone)]
     /// # struct Client;
     /// # impl Client {
@@ -412,14 +424,18 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     ///     type Error = io::Error;
     ///     type Options = ();
     ///
-    ///     async fn publish(
+    ///     async fn publish<'msg>(
     ///         &self,
-    ///         msg: OutgoingMessage<'_, BytesMut>,
+    ///         msg: OutgoingMessage<'msg, BytesMut>,
     ///         _options: Option<&()>,
-    ///     ) -> io::Result<()> {
+    ///     ) -> PublishOutcome<'msg, io::Error, Take> {
     ///         // The destination, the buffer and the map the transforms filled, in one move.
     ///         let (topic, payload, headers) = msg.into_parts();
-    ///         self.client.send(topic, payload.freeze(), headers).await
+    ///         self.client
+    ///             .send(topic, payload.freeze(), headers)
+    ///             .await
+    ///             // The client consumed the buffer, so the refusal has no message to return.
+    ///             .map_err(PublishMessageError::new)
     ///     }
     /// }
     /// ```

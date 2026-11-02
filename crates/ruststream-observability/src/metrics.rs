@@ -386,7 +386,7 @@ impl fmt::Debug for MetricsPublish {
 impl PublishLayer for MetricsPublish {
     fn on_publish<'a, N: PublishPipeline, P: ruststream_core::Publisher>(
         &'a self,
-        out: &'a mut Outgoing<'a>,
+        out: &'a mut Outgoing<'_>,
         next: PublishNext<'a, N, P>,
     ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>> + Send + 'a {
         // The message moves into the rest of the pipeline, so the destination's series are

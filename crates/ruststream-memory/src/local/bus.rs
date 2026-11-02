@@ -14,9 +14,9 @@ use bytes::Bytes;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::waitqueue::WakerRegistration;
-use ruststream_core::HeaderMap;
 #[cfg(feature = "testing")]
 use ruststream_core::RawMessage;
+use ruststream_core::{BytesMut, HeaderMap, OutgoingMessage, PublishMessageError};
 use ruststream_runtime::RETRY_COUNT_HEADER;
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::Coordinator;
@@ -231,19 +231,20 @@ impl<const CAP: usize> Bus<CAP> {
         name: &str,
         payload: Bytes,
         headers: HeaderMap,
-    ) -> Result<(), LocalMemoryError> {
+    ) -> Result<(), Box<Unsent>> {
         if !self.live.get() {
-            return Err(LocalMemoryError::ShutDown);
+            return Err(Unsent::boxed(LocalMemoryError::ShutDown, payload, headers));
         }
         let subscriptions = self.subscriptions.borrow();
         let reading = || subscriptions.iter().filter(|open| open.name() == name);
         // All or nothing: a publish refused by one subscription reaches no other, so the caller
         // can publish it again without doubling it anywhere.
         if reading().any(|subscription| !subscription.has_room()) {
-            return Err(LocalMemoryError::Full {
+            let error = LocalMemoryError::Full {
                 name: String::from(name),
                 capacity: CAP,
-            });
+            };
+            return Err(Unsent::boxed(error, payload, headers));
         }
         #[cfg(feature = "testing")]
         self.harness.record(name, &payload, &headers);
@@ -270,6 +271,47 @@ impl<const CAP: usize> Bus<CAP> {
     #[cfg(feature = "testing")]
     pub(super) fn harness(&self) -> &Harness {
         &self.harness
+    }
+}
+
+/// The message a refused publish did not send, with the error that refused it.
+///
+/// Boxed so that the success path of a publish stays pointer-sized.
+pub(super) struct Unsent {
+    pub(super) error: LocalMemoryError,
+    payload: Bytes,
+    headers: HeaderMap,
+}
+
+impl Unsent {
+    fn boxed(error: LocalMemoryError, payload: Bytes, headers: HeaderMap) -> Box<Self> {
+        Box::new(Self {
+            error,
+            payload,
+            headers,
+        })
+    }
+
+    /// The refusal as a publisher reports it, with the message handed back in the buffer it came
+    /// in.
+    pub(super) fn returned(
+        self,
+        name: &str,
+    ) -> PublishMessageError<LocalMemoryError, OutgoingMessage<'_, BytesMut>> {
+        let Self {
+            error,
+            payload,
+            headers,
+        } = self;
+        // The bus refused before sharing the block, so it is still unique and the buffer comes
+        // back without a copy.
+        let buffer = payload
+            .try_into_mut()
+            .unwrap_or_else(|shared| BytesMut::from(shared.as_ref()));
+        PublishMessageError::with_message(
+            error,
+            OutgoingMessage::with_payload(name, buffer).with_headers(headers),
+        )
     }
 }
 

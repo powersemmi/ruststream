@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
 use crate::error::{DownPublish, Job, Queue, RETRY_DELAY};
+use ruststream_core::{PublishMessageError, PublishOutcome};
 
 /// Publishes one job to `to`.
 async fn publish_job<State: Send + Sync + 'static>(tb: &TestApp<State>, id: u32, to: &'static str) {
@@ -42,14 +43,17 @@ impl Publisher for Refuses1 {
     type Error = io::Error;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), io::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
         let refused = msg.payload().windows(7).any(|w| w == br#""id":1}"#);
         ready(if refused {
-            Err(io::Error::other("refused"))
+            Err(PublishMessageError::with_message(
+                io::Error::other("refused"),
+                msg,
+            ))
         } else {
             Ok(())
         })
@@ -65,16 +69,19 @@ impl Publisher for Refuses12 {
     type Error = io::Error;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), io::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
         let refused = [br#""id":1}"#, br#""id":2}"#]
             .iter()
             .any(|id| msg.payload().windows(7).any(|w| w == *id));
         ready(if refused {
-            Err(io::Error::other("refused"))
+            Err(PublishMessageError::with_message(
+                io::Error::other("refused"),
+                msg,
+            ))
         } else {
             Ok(())
         })
@@ -118,18 +125,21 @@ impl Publisher for RefusesJob {
     type Error = io::Error;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), io::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
         let wanted = format!(r#""id":{}}}"#, self.0);
         let refused = msg
             .payload()
             .windows(wanted.len())
             .any(|w| w == wanted.as_bytes());
         ready(if refused {
-            Err(io::Error::other("refused"))
+            Err(PublishMessageError::with_message(
+                io::Error::other("refused"),
+                msg,
+            ))
         } else {
             Ok(())
         })
@@ -216,7 +226,9 @@ async fn uniform(jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> HandlerOutcome
             let count = failures.len();
             let each: Vec<String> = failures
                 .map(|failed| {
-                    let payload = String::from_utf8_lossy(failed.message().payload()).into_owned();
+                    let payload =
+                        String::from_utf8_lossy(failed.message().payload().expect("the bytes"))
+                            .into_owned();
                     format!(" {payload} {}", failed.error())
                 })
                 .collect();
@@ -333,7 +345,9 @@ async fn receipted(jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> Vec<Receipt>
         .error(async move |failures: Failures| {
             let each: Vec<String> = failures
                 .map(|failed| {
-                    let payload = String::from_utf8_lossy(failed.message().payload()).into_owned();
+                    let payload =
+                        String::from_utf8_lossy(failed.message().payload().expect("the bytes"))
+                            .into_owned();
                     format!(
                         " {} {payload} {}",
                         failed.message().destination(),
@@ -464,7 +478,9 @@ async fn partial(jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> Vec<Receipt> {
         .error(async move |failures: Failures| {
             let each: Vec<String> = failures
                 .map(|failed| {
-                    let payload = String::from_utf8_lossy(failed.message().payload()).into_owned();
+                    let payload =
+                        String::from_utf8_lossy(failed.message().payload().expect("the bytes"))
+                            .into_owned();
                     format!(" {payload}")
                 })
                 .collect();
@@ -508,7 +524,9 @@ async fn typed_cause(jobs: &[Job], ctx: &mut Context<'_, (), Log>) -> Vec<Receip
         .error(async move |failures: Failures| {
             let each: Vec<String> = failures
                 .map(|failed| {
-                    let payload = String::from_utf8_lossy(failed.message().payload()).into_owned();
+                    let payload =
+                        String::from_utf8_lossy(failed.message().payload().expect("the bytes"))
+                            .into_owned();
                     let kind = failed
                         .error()
                         .downcast_ref::<io::Error>()
@@ -547,5 +565,71 @@ async fn a_batch_reply_error_keeps_the_type_of_the_broker_error() {
     assert_eq!(
         *log.lock().expect("log"),
         [r#"error {"id":1} Some(Other) {"id":2} Some(Other) {"id":3} Some(Other)"#]
+    );
+}
+
+/// A publisher whose broker refuses the reply of job 2 and takes every other.
+#[derive(Debug, Clone, Copy)]
+struct Refuses2;
+
+impl Publisher for Refuses2 {
+    type Payload = Lend;
+    type Error = io::Error;
+    type Options = ();
+
+    fn publish<'msg>(
+        &self,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
+        _options: Option<&()>,
+    ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
+        let refused = msg.payload().windows(7).any(|w| w == br#""id":2}"#);
+        ready(if refused {
+            Err(PublishMessageError::with_message(
+                io::Error::other("refused"),
+                msg,
+            ))
+        } else {
+            Ok(())
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Refuses2Publish;
+
+impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for Refuses2Publish {
+    type Live = Refuses2;
+
+    fn pair(
+        self,
+        _connected: &ConnectedMemoryBroker<Log>,
+    ) -> impl Future<Output = Result<Refuses2, PairError>> {
+        ready(Ok(Refuses2))
+    }
+}
+
+/// A batch whose second reply the broker refuses tells `.error` of the replies that did not go
+/// out, the refused one as it was sent; the reply that left is not among them.
+#[tokio::test(start_paused = true)]
+async fn a_refused_batch_reply_reports_only_the_replies_that_did_not_go_out() {
+    let log = Log::default();
+    let startup = Arc::clone(&log);
+    let app = RustStream::new(AppInfo::new("batch", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(startup))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(receipted.batch(nonzero!(2)))
+                .out_reply(Refuses2Publish)
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+    join_all([
+        publish_job(&tb, 1, "receipted"),
+        publish_job(&tb, 2, "receipted"),
+    ])
+    .await;
+    tb.settle().await.expect("settle");
+
+    assert_eq!(
+        *log.lock().expect("log"),
+        [r#"error receipts {"id":2} refused"#]
     );
 }

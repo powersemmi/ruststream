@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use allocation_counter::measure;
+use ruststream::PublishOutcome;
 use ruststream::codec::{Codec, JsonCodec};
 #[cfg(feature = "memory")]
 use ruststream::memory::MemoryBroker;
@@ -126,11 +127,11 @@ impl Publisher for Probe {
     type Error = Infallible;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), Infallible>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Infallible, Take>> {
         let read_at = msg.payload().as_ptr() as usize;
         let len = msg.payload().len();
         let payload = msg.into_payload();
@@ -181,11 +182,11 @@ impl Publisher for Reading {
     type Error = Infallible;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), Infallible>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Infallible, Lend>> {
         let read_at = msg.payload().as_ptr() as usize;
         let len = msg.payload().len();
         // The form itself, with no arm to match on: a lending publisher is handed a slice and
@@ -227,11 +228,11 @@ impl Publisher for Keeper {
     type Error = Infallible;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), Infallible>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Infallible, Take>> {
         // What a transport whose client takes owned parts does: one move for all three.
         let (name, payload, headers) = msg.into_parts();
         *self.0.lock().expect("keeper mutex poisoned") =
@@ -270,11 +271,11 @@ impl Publisher for Taker {
     type Error = Infallible;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), Infallible>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Infallible, Lend>> {
         let (_, _, headers) = msg.into_parts();
         let seen = SeenHeaders {
             len: headers.len(),

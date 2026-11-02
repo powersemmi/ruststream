@@ -20,6 +20,7 @@ use ruststream::memory::{ConnectedMemoryBroker, LogMode, MemoryPublisher};
 use ruststream::runtime::{Outgoing, for_batch};
 use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, PairError, Take};
+use ruststream::{PublishMessageError, PublishOutcome};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]
@@ -126,11 +127,11 @@ impl Publisher for Laned {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Take> {
         self.inner.publish(msg, options).await
     }
 
@@ -267,11 +268,11 @@ impl Publisher for Journaled {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Take> {
         let open = if self.open.load(Ordering::SeqCst) {
             "open"
         } else {
@@ -280,7 +281,10 @@ impl Publisher for Journaled {
         let mut headers = msg.headers().clone();
         headers.insert("x-transaction", open);
         let marked = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
-        self.inner.publish(marked, options).await
+        self.inner
+            .publish(marked, options)
+            .await
+            .map_err(PublishMessageError::without_message)
     }
 }
 

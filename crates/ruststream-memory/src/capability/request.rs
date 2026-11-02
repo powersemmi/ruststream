@@ -12,7 +12,9 @@ use thiserror::Error;
 use tokio::{sync::mpsc, time::timeout};
 
 use crate::{Discarding, MemoryMessage, MemoryState};
-use ruststream_core::{BytesMut, OutgoingMessage, Publisher, RequestReply, Str, Take};
+use ruststream_core::{
+    BytesMut, OutgoingMessage, PublishOutcome, Publisher, RequestReply, Str, Take,
+};
 
 /// Errors returned by [`MemoryRequester`] operations.
 #[derive(Debug, Error)]
@@ -119,16 +121,16 @@ impl Publisher for MemoryRequester {
     type Error = RequestError;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         _options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
+    ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Take>> {
         let (name, payload, headers) = msg.into_parts();
         ready(
             self.state
-                .fanout(name, payload.freeze(), headers)
-                .map_err(|_| RequestError::ShutDown),
+                .fanout_unsent(name, payload.freeze(), headers)
+                .map_err(|unsent| (*unsent).returned_as(name, |_| RequestError::ShutDown)),
         )
     }
 }
@@ -193,7 +195,9 @@ mod tests {
     use super::*;
     use crate::capability::tests::replaying;
     use crate::{Bus, MemoryBroker};
-    use ruststream_core::{Broker, ConnectedBroker, IncomingMessage, Subscriber};
+    use ruststream_core::{
+        Broker, ConnectedBroker, IncomingMessage, PublishMessageError, Subscriber,
+    };
 
     #[tokio::test(start_paused = true)]
     async fn a_request_without_a_responder_times_out_naming_the_subject() {
@@ -232,8 +236,11 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(publish, Err(RequestError::ShutDown)),
-            "{publish:?}"
+            matches!(
+                publish.map_err(PublishMessageError::into_error),
+                Err(RequestError::ShutDown)
+            ),
+            "publish after shutdown"
         );
 
         let request = requester
@@ -246,6 +253,27 @@ mod tests {
             matches!(request, Err(RequestError::ShutDown)),
             "a request against a dead bus must fail fast, not time out",
         );
+    }
+
+    #[tokio::test]
+    async fn a_publish_refused_after_shutdown_returns_the_message() {
+        let broker = MemoryBroker::new();
+        let requester = broker.requester();
+        let connected = broker.connect().await.unwrap();
+        connected.shutdown().await.unwrap();
+
+        let refused = Publisher::publish(
+            &requester,
+            OutgoingMessage::new("svc.echo", b"ping".as_slice()),
+            None,
+        )
+        .await
+        .expect_err("a dead bus refuses the publish");
+
+        let message = refused.message().expect("the refusal returns the message");
+        assert_eq!(message.name(), "svc.echo");
+        assert_eq!(message.payload(), b"ping");
+        assert!(matches!(refused.into_error(), RequestError::ShutDown));
     }
 
     #[tokio::test]

@@ -16,8 +16,8 @@ use crate::publish::{
 };
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 use crate::{
-    HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, OwnedTransactions, Publisher,
-    TransactionalPublisher,
+    HeaderMap, LocalPublisher, OutgoingDestination, OutgoingFor, OwnedTransactions,
+    PublishMessageError, PublishOutcome, Publisher, TransactionalPublisher,
 };
 
 use super::arena::Outs;
@@ -230,13 +230,15 @@ where
     type Error = W::Error;
     type Options = W::Options;
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingFor<'_, Self::Payload>,
+        msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
         let mut sink = self;
-        LocalPublishSink::send(&mut sink, msg, options).await
+        LocalPublishSink::send(&mut sink, msg, options)
+            .await
+            .map_err(|refusal| PublishMessageError::new(refusal.into_error()))
     }
 
     fn base_headers(&self) -> Option<&HeaderMap> {

@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::{Stream, StreamExt};
+use ruststream::Bytes;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, LogMode, MemoryPublisher};
 use ruststream::runtime::RETRY_COUNT_HEADER;
@@ -26,6 +27,7 @@ use ruststream::{
     AckError, AddressedCopies, BrokerMoves, Lend, OutgoingMessage, PairError, RedeliveryAddress,
     RedeliveryAddressed, Settle, Subscribe, Subscriber, SubscriptionSource, Take,
 };
+use ruststream_core::{PublishMessageError, PublishOutcome};
 use serde::{Deserialize, Serialize};
 
 pub(crate) const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -129,12 +131,15 @@ impl Publisher for Down {
     type Error = io::Error;
     type Options = ();
 
-    fn publish(
+    fn publish<'msg>(
         &self,
-        _msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> impl Future<Output = Result<(), io::Error>> {
-        ready(Err(io::Error::other("broker down")))
+    ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
+        ready(Err(PublishMessageError::with_message(
+            io::Error::other("broker down"),
+            msg,
+        )))
     }
 }
 
@@ -163,7 +168,7 @@ async fn on_job(job: &Job, State(alerts): State<Arc<Mutex<Vec<Alert>>>>) -> Hand
             let alert = Alert {
                 destination: lost.destination().to_owned(),
                 error: err.to_string(),
-                bytes: lost.payload().len(),
+                bytes: lost.payload().map_or(0, Bytes::len),
             };
             alerts.lock().expect("alerts").push(alert);
         }
@@ -422,15 +427,21 @@ impl Publisher for RefusesDeadLetter {
     type Error = io::Error;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, BytesMut>,
+        msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&()>,
-    ) -> Result<(), io::Error> {
+    ) -> PublishOutcome<'msg, io::Error, Take> {
         if msg.name() == "jobs.dead" {
-            return Err(io::Error::other("dead letter refused"));
+            return Err(PublishMessageError::with_message(
+                io::Error::other("dead letter refused"),
+                msg,
+            ));
         }
-        self.0.publish(msg, options).await.map_err(io::Error::other)
+        self.0
+            .publish(msg, options)
+            .await
+            .map_err(|failed| PublishMessageError::new(io::Error::other(failed.into_error())))
     }
 }
 
@@ -509,7 +520,7 @@ async fn a_single_outcome_error_owns_a_capture_that_is_not_clone() {
                 lost_log.alerts.lock().expect("alerts").push(Alert {
                     destination: lost.destination().to_owned(),
                     error: format!("{id} {err}"),
-                    bytes: lost.payload().len(),
+                    bytes: lost.payload().map_or(0, Bytes::len),
                 });
             }
         })
@@ -555,7 +566,7 @@ async fn a_single_delivery_hands_one_failed_with_its_bytes_and_headers() {
                 lost.alerts.lock().expect("alerts").push(Alert {
                     destination: failed.message().destination().to_owned(),
                     error: format!("{id} {} retries {retries}", failed.error()),
-                    bytes: failed.message().payload().len(),
+                    bytes: failed.message().payload().map_or(0, Bytes::len),
                 });
             }
         })
