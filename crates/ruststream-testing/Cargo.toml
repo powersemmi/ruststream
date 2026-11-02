@@ -340,6 +340,13 @@ name = "compio_error"
 path = "tests/compio_error.rs"
 required-features = ["compio", "json"]
 
+# The compio `TestApp` refuses a test runtime that fell back to polling where the environment asks
+# for `io_uring`.
+[[test]]
+name = "compio_driver"
+path = "tests/compio_driver.rs"
+required-features = ["compio"]
+
 # An app that settles, and one that cannot start, through the compio `TestApp`.
 [[test]]
 name = "compio_startup"
