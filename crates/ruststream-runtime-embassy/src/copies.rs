@@ -9,6 +9,8 @@ use alloc::string::String;
 #[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
 use core::array;
+#[cfg(not(ruststream_alloc))]
+use core::cell::Cell;
 use core::cell::RefCell;
 #[cfg(ruststream_alloc)]
 use core::convert::Infallible;
@@ -21,6 +23,8 @@ use core::pin::Pin;
 use core::task::{Poll, Waker};
 use core::time::Duration;
 
+#[cfg(not(ruststream_alloc))]
+use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::Mutex;
 #[cfg(not(ruststream_alloc))]
 use futures::future::Either;
@@ -103,6 +107,80 @@ fn diagnostic_name(name: &str) -> Subscription {
         let _ = cut.push_str(head);
     }
     cut
+}
+
+/// What a batch element's copy reports to the fan.
+#[cfg(not(ruststream_alloc))]
+type Part = (usize, Result<(), (BoxError, FailedMessage)>);
+
+/// Where the publishing of a store's copies leaves the reports of batch elements for the task
+/// that makes them, so a report that waits on a closure holds back no later copy. It holds one
+/// report: a batch's last element reports once, and the fan keeps the next batch out until that
+/// closure is done.
+#[cfg(not(ruststream_alloc))]
+struct Handoff {
+    part: RefCell<Option<Part>>,
+    /// Set once the publishing has ended.
+    finished: Cell<bool>,
+    /// The task waiting in [`take`](Self::take).
+    taker: RefCell<Option<Waker>>,
+    /// The task waiting in [`give`](Self::give).
+    giver: RefCell<Option<Waker>>,
+}
+
+#[cfg(not(ruststream_alloc))]
+impl Handoff {
+    const fn new() -> Self {
+        Self {
+            part: RefCell::new(None),
+            finished: Cell::new(false),
+            taker: RefCell::new(None),
+            giver: RefCell::new(None),
+        }
+    }
+
+    /// Leaves `part`, waiting while an earlier one is still there.
+    async fn give(&self, part: Part) {
+        let mut part = Some(part);
+        poll_fn(|cx| {
+            let mut held = self.part.borrow_mut();
+            if held.is_some() {
+                *self.giver.borrow_mut() = Some(cx.waker().clone());
+                return Poll::Pending;
+            }
+            *held = part.take();
+            if let Some(waker) = self.taker.borrow_mut().take() {
+                waker.wake();
+            }
+            Poll::Ready(())
+        })
+        .await;
+    }
+
+    /// The next part, `None` once the publishing has ended and nothing is left.
+    async fn take(&self) -> Option<Part> {
+        poll_fn(|cx| {
+            if let Some(part) = self.part.borrow_mut().take() {
+                if let Some(waker) = self.giver.borrow_mut().take() {
+                    waker.wake();
+                }
+                return Poll::Ready(Some(part));
+            }
+            if self.finished.get() {
+                return Poll::Ready(None);
+            }
+            *self.taker.borrow_mut() = Some(cx.waker().clone());
+            Poll::Pending
+        })
+        .await
+    }
+
+    fn finish(&self) {
+        self.finished.set(true);
+        if let Some(waker) = self.taker.borrow_mut().take() {
+            waker.wake();
+        }
+    }
 }
 
 /// The records of a store, behind the frame lock.
@@ -293,11 +371,29 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
     /// driver.
     #[cfg(not(ruststream_alloc))]
     pub(crate) async fn drive<Host: Detach>(&self, host: &Host) {
+        // The report of a batch element's copy may wait on the outcome's closure and follow-up,
+        // so it runs beside the publishing: a slow follow-up delays no later copy.
+        let handoff = Handoff::new();
+        join(self.publish_due(host, &handoff), self.gather(&handoff)).await;
+    }
+
+    /// Publishes every copy once it is due, handing the reports of batch elements to `handoff`.
+    #[cfg(not(ruststream_alloc))]
+    async fn publish_due<Host: Detach>(&self, host: &Host, handoff: &Handoff) {
         let mut timer: Option<(Timers::Instant, Timers::Sleep)> = None;
         while let Some(record) = self.next_due(&mut timer).await {
-            if let Some(follow) = self.send(record).await {
+            if let Some(follow) = self.send_by(record, Some(handoff)).await {
                 host.detach(follow).await;
             }
+        }
+        handoff.finish();
+    }
+
+    /// Reports what `handoff` receives to the mount's fan, until the publishing is done.
+    #[cfg(not(ruststream_alloc))]
+    async fn gather(&self, handoff: &Handoff) {
+        while let Some((index, outcome)) = handoff.take().await {
+            self.report(index, outcome).await;
         }
     }
 
@@ -364,6 +460,21 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
     /// of the call), and without a continuation a warning names the failure. The headers are
     /// copied for the continuation only where one is registered.
     async fn send(&self, record: usize) -> Option<Continuation> {
+        self.send_by(
+            record,
+            #[cfg(not(ruststream_alloc))]
+            None,
+        )
+        .await
+    }
+
+    /// [`send`](Self::send), with the report of a batch element's copy handed to `handoff` where
+    /// there is one, and made here otherwise.
+    async fn send_by(
+        &self,
+        record: usize,
+        #[cfg(not(ruststream_alloc))] handoff: Option<&Handoff>,
+    ) -> Option<Continuation> {
         let (payload, headers, options, destination, reaction, oversize) =
             self.record(record, |held| {
                 held.held = Held::Sending;
@@ -441,7 +552,10 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
         {
             failed.react().await;
             if let Some((index, outcome)) = part {
-                self.report(index, outcome).await;
+                match handoff {
+                    Some(handoff) => handoff.give((index, outcome)).await,
+                    None => self.report(index, outcome).await,
+                }
                 return None;
             }
         }
@@ -1293,7 +1407,7 @@ mod tests {
 mod fixed_tests {
     use core::cell::{Cell, RefCell};
     use core::fmt::Write;
-    use core::future::{Future, ready};
+    use core::future::{Future, pending, ready};
     use core::pin::{Pin, pin};
     use core::sync::atomic::{AtomicUsize, Ordering};
     use core::task::{Context, Poll, Waker};
@@ -1303,8 +1417,8 @@ mod fixed_tests {
         AckError, Headers, IncomingMessage, PAYLOAD_CAPACITY, PayloadBuf, Settle,
     };
     use ruststream_runtime::{
-        Clock, Continuation, CopyPublisher, Detach, ErrorHook, Failures, KeptCopies, KeptDelivery,
-        PrepareCopy, PrepareKept, Reaction, Refusal,
+        BatchFan, Clock, Continuation, CopyPublisher, Detach, ErrorHook, Failures, Gathers,
+        KeptCopies, KeptDelivery, PrepareCopy, PrepareKept, Reaction, Refusal,
     };
 
     use super::{CopyStore, diagnostic_name};
@@ -1490,6 +1604,43 @@ mod fixed_tests {
         assert!(
             store.take_record().is_some(),
             "the sent copy gave its record back"
+        );
+    }
+
+    #[test]
+    fn a_follow_up_still_running_does_not_hold_back_the_next_copy() {
+        let (hand, path) = (Hand::default(), Taking::default());
+        let store = CopyStore::<_, 2, _>::on_clock(&path, diagnostic_name("jobs"), &hand)
+            .with_fan(BatchFan::<1>::new());
+        let fan = store.fan().expect("the store holds a fan");
+        let error = ErrorHook::new(async |_: &Failures| {});
+        let follow_up = Continuation::new(pending::<()>());
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(
+            pin!(fan.begin(error, Some(follow_up), 1))
+                .as_mut()
+                .poll(&mut cx)
+                .is_ready()
+        );
+        let element = store.take_record().expect("a free record");
+        store.fill(element, b"element", Headers::new());
+        store.arm(element, Duration::from_millis(1), Some(Reaction::part(0)));
+        let later = store.take_record().expect("a free record");
+        store.fill(later, b"later", Headers::new());
+        store.arm(later, Duration::from_millis(2), None);
+
+        let mut driver = pin!(store.drive(&Beside));
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+        hand.0.set(1);
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+        assert_eq!(path.sent.get(), 1, "the batch element went out");
+        hand.0.set(2);
+        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
+
+        assert_eq!(
+            path.sent.get(),
+            2,
+            "the copy after it waited for the batch's follow-up"
         );
     }
 
