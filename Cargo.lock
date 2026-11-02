@@ -1955,6 +1955,7 @@ dependencies = [
  "ruststream-memory",
  "ruststream-observability",
  "ruststream-runtime",
+ "ruststream-runtime-compio",
  "ruststream-runtime-embassy",
  "ruststream-runtime-tokio",
  "serde",

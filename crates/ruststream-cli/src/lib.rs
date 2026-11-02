@@ -6,6 +6,8 @@
 //! [`ruststream::runtime::cli`](https://docs.rs/ruststream/latest/ruststream/runtime/cli/), whose
 //! overview teaches it. The `tool` feature adds the driver of the `ruststream` binary.
 
+#[cfg(feature = "compio")]
+mod compio_entry;
 #[cfg(feature = "tokio")]
 mod entry;
 #[cfg(feature = "tool")]
@@ -14,6 +16,12 @@ pub mod tool;
 
 #[cfg(feature = "tokio")]
 pub use entry::{AppRuntime, run_main, run_main_on};
+
+/// The compio entry point: what `#[ruststream::app(runtime = compio)]` expands to.
+#[cfg(feature = "compio")]
+pub mod compio {
+    pub use crate::compio_entry::run_main;
+}
 
 #[cfg(feature = "asyncapi")]
 use std::fs;
@@ -25,6 +33,8 @@ use thiserror::Error;
 #[cfg(feature = "asyncapi")]
 use ruststream_asyncapi as asyncapi;
 use ruststream_runtime::Described;
+#[cfg(feature = "compio")]
+use ruststream_runtime_compio::RustStreamError as CompioRunError;
 #[cfg(feature = "tokio")]
 use ruststream_runtime_tokio::RustStreamError;
 
@@ -39,6 +49,14 @@ pub enum CliError {
     #[cfg(feature = "tokio")]
     #[error(transparent)]
     Run(#[from] RustStreamError),
+    /// The compio service returned an error while running.
+    #[cfg(feature = "compio")]
+    #[error(transparent)]
+    RunCompio(#[from] CompioRunError),
+    /// A compio app was asked to run on zero cores.
+    #[cfg(feature = "compio")]
+    #[error("a compio service needs at least one core")]
+    NoCores,
     /// The first argument was not a recognized command.
     #[error("unknown command {0:?}; expected `run` or `asyncapi gen`")]
     UnknownCommand(String),
