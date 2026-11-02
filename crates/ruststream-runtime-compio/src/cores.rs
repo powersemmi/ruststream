@@ -9,7 +9,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::pin::pin;
 use std::thread::{self, ScopedJoinHandle};
 
-use compio::runtime::{self as compio_runtime, RuntimeBuilder};
+use compio::runtime::RuntimeBuilder;
 use compio::signal::ctrl_c;
 #[cfg(unix)]
 use compio::signal::unix::signal as unix_signal;
@@ -19,6 +19,7 @@ use thiserror::Error;
 use tracing::{error, warn};
 
 use crate::Stop;
+use crate::spawn::spawn;
 
 type BoxError = Box<dyn Error + Send + Sync>;
 
@@ -323,7 +324,7 @@ where
     let ended = catch_unwind(AssertUnwindSafe(|| {
         runtime.block_on(async {
             if signals {
-                compio_runtime::spawn(raise_on_signal(stop.clone())).detach();
+                spawn(raise_on_signal(stop.clone())).detach();
             }
             make(core, stop.clone()).await
         })

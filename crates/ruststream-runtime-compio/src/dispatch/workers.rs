@@ -8,7 +8,7 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use compio::runtime::{self, JoinHandle};
+use compio::runtime::JoinHandle;
 use futures::Stream;
 use futures::channel::oneshot;
 use ruststream_core::{BuildContext, IncomingMessage, Subscriber};
@@ -20,6 +20,7 @@ use ruststream_runtime::{
 use tracing::error;
 
 use super::{Fabric, Hosted, Shared, StartLaneError, spawn_dispatch};
+use crate::spawn::spawn;
 use crate::{Stop, yield_now};
 
 /// The lanes a loop started, each reporting when its work has ended.
@@ -60,7 +61,7 @@ where
         crew.push(reported);
         let each = each.clone();
         fabric.run_on(core, subscription, move || {
-            runtime::spawn(async move {
+            spawn(async move {
                 // Built on the core and never leaving it.
                 let mut handle = each();
                 lane.work(async move |item| {
@@ -152,7 +153,7 @@ where
             }
         },
     )?;
-    Ok(runtime::spawn(async move {
+    Ok(spawn(async move {
         read_then_join(
             feed,
             crew,

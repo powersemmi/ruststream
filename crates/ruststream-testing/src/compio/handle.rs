@@ -11,6 +11,7 @@ use ruststream_runtime::testing::{
 use ruststream_runtime::{
     HeadersUnset, MessageBody, PublishBuilder, PublishSink, SinkOutcome, UnnamedCodec, message_of,
 };
+use ruststream_runtime_compio::testing::Runnable;
 
 /// One broker of a compio [`TestApp`](super::TestApp), addressed by its production type with
 /// [`TestApp::broker`](super::TestApp::broker).
@@ -20,6 +21,7 @@ use ruststream_runtime::{
 /// through [`published`](Self::published).
 pub struct BrokerHandle<'a> {
     pub(super) coordinator: &'a Coordinator,
+    pub(super) runnable: Runnable,
     pub(super) scope_id: usize,
     pub(super) broker: &'a dyn TestableBroker,
     pub(super) name: &'static str,
@@ -37,6 +39,7 @@ impl fmt::Debug for BrokerHandle<'_> {
 /// would publish. After the broker takes the message, the publish lets the app handle it.
 pub struct InjectSink<'a> {
     coordinator: &'a Coordinator,
+    runnable: Runnable,
     scope_id: usize,
     broker: &'a dyn TestableBroker,
 }
@@ -69,7 +72,9 @@ impl PublishSink for InjectSink<'_> {
             .record_published(self.scope_id, recorded, started)
             .run()
             .await;
-        super::settled(self.coordinator).await.map_err(Into::into)
+        super::settled(self.coordinator, &self.runnable)
+            .await
+            .map_err(Into::into)
     }
 }
 
@@ -87,6 +92,7 @@ impl<'a> BrokerHandle<'a> {
     {
         let sink = InjectSink {
             coordinator: self.coordinator,
+            runnable: self.runnable.clone(),
             scope_id: self.scope_id,
             broker: self.broker,
         };

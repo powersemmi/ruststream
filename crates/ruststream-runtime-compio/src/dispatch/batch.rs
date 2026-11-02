@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::task::Poll;
 
 use bytes::BytesMut;
-use compio::runtime::{self, JoinHandle};
+use compio::runtime::JoinHandle;
 use ruststream_core::{BatchSlot, BatchStream, BatchSubscriber};
 use ruststream_runtime::{
     BatchHandler, DispatchFailure, RING, RetryCopies, Turn, Workers, placed, run_batch,
@@ -18,6 +18,7 @@ use tracing::error;
 use super::slots::{Filled, Stock};
 use super::workers::{read_then_join, start_lanes};
 use super::{Fabric, Hosted, Shared, StartLaneError};
+use crate::spawn::spawn;
 use crate::{Stop, yield_now};
 
 /// Spawns a task that drives `subscriber` through a batch `handler`, one batch per invocation.
@@ -64,7 +65,7 @@ where
         failure,
     });
     if workers.is_sequential() {
-        return Ok(runtime::spawn(async move {
+        return Ok(spawn(async move {
             batch_loop(subscriber, &shared, &stop, batch_size).await;
         }));
     }
@@ -99,7 +100,7 @@ where
         }
     })?;
     let mut subscriber = subscriber;
-    Ok(runtime::spawn(async move {
+    Ok(spawn(async move {
         read_then_join(
             feed,
             crew,

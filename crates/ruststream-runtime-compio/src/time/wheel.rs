@@ -25,7 +25,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
-use compio::runtime;
+use crate::spawn::spawn;
 use compio::time::sleep_until;
 use futures::{FutureExt, select_biased};
 
@@ -142,7 +142,7 @@ impl Wheel {
             wheel
         });
         if wheel.take_driver_seat() {
-            runtime::spawn(drive(wheel)).detach();
+            spawn(drive(wheel)).detach();
         }
         wheel
     }

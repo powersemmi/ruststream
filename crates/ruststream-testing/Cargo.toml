@@ -322,6 +322,12 @@ name = "compio_retry"
 path = "tests/compio_retry.rs"
 required-features = ["compio", "json"]
 
+# What the compio `TestApp` takes for settled: the clock's waits, a long reaction, a stall.
+[[test]]
+name = "compio_quiescence"
+path = "tests/compio_quiescence.rs"
+required-features = ["compio", "json"]
+
 # The `.error` of a compio service's failed reply, through the compio `TestApp`.
 [[test]]
 name = "compio_error"

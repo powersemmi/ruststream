@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use compio::runtime;
+use crate::spawn::spawn;
 use event_listener::Event;
 use ruststream_runtime::{Continuation, Detach};
 
@@ -94,7 +94,7 @@ impl Tasks {
     {
         self.0.live.fetch_add(1, Ordering::AcqRel);
         let live = Live(Arc::clone(&self.0));
-        runtime::spawn(async move {
+        spawn(async move {
             let _live = live;
             work.await;
         })

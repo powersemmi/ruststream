@@ -22,7 +22,10 @@ mod clock;
 mod cores;
 #[doc(hidden)]
 pub mod dispatch;
+#[cfg(feature = "testing")]
+mod quiescence;
 mod sink;
+mod spawn;
 mod stop;
 mod tasks;
 pub mod time;
@@ -56,6 +59,7 @@ pub use yield_now::{YieldNow, yield_now};
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 pub mod testing {
+    pub use crate::quiescence::{Quiescence, Runnable};
     pub use crate::virtual_clock::VirtualClock;
     use crate::virtual_clock::armed;
 

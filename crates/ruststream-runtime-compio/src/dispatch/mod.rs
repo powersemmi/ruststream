@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use bytes::BytesMut;
-use compio::runtime::{self, JoinHandle};
+use compio::runtime::JoinHandle;
 use futures::Stream;
 use pin_project_lite::pin_project;
 use ruststream_core::{BuildContext, ReadyHint, Subscriber};
@@ -27,6 +27,7 @@ use ruststream_runtime::{
     run_sequential,
 };
 
+use crate::spawn::spawn;
 use crate::{Stop, Tasks};
 
 pub use batch::spawn_batch_dispatch;
@@ -183,7 +184,7 @@ where
     C: BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
-    runtime::spawn(run_sequential(
+    spawn(run_sequential(
         Yielding::new(subscriber),
         handler,
         stop,

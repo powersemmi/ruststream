@@ -8,14 +8,16 @@
 
 use std::any::{TypeId, type_name};
 use std::fmt;
-use std::pin::pin;
+use std::future::poll_fn;
+use std::pin::{Pin, pin};
+use std::task::Poll;
 use std::time::Duration;
 
 use futures::future::{self, Either};
 use ruststream_runtime::ConnectedLifecycle;
 use ruststream_runtime::OutSlot;
 use ruststream_runtime::testing::{Coordinator, PublishedAssertions, TestError, Within};
-use ruststream_runtime_compio::testing::{VirtualClock, armed_timers};
+use ruststream_runtime_compio::testing::{Quiescence, Runnable, VirtualClock, armed_timers};
 use ruststream_runtime_compio::{
     App, InProcessError, InProcessStart, RunningApp, RustStreamError, StateSource, yield_now,
 };
@@ -31,16 +33,6 @@ pub use handle::{BrokerHandle, InjectSink};
 /// quiescence: a guard against a handler that requeues forever.
 const MAX_STEPS: usize = 10_000;
 
-/// How many turns without progress make a reaction that waits on the virtual clock a standstill.
-const QUIET_TURNS: usize = 256;
-
-/// How many quiet stretches with no timer armed make a reaction stalled.
-const STALL_ROUNDS: usize = 64;
-
-/// How many turns of the runtime a step gives the app's tasks after the clock moved, so a timer
-/// that fell due has run its task before the step looks for what is in flight.
-const TURNS: usize = 16;
-
 /// A test harness around a compio service's production app.
 ///
 /// Takes the app `main` builds, unchanged. [`start`](Self::start) connects each of its brokers
@@ -51,8 +43,9 @@ const TURNS: usize = 16;
 ///
 /// The harness holds the runner's virtual clock from `start` until it is dropped: the app's
 /// retries, batch deadlines and `ruststream::time::sleep` wait until [`advance`](Self::advance)
-/// moves the clock. A handler that calls `compio::time::sleep` directly waits on compio's own
-/// timers, which `advance` does not reach. One `TestApp` runs at a time on a thread.
+/// moves the clock. Work that waits on compio's own timers or on I/O is not advanced: with nothing
+/// else to run and no timer of the clock armed, `settle` returns [`TestError::Stalled`]. One
+/// `TestApp` runs at a time on a thread.
 ///
 /// # Examples
 ///
@@ -107,6 +100,7 @@ pub struct TestApp {
     running: RunningApp,
     coordinator: Coordinator,
     clock: VirtualClock,
+    quiescence: Quiescence,
 }
 
 impl fmt::Debug for TestApp {
@@ -164,6 +158,8 @@ impl TestApp {
     }
 
     async fn run<A: App>(app: A, state: StateSource<A::State>) -> Result<Self, TestError> {
+        // Taken before the app starts, so every task of its startup is followed.
+        let quiescence = Quiescence::take();
         let clock = VirtualClock::take();
         let coordinator = Coordinator::in_place(MAX_STEPS);
         let start = InProcessStart::new(coordinator.clone(), registration_of, state);
@@ -172,6 +168,7 @@ impl TestApp {
             running,
             coordinator,
             clock,
+            quiescence,
         })
     }
 
@@ -183,7 +180,7 @@ impl TestApp {
     ///
     /// Returns [`TestError::NotQuiescent`] if the app keeps producing work.
     pub async fn settle(&self) -> Result<(), TestError> {
-        settled(&self.coordinator).await
+        settled(&self.coordinator, &self.quiescence.reader()).await
     }
 
     /// Moves the virtual clock forward by `by` and lets the app handle what fell due: a retry
@@ -194,9 +191,6 @@ impl TestApp {
     /// As [`settle`](Self::settle).
     pub async fn advance(&self, by: Duration) -> Result<(), TestError> {
         self.clock.advance(by);
-        for _ in 0..TURNS {
-            yield_now().await;
-        }
         self.settle().await
     }
 
@@ -213,14 +207,16 @@ impl TestApp {
             running,
             coordinator,
             clock,
+            quiescence,
         } = self;
         let stopped = {
+            let runnable = quiescence.reader();
             let mut shutdown = pin!(running.shutdown());
             // Work the app holds that waits on the clock runs to its end: the clock moves from
             // one armed deadline to the next until the app has stopped.
             loop {
-                let quiet = pin!(quiet());
-                match future::select(shutdown.as_mut(), quiet).await {
+                let idle = pin!(idle(&runnable));
+                match future::select(shutdown.as_mut(), idle).await {
                     Either::Left((stopped, _)) => break stopped,
                     Either::Right(((), _)) => {
                         if !clock.advance_to_next() {
@@ -260,6 +256,7 @@ impl TestApp {
             .expect("an in-process broker connected through its registration");
         BrokerHandle {
             coordinator: &self.coordinator,
+            runnable: self.quiescence.reader(),
             scope_id,
             broker,
             name: connected.name(),
@@ -278,39 +275,60 @@ impl TestApp {
 /// Drives the reaction to a standstill: everything delivered is handled, and what remains waits on
 /// the virtual clock.
 ///
-/// A handler that sleeps on the app's clock holds its delivery, so the reaction is not over by the
-/// coordinator's count. compio exposes no signal that its runtime is idle, so a stretch of turns
-/// in which nothing finished, with a timer armed, is taken for a reaction that waits on the clock.
-pub(crate) async fn settled(coordinator: &Coordinator) -> Result<(), TestError> {
-    let driven = {
-        let drive = pin!(coordinator.drive());
-        let standstill = pin!(standstill());
-        match future::select(drive, standstill).await {
-            Either::Left((driven, _)) => driven,
-            Either::Right((stalled, _)) => stalled,
+/// The app is settled once no task of its runtime is runnable and either nothing is in flight or a
+/// timer of the virtual clock waits: the work that remains is the clock's to release. Nothing
+/// runnable, a delivery in flight and no timer armed is [`TestError::Stalled`]: the delivery waits
+/// on something neither the app nor the clock wakes (a handler that sleeps on `compio::time`
+/// directly, whose timer `advance` does not move, ends here too).
+///
+/// compio exposes no signal that its runtime is idle, so the runner follows its own tasks
+/// ([`Quiescence`]). The harness yields first, which lets every task woken before the yield run,
+/// and reads the count after.
+pub(crate) async fn settled(
+    coordinator: &Coordinator,
+    runnable: &Runnable,
+) -> Result<(), TestError> {
+    // The step budget counts from here; `drive` begins it again only when it is made anew.
+    coordinator.begin_step();
+    let mut drive: Option<Pin<Box<_>>> = None;
+    let settled = loop {
+        yield_now().await;
+        // The budget is read before `drive` is: both measure from the same step, so `drive` would
+        // report the same exhaustion, with however many deliveries ran in this turn on top.
+        if coordinator.exhausted() {
+            break Err(TestError::NotQuiescent {
+                processed: MAX_STEPS,
+            });
         }
+        let drive_now = drive.get_or_insert_with(|| Box::pin(coordinator.drive()));
+        // `drive` is ready exactly when nothing is in flight; its error is the exhaustion above.
+        let nothing_in_flight = poll_fn(|cx| Poll::Ready(drive_now.as_mut().poll(cx)))
+            .await
+            .is_ready();
+        if nothing_in_flight {
+            // Read again at the next look: work may have been set off since.
+            drive = None;
+        }
+        if runnable.count() > 0 {
+            continue;
+        }
+        break if nothing_in_flight || armed_timers() > 0 {
+            Ok(())
+        } else {
+            Err(TestError::Stalled)
+        };
     };
     coordinator.hooks().raise_failure();
-    driven
+    settled
 }
 
-/// Resolves once the runtime has given the app's tasks [`QUIET_TURNS`] turns while a timer of the
-/// virtual clock waits, or with [`TestError::Stalled`] after [`STALL_ROUNDS`] such stretches with
-/// none armed.
-async fn standstill() -> Result<(), TestError> {
-    for _ in 0..STALL_ROUNDS {
-        quiet().await;
-        if armed_timers() > 0 {
-            return Ok(());
-        }
-    }
-    Err(TestError::Stalled)
-}
-
-/// Gives the runtime [`QUIET_TURNS`] turns.
-async fn quiet() {
-    for _ in 0..QUIET_TURNS {
+/// Resolves once no task of the app's runtime is runnable, after the harness has yielded to them.
+async fn idle(runnable: &Runnable) {
+    loop {
         yield_now().await;
+        if runnable.count() == 0 {
+            return;
+        }
     }
 }
 

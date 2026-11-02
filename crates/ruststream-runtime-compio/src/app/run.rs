@@ -10,7 +10,8 @@ use std::pin::pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use compio::runtime;
+use crate::spawn::spawn;
+use compio::runtime::JoinHandle;
 use futures::future::{self, Either};
 use tracing::{debug, info, warn};
 
@@ -250,7 +251,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         // Core 0 serves its own mailbox beside the app, as every other core does for its own.
         let mut handles: Vec<Loop> = vec![{
             let (fabric, stop) = (fabric.clone(), stop.clone());
-            runtime::spawn(async move {
+            spawn(async move {
                 fabric.serve(0, &stop).await;
                 Ok(())
             })
@@ -610,8 +611,8 @@ async fn start_subscribers<State: Send + Sync>(
 /// Holds `handle` in a task that carries the subscription's place in the health count, so the
 /// count drops with the loop however it ends. Dropping or cancelling the returned handle cancels
 /// the loop.
-fn counted(handle: runtime::JoinHandle<()>, consuming: Consuming) -> Loop {
-    runtime::spawn(async move {
+fn counted(handle: JoinHandle<()>, consuming: Consuming) -> Loop {
+    spawn(async move {
         let _consuming = consuming;
         handle.await
     })
@@ -637,7 +638,7 @@ async fn run_after_startup<State: Send + Sync>(
 /// [`RunningApp::shutdown`]: the process may stay alive serving healthz from a sibling task, which
 /// is exactly when the probe matters.
 fn watch_for_failure(stop: Stop, health: HealthReport) {
-    runtime::spawn(async move {
+    spawn(async move {
         stop.cancelled().await;
         if let Some(reason) = stop.failure() {
             health.transition(HealthState::Failed { reason });
