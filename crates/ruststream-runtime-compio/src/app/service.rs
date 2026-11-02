@@ -29,7 +29,7 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Mounted, StateInit};
 ///
 /// `RustStream` binds one or more brokers, the handlers attached to each, and the service
 /// lifecycle into a single runnable unit. Handlers are registered through [`with_broker`], which
-/// hands a scope bound to that broker; nothing connects or subscribes until [`run`]. Brokers are
+/// hands a scope bound to that broker; nothing connects or subscribes until the app runs. Brokers are
 /// held type-erased (only their lifecycle), so a single service can mix broker types.
 ///
 /// The type parameter `Layers` is the global middleware stack applied to every per-message
@@ -50,7 +50,6 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Mounted, StateInit};
 /// [`with_broker`]: Self::with_broker
 /// [`layer`]: Self::layer
 /// [`on_startup`]: Self::on_startup
-/// [`run`]: Self::run
 pub struct RustStream<Layers = Identity, State = (), Pipeline = PublishIdentity, Phase = Wired> {
     pub(super) info: AppInfo,
     pub(super) brokers: Vec<RegisteredBroker>,
@@ -349,7 +348,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         self
     }
 
-    /// Sets how long [`run`](Self::run) waits for in-flight handlers to finish after shutdown is
+    /// Sets how long the running app waits for in-flight handlers to finish after shutdown is
     /// triggered. After the timeout, the remaining handler tasks are aborted. The same bound then
     /// applies to draining post-settle `and_after` continuations; on timeout they are abandoned
     /// (they are at-most-once side effects, so this loses follow-up work, never a settlement).

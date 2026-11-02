@@ -23,7 +23,7 @@ use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
 /// which returns the mount chain: `|b| b.include(confirm).out_reply(Publish).include(audit)`.
 /// The chain carries every registration's type, and the app mounts it, wrapped with its global
 /// middleware stack `Layers`, once the closure returns; nothing starts before
-/// [`RustStream::run`](crate::RustStream::run).
+/// the app runs.
 ///
 /// The scope is a chain itself. [`after_startup`](Self::after_startup) and
 /// [`include_router`](Self::include_router) are steps that return the grown scope, `Pre` is what
