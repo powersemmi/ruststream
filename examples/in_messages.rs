@@ -108,10 +108,11 @@ impl Codec for Registry {
         }))
     }
 
-    fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
-        let mut framed = BytesMut::from(&[0u8][..]);
-        framed.extend_from_slice(&JsonCodec.encode(value)?);
-        Ok(framed)
+    /// The registry is read here, never written: the producer that owns it frames its records.
+    fn encode<T: Serialize>(&self, _value: &T) -> Result<BytesMut, CodecError> {
+        Err(CodecError::Encode(
+            "the registry codec reads records only".into(),
+        ))
     }
 
     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
@@ -291,6 +292,14 @@ mod tests {
             .assert_called(2)
             .assert_last_failed_to_decode();
         Ok(())
+    }
+
+    #[test]
+    fn the_registry_codec_refuses_to_write_a_record() {
+        assert!(
+            Registry.encode(&OrderCreated { id: 5 }).is_err(),
+            "a record the codec cannot name is not written"
+        );
     }
 
     #[tokio::test]

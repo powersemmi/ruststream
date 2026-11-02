@@ -500,8 +500,9 @@ pub trait Codec: Send + Sync + Clone {
 ///         Ok(Record(payload.first().and_then(|schema| Self::record(*schema))))
 ///     }
 ///
-///     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
-///         JsonCodec.encode(value)
+///     /// The registry is read here, never written: the producer that owns it frames its records.
+///     fn encode<T: Serialize>(&self, _value: &T) -> Result<BytesMut, CodecError> {
+///         Err(CodecError::Encode("the registry codec reads records only".into()))
 ///     }
 ///
 ///     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
