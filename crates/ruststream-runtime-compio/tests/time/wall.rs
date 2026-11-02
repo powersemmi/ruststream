@@ -224,3 +224,19 @@ fn a_sleep_polled_after_its_core_is_gone_goes_on_where_it_is_polled() {
     Runtime::new().expect("a compio runtime").block_on(sleep);
     assert!(started.elapsed() >= DELAY, "the sleep ended early");
 }
+
+#[test]
+fn a_sleep_of_an_ended_runtime_stays_pending_once_the_next_runtime_has_slept() {
+    let mut old = time::sleep(Duration::from_secs(60));
+    Runtime::new()
+        .expect("a compio runtime")
+        .block_on(async { assert!(poll_once(&mut old).is_pending()) });
+    Runtime::new().expect("a compio runtime").block_on(async {
+        // The new runtime takes the thread's wheel before the old sleep is polled again.
+        time::sleep(Duration::from_millis(1)).await;
+        assert!(
+            poll_once(&mut old).is_pending(),
+            "the old sleep ended early"
+        );
+    });
+}

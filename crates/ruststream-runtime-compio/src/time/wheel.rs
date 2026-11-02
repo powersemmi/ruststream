@@ -202,7 +202,7 @@ impl Wheel {
     /// Polls an armed timer, keeping `waker` as the one to wake.
     pub(super) fn poll(&self, key: &Key, waker: &Waker) -> Status {
         let mut timers = self.lock();
-        if !timers.driven {
+        if !timers.driven || key.epoch != timers.epoch {
             return Status::Orphaned;
         }
         if !timers.is_armed(key) {
