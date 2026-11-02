@@ -171,6 +171,79 @@ fn a_handler_stuck_past_the_timeout_is_cancelled_at_the_cap() {
 }
 
 #[test]
+fn the_brokers_close_only_after_a_lane_on_another_core_is_gone() {
+    let log = Log::default();
+    let (source, line) = wire("orders", &log);
+    let poster = line.poster();
+    let (began, mut handling) = mpsc::unbounded();
+    let after = log.clone();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .shutdown_timeout(Duration::from_millis(20))
+        .after_startup(async move |_state: Arc<()>| {
+            poster.post(1);
+            poster.post(2);
+            Ok::<_, Infallible>(())
+        })
+        .after_shutdown(async move |_state: Arc<()>| {
+            after.add("after_shutdown");
+            Ok::<_, Infallible>(())
+        })
+        .with_broker(LocalMemoryBroker::<8>::new(), {
+            let log = log.clone();
+            move |b| {
+                b.include(
+                    subscriber(
+                        source,
+                        On(move |_| {
+                            let (log, began) = (log.clone(), began.clone());
+                            async move {
+                                let _stuck = Dropped(log, "handler dropped");
+                                let _ = began.unbounded_send(());
+                                // A handler that holds its core past the cap, as a blocking call
+                                // does: the cap of that core can only start once it lets go.
+                                if thread::current()
+                                    .name()
+                                    .is_some_and(|name| name.starts_with("ruststream-core"))
+                                {
+                                    thread::sleep(Duration::from_millis(100));
+                                }
+                                pending::<()>().await;
+                                Ok(())
+                            }
+                        }),
+                    )
+                    .build(),
+                )
+                .workers(Workers::pool(NonZeroUsize::new(2).expect("two")))
+            }
+        });
+
+    let cores = Cores::new(NonZeroUsize::new(3).expect("three"))
+        .unpinned()
+        .without_signals();
+    run_guarded(cores, move |cores| {
+        app.run_until(cores, async move {
+            handling.next().await.expect("the first handler started");
+            handling.next().await.expect("the second handler started");
+        })
+    })
+    .expect("the run ended in time")
+    .expect("the cap ends the run cleanly");
+
+    let entries = log.entries();
+    let closed = entries.iter().position(|entry| *entry == "after_shutdown");
+    let last_dropped = entries
+        .iter()
+        .rposition(|entry| *entry == "handler dropped");
+    assert!(
+        closed
+            .zip(last_dropped)
+            .is_some_and(|(closed, dropped)| dropped < closed),
+        "every handler is gone before the brokers close: {entries:?}"
+    );
+}
+
+#[test]
 fn a_lane_stuck_on_another_core_is_cancelled_at_the_cap_and_the_run_ends() {
     let log = Log::default();
     let (source, line) = wire("orders", &log);

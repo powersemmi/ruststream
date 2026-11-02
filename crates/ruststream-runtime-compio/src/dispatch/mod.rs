@@ -31,7 +31,7 @@ use crate::spawn::spawn;
 use crate::{Stop, Tasks};
 
 pub use batch::spawn_batch_dispatch;
-pub use cores::{Fabric, Layout, LayoutError, Mount, StartLaneError};
+pub use cores::{Fabric, LaneGuard, Layout, LayoutError, Mount, StartLaneError};
 pub use workers::spawn_dispatch_workers;
 
 /// What one subscription's loop dispatches under.

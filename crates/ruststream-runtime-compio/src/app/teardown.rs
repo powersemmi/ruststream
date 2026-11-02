@@ -16,6 +16,7 @@ use futures::future::{self, Either};
 use ruststream_runtime::Clock;
 use tracing::{debug, info, warn};
 
+use crate::dispatch::Fabric;
 use crate::{BoxError, CompioClock, ConnectedLifecycle, LocalBoxFuture, Stop, Tasks};
 
 use super::{LifecycleHook, RustStreamError};
@@ -107,6 +108,8 @@ pub(crate) struct Teardown {
     pub(crate) shutdown_timeout: Option<Duration>,
     /// The work deliveries left behind, which shutdown waits for.
     pub(crate) continuations: Tasks,
+    /// The lanes on the other cores, which are gone before the brokers close.
+    pub(crate) fabric: Fabric,
 }
 
 impl Teardown {
@@ -127,6 +130,7 @@ impl Teardown {
             brokers,
             shutdown_timeout,
             continuations,
+            fabric,
         } = self;
 
         stop.begin();
@@ -138,6 +142,9 @@ impl Teardown {
         // that refuses to close must not leave the other brokers open or skip `after_shutdown`.
         // The first failure is the one returned.
         let drained = drain_handles(handles.take(), shutdown_timeout).await;
+        // The loops of core 0 are over, but a lane on another core is told to go by its own
+        // core's cap, so wait for it to be dropped: a handler must not outlive the brokers.
+        fabric.lanes_gone().await;
 
         // Handlers have stopped, so no new post-settle continuations can be spawned: wait for
         // the in-flight ones, on every core, bounded by the same shutdown timeout. They are

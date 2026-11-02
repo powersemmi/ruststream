@@ -283,7 +283,15 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             started = run_after_startup(after_startup, &state).await;
         }
         if let Err(err) = started {
-            unwind_started(&stop, handles, shutdown_timeout, connected, &continuations).await;
+            unwind_started(
+                &stop,
+                handles,
+                shutdown_timeout,
+                connected,
+                &continuations,
+                &fabric,
+            )
+            .await;
             return Err(err);
         }
 
@@ -299,6 +307,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
                 brokers: connected,
                 shutdown_timeout,
                 continuations,
+                fabric,
             },
             health,
         })
@@ -665,6 +674,7 @@ async fn unwind_started(
     shutdown_timeout: Option<Duration>,
     brokers: Vec<ConnectedEntry>,
     continuations: &Tasks,
+    fabric: &Fabric,
 ) {
     stop.cancel();
     if let Err(err) = drain_handles(handles, shutdown_timeout).await {
@@ -674,6 +684,7 @@ async fn unwind_started(
             "draining dispatch tasks failed during the startup unwind",
         );
     }
+    fabric.lanes_gone().await;
     drain_continuations(continuations, shutdown_timeout).await;
     unwind_connected(brokers).await;
 }

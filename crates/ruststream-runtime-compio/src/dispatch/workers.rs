@@ -60,8 +60,10 @@ where
         let (ended, reported) = oneshot::channel();
         crew.push(reported);
         let each = each.clone();
+        let alive = fabric.lane_guard();
         fabric.run_on(core, subscription, move || {
             spawn(async move {
+                let _alive = alive;
                 // Built on the core and never leaving it.
                 let mut handle = each();
                 let mut budget = Budget::default();

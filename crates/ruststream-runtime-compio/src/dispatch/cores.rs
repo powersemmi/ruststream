@@ -3,9 +3,11 @@
 
 use std::fmt::{self, Debug, Formatter, Write};
 use std::iter;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use compio::runtime::{JoinError, JoinHandle};
+use event_listener::Event;
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt, pin_mut, select};
@@ -143,6 +145,27 @@ struct Mail {
 pub struct Fabric {
     senders: Arc<[UnboundedSender<Mail>]>,
     inboxes: Arc<Mutex<Vec<Option<UnboundedReceiver<Mail>>>>>,
+    lanes: Arc<Lanes>,
+}
+
+/// How many lanes exist, on any core, and the wait for the last one to be gone.
+#[derive(Debug, Default)]
+struct Lanes {
+    alive: AtomicUsize,
+    gone: Event,
+}
+
+/// A lane's place in the count of live lanes, held by the lane for as long as it exists: it is
+/// released when the lane ends, is cancelled with its core, or is dropped unstarted.
+#[derive(Debug)]
+pub struct LaneGuard(Arc<Lanes>);
+
+impl Drop for LaneGuard {
+    fn drop(&mut self) {
+        if self.0.alive.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.0.gone.notify(usize::MAX);
+        }
+    }
 }
 
 impl Debug for Fabric {
@@ -166,6 +189,32 @@ impl Fabric {
         Self {
             senders: senders.into(),
             inboxes: Arc::new(Mutex::new(inboxes)),
+            lanes: Arc::default(),
+        }
+    }
+
+    /// A place in the count of live lanes, for a lane about to be started: the lane holds it for
+    /// its whole life.
+    #[must_use]
+    pub fn lane_guard(&self) -> LaneGuard {
+        self.lanes.alive.fetch_add(1, Ordering::AcqRel);
+        LaneGuard(Arc::clone(&self.lanes))
+    }
+
+    /// Resolves once no lane exists on any core: every handler a lane ran is finished or dropped.
+    ///
+    /// A lane cancelled at the shutdown cap is gone only when its own core has dropped it, which
+    /// this waits for.
+    pub async fn lanes_gone(&self) {
+        loop {
+            if self.lanes.alive.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            let listener = self.lanes.gone.listen();
+            if self.lanes.alive.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            listener.await;
         }
     }
 
