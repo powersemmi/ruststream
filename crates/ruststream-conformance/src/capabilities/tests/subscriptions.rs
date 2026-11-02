@@ -79,6 +79,9 @@ enum BatchFault {
     Singletons,
     /// Every fill reports a failure with the batch it collected still in the slot.
     FailsWithMessages,
+    /// A fill that collected messages reports the end of the subscription with them still in the
+    /// slot, so the runtime would drop them unhandled.
+    EndsWithMessages,
 }
 
 /// A seek fault of [`FaultySeeker`].
@@ -252,13 +255,14 @@ impl<Log: LogMode> BatchSubscriber for FaultySubscriber<Log> {
         let size = match self.batch {
             Some(BatchFault::Oversized) => size.saturating_add(1),
             Some(BatchFault::Singletons) => NonZeroUsize::MIN,
-            Some(BatchFault::FailsWithMessages) | None => size,
+            Some(BatchFault::FailsWithMessages | BatchFault::EndsWithMessages) | None => size,
         };
         Wrapping {
             inner: Box::pin(self.inner.batches(size)),
             lent: Vec::new(),
             settle,
             fails: matches!(self.batch, Some(BatchFault::FailsWithMessages)),
+            ends: matches!(self.batch, Some(BatchFault::EndsWithMessages)),
         }
     }
 }
@@ -270,6 +274,7 @@ struct Wrapping<Inner, Log> {
     lent: Vec<MemoryMessage<Log>>,
     settle: Option<SettleFault>,
     fails: bool,
+    ends: bool,
 }
 
 // Boxed and owned parts only; nothing is pinned in place.
@@ -296,6 +301,9 @@ where
         );
         if this.fails {
             return Poll::Ready(Some(Err(StreamError)));
+        }
+        if this.ends {
+            return Poll::Ready(None);
         }
         Poll::Ready(step.map(|filled| filled.map_err(|never| match never {})))
     }
@@ -596,6 +604,17 @@ async fn batches_catch_a_failed_fill_that_leaves_messages_in_the_slot() {
     batches(
         MemoryBroker::new,
         |name| FaultySource::batching(name, BatchFault::FailsWithMessages),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "a subscription that ended must have handed its partial batch over")]
+async fn batches_catch_an_end_that_keeps_a_partial_batch_in_the_slot() {
+    batches(
+        MemoryBroker::new,
+        |name| FaultySource::batching(name, BatchFault::EndsWithMessages),
         |broker| broker.publisher(),
     )
     .await;

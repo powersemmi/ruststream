@@ -3,7 +3,7 @@
 //!
 //! A check drives the stream the way the runtime does: it lends one slot, drains it after each
 //! fill and lends the same one again. A broker that keeps messages in the slot it was handed
-//! back, grows it past the size, or touches it when the subscription ends fails here.
+//! back, grows it past the size, or ends the subscription with messages still in the slot fails here.
 
 use std::num::NonZeroUsize;
 use std::pin::Pin;
@@ -65,7 +65,7 @@ where
                 assert_eq!(
                     this.slot.drain().count(),
                     0,
-                    "a subscription that ended must leave the slot untouched",
+                    "a subscription that ended must have handed its partial batch over first and leave the slot empty",
                 );
                 Poll::Ready(None)
             }

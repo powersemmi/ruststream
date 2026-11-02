@@ -94,7 +94,9 @@ impl<Message: MaybeSend> BatchSlot for Vec<Message> {
 ///
 /// A poll that returns `Poll::Pending` may leave messages in the slot: the collection resumes
 /// from them on the next poll, so the state of a half-filled batch lives in the slot and is
-/// cancel-safe between polls.
+/// cancel-safe between polls. A partial batch is handed to the handler before the subscription
+/// ends: the end is reported on a poll that finds the slot empty, because the runtime drops the
+/// slot with the stream.
 pub trait BatchStream<Slot> {
     /// What a failed fill reports.
     type Error;
@@ -104,7 +106,8 @@ pub trait BatchStream<Slot> {
     /// - `Ready(Some(Ok(())))`: the slot holds a batch of at least one message.
     /// - `Ready(Some(Err(_)))`: the fill failed and the slot is empty. The next poll starts a new
     ///   batch.
-    /// - `Ready(None)`: the subscription ended and the slot is untouched.
+    /// - `Ready(None)`: the subscription ended and the slot is empty. Messages collected before the
+    ///   end go out first as a batch, and the end is reported on the next poll.
     fn poll_fill(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
