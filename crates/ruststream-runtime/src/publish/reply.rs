@@ -31,22 +31,17 @@ use crate::{PayloadForm, Publisher, TransactionalPublisher};
 pub struct BatchRefusal {
     /// The first reply that did not go out.
     lost_from: usize,
-    /// The refused reply and what came back for it, when a publish was refused.
-    refused: Option<(usize, Refusal)>,
-    /// The cause when no single reply was refused: the transaction could not begin or commit.
-    error: Option<BoxError>,
+    /// Why they did not.
+    cause: Cause,
 }
 
-/// The cause of a batch reply refused with no error of its own.
-fn refused_reply() -> BoxError {
-    #[cfg(ruststream_alloc)]
-    {
-        BoxError::from("a batch reply was refused")
-    }
-    #[cfg(not(ruststream_alloc))]
-    {
-        BoxError::msg("a batch reply was refused")
-    }
+/// Why a batch's replies did not all go out.
+#[derive(Debug)]
+enum Cause {
+    /// The reply at the index was refused, with what came back for it.
+    Refused(usize, Refusal),
+    /// No single reply was refused: the transaction could not begin or commit.
+    Whole(BoxError),
 }
 
 impl BatchRefusal {
@@ -54,8 +49,7 @@ impl BatchRefusal {
     fn at(index: usize, lost_from: usize, refusal: Refusal) -> Self {
         Self {
             lost_from,
-            refused: Some((index, refusal)),
-            error: None,
+            cause: Cause::Refused(index, refusal),
         }
     }
 
@@ -63,17 +57,15 @@ impl BatchRefusal {
     fn whole(error: BoxError) -> Self {
         Self {
             lost_from: 0,
-            refused: None,
-            error: Some(error),
+            cause: Cause::Whole(error),
         }
     }
 
     /// The cause alone.
     pub(crate) fn into_error(self) -> BoxError {
-        match (self.refused, self.error) {
-            (Some((_, refusal)), _) => refusal.into_error(),
-            (None, Some(error)) => error,
-            (None, None) => refused_reply(),
+        match self.cause {
+            Cause::Refused(_, refusal) => refusal.into_error(),
+            Cause::Whole(error) => error,
         }
     }
 
@@ -93,32 +85,28 @@ impl BatchRefusal {
         encode: impl Fn(&T) -> CopiedPayload,
         lent: impl FnOnce(usize, usize) -> CopiedPayload,
     ) -> (BoxError, Vec<FailedMessage>) {
-        let Self {
-            lost_from,
-            refused,
-            error,
-        } = self;
-        let (refused_at, refusal) = match refused {
-            Some((index, refusal)) => (Some(index), Some(refusal)),
-            None => (None, None),
+        let Self { lost_from, cause } = self;
+        let (cause, refused_at, mut sent) = match cause {
+            Cause::Refused(index, refusal) => {
+                let (error, message) = refusal.into_message(name, lent);
+                (error, Some(index), Some(message))
+            }
+            Cause::Whole(error) => (error, None, None),
         };
-        let mut sent = refusal.map(|refusal| refusal.into_message(name, lent));
-        let mut cause = error;
         let lost = replies
             .iter()
             .enumerate()
             .skip(lost_from)
             .map(|(index, reply)| {
                 if Some(index) == refused_at
-                    && let Some((error, message)) = sent.take()
+                    && let Some(message) = sent.take()
                 {
-                    cause = Some(error);
                     return message;
                 }
                 FailedMessage::new(name, Some(encode(reply)), HeaderSet::new())
             })
             .collect();
-        (cause.unwrap_or_else(|| refused_reply()), lost)
+        (cause, lost)
     }
 }
 
@@ -140,25 +128,18 @@ impl BatchRefusal {
         encode: impl Fn(&T) -> CopiedPayload,
         lent: impl FnOnce(usize, usize) -> CopiedPayload,
     ) -> heapless::Vec<Failed, ELEMENTS> {
-        let Self {
-            lost_from,
-            refused,
-            error,
-        } = self;
-        let (refused_at, refusal) = match refused {
-            Some((index, refusal)) => (Some(index), Some(refusal)),
-            None => (None, None),
+        let Self { lost_from, cause } = self;
+        let (cause, refused_at, mut sent) = match cause {
+            Cause::Refused(index, refusal) => {
+                let (error, message) = refusal.into_message(name, lent);
+                (error, Some(index), Some(message))
+            }
+            Cause::Whole(error) => (error, None, None),
         };
-        let mut sent = refusal.map(|refusal| refusal.into_message(name, lent));
-        let cause = sent
-            .as_ref()
-            .map(|(error, _)| *error)
-            .or(error)
-            .unwrap_or_else(refused_reply);
         let mut lost = heapless::Vec::new();
         for (index, reply) in replies.iter().enumerate().skip(lost_from) {
             let message = match sent.take() {
-                Some((_, message)) if Some(index) == refused_at => message,
+                Some(message) if Some(index) == refused_at => message,
                 other => {
                     sent = other;
                     FailedMessage::new(name, Some(encode(reply)), HeaderSet::new())
@@ -176,10 +157,9 @@ impl BatchRefusal {
 
 impl fmt::Display for BatchRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.refused, &self.error) {
-            (Some((_, refusal)), _) => fmt::Display::fmt(refusal, f),
-            (None, Some(error)) => fmt::Display::fmt(error, f),
-            (None, None) => f.write_str("a batch reply was refused"),
+        match &self.cause {
+            Cause::Refused(_, refusal) => fmt::Display::fmt(refusal, f),
+            Cause::Whole(error) => fmt::Display::fmt(error, f),
         }
     }
 }
