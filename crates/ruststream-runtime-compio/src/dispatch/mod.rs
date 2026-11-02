@@ -15,8 +15,7 @@ mod workers;
 
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::task::{Context, Poll, ready};
+use std::task::{Context, Poll};
 
 use bytes::BytesMut;
 use compio::runtime::{self, JoinHandle};
@@ -28,7 +27,7 @@ use ruststream_runtime::{
     run_sequential,
 };
 
-use crate::{Stop, Tasks, YieldNow, yield_now};
+use crate::{Stop, Tasks};
 
 pub use batch::spawn_batch_dispatch;
 pub use cores::{Fabric, Layout, LayoutError, Mount, StartLaneError};
@@ -87,42 +86,12 @@ pub(crate) struct Shared<Body, State, Cx, Retry> {
 /// compio has no budget of its own: a loop whose handler never waits would keep the core inside
 /// one poll, and the continuations, hooks and retry timers on that core would wait for the whole
 /// burst. The yield comes before the next poll of the stream, after the delivery was settled.
-///
-/// While a yield is owed the subscription's probe answers that something may be ready: the yield
-/// completes only in a poll of the stream, and a loop that skipped that poll on an idle probe
-/// would never be woken again, the wake of the stream having been spent on the delivery before.
-pub(crate) struct Yielding<Inner> {
-    inner: Inner,
-    owed: Arc<AtomicBool>,
-}
+pub(crate) struct Yielding<Inner>(pub(crate) Inner);
 
 impl<Inner> Yielding<Inner> {
-    pub(crate) fn new(inner: Inner) -> Self {
-        Self {
-            inner,
-            owed: Arc::default(),
-        }
+    pub(crate) const fn new(inner: Inner) -> Self {
+        Self(inner)
     }
-}
-
-/// The probe of a [`Yielding`] subscriber: the inner probe, or a yield still owed.
-struct Owing<Probe> {
-    probe: Probe,
-    owed: Arc<AtomicBool>,
-}
-
-impl<Probe: ReadyHint> ReadyHint for Owing<Probe> {
-    const GATED: bool = Probe::GATED;
-
-    #[inline]
-    fn may_be_ready(&self) -> bool {
-        self.owed.load(Ordering::Relaxed) || self.probe.may_be_ready()
-    }
-}
-
-/// Whether the runtime consults `probe` at all.
-const fn gated<Probe: ReadyHint>(_probe: &Probe) -> bool {
-    Probe::GATED
 }
 
 impl<Inner: Subscriber> Subscriber for Yielding<Inner> {
@@ -133,51 +102,61 @@ impl<Inner: Subscriber> Subscriber for Yielding<Inner> {
         &mut self,
     ) -> impl Stream<Item = Result<Self::Message, Self::Error>> + ruststream_core::MaybeSend + '_
     {
-        // Only a gated probe reads the flag, so a subscriber without one never writes it.
-        let flag = gated(&self.inner.ready_hint()).then(|| Arc::clone(&self.owed));
-        YieldingStream {
-            inner: self.inner.stream(),
-            owed: None,
-            flag,
-        }
+        let probe = self.0.ready_hint();
+        YieldingStream::new(self.0.stream(), probe)
     }
 
+    // The yield adds nothing to the answer: it is taken only while the probe says more may be
+    // waiting, so a yielded stream still reads as ready.
     fn ready_hint(&self) -> impl ReadyHint + ruststream_core::MaybeSendSync + 'static + use<Inner> {
-        Owing {
-            probe: self.inner.ready_hint(),
-            owed: Arc::clone(&self.owed),
-        }
+        self.0.ready_hint()
     }
 }
 
 pin_project! {
-    struct YieldingStream<Items> {
+    /// A stream that returns `Pending` once after each ready item, having woken its task, when its
+    /// probe says more may be waiting.
+    ///
+    /// A yield returns `Pending` without polling the stream, so the stream registers no waker, and
+    /// a loop skips a subscription whose probe says nothing is ready. A yield past the last
+    /// delivery would leave the subscription parked with no waker for the next one, so the yield
+    /// is taken only while the probe says more may be waiting; otherwise the stream is polled and
+    /// parks with its waker.
+    struct YieldingStream<Items, Probe> {
         #[pin]
         inner: Items,
-        owed: Option<YieldNow>,
-        flag: Option<Arc<AtomicBool>>,
+        owed: bool,
+        probe: Probe,
     }
 }
 
-impl<Items: Stream> Stream for YieldingStream<Items> {
+impl<Items, Probe> YieldingStream<Items, Probe> {
+    const fn new(inner: Items, probe: Probe) -> Self {
+        Self {
+            inner,
+            owed: false,
+            probe,
+        }
+    }
+}
+
+impl<Items: Stream, Probe: ReadyHint> Stream for YieldingStream<Items, Probe> {
     type Item = Items::Item;
 
+    #[inline]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
-        if let Some(owed) = this.owed {
-            ready!(Pin::new(owed).poll(cx));
-            *this.owed = None;
-            if let Some(flag) = this.flag {
-                flag.store(false, Ordering::Relaxed);
+        if *this.owed {
+            *this.owed = false;
+            if this.probe.may_be_ready() {
+                // Woken before it parks: the task is polled again once the core's other tasks
+                // have had a turn.
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
             }
         }
         let polled = this.inner.poll_next(cx);
-        if matches!(polled, Poll::Ready(Some(_))) {
-            *this.owed = Some(yield_now());
-            if let Some(flag) = this.flag {
-                flag.store(true, Ordering::Relaxed);
-            }
-        }
+        *this.owed = matches!(polled, Poll::Ready(Some(_)));
         polled
     }
 }
@@ -217,4 +196,95 @@ where
         (),
         BytesMut::new(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::pin::pin;
+    use std::rc::Rc;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::task::{Context, Poll, Wake, Waker};
+
+    use futures::Stream;
+    use futures::stream::poll_fn;
+    use ruststream_core::ReadyHint;
+
+    use super::YieldingStream;
+
+    /// A probe with a fixed answer.
+    struct Probe(bool);
+
+    impl ReadyHint for Probe {
+        fn may_be_ready(&self) -> bool {
+            self.0
+        }
+    }
+
+    /// A waker that notes it was woken.
+    #[derive(Default)]
+    struct Woken(AtomicBool);
+
+    impl Wake for Woken {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// A stream with one item, then pending; counts its polls.
+    fn one_item(polls: Rc<Cell<u32>>) -> impl Stream<Item = u8> {
+        poll_fn(move |_cx| {
+            polls.set(polls.get() + 1);
+            if polls.get() == 1 {
+                Poll::Ready(Some(7))
+            } else {
+                Poll::Pending
+            }
+        })
+    }
+
+    #[test]
+    fn after_the_last_delivery_the_stream_is_polled_and_parks_with_its_waker() {
+        let polls = Rc::new(Cell::new(0));
+        let mut stream = pin!(YieldingStream::new(
+            one_item(Rc::clone(&polls)),
+            Probe(false)
+        ));
+        let woken = Arc::new(Woken::default());
+        let waker = Waker::from(Arc::clone(&woken));
+        let mut cx = Context::from_waker(&waker);
+
+        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Ready(Some(7)));
+        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Pending);
+        assert_eq!(
+            polls.get(),
+            2,
+            "the stream registered for the next delivery"
+        );
+        assert!(!woken.0.load(Ordering::SeqCst), "no yield was taken");
+    }
+
+    #[test]
+    fn while_more_may_be_waiting_the_stream_yields_once_after_a_delivery() {
+        let polls = Rc::new(Cell::new(0));
+        let mut stream = pin!(YieldingStream::new(
+            one_item(Rc::clone(&polls)),
+            Probe(true)
+        ));
+        let woken = Arc::new(Woken::default());
+        let waker = Waker::from(Arc::clone(&woken));
+        let mut cx = Context::from_waker(&waker);
+
+        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Ready(Some(7)));
+        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Pending);
+        assert_eq!(polls.get(), 1, "the yield did not poll the stream");
+        assert!(woken.0.load(Ordering::SeqCst), "the yield woke its task");
+        assert_eq!(stream.as_mut().poll_next(&mut cx), Poll::Pending);
+        assert_eq!(
+            polls.get(),
+            2,
+            "the poll after the yield reached the stream"
+        );
+    }
 }
