@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 // --8<-- [start:app]
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream::runtime::Ctx;
 use ruststream::runtime::HandlerOutcome;
@@ -33,14 +34,13 @@ async fn audit(order: &Order) -> HandlerOutcome {
 
 #[ruststream::app(runtime = compio, cores = 4)]
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-        LocalMemoryBroker::<4>::new(),
-        |b| {
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(LocalMemoryBroker::<4>::new(), |b| {
             b.include(confirm)
                 .out_reply(LocalMemoryPublish)
                 .include(audit)
-        },
-    )
+        })
 }
 // --8<-- [end:app]
 

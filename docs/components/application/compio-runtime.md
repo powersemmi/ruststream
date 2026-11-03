@@ -94,19 +94,7 @@ A core that fails or panics stops the others, and `run` returns the failure of t
 
 ## Diagnostics
 
-The runner reports what happens to the service (startup, a lost reply, a handler that panicked, a core that failed) through the logger the app selects, and reports nothing until it selects one.
-
-```rust
-use ruststream::diagnostics::TracingLogger;
-use ruststream::memory::local::LocalMemoryBroker;
-use ruststream::runtime::compio::{AppInfo, RustStream};
-
-fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .logger(TracingLogger)
-        .with_broker(LocalMemoryBroker::<4>::new(), |b| b)
-}
-```
+The runner reports what happens to the service (startup, a lost reply, a handler that panicked, a core that failed) through the logger the app selects, and reports nothing until it selects one: the app above selects `TracingLogger` with `.logger(TracingLogger)`.
 
 [`logger`](api:ruststream::runtime::compio::RustStream::logger) is applied when the app starts, before the brokers connect.
 `TracingLogger` is always available on compio; `LogLogger` needs the `log` feature.

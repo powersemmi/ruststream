@@ -13,6 +13,7 @@ use ruststream::runtime::compio::run_main;
 use serde::{Deserialize, Serialize};
 
 // --8<-- [start:app]
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream::nonzero;
 use ruststream::prelude::SubscriberSettings;
@@ -51,9 +52,9 @@ impl Handle<Order> for Audit {
 }
 
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-        LocalMemoryBroker::<4>::new(),
-        |b| {
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(LocalMemoryBroker::<4>::new(), |b| {
             b.include(
                 subscriber(LocalMemorySource::new("orders"), Confirm)
                     .workers(nonzero!(4))
@@ -63,8 +64,7 @@ fn app() -> impl App {
             )
             .out_reply(LocalMemoryPublish)
             .include(subscriber(LocalMemorySource::new("orders"), Audit).build())
-        },
-    )
+        })
 }
 // --8<-- [end:app]
 
