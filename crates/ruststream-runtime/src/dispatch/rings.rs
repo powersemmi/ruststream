@@ -42,7 +42,7 @@ use std::vec::Vec;
 
 use futures::Stream;
 use futures::task::AtomicWaker;
-use rtrb::{Consumer, Producer, RingBuffer};
+use rtrb::{Consumer, Producer, PushError, RingBuffer};
 
 use super::Turn;
 use crate::host::{Halt, ShutdownWait};
@@ -440,22 +440,22 @@ impl<Item> Feed<Item> {
                     if keyed.is_none() {
                         turn = (index + 1) % count;
                     }
-                    // A thread waits for its own ring, whatever else has room: a key stays in order.
-                    // Shutdown does not cut the wait short, so the delivery in hand is handed over
-                    // rather than dropped.
-                    if picked.is_none()
-                        && let Err(stuck) = self
-                            .room(Which::One(index), None::<Pin<&mut Pending<()>>>)
-                            .await
-                    {
-                        report(name, &stuck);
+                    // A thread's ring may be gone before the delivery is handed to it.
+                    if picked.is_none() && self.rings[index].is_abandoned() {
+                        report(name, &Stuck::Gone(index));
                         break;
                     }
-                    // Only the loop fills a ring, and it pushes only after it saw room.
-                    self.rings[index]
-                        .push(item)
-                        .unwrap_or_else(|_| unreachable!("the loop pushes only after it saw room"));
-                    self.signals.pushed(index);
+                    // A pool has picked a ring with room already, so its push goes through. A full
+                    // ring is waited on, whatever else has room: a key stays in order.
+                    match self.rings[index].push(item) {
+                        Ok(()) => self.signals.pushed(index),
+                        Err(PushError::Full(item)) => {
+                            if let Err(stuck) = self.hand_over_when_room(index, item).await {
+                                report(name, &stuck);
+                                break;
+                            }
+                        }
+                    }
                 }
                 Turn::Delivery(Err(err)) => {
                     error!(
@@ -471,6 +471,23 @@ impl<Item> Feed<Item> {
                 }
                 Turn::Shutdown => break,
             }
+        }
+    }
+
+    /// Pushes `item` to ring `index` once it has room. Shutdown does not cut the wait short,
+    /// so the delivery in hand is handed over rather than dropped.
+    #[cold]
+    async fn hand_over_when_room(&mut self, index: usize, mut item: Item) -> Result<(), Stuck> {
+        loop {
+            match self.rings[index].push(item) {
+                Ok(()) => {
+                    self.signals.pushed(index);
+                    return Ok(());
+                }
+                Err(PushError::Full(back)) => item = back,
+            }
+            self.room(Which::One(index), None::<Pin<&mut Pending<()>>>)
+                .await?;
         }
     }
 
