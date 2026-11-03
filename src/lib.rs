@@ -96,13 +96,17 @@
 //! * `postcard`: `codec::PostcardCodec`.
 //! * `json-core`: `codec::JsonCoreCodec`, JSON over `serde-json-core`.
 //!
-//! The embassy runtime without `alloc` reports what it loses or refuses (a reply the bus does not
-//! take, a continuation that never runs) to the logger the device has, each line naming the
-//! subscription and the message type. The feature picks the logger. With `alloc` the same reports
-//! are `tracing` events.
+//! The framework reports nothing until the app selects a logger with `.logger(..)`
+//! ([`diagnostics`]). Three features compile the loggers in:
 //!
-//! * `log`: records for the `log` crate, for a host or a board with a logger.
-//! * `defmt`: lines for `defmt`, for a board with a probe. Both may be on and both receive.
+//! * `tracing`: `diagnostics::TracingLogger`, `tracing` events at the place that reports. It
+//!   needs `alloc`; the tokio runner turns it on, and a heap-backed embassy app turns it on itself.
+//! * `log`: `diagnostics::LogLogger`, records for the `log` crate, for a host or a board with a
+//!   logger.
+//! * `defmt`: `diagnostics::DefmtLogger`, lines for `defmt`, for a board with a probe.
+//!
+//! Each report names the subscription and the message type, and the level of the logger's own
+//! backend decides which show.
 //!
 //! Two more features work on either runtime:
 //!
@@ -138,7 +142,7 @@
 //! features it enables: `features = ["tokio"]`, `features = ["embassy"]` or both. A broker crate on
 //! tokio enables `tokio`. A device service on a bare-metal target picks from `embassy`, `macros`
 //! and `memory`, a codec (`json` and `cbor` with a heap, `postcard` and `json-core` without), and
-//! `log` or `defmt` for its diagnostics. On a target with an operating system the crate uses the
+//! `log` or `defmt` for its logger. On a target with an operating system the crate uses the
 //! standard library with either runtime.
 //!
 //! # Getting the imports
@@ -237,14 +241,18 @@ pub mod codec;
 
 /// The loggers an app selects with `.logger(..)`: the framework reports nothing until it does.
 ///
-/// [`TracingLogger`] needs the `tracing` feature (the tokio runner turns it on), [`LogLogger`] the
-/// `log` feature, [`DefmtLogger`] the `defmt` feature. The selection is process-wide, and the
+/// `TracingLogger` needs the `tracing` feature (the tokio runner turns it on), `LogLogger` the
+/// `log` feature, `DefmtLogger` the `defmt` feature. The selection is process-wide, and the
 /// level the user's backend filters at decides which events show: a `tracing` subscriber's
-/// filter, `log::max_level()`, defmt's level.
+/// filter, `log::max_level()`, defmt's level. Every warning the framework raises stays on, and a
+/// service silences one by raising that level. A diagnostic costs one atomic load, and a delivery
+/// that succeeds raises none.
+///
+/// Guide: <https://powersemmi.github.io/ruststream/latest/components/observability/logging/>.
 ///
 /// # Examples
 ///
-/// See [`Logger`].
+/// See [`Logger`](diagnostics::Logger).
 pub mod diagnostics {
     #[cfg(feature = "defmt")]
     pub use ruststream_core::diag::DefmtLogger;

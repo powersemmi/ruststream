@@ -12,7 +12,7 @@ The handlers are the ones a server runs, written with `#[subscriber]`.
 
 A device with no heap builds the framework without the `alloc` feature.
 That build is a form of its own: it allocates nothing at startup or per message, and it keeps in storage of a fixed size what the heap form keeps on the heap.
-The selection is by features: `embassy` picks the runner, `memory` the local bus, `macros` the attributes, `postcard` or `json-core` the codec, and `log` or `defmt` where the diagnostics go.
+The selection is by features: `embassy` picks the runner, `memory` the local bus, `macros` the attributes, `postcard` or `json-core` the codec, and `log` or `defmt` for the logger the app selects.
 Cargo features add up, so one crate of the dependency graph that turns `alloc` on turns it on for the whole build.
 `tokio`, `json`, `cbor` and `msgpack` turn `alloc` on.
 
@@ -107,9 +107,10 @@ To settle each message on its own, it returns `Outcomes<HandlerOutcome, N>`, one
 
 ## Diagnostics
 
-`tracing` needs the heap, so this build reports through `log` or `defmt`, whichever the build enables; both may be on and both receive.
-The reports are the same as `tracing` events carry: a reply the bus did not take, a continuation that never runs, a retry that found no room.
-Each names the subscription and the message type.
+The app selects the logger with `.logger(..)` on the `EmbeddedApp`, and nothing is reported until it does.
+`tracing` needs the heap, so this build selects `LogLogger` or `DefmtLogger`, whichever feature the build enables; a heap-backed app selects `TracingLogger`.
+The reports are the same ones the tokio runner makes: a reply the bus did not take, a continuation that never runs, a retry that found no room.
+Each names the subscription and the message type, and the level of the logger's backend decides which show.
 
 ```toml
 # A host or a board with a logger.

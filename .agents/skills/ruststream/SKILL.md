@@ -135,6 +135,13 @@ A mount site imports the broker's prelude (`use ruststream_nats::prelude::*;`,
 (`testing`, `asyncapi`, `metrics`, `logging`, `otel`) explicitly. Everything else, `Router`,
 `DefaultSlot`, `FailurePolicies`, `nonzero!` and the derives included, rides the glob.
 
+### The app selects the logger
+
+The framework reports nothing until the app selects a logger: `.logger(TracingLogger)` on the
+builder (`ruststream::diagnostics`; the `tracing` feature is on with tokio), or `LogLogger` /
+`DefmtLogger` with their features. The selection is process-wide. Every warning stays on, and the
+level of the backend (a `tracing` filter, `log::max_level()`, defmt's level) silences one.
+
 ### The first parameter's type picks the form
 
 `&T` is one message, `&[T]` a batch. `T: Deserialize` decodes with the codec. A type with

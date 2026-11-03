@@ -14,7 +14,7 @@ and `msgpack` turn it on.
 - A device with a heap enables `embassy`, `macros`, a codec feature (`json` or `cbor`) and
   `memory`. Headers are `HeaderMap`, continuations are boxed, codecs are `Codec`.
 - A device with no heap enables `embassy`, `memory`, `macros`, a slice codec (`postcard` or
-  `json-core`) and a logger (`log` or `defmt`) with `default-features = false`. The build
+  `json-core`) and a logger feature (`log` or `defmt`) with `default-features = false`. The build
   allocates nothing at startup or per message, and builds for `thumbv6m-none-eabi`.
 
 ```toml
@@ -49,8 +49,10 @@ full is the "no free record" error; both reach the handler's `.error`.
 
 ## Diagnostics
 
-`tracing` needs the heap, so the build without `alloc` reports through `log` or `defmt`, whichever
-feature is on (both may be). Each line names the subscription and the message type.
+Nothing is reported until the app selects a logger: `.logger(LogLogger)` or `.logger(DefmtLogger)`
+on the `EmbeddedApp` (`ruststream::diagnostics`). `tracing` needs the heap, so the build without
+`alloc` has those two, whichever feature is on. Each line names the subscription and the message
+type, and the level of the logger's backend decides which show.
 
 ## Test it
 

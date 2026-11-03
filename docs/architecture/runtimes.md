@@ -72,7 +72,7 @@ What differs is the form of the parts whose size the heap would decide:
 | `ctx.after(..)` | registers | returns a `Result`, because a delivery holds four registrations |
 | Batch | `Vec` of outcomes | a size up to 16, named at the mount with `.batch::<N>()` |
 | Local bus | `LocalMemoryBroker::new()` | a `LocalMemoryBus` that the board declares as a `static` |
-| Diagnostics | `tracing` events | `log` or `defmt`, whichever the build enables |
+| Logger the app selects | `TracingLogger`, `LogLogger` or `DefmtLogger` | `LogLogger` or `DefmtLogger`, whichever the build enables |
 
 The form is chosen by the build, so a handler never branches on it.
 A heap type used in the fixed form does not resolve, and a capacity that is exceeded is a compile error that names it.

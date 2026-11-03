@@ -72,7 +72,7 @@ embassy 运行器有两种构建形态，一次构建只含其中一种。
 | `ctx.after(..)` | 登记 | 返回 `Result`，因为一次投递只有四个登记名额 |
 | 批 | 结果的 `Vec` | 最多 16 条，在挂载处用 `.batch::<N>()` 指定 |
 | 本地总线 | `LocalMemoryBroker::new()` | 由开发板声明为 `static` 的 `LocalMemoryBus` |
-| 诊断 | `tracing` 事件 | `log` 或 `defmt`，取决于启用了哪个 feature |
+| 应用选定的日志器 | `TracingLogger`、`LogLogger` 或 `DefmtLogger` | `LogLogger` 或 `DefmtLogger`，取决于启用了哪个 feature |
 
 形态由构建选定，所以处理器不会按它分支。
 带堆形态的类型在固定形态中无法解析，超出的容量是点名该容量的编译错误。

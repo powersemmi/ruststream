@@ -51,7 +51,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Publishing](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/): replies, `Out` slots, where a message type goes, the publish builder, per-message settings and another broker's publisher
 - [Publishers](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/publishers/): the publisher capabilities, one page each: `Publisher`, `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`
 - [Transforms](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/transforms/): `PublishTransform` on a reply or a slot, naming transforms that set the destination, and batch reply transforms
-- [Observability](https://powersemmi.github.io/ruststream/latest/components/observability/): console logging, `TracingLayer`, Prometheus metrics, W3C trace propagation and OpenTelemetry export
+- [Observability](https://powersemmi.github.io/ruststream/latest/components/observability/): the logger the app selects, console logging, `TracingLayer`, Prometheus metrics, W3C trace propagation and OpenTelemetry export
 - [AsyncAPI](https://powersemmi.github.io/ruststream/latest/components/asyncapi/): the generated AsyncAPI document, one page per function or capability
 - [AsyncAPI generation](https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/): `build_spec`, JSON and YAML, `asyncapi gen`, the viewer, payload schemas and `#[derive(MessageInfo)]`
 - [What the AsyncAPI document reports](https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/): replies, channel parameters, header schemas, content types, message sets and the retry extension
