@@ -43,6 +43,9 @@ default: check
 
 check:
     cargo fmt --all -- --check
+    # The site's excerpts: every `reference=` names a file and a region that exist, and the fences
+    # follow the page rules. The site build fails on the same file, minutes later.
+    python3 scripts/lint_doc_fences.py
     # The benchmarks are left out of the workspace legs on purpose: they are built with the
     # production feature set, and the harness feature is a compile error in them. Their own leg
     # follows.

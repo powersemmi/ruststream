@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Hold the Rust fences of the documentation pages, in every language, to two rules.
+"""Hold the Rust fences of the documentation pages, in every language, to these rules.
 
 Every ```rust fence must either embed a compiled snippet (a `reference="<path>#<region>"`
 on the fence) or be explicitly exempted by an MDX comment on the line directly above it:
 
     {/* inline-rust: <why this cannot come from a compiled example> */}
     ```rust
+
+A `reference` names a file that exists and, after `#`, a region marked in that file with
+`// --8<-- [start:<region>]` and `// --8<-- [end:<region>]`.
 
 The justification is mandatory. Exemptions are for code that has no compilable home in
 this repository: simplified trait sketches (the real signatures are RPITIT with long doc
@@ -260,6 +263,16 @@ def lint(path: Path) -> list[str]:
             if snippet:
                 target = snippet.group(1)
                 region = REGION.search(line)
+                # The site build reads the excerpt and fails on a file or a region that is not
+                # there; the same check here fails in seconds, before a site build.
+                source = ROOT / target
+                if not source.is_file():
+                    errors.append(f"{path}:{n}: {target} does not exist")
+                elif region and region_lines(source, region.group(1)) is None:
+                    errors.append(
+                        f"{path}:{n}: {target} has no region `{region.group(1)}` - mark it with"
+                        f" `// --8<-- [start:{region.group(1)}]` and `[end:{region.group(1)}]`"
+                    )
                 if region and target.startswith(EXAMPLES) and relative.startswith(TESTING_PAGES):
                     errors.extend(testing_region_errors(path, n, target, region.group(1)))
                 # The rule is about a service's code, which lives under `examples/`; a page that
