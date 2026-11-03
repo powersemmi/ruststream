@@ -6,8 +6,12 @@
 #![no_main]
 
 use cortex_m_rt::exception;
+#[cfg(feature = "defmt")]
+use defmt_rtt as _;
 use embassy_executor::Spawner;
 use panic_halt as _;
+#[cfg(feature = "defmt")]
+use ruststream::diagnostics::DefmtLogger;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryBus, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts};
 use ruststream::subscriber;
@@ -75,7 +79,10 @@ use ruststream::codec::PostcardCodec as Chosen;
 
 #[ruststream::app(runtime = embassy)]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
-    EmbeddedApp::new().with_broker(bus, |b| {
+    let app = EmbeddedApp::new();
+    #[cfg(feature = "defmt")]
+    let app = app.logger(DefmtLogger);
+    app.with_broker(bus, |b| {
         #[cfg(any(feature = "postcard", feature = "json-core"))]
         let b = b.with_codec(Chosen);
         b.include(service::on_reading)

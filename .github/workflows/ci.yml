@@ -322,6 +322,12 @@ jobs:
                 --target $target ${features:+--features $features}
             done
           done
+          # The same binary with defmt: it links with `DefmtLogger` selected and with defmt compiled
+          # and no logger selected, and the optimised ELF carries the framework's defmt code only
+          # in the first.
+          for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do
+            crates/ruststream-firmware-noalloc/check-defmt.sh $target
+          done
 
       # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
       # It also rewrites the manifests while it runs, which is why this is the last step and the

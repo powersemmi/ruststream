@@ -9,5 +9,9 @@ fn main() {
     fs::copy("memory.x", out.join("memory.x")).expect("memory.x sits beside the manifest");
     println!("cargo:rustc-link-search={}", out.display());
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
+    // The linker script that places defmt's strings, shipped by the `defmt` crate.
+    if env::var_os("CARGO_FEATURE_DEFMT").is_some() {
+        println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
+    }
     println!("cargo:rerun-if-changed=memory.x");
 }

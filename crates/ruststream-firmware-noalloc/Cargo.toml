@@ -17,6 +17,10 @@ publish = false
 # as bytes and no codec is named.
 postcard = ["ruststream/postcard", "dep:serde"]
 json-core = ["ruststream/json-core", "dep:serde"]
+# The app selects `DefmtLogger`; `defmt-rtt` is the global logger that carries the lines to a probe.
+defmt = ["ruststream/defmt", "dep:defmt-rtt"]
+# defmt is compiled into the build and the app selects no logger.
+defmt-unselected = ["ruststream/defmt"]
 
 [dependencies]
 ruststream = { path = "../..", default-features = false, features = ["embassy", "memory", "macros"] }
@@ -32,3 +36,6 @@ systick-timer = { version = "0.2.3", features = ["embassy-time-driver"] }
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7.5"
 panic-halt = "1"
+# The global logger of a defmt firmware: RTT, which a probe reads. The critical section its
+# buffer locks through is the one `cortex-m` provides above, for a single core.
+defmt-rtt = { version = "1", optional = true }
