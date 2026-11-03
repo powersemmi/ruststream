@@ -12,8 +12,8 @@ members = [
     "crates/ruststream-cli",
     "crates/ruststream-conformance",
     "crates/ruststream-macros",
-    "crates/ruststream-example-suite",
-    "crates/ruststream-no-std-probe",
+    "checks/ruststream-example-suite",
+    "checks/ruststream-no-std-probe",
     "crates/ruststream-runtime-embassy",
 ]
 # A bare cargo command at the root builds the facade, the crate a service depends on.

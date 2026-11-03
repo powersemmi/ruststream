@@ -23,7 +23,7 @@ defmt = ["ruststream/defmt", "dep:defmt-rtt"]
 defmt-unselected = ["ruststream/defmt"]
 
 [dependencies]
-ruststream = { path = "../ruststream", default-features = false, features = ["embassy", "memory", "macros"] }
+ruststream = { path = "../../crates/ruststream", default-features = false, features = ["embassy", "memory", "macros"] }
 serde = { version = "1", default-features = false, features = ["derive"], optional = true }
 # The executor the app's task runs on: a Cortex-M thread-mode executor, `platform-cortex-m` picks the
 # architecture and the `executor-thread` feature gives `Executor::run`.

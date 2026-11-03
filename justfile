@@ -140,14 +140,14 @@ check:
     # and once for each slice codec.
     for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do \
         for features in "" postcard json-core; do \
-            RUSTFLAGS="" cargo build --locked --manifest-path crates/ruststream-firmware-noalloc/Cargo.toml \
+            RUSTFLAGS="" cargo build --locked --manifest-path checks/ruststream-firmware-noalloc/Cargo.toml \
                 --target $target ${features:+--features $features} || exit 1; \
         done; \
     done
     # The same binary with defmt: it links with `DefmtLogger` selected and with defmt compiled and
     # no logger selected, and the optimised ELF carries the framework's defmt code only in the first.
     for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do \
-        crates/ruststream-firmware-noalloc/check-defmt.sh $target || exit 1; \
+        checks/ruststream-firmware-noalloc/check-defmt.sh $target || exit 1; \
     done
     # The embassy runtime alone, as a device service builds it: the facade with the embassy set,
     # where every target that needs tokio names it and drops out, then the embedded runner and

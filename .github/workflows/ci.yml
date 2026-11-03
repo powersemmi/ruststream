@@ -54,6 +54,7 @@ jobs:
           filters: |
             rust:
               - 'crates/**'
+              - 'checks/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -320,7 +321,7 @@ jobs:
           # global allocator: it fails to link while any crate of the build needs a heap.
           for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do
             for features in "" postcard json-core; do
-              cargo build --locked --manifest-path crates/ruststream-firmware-noalloc/Cargo.toml \
+              cargo build --locked --manifest-path checks/ruststream-firmware-noalloc/Cargo.toml \
                 --target $target ${features:+--features $features}
             done
           done
@@ -328,7 +329,7 @@ jobs:
           # and no logger selected, and the optimised ELF carries the framework's defmt code only
           # in the first.
           for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do
-            crates/ruststream-firmware-noalloc/check-defmt.sh $target
+            checks/ruststream-firmware-noalloc/check-defmt.sh $target
           done
 
       # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
