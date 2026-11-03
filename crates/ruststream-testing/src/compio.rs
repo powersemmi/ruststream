@@ -239,8 +239,16 @@ impl TestApp {
                 // `running`. A second run with no time to wait cancels the loops that are left
                 // and goes on to the brokers and the `after_shutdown` hooks, so a test that
                 // catches this error does not go on with a handler running or a broker open.
-                // It is awaited as it is, not driven: a busy task would end a driven wait again.
-                running.finish_shutdown_now().await;
+                // The clock moves on while it runs, so an `after_shutdown` hook that sleeps on
+                // the app's clock ends; a task that is left busy ends the wait again, and the
+                // error already in hand is the one returned.
+                let _ = driven(
+                    running.finish_shutdown_now(),
+                    &coordinator,
+                    &runnable,
+                    &clock,
+                )
+                .await;
                 return Err(kept_running);
             }
         };

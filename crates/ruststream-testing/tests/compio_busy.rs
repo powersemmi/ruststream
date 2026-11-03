@@ -10,9 +10,11 @@ use std::future::poll_fn;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::task::Poll;
+use std::time::Duration;
 
 use compio::runtime::Runtime;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
+use ruststream::runtime::compio::time::sleep;
 use ruststream::runtime::compio::{AppInfo, RustStream};
 use ruststream::runtime::{HandlerOutcome, State};
 use ruststream::testing::TestError;
@@ -106,6 +108,45 @@ fn a_failed_shutdown_stops_the_handler_and_runs_after_shutdown() -> Result<(), B
             ticks.0.load(Ordering::Relaxed),
             at_return,
             "the handler kept running after the shutdown returned",
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn an_after_shutdown_hook_that_sleeps_finishes_after_a_failed_shutdown()
+-> Result<(), Box<dyn Error>> {
+    Runtime::new()?.block_on(async {
+        let after_ran = Arc::new(AtomicBool::new(false));
+        let hook_ran = Arc::clone(&after_ran);
+        let app = RustStream::new(AppInfo::new("busy-sleep", "0.1.0"))
+            .on_startup(async move |(): ()| {
+                Ok::<_, Infallible>(Busy {
+                    ticks: Ticks(Arc::new(AtomicU64::new(0))),
+                })
+            })
+            .after_shutdown(async move |_: Arc<Busy>| {
+                sleep(Duration::from_secs(5)).await;
+                hook_ran.store(true, Ordering::Relaxed);
+                Ok::<_, Infallible>(())
+            })
+            .with_broker(Bus::new(), |b| b.include(on_spin));
+        let tb = TestApp::start(app).await?;
+        let _ = tb
+            .broker::<Bus>()
+            .message(&Spin(b"1".to_vec()))
+            .publish()
+            .await;
+
+        let stopped = tb.shutdown().await;
+
+        assert!(
+            matches!(stopped, Err(TestError::KeptRunning { .. })),
+            "the shutdown returned {stopped:?}",
+        );
+        assert!(
+            after_ran.load(Ordering::Relaxed),
+            "after_shutdown did not finish",
         );
         Ok(())
     })
