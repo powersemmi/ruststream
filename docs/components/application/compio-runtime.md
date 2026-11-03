@@ -17,7 +17,7 @@ The handlers are the ones a tokio service runs, written with `#[subscriber]`.
 Core 0 runs on the calling thread, and every further core runs on a thread of its own, pinned to a CPU the process may use.
 Core 0 owns the brokers and receives every subscription.
 A sequential subscription is handled on core 0.
-A subscription with `workers(n)` or `threads(n)` hands its deliveries to workers on other cores, and `by_key` keeps the deliveries of one key on one worker.
+A subscription with `workers(n)` or `threads(n)` hands its deliveries to workers placed across the cores, and `by_key` keeps the deliveries of one key on one worker.
 
 The feature is `compio`. The runner builds on compio 0.20.0-beta.1 and moves to compio 0.20 when it ships.
 

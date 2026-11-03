@@ -245,33 +245,44 @@ jobs:
         if: always() && env.DIST_CHANGED == 'true'
         run: rm -rf target/package
 
-      # Renders the scaffold and compiles it, so template drift fails here and not on a user's
-      # first build. The rendered project is patched to this checkout. No --locked: a fresh
-      # scaffold has no lock file, which is the situation a user starts from.
-      - name: Render and check templates/memory
+      # Renders each scaffold and builds it, so template drift fails here and not on a user's
+      # first build. A build, not a check: a symbol only the link asks for (the critical section
+      # the in-process bus locks through) fails a check-clean scaffold. The rendered project is
+      # patched to this checkout. No --locked: a fresh scaffold has no lock file, which is the
+      # situation a user starts from. The firmware builds for its own target with the
+      # environment's flags left out, as the board does.
+      - name: Render and build the templates
         if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
         run: |
-          cargo generate --path templates/memory --name smoke --destination "$RUNNER_TEMP" --vcs none
-          # The scaffold manifest is checked in as `Cargo.toml.liquid` so that cargo's git-source
-          # package discovery never parses its placeholder name. Assert that cargo-generate did
-          # drop the suffix, otherwise the append below would quietly write a manifest of its own.
-          test -f "$RUNNER_TEMP/smoke/Cargo.toml"
+          rustup target add thumbv7em-none-eabihf
           # `[patch]` redirects where a crate comes from, not what the manifest asks for, and
           # Cargo keeps pre-releases out of a range that does not name one. So while the
-          # workspace is on a pre-release the scaffold's own `0.7` would reject this checkout.
-          # Point the rendered copy at the version actually being built; the template keeps the
-          # requirement a user writes for the release it targets.
+          # workspace is on a pre-release the scaffold's own requirement would reject this
+          # checkout. Point the rendered copy at the version actually being built; the template
+          # keeps the requirement a user writes for the release it targets.
           VERSION=$(cargo metadata --format-version 1 --no-deps \
             | jq -r '.packages[] | select(.name == "ruststream") | .version')
-          sed -i "s|^ruststream = { version = \"[^\"]*\"|ruststream = { version = \"$VERSION\"|" \
-            "$RUNNER_TEMP/smoke/Cargo.toml"
-          grep -q "version = \"$VERSION\"" "$RUNNER_TEMP/smoke/Cargo.toml"
-          {
-            echo ""
-            echo "[patch.crates-io]"
-            echo "ruststream = { path = \"$GITHUB_WORKSPACE/crates/ruststream\" }"
-          } >> "$RUNNER_TEMP/smoke/Cargo.toml"
-          cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"
+          for template in memory compio-memory embassy-memory; do
+            dest="$RUNNER_TEMP/smoke-$template"
+            cargo generate --path "templates/$template" --name "smoke-$template" \
+              --destination "$RUNNER_TEMP" --vcs none
+            # The scaffold manifest is checked in as `Cargo.toml.liquid` so that cargo's
+            # git-source package discovery never parses its placeholder name. Assert that
+            # cargo-generate did drop the suffix, otherwise the append below would quietly
+            # write a manifest of its own.
+            test -f "$dest/Cargo.toml"
+            sed -i "s|^ruststream = { version = \"[^\"]*\"|ruststream = { version = \"$VERSION\"|" \
+              "$dest/Cargo.toml"
+            grep -q "version = \"$VERSION\"" "$dest/Cargo.toml"
+            {
+              echo ""
+              echo "[patch.crates-io]"
+              echo "ruststream = { path = \"$GITHUB_WORKSPACE/crates/ruststream\" }"
+            } >> "$dest/Cargo.toml"
+            # The firmware's target comes from its own `.cargo/config.toml`, which cargo reads
+            # from the directory it runs in.
+            (cd "$dest" && cargo build --release)
+          done
 
       # The contract without `std`: a Cortex-M4F with an allocator, and a Cortex-M0+, which has no
       # compare-and-swap. There `bytes` takes `extra-platforms`, and the library build takes

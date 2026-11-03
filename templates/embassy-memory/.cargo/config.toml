@@ -1,0 +1,4 @@
+# The firmware builds for a Cortex-M4F; a board with another core names its target here
+# (`thumbv6m-none-eabi` for an M0+, `thumbv8m.main-none-eabihf` for an M33).
+[build]
+target = "thumbv7em-none-eabihf"

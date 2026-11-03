@@ -1,0 +1,11 @@
+# cargo-generate manifest for the RustStream starter on the compio runtime.
+#
+# Render it with:
+#   cargo generate --git https://github.com/powersemmi/ruststream templates/compio-memory --name my-service
+#
+# `{{project-name}}` (the --name value) is a cargo-generate built-in; no placeholders need declaring.
+#
+# The manifest is `Cargo.toml.liquid`: cargo-generate drops the suffix after rendering, and cargo
+# never parses a placeholder package name when it walks this repository as a git source.
+[template]
+description = "A RustStream starter service on the compio runtime, over the in-process bus"

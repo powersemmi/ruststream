@@ -41,8 +41,9 @@
 //! A broker crate ships a [`cargo generate`](https://github.com/cargo-generate/cargo-generate)
 //! template for each transport or topology it serves (`nats` and `nats-js`; `redis-stream`,
 //! `redis-pubsub` and `redis-list`), and its own CI keeps the scaffold in step with its API. The
-//! core owns one, `templates/memory`, so a default `cargo generate` works offline with no broker
-//! dependency.
+//! core owns the in-memory starters, one per runtime (`templates/memory` on tokio,
+//! `templates/compio-memory`, `templates/embassy-memory`), so a default `cargo generate` works
+//! offline with no broker dependency.
 //!
 //! ```text
 //! templates/<name>/

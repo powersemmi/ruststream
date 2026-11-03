@@ -104,7 +104,9 @@ ruststream asyncapi gen        # print the AsyncAPI document
 ```
 
 Scaffold a fresh project with `cargo generate --git https://github.com/powersemmi/ruststream
-templates/memory --name my-service` (each broker crate ships its own template). See the
+templates/memory --name my-service`; `templates/compio-memory` starts one on the compio runtime
+and `templates/embassy-memory` a Cortex-M firmware on embassy. Each broker crate ships its own
+template. See the
 [quick start](https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/).
 
 ## Test it
