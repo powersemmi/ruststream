@@ -21,6 +21,7 @@ mod buffered;
 mod clock;
 mod detach;
 mod dispatch;
+mod follow;
 mod shutdown;
 mod sink;
 #[cfg(test)]
@@ -40,6 +41,9 @@ pub use app::{ConnectedEntry, LifecycleHook, RegisteredBroker, ShutdownHooks, St
 pub use app::{MountRoutes, ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use clock::Tokio;
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use follow::Quiescence;
 pub use ruststream_runtime::MainRuntime;
 #[doc(hidden)]
 pub use shutdown::Shutdown;

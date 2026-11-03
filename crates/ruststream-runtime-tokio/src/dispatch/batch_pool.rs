@@ -24,6 +24,7 @@ use tokio::sync::Notify;
 use super::pool::{Crew, Shared};
 use super::{Shutdown, Turn, Workers};
 use crate::BatchSubscriber;
+use crate::follow::spawn_followed;
 use ruststream_core::{BatchSlot, BatchStream};
 use ruststream_runtime::{BatchHandler, RetryCopies, run_batch};
 
@@ -250,7 +251,7 @@ pub(super) async fn run<Sub, Body, Cx, State, Retry>(
     let mut crew = Crew(Vec::with_capacity(count));
     for index in 0..count {
         let inbox = Arc::new(Inbox::new());
-        crew.0.push(tokio::spawn(work(
+        crew.0.push(spawn_followed(work(
             Arc::clone(&shared),
             Arc::clone(&inbox),
             Arc::clone(&free),

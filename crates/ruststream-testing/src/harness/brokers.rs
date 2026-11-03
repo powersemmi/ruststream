@@ -7,12 +7,14 @@ use std::time::Duration;
 
 use ruststream_core::Broker;
 use ruststream_runtime::ConnectedLifecycle;
+use ruststream_runtime_tokio::Quiescence;
 
 use ruststream_runtime::testing::{Coordinator, LiveSubscription};
 use ruststream_runtime::testing::{TestError, TestableBroker, TestableRegistration};
 
 #[cfg(doc)]
 use super::TestApp;
+use super::busy::until_idle;
 
 /// One broker of the app under test: its label, its erased connected handle (for type/label
 /// addressing), and its type's registration, when a broker crate made one. In process every broker
@@ -124,8 +126,11 @@ impl Mode {
         &self,
         coordinator: &Coordinator,
         brokers: &[BrokerEntry],
+        quiescence: &Quiescence,
     ) -> Result<(), TestError> {
-        let settled = self.reaction(coordinator, brokers).await;
+        let settled = until_idle(quiescence, self.reaction(coordinator, brokers))
+            .await
+            .and_then(|settled| settled);
         coordinator.hooks().raise_failure();
         settled
     }

@@ -402,7 +402,7 @@ impl RunningApp {
     /// A failure does not cut the teardown short: every broker is still shut down and the
     /// `after_shutdown` hooks still run before the first failure is returned.
     pub async fn shutdown(self) -> Result<(), RustStreamError> {
-        let Self { teardown } = self;
+        let Self { mut teardown } = self;
         // The teardown consumes its signal; the probes read the report the signal shares.
         let shutdown = teardown.shutdown.clone();
         let health = shutdown.health();
@@ -515,13 +515,13 @@ fn watch_for_failure(shutdown: Shutdown) {
 /// answer.
 async fn unwind_started(
     shutdown: &Shutdown,
-    handles: Vec<JoinHandle<()>>,
+    mut handles: Vec<JoinHandle<()>>,
     shutdown_timeout: Option<Duration>,
     brokers: Vec<ConnectedEntry>,
     continuations: TaskTracker,
 ) {
     shutdown.cancel();
-    if let Err(err) = drain_handles(handles, shutdown_timeout).await {
+    if let Err(err) = drain_handles(&mut handles, shutdown_timeout).await {
         warn!(
             target: "ruststream::lifecycle",
             error = %err,

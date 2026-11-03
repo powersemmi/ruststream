@@ -16,6 +16,7 @@ A batch handler needs it: each harness publish settles alone, so the batch it re
 Two messages sent through a bare publisher wait together, and `settle` delivers them as one batch, which [`assert_batch_sizes`](../subscriber-assertions/assert-batch-sizes.md) reads back.
 In process `settle` waits until the transports report nothing in flight.
 In live mode it waits until every subscription has handled what the harness saw published to it, up to the deadline of `start_live`.
+A task that keeps itself runnable never lets the app go idle; on the paused clock the harness lets time pass meanwhile and `settle` fails with [`TestError::KeptRunning`](api:ruststream::testing::TestError).
 [`advance`](./advance.md) settles after a delay has passed.
 
 ## Example

@@ -14,7 +14,7 @@ use tokio::time;
 use tokio::time::Instant;
 use tokio_util::task::TaskTracker;
 
-use ruststream_runtime_tokio::{App, RustStreamError, SubscriptionEnd};
+use ruststream_runtime_tokio::{App, Quiescence, RustStreamError, SubscriptionEnd};
 use ruststream_runtime_tokio::{
     ConnectedEntry, LifecycleHook, RegisteredBroker, Shutdown, ShutdownHooks, Starter, Teardown,
     TestParts,
@@ -26,11 +26,13 @@ use ruststream_runtime::testing::{TestError, TestableRegistration};
 use ruststream_runtime::testing::HookFailures;
 
 mod brokers;
+mod busy;
 mod drive;
 
 pub use brokers::TestBrokers;
 use brokers::registration_of;
 pub(crate) use brokers::{BrokerEntry, Mode};
+use busy::until_idle;
 
 /// The default cap on dispatched deliveries before [`TestApp::publish`] gives up driving a reaction
 /// to quiescence. Guards against a non-terminating requeue loop.
@@ -115,6 +117,8 @@ pub struct TestApp<State> {
     continuations: TaskTracker,
     shutdown_timeout: Option<Duration>,
     hook_failures: HookFailures,
+    // The runner's count of runnable tasks, which tells a busy app from a parked one.
+    quiescence: Quiescence,
 }
 
 impl<State> fmt::Debug for TestApp<State> {
@@ -519,6 +523,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         // A publisher the runtime pairs names the connected broker it was paired against; this
         // is how the harness knows which registration that is.
         coordinator.locate(entries.iter().map(|entry| entry.lifecycle.as_any()));
+        // Taken before the first task is spawned, so every task of the app is followed.
+        let quiescence = Quiescence::take();
         let shutdown = Shutdown::with_subscription_end(subscription_end);
         let mut handles = Vec::with_capacity(starters.len());
         let failed = 'start: {
@@ -538,8 +544,21 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         if let Some(err) = failed {
             // Unwound the way the service unwinds a failed start: what is running stops, and the
             // brokers already connected are shut down rather than dropped.
-            stop_dispatch(&shutdown, handles, shutdown_timeout).await;
-            drain_continuations(&continuations, shutdown_timeout).await;
+            let stopped = until_idle(&quiescence, async {
+                stop_dispatch(&shutdown, &mut handles, shutdown_timeout).await;
+                drain_continuations(&continuations, shutdown_timeout).await;
+            })
+            .await;
+            if stopped.is_err() {
+                // The wait was given up, not the stop: the loops it had not seen finish are still
+                // in `handles`. A second pass with no time to wait aborts them, so no handler
+                // runs on once the brokers close.
+                let _ = until_idle(&quiescence, async {
+                    stop_dispatch(&shutdown, &mut handles, Some(Duration::ZERO)).await;
+                    drain_continuations(&continuations, Some(Duration::ZERO)).await;
+                })
+                .await;
+            }
             shut_down(entries).await;
             return Err(err);
         }
@@ -555,6 +574,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             continuations,
             shutdown_timeout,
             hook_failures: HookFailures::new(coordinator),
+            quiescence,
         })
     }
     /// Shuts the harness down the way [`RunningApp::shutdown`](ruststream_runtime_tokio::RunningApp::shutdown)
@@ -570,13 +590,19 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// are done, so a hook's failed assertion fails the test however it ends. A harness dropped
     /// without a shutdown raises it as it goes.
     ///
+    /// A handler that keeps itself runnable does not hold the shutdown: the paused clock moves on
+    /// while it waits, so the shutdown timeout fires and the handler is aborted. With no shutdown
+    /// timeout, such a handler fails the shutdown, after the harness has aborted it, shut the brokers
+    /// down and run the `after_shutdown` hooks.
+    ///
     /// # Errors
     ///
-    /// Returns [`RustStreamError::Dispatch`] when a fail-fast failure tore the service down,
+    /// Returns [`RustStreamError::Dispatch`] when a fail-fast failure tore the service down or a
+    /// task of the app keeps itself runnable with no shutdown timeout to end the wait,
     /// [`RustStreamError::Shutdown`] when a broker fails to shut down, and
     /// [`RustStreamError::Join`] when a dispatch task panicked.
     pub async fn shutdown(self) -> Result<(), RustStreamError> {
-        let teardown = Teardown {
+        let mut teardown = Teardown {
             shutdown: self.shutdown,
             handles: self.handles,
             hooks: self
@@ -594,9 +620,22 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             shutdown_timeout: self.shutdown_timeout,
             continuations: self.continuations,
         };
-        let stopped = teardown.run().await;
+        // The wait ends by the shutdown timeout even when a handler keeps itself runnable: the
+        // paused clock moves on while it waits.
+        let stopped = match until_idle(&self.quiescence, teardown.run()).await {
+            Ok(stopped) => stopped,
+            Err(kept_running) => {
+                // The wait was given up, not the teardown: what it had not reached is still in
+                // `teardown`. A second run with no time to wait aborts the loops that are left
+                // and goes on to the brokers and the `after_shutdown` hooks, so a test that
+                // catches this error does not go on with a handler running or a broker open.
+                teardown.shutdown_timeout = Some(Duration::ZERO);
+                let _ = until_idle(&self.quiescence, teardown.run()).await;
+                Err(RustStreamError::Dispatch(kept_running.to_string()))
+            }
+        };
         // The handlers are done or aborted: the hooks they left waiting go with them.
-        self.hook_failures.stop().await;
+        let _ = until_idle(&self.quiescence, self.hook_failures.stop()).await;
         // The handlers are done, so a failure a hook left is in by now.
         self.hook_failures.raise();
         stopped
@@ -605,24 +644,28 @@ impl<State: Send + Sync + 'static> TestApp<State> {
 
 /// Stops the dispatch loops: signals them, and waits for them all, bounded by one shutdown
 /// timeout; the loops still running at its end are aborted with their workers, as the service's
-/// own shutdown does.
+/// own shutdown does. A loop leaves `handles` only once it has finished, so a stop that is dropped
+/// mid-wait keeps the loops it had not seen finish, and a second stop aborts them.
 async fn stop_dispatch(
     shutdown: &Shutdown,
-    handles: Vec<JoinHandle<()>>,
+    handles: &mut Vec<JoinHandle<()>>,
     timeout: Option<Duration>,
 ) {
     shutdown.cancel();
     let until = timeout.map(|timeout| Instant::now() + timeout);
-    for mut handle in handles {
-        let Some(until) = until else {
-            let _ = handle.await;
-            continue;
+    while let Some(handle) = handles.first_mut() {
+        let finished = if let Some(until) = until {
+            time::timeout_at(until, &mut *handle).await.is_ok()
+        } else {
+            let _ = (&mut *handle).await;
+            true
         };
-        if time::timeout_at(until, &mut handle).await.is_err() {
+        if !finished {
             handle.abort();
             // Awaited, so the loop is gone, not merely told to go, when this returns.
-            let _ = handle.await;
+            let _ = (&mut *handle).await;
         }
+        handles.remove(0);
     }
 }
 

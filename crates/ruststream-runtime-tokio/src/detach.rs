@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use tokio_util::task::TaskTracker;
 
+use crate::follow::follow;
 use crate::{Clock, Continuation, Copying, Delivery, Detach, Lent, RetryCopies, RetryRoute, Tokio};
 
 /// The tokio runner's handle: what a delivery leaves behind is a task of the app's tracker, which
@@ -43,8 +44,8 @@ impl Tracked {
         Work: Future<Output = ()> + Send + 'static,
     {
         match &self.own {
-            None => drop(self.tasks.spawn(work)),
-            Some(own) => drop(self.tasks.spawn(own.track_future(work))),
+            None => drop(self.tasks.spawn(follow(work))),
+            Some(own) => drop(self.tasks.spawn(own.track_future(follow(work)))),
         }
     }
 }

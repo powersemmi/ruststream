@@ -184,7 +184,7 @@ impl TestApp {
     /// Returns [`TestError::Connect`] if a broker fails to connect in process,
     /// [`TestError::Subscribe`] if a subscription fails to open, [`TestError::Startup`] if an
     /// `after_startup` hook fails, [`TestError::Stalled`] if the startup waits on something that
-    /// neither the app nor the clock wakes, or [`TestError::NotQuiescent`] if the app keeps
+    /// neither the app nor the clock wakes, or [`TestError::KeptRunning`] if the app keeps
     /// waking itself.
     ///
     /// # Panics
@@ -332,7 +332,8 @@ impl TestApp {
     ///
     /// # Errors
     ///
-    /// Returns [`TestError::NotQuiescent`] if the app keeps waking itself.
+    /// Returns [`TestError::KeptRunning`] if the app keeps waking itself, or
+    /// [`TestError::NotQuiescent`] if the reaction keeps dispatching deliveries.
     ///
     /// # Examples
     ///
@@ -429,7 +430,7 @@ impl TestApp {
     /// Returns [`TestError::Failed`] with the app's own [`RunError`] if it stopped on one before
     /// or during the shutdown (a subscription failed under a fail-fast policy, say),
     /// [`TestError::Stalled`] if work it holds waits on something that neither the app nor the
-    /// clock wakes, or [`TestError::NotQuiescent`] if it keeps waking itself.
+    /// clock wakes, or [`TestError::KeptRunning`] if it keeps waking itself.
     ///
     /// # Examples
     ///
@@ -453,9 +454,7 @@ impl TestApp {
                 return Err(TestError::Stalled);
             }
         }
-        Err(TestError::NotQuiescent {
-            processed: MAX_POLLS,
-        })
+        Err(TestError::KeptRunning { turns: MAX_POLLS })
     }
 
     /// Addresses the broker of type `B`, the production type the app was built with.
@@ -494,9 +493,7 @@ impl TestApp {
                 return Err(TestError::Stalled);
             }
         }
-        Err(TestError::NotQuiescent {
-            processed: MAX_POLLS,
-        })
+        Err(TestError::KeptRunning { turns: MAX_POLLS })
     }
 
     /// Asserts on what was published through the [`Out`](ruststream_runtime::Out) slot marked
@@ -622,16 +619,14 @@ impl TestApp {
                     // too, and is not done.
                     return Poll::Ready(if self.coordinator().exhausted() {
                         Err(TestError::NotQuiescent {
-                            processed: MAX_POLLS,
+                            processed: self.coordinator().step_processed(),
                         })
                     } else {
                         Ok(())
                     });
                 }
             }
-            Poll::Ready(Err(TestError::NotQuiescent {
-                processed: MAX_POLLS,
-            }))
+            Poll::Ready(Err(TestError::KeptRunning { turns: MAX_POLLS }))
         })
         .await;
         // The hooks ran inside the polls above; a failure one of them left fails this step.

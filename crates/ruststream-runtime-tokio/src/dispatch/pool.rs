@@ -18,6 +18,8 @@ use ruststream_core::diag::error;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::follow::spawn_followed;
+
 use super::{
     DispatchFailure, Handler, HeadersOnDemand, Hosted, Shutdown, Slot, Turn, Workers, dispatch,
     key_index, log_worker_exit,
@@ -151,7 +153,7 @@ where
             loop_side: free_side.clone(),
         });
         let shared = Arc::clone(shared);
-        crew.0.push(tokio::spawn(work(shared, inbox, idle)));
+        crew.0.push(spawn_followed(work(shared, inbox, idle)));
         inboxes.push(inbox_side);
         if !workers.by_key() {
             // Room for every worker was made above, and nothing has taken any yet.
@@ -193,7 +195,7 @@ where
     State: Send + Sync + 'static,
 {
     let consuming = shutdown.consuming();
-    tokio::spawn(async move {
+    spawn_followed(async move {
         let _consuming = consuming;
         let count = workers.count().get();
         let keyed = workers.by_key();

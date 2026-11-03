@@ -98,8 +98,14 @@ impl Teardown {
     /// Returns [`RustStreamError`] if a dispatch task panicked, a broker failed to shut down, or
     /// the service had already torn itself down on a fail-fast failure
     /// ([`RustStreamError::Dispatch`]).
+    ///
+    /// # Cancel safety
+    ///
+    /// Each stage takes its items out of `self` one at a time, so a `run` that is dropped
+    /// mid-way leaves the items it had not reached in place, and a second `run` finishes them.
+    /// The harness relies on this to complete a teardown it had to abandon.
     #[doc(hidden)]
-    pub async fn run(self) -> Result<(), RustStreamError> {
+    pub async fn run(&mut self) -> Result<(), RustStreamError> {
         let Self {
             shutdown,
             handles,
@@ -108,9 +114,10 @@ impl Teardown {
             shutdown_timeout,
             continuations,
         } = self;
+        let shutdown_timeout = *shutdown_timeout;
 
         shutdown.begin();
-        run_hooks(hooks.on_shutdown, "on_shutdown").await;
+        run_hooks(&mut hooks.on_shutdown, "on_shutdown").await;
 
         shutdown.cancel();
         debug!(target: "ruststream::lifecycle", "draining in-flight handlers");
@@ -122,11 +129,11 @@ impl Teardown {
         // Handlers have stopped, so no new post-settle continuations can be spawned: close the
         // tracker and drain the in-flight ones, bounded by the same shutdown timeout. They are
         // at-most-once, so timing one out only abandons follow-up work, never a settlement.
-        drain_continuations(continuations, shutdown_timeout).await;
+        drain_continuations(continuations.clone(), shutdown_timeout).await;
 
         let closed = close_brokers(brokers).await;
 
-        run_hooks(hooks.after_shutdown, "after_shutdown").await;
+        run_hooks(&mut hooks.after_shutdown, "after_shutdown").await;
         info!(target: "ruststream::lifecycle", "service stopped");
 
         drained?;
@@ -142,9 +149,11 @@ impl Teardown {
 
 /// Shuts the brokers down in reverse registration order. Every broker gets its turn even after
 /// one fails; the first failure is the one returned.
-async fn close_brokers(brokers: Vec<ConnectedEntry>) -> Result<(), RustStreamError> {
+async fn close_brokers(brokers: &mut Vec<ConnectedEntry>) -> Result<(), RustStreamError> {
     let mut closed = Ok(());
-    for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
+    // Taken off the list one at a time, so a teardown dropped mid-way keeps the brokers it had
+    // not reached.
+    while let Some(ConnectedEntry { lifecycle, label }) = brokers.pop() {
         let name = lifecycle.name();
         let broker = label.as_deref().unwrap_or(name);
         match lifecycle.shutdown().await {
@@ -167,8 +176,9 @@ async fn close_brokers(brokers: Vec<ConnectedEntry>) -> Result<(), RustStreamErr
 
 /// Runs one list of shutdown hooks in order. A failing hook is logged and does not stop the
 /// shutdown: the service is going down either way, and the hooks after it still get their turn.
-async fn run_hooks(hooks: Vec<BoundHook>, phase: &'static str) {
-    for hook in hooks {
+async fn run_hooks(hooks: &mut Vec<BoundHook>, phase: &'static str) {
+    while !hooks.is_empty() {
+        let hook = hooks.remove(0);
         if let Err(err) = hook().await {
             warn!(target: "ruststream::lifecycle", error = %err, "{phase} hook failed");
         }
@@ -178,20 +188,24 @@ async fn run_hooks(hooks: Vec<BoundHook>, phase: &'static str) {
 /// Awaits all handler tasks, bounded by `timeout` if set. On timeout the remaining tasks are
 /// aborted and awaited, so a loop is gone, not merely told to go, when this returns. A task that
 /// panicked surfaces as [`RustStreamError::Join`], with a timeout or without one.
+///
+/// A loop leaves the list only once it has finished, so a drain that is dropped mid-wait keeps
+/// the loops it had not seen finish, and a second drain aborts them.
 pub(crate) async fn drain_handles(
-    handles: Vec<JoinHandle<()>>,
+    handles: &mut Vec<JoinHandle<()>>,
     timeout: Option<Duration>,
 ) -> Result<(), RustStreamError> {
     let Some(timeout) = timeout else {
         // Every loop is awaited, so one that panicked does not leave the others running while
         // the brokers close; the first panic is the one returned.
         let mut joined = Ok(());
-        for handle in handles {
-            if let Err(err) = handle.await
+        while !handles.is_empty() {
+            if let Err(err) = (&mut handles[0]).await
                 && joined.is_ok()
             {
                 joined = Err(RustStreamError::Join(err));
             }
+            handles.remove(0);
         }
         return joined;
     };
@@ -199,8 +213,9 @@ pub(crate) async fn drain_handles(
     let until = Tokio.now() + timeout;
     let mut timed_out = false;
     let mut joined = Ok(());
-    for mut handle in handles {
-        if let Ok(outcome) = time::timeout_at(until, &mut handle).await {
+    while !handles.is_empty() {
+        let handle = &mut handles[0];
+        if let Ok(outcome) = time::timeout_at(until, &mut *handle).await {
             // A loop that finished before the deadline reports a panic as the untimed path does;
             // a cancelled one says nothing.
             if let Err(err) = outcome
@@ -209,6 +224,7 @@ pub(crate) async fn drain_handles(
             {
                 joined = Err(RustStreamError::Join(err));
             }
+            handles.remove(0);
             continue;
         }
         if !timed_out {
@@ -221,6 +237,7 @@ pub(crate) async fn drain_handles(
         handle.abort();
         // The aborted loop ends at its next await; its outcome (cancelled) says nothing more.
         let _ = handle.await;
+        handles.remove(0);
     }
     joined
 }
@@ -271,7 +288,7 @@ mod tests {
         });
 
         let drain = async {
-            let drained = drain_handles(vec![panicked, gated], None).await;
+            let drained = drain_handles(&mut vec![panicked, gated], None).await;
             (drained, finished.load(Ordering::SeqCst))
         };
         let releaser = async {
@@ -296,7 +313,7 @@ mod tests {
     #[tokio::test]
     async fn a_panicked_loop_fails_run_under_a_shutdown_timeout() {
         let panicked = tokio::spawn(async { panic!("dispatch loop panicked") });
-        let teardown = Teardown {
+        let mut teardown = Teardown {
             shutdown: Shutdown::new(),
             handles: vec![panicked],
             hooks: ShutdownHooks::bind::<()>(Vec::new(), Vec::new(), &Arc::new(())),

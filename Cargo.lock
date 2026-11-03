@@ -1879,6 +1879,7 @@ dependencies = [
  "bytes",
  "crossbeam-queue",
  "futures",
+ "pin-project-lite",
  "rtrb",
  "ruststream",
  "ruststream-core",

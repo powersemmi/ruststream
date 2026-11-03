@@ -15,6 +15,8 @@ It is the service's own [shutdown](../../running/shutdown.md), step for step.
 It runs `on_shutdown`, stops the dispatch loops, and waits for in-flight handlers and post-settle continuations.
 It then shuts the brokers down in reverse order of registration and runs `after_shutdown`.
 The wait for handlers and continuations is bounded by the app's shutdown timeout.
+A handler that keeps itself runnable does not stop the clock: on a paused clock time passes while the shutdown waits, so the timeout fires and the handler is aborted, as it would be in the service.
+Without a shutdown timeout, such a handler fails the shutdown with `RustStreamError::Dispatch`.
 A failing shutdown hook is logged, and the shutdown goes on, as in the service.
 The result is `Ok` for a healthy run and [`RustStreamError::Dispatch`](api:ruststream::runtime::RustStreamError) after a fail-fast failure, such as a handler panic under the default policy.
 A broker that fails to shut down returns the service's error for it too.

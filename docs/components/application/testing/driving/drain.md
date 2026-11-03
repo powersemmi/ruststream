@@ -16,6 +16,7 @@ It runs on its own task after the delivery settles, so a [`publish`](./publish.m
 A settlement registers its continuations before it releases the delivery, so `drain` after a publish finds them all.
 An effect of the handler body itself needs no `drain`: the publish has already settled it.
 In the example the test builds the state with [`with_state`](../starting-and-stopping/with-state.md) to read the mail client's record afterwards.
+A continuation that keeps itself runnable never finishes, and `drain` panics with the harness's `KeptRunning` message instead of hanging.
 [`shutdown`](../starting-and-stopping/shutdown.md) waits for continuations too.
 
 ## Example
