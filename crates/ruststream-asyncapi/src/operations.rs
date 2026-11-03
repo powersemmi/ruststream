@@ -5,8 +5,8 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
+use ruststream_core::diag::warn;
 use serde_json::Value;
-use tracing::warn;
 
 use ruststream_core::Tag;
 use ruststream_runtime::{

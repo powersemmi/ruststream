@@ -982,6 +982,11 @@ required-features = ["embassy", "memory", "macros", "testing", "log"]
 # The tokio runner reports through the logger the app selects. The selection is process-wide, so
 # the test owns a binary.
 [[test]]
+name = "asyncapi_logger"
+path = "tests/asyncapi_logger.rs"
+required-features = ["tokio", "memory", "macros", "testing", "asyncapi"]
+
+[[test]]
 name = "logger_tokio"
 path = "tests/logger_tokio.rs"
 required-features = ["tokio", "memory", "macros", "testing", "log"]
