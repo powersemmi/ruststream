@@ -373,3 +373,9 @@ required-features = ["tokio", "json"]
 name = "compio_logger"
 path = "tests/compio_logger.rs"
 required-features = ["compio", "json"]
+
+# A destination hook runs on the test's own publish, through the compio `TestApp`.
+[[test]]
+name = "compio_hooks"
+path = "tests/compio_hooks.rs"
+required-features = ["compio", "json"]

@@ -2,6 +2,9 @@
 //! broker, and where the assertions on that broker's handlers and publishes start.
 
 use std::fmt;
+use std::future::poll_fn;
+use std::pin::pin;
+use std::task::Poll;
 
 use ruststream_core::{Lend, OutgoingDestination, OutgoingMessage, RawMessage};
 use ruststream_runtime::testing::{
@@ -12,6 +15,16 @@ use ruststream_runtime::{
     HeadersUnset, MessageBody, PublishBuilder, PublishSink, SinkOutcome, UnnamedCodec, message_of,
 };
 use ruststream_runtime_compio::testing::Runnable;
+
+/// Polls `future` once and drops it: the hand-over of a hook is its first poll.
+async fn poll_once<Fut: Future>(future: Fut) {
+    let mut future = pin!(future);
+    poll_fn(|cx| {
+        let _ = future.as_mut().poll(cx);
+        Poll::Ready(())
+    })
+    .await;
+}
 
 /// One broker of a compio [`TestApp`](super::TestApp), addressed by its production type with
 /// [`TestApp::broker`](super::TestApp::broker).
@@ -68,10 +81,16 @@ impl PublishSink for InjectSink<'_> {
             .with_headers(msg.headers().clone());
         let started = self.coordinator.test_publish_started();
         self.broker.inject(msg);
-        self.coordinator
+        let hooks = self
+            .coordinator
             .record_published(self.scope_id, recorded, started)
-            .run()
-            .await;
+            .run();
+        // One poll hands the hooks of the test's own publish to the harness, which starts them
+        // from `settled`: waiting for them here would wait for a step that only this publish
+        // takes. A hook that waits on the clock stays queued past this publish, as one registered
+        // on a subscriber does, and finishes when the test advances the clock or shuts the app
+        // down.
+        poll_once(hooks).await;
         super::settled(self.coordinator, &self.runnable)
             .await
             .map_err(Into::into)
