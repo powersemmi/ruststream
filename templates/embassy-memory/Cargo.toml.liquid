@@ -1,0 +1,28 @@
+[package]
+name = "{{project-name}}"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# The framework without `alloc`: the embassy runner, the local bus, the attributes, the postcard
+# codec, and defmt for the logger the app selects.
+ruststream = { version = "0.8", default-features = false, features = ["embassy", "memory", "macros", "postcard", "defmt"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+# The executor the app's task runs on: a Cortex-M thread-mode executor.
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+# The tick source `embassy-time` links against, over the core's SysTick, which every Cortex-M has.
+# A board with a timer of its own names its HAL's driver here instead.
+embassy-time-driver = "0.2.2"
+systick-timer = { version = "0.2.3", features = ["embassy-time-driver"] }
+# The core support and the critical section the bus locks through, for a single core.
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
+# The log lines go to a debug probe over RTT.
+defmt = "1"
+defmt-rtt = "1"
+panic-halt = "1"
+
+[profile.release]
+debug = true
+lto = "fat"
+opt-level = "s"

@@ -18,7 +18,9 @@ cd my-service
 ```
 
 Scaffolding needs only `cargo generate`. `templates/memory` is the starter template for the
-in-memory broker. A broker crate that ships a template is scaffolded the same way, naming that
+in-memory broker. `templates/compio-memory` starts a service on the compio runtime over the
+in-process bus, and `templates/embassy-memory` a Cortex-M firmware on the embassy runtime with no
+heap. A broker crate that ships a template is scaffolded the same way, naming that
 crate's repository and the template's path (for example
 `--git https://github.com/powersemmi/ruststream-nats templates/nats`); the broker's own
 documentation names the templates it has. `cargo generate` writes an idiomatic, multi-file project:

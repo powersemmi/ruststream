@@ -1,0 +1,13 @@
+[package]
+name = "{{project-name}}"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ruststream = { version = "0.8", default-features = false, features = ["compio", "memory", "macros", "json", "tracing"] }
+# The bus locks through a critical section, and the binary supplies it: on a host, the one
+# `critical-section` builds over the standard library.
+critical-section = { version = "1.1", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
