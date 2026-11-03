@@ -16,7 +16,7 @@ use ruststream_runtime::{BatchHandler, Context, SendHost, Workers};
 use ruststream_runtime_compio::dispatch::{
     Fabric, Layout, Mount, spawn_batch_dispatch, spawn_dispatch_workers,
 };
-use ruststream_runtime_compio::{Stop, SubscriptionEnd, Tasks};
+use ruststream_runtime_compio::{Stop, SubscriptionEnd, Tasks, yield_now};
 use thiserror::Error;
 
 use crate::support::{
@@ -34,6 +34,8 @@ enum Tail {
     Ends,
     /// It waits for more that never come.
     Waits,
+    /// It answers every poll with an error, at once: a broker that is down.
+    Faults,
 }
 
 /// A subscriber over a script of stream items.
@@ -78,10 +80,19 @@ impl Scripted {
         }
     }
 
+    /// Nothing but errors, every one ready at once.
+    fn failing() -> Self {
+        Self {
+            items: Vec::new(),
+            tail: Tail::Faults,
+        }
+    }
+
     fn items(&mut self) -> impl Stream<Item = Result<Msg, Fault>> + Send + 'static {
         let tail = match self.tail {
-            Tail::Ends => stream::empty().left_stream(),
-            Tail::Waits => stream::pending().right_stream(),
+            Tail::Ends => stream::empty().boxed(),
+            Tail::Waits => stream::pending().boxed(),
+            Tail::Faults => stream::repeat_with(|| Err(Fault)).boxed(),
         };
         stream::iter(mem::take(&mut self.items)).chain(tail)
     }
@@ -312,6 +323,29 @@ fn shutdown_stops_a_loop_whose_subscription_never_runs_dry() {
                 (0..handled.len()).collect::<Vec<_>>(),
                 "{shape:?} under {form:?} lost a delivery or handled one twice"
             );
+        }
+    }
+}
+
+#[test]
+fn shutdown_stops_a_loop_whose_subscription_only_fails() {
+    for shape in SHAPES {
+        for &form in forms(shape) {
+            on_cores(3, async |fabric, stop, tasks| {
+                let (seen, _arrived) = mpsc::unbounded();
+                let joined = start(
+                    shape,
+                    form,
+                    Scripted::failing(),
+                    (&fabric, &stop, tasks),
+                    seen,
+                );
+                // Core 0 runs this scenario beside the loop: it comes back only if the loop hands
+                // the core a turn between errors.
+                yield_now().await;
+                stop.cancel();
+                joined.await.expect("the loop does not panic");
+            });
         }
     }
 }

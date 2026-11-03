@@ -180,6 +180,9 @@ async fn batch_loop<S, H, C, St, Retry>(
                     error = %err,
                     "subscriber stream error",
                 );
+                // A broker that keeps failing delivers no batch, which is where the loop yields;
+                // without this the core would never leave the loop.
+                yield_now().await;
             }
             Turn::Ended => {
                 stop.stream_ended(&shared.name);
