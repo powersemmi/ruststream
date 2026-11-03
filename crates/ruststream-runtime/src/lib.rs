@@ -181,6 +181,8 @@ pub use dispatch::{
 pub use dispatch::{Placement, RETRY_COUNT_HEADER, Workers};
 #[cfg(ruststream_alloc)]
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
+#[doc(hidden)]
+pub use extract::{AnyContext, ContextOf, FoldedContext, JoinSlot};
 pub use extract::{Ctx, CtxKey, FromContext, FromRef, Headers, State};
 #[doc(hidden)]
 pub use failure::DispatchFailure;

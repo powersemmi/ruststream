@@ -14,6 +14,7 @@ use alloc::format;
 use core::any::type_name;
 use core::convert::Infallible;
 use core::fmt;
+use core::marker::PhantomData;
 use ruststream_core::{MaybeSend, MaybeSync};
 
 use ruststream_core::diag::warn;
@@ -274,21 +275,80 @@ pub struct Ctx<K: CtxKey>(pub K::Value);
 /// # fn main() {}
 /// ```
 pub trait CtxKey: sealed::Sealed {
+    /// The context the key reads from, for the macros to project the handler's context type:
+    /// [`ContextOf`] for a [`ContextField`], [`AnyContext`] for a runner's handle, which reads
+    /// none and extracts under any.
+    #[doc(hidden)]
+    type Slot;
+
     /// The owned value the extractor binds.
     type Value: MaybeSend + 'static;
 }
 
 impl<K: ContextField> CtxKey for K {
+    type Slot = ContextOf<K::Context>;
     type Value = K::Value;
+}
+
+/// The context a [`ContextField`] key reads from. Macro machinery.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct ContextOf<Context>(PhantomData<fn() -> Context>);
+
+/// The slot of a key that reads no broker context. Macro machinery.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct AnyContext;
+
+/// Two keys' slots folded into one: an [`AnyContext`] yields to the other, so a handler's
+/// context is the first context a key names, whatever order the keys come in. Macro machinery.
+#[doc(hidden)]
+pub trait JoinSlot<Other> {
+    /// The folded slot.
+    type Joined;
+}
+
+impl JoinSlot<Self> for AnyContext {
+    type Joined = Self;
+}
+
+impl<Context> JoinSlot<ContextOf<Context>> for AnyContext {
+    type Joined = ContextOf<Context>;
+}
+
+impl<Context> JoinSlot<AnyContext> for ContextOf<Context> {
+    type Joined = Self;
+}
+
+impl<Context, Other> JoinSlot<ContextOf<Other>> for ContextOf<Context> {
+    type Joined = Self;
+}
+
+/// The handler context a folded slot stands for: the named context, or `()` when no key named
+/// one. Macro machinery.
+#[doc(hidden)]
+pub trait FoldedContext {
+    /// The context type.
+    type Context;
+}
+
+impl FoldedContext for AnyContext {
+    type Context = ();
+}
+
+impl<Context> FoldedContext for ContextOf<Context> {
+    type Context = Context;
 }
 
 #[cfg(feature = "tokio")]
 impl CtxKey for MainRuntime {
+    type Slot = AnyContext;
     type Value = Self;
 }
 
 #[cfg(feature = "compio")]
 impl CtxKey for Core {
+    type Slot = AnyContext;
     type Value = Self;
 }
 

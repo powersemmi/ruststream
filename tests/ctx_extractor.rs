@@ -144,3 +144,55 @@ async fn ctx_extractor_composes_with_an_explicit_ctx_parameter() {
         .assert_called_once()
         .settled(HandlerOutcome::ack());
 }
+
+// --- a key named like a runner's handle is still the user's own field ---
+
+mod my_fields {
+    use super::{ContextField, DeliveryMeta};
+
+    /// A user's key that happens to be called `Core`: it reads the payload length like any field.
+    #[derive(Clone, Copy, Default)]
+    pub(super) struct Core;
+
+    impl ContextField for Core {
+        type Context = DeliveryMeta;
+        type Value = usize;
+        fn read(self, src: &DeliveryMeta) -> usize {
+            src.payload_len
+        }
+    }
+}
+
+#[subscriber("named")]
+async fn measure_named(
+    _order: &Order,
+    Ctx(len): Ctx<my_fields::Core>,
+    State(seen): State<SeenLen>,
+) -> HandlerOutcome {
+    seen.0.store(len, Ordering::Relaxed);
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ctx_extractor_takes_a_user_key_named_core() {
+    let seen_len = Arc::new(AtomicUsize::new(0));
+    let state_seen = SeenLen(Arc::clone(&seen_len));
+    let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(MeasureState { seen: state_seen }))
+        .with_broker(MemoryBroker::new(), |b| b.include(measure_named));
+
+    let tb = TestApp::start(app).await.expect("start");
+    tb.broker::<MemoryBroker>()
+        .message(&Order { id: 7 })
+        .to("named")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("named")
+        .assert_called_once()
+        .settled(HandlerOutcome::ack());
+    let expected = serde_json::to_vec(&Order { id: 7 }).expect("encode").len();
+    assert_eq!(seen_len.load(Ordering::Relaxed), expected);
+}

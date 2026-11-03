@@ -45,6 +45,8 @@ pub use ruststream_runtime::{
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
 #[doc(hidden)]
+pub use ruststream_runtime::{AnyContext, ContextOf, FoldedContext, JoinSlot};
+#[doc(hidden)]
 pub use ruststream_runtime::{
     AnyOutPos, BindSlotsBody, MaybeSendSink, MaybeSendSync, SelectEntry, SlotEntry, SlotPublish,
     SlotTransactions,
