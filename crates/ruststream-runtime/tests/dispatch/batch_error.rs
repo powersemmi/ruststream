@@ -19,7 +19,7 @@ use ruststream::{Lend, OutgoingMessage, PairError};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
-use crate::error::{DownPublish, Job, Queue, RETRY_DELAY};
+use super::error::{DownPublish, Job, Queue, RETRY_DELAY};
 use ruststream_core::{PublishMessageError, PublishOutcome};
 
 /// Publishes one job to `to`.

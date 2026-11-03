@@ -1,5 +1,7 @@
 [package]
 name = "ruststream-memory"
+# Every file under `tests/` is a module of one test binary: one link instead of one per file.
+autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -89,3 +91,7 @@ ruststream = { path = "../ruststream", features = ["macros", "memory", "json", "
 
 [lints]
 workspace = true
+
+[[test]]
+name = "suite"
+path = "tests/main.rs"

@@ -77,7 +77,6 @@ jobs:
               - 'Cargo.lock'
               # the testing and conformance pages embed their snippets from these test files
               - 'crates/ruststream/tests/doc_*.rs'
-              - 'crates/ruststream/tests/conformance_self.rs'
               - 'scripts/lint_doc_fences.py'
               - 'scripts/check_doc_i18n.py'
               - 'scripts/doc_glossary.toml'

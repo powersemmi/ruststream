@@ -26,7 +26,8 @@ use ruststream_core::{
     Positioned, Seekable, Seeker, Settle, Subscribe, Subscriber, SubscriptionSource, nonzero,
 };
 
-// The in-memory reference passes the opt-in suites; the others run in `tests/conformance_self.rs`.
+// The in-memory reference passes the opt-in suites; the others run in the crate's
+// `tests/harness/reference.rs`.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_broker_passes_batch_seeking() {

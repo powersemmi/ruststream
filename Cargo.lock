@@ -1946,6 +1946,7 @@ dependencies = [
 name = "ruststream-asyncapi"
 version = "0.8.0"
 dependencies = [
+ "compio",
  "ruststream",
  "ruststream-core",
  "ruststream-runtime",
@@ -1994,6 +1995,7 @@ dependencies = [
  "ruststream-memory",
  "ruststream-runtime",
  "ruststream-runtime-tokio",
+ "schemars",
  "serde",
  "serde_json",
  "thiserror",
@@ -2034,7 +2036,10 @@ version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "ruststream",
+ "serde",
  "syn 3.0.9",
+ "tokio",
 ]
 
 [[package]]
@@ -2073,6 +2078,7 @@ dependencies = [
 name = "ruststream-observability"
 version = "0.8.0"
 dependencies = [
+ "allocation-counter",
  "arc-swap",
  "boxcar",
  "opentelemetry",
@@ -2083,6 +2089,7 @@ dependencies = [
  "ruststream-core",
  "ruststream-runtime",
  "ruststream-runtime-tokio",
+ "schemars",
  "serde",
  "serde_json",
  "thiserror",
@@ -2105,8 +2112,10 @@ dependencies = [
  "heapless",
  "inventory",
  "opentelemetry",
+ "opentelemetry_sdk",
  "pin-project-lite",
  "postcard",
+ "prometheus",
  "prost",
  "quanta",
  "rmp-serde",
@@ -2222,9 +2231,11 @@ dependencies = [
  "ruststream-runtime-compio",
  "ruststream-runtime-embassy",
  "ruststream-runtime-tokio",
+ "schemars",
  "send_wrapper",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "tokio-util",
  "tracing",

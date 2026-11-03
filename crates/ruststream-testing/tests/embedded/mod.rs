@@ -1,0 +1,30 @@
+//! The `embedded` tests: each file is a module of it.
+
+mod app;
+mod batch_continuation;
+mod batch_dead_letter;
+mod batch_encode;
+mod batch_error;
+mod batch_input;
+mod batch_out;
+mod batch_out_retry;
+mod batch_reply;
+mod batch_retry;
+mod bindable;
+mod continuation;
+mod continuation_local;
+mod dead_letter;
+mod encode_capacity;
+mod error;
+mod error_local;
+mod error_out;
+mod error_reply;
+mod input;
+mod manual;
+mod out_continuation;
+mod quiescence;
+mod readiness;
+mod retry;
+mod retry_moved;
+mod retry_startup;
+mod spill;

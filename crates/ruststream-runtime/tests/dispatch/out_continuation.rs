@@ -10,7 +10,7 @@ use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{DownPublish, Job, Queue, RETRY_DELAY};
+use super::error::{DownPublish, Job, Queue, RETRY_DELAY};
 
 /// What the continuations raise.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Outgoing)]

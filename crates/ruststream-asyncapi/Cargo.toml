@@ -1,5 +1,7 @@
 [package]
 name = "ruststream-asyncapi"
+# Every file under `tests/` is a module of one test binary: one link instead of one per file.
+autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -30,7 +32,12 @@ schemars = "1"
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
 # The doc examples are a service's code, so they import the facade; a path dependency without a
 # version is dropped on publish.
-ruststream = { path = "../ruststream", features = ["macros", "memory", "json", "asyncapi", "testing"] }
+ruststream = { path = "../ruststream", features = ["macros", "memory", "json", "asyncapi", "testing", "cbor", "conformance", "compio"] }
+compio.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "suite"
+path = "tests/main.rs"

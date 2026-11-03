@@ -1,0 +1,207 @@
+//! Shared helpers for the integration tests.
+//!
+//! What lives here is what a suite needs but is never the subject of its assertions: the
+//! stand-in message and the connected form the publish-log assertions read from. A suite that
+//! tests one of these shapes itself declares its own instead.
+//!
+//! Each suite uses what it needs, hence the `dead_code` allowances.
+//!
+//! Registrations are documented by default, so every message type here derives `JsonSchema`:
+//! a suite mounting one of them is not asking to be the file that opts documentation out.
+
+use std::future::poll_fn;
+use std::pin::Pin;
+use std::task::{Context, Poll, ready};
+use std::time::Duration;
+
+use ruststream::memory::ConnectedMemoryBroker;
+use ruststream::memory::LogMode;
+use ruststream::memory::Retention;
+use ruststream::memory::{MemoryBroker, MemoryPublisher, Retaining};
+use ruststream::testing;
+use serde::{Deserialize, Serialize};
+
+/// The message the suites drive when the payload is not what they are asserting on: one field,
+/// so a decode either happened or did not.
+///
+/// The `Outgoing` derive rides along wherever the macros feature is on, which lets a suite
+/// publish it through the builder. It declares no name: the subject differs per suite, so the
+/// call site keeps naming it with `to(..)`.
+#[derive(
+    ruststream::Outgoing, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[allow(dead_code)]
+pub(crate) struct Order {
+    pub(crate) id: u32,
+}
+
+/// The reply half of a request/reply suite: what a handler answers with when the answer's shape
+/// is not what the suite is asserting on.
+///
+/// The `Outgoing` derive is what makes it a reply at all. It declares no name, because the reply
+/// subject differs per suite, so the mount site keeps naming it.
+#[derive(
+    ruststream::Outgoing, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[allow(dead_code)]
+pub(crate) struct Receipt {
+    pub(crate) id: u32,
+}
+
+/// The stand-in message of the suites that forward rather than reply: same role as [`Order`],
+/// distinct so a test driving both sides can tell input from output.
+#[derive(
+    ruststream::Outgoing, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[allow(dead_code)]
+pub(crate) struct Event {
+    pub(crate) id: u64,
+}
+
+/// An [`Event`] encoded for the wire.
+#[allow(dead_code)]
+pub(crate) fn payload(id: u64) -> Vec<u8> {
+    serde_json::to_vec(&Event { id }).expect("an event serializes")
+}
+
+/// Bytes published as themselves: the named wire a suite injects an arbitrary payload through.
+///
+/// Publishing is typed, so bytes that are not a model of their own still travel as a declared
+/// type; `#[derive(Serialized)]` is what says "these bytes are already the payload", and no
+/// codec runs on them. Suites use it for the two payloads that are deliberately not a model:
+/// what a raw (`&[u8]` or `Deserialized`) subscriber is meant to receive, and what a decode
+/// policy is meant to reject. It declares no name - the subject differs per suite, so the call
+/// site keeps naming it with `to(..)`.
+#[derive(ruststream::Outgoing, ruststream::Serialized, Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct Wire(pub(crate) Vec<u8>);
+
+#[allow(dead_code)]
+impl Wire {
+    /// The wire form of `bytes`, for the call sites that hold a slice or a literal.
+    pub(crate) fn of(bytes: impl AsRef<[u8]>) -> Self {
+        Self(bytes.as_ref().to_vec())
+    }
+}
+
+/// The request/response pair of the middleware suites, whose subject is what runs around a
+/// handler rather than what the handler carries.
+///
+/// The request half rides the `Outgoing` derive like [`Order`]: a suite drives these middleware
+/// through it, so the request is published, and it declares no name because the subject differs
+/// per suite.
+#[derive(
+    ruststream::Outgoing, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[allow(dead_code)]
+pub(crate) struct Req {
+    pub(crate) n: u32,
+}
+
+/// The answer to a [`Req`]. See its docs.
+#[derive(
+    ruststream::Outgoing, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[allow(dead_code)]
+pub(crate) struct Resp {
+    pub(crate) n: u32,
+}
+
+/// The connected form of `broker`, for the assertions that read a broker's publish log.
+///
+/// A broker's `TestableBroker` surface appears on the connected form: the log belongs to the
+/// connection, not to the configuration the app was built from.
+#[allow(dead_code)]
+pub(crate) async fn connected<Log: LogMode>(
+    broker: &MemoryBroker<Log>,
+) -> ConnectedMemoryBroker<Log> {
+    ruststream::Broker::connect(broker.clone())
+        .await
+        .expect("memory connect is infallible")
+}
+
+/// A fresh memory broker with the two handles a suite drives it through: one to publish input,
+/// one to read the publish log. The broker itself is returned to be moved into the app.
+///
+/// Reading a publish log back means the broker has to keep one, so this is the retaining form;
+/// the window is wider than anything these suites publish.
+#[allow(dead_code)]
+pub(crate) async fn observed_memory() -> (
+    MemoryBroker<Retaining>,
+    MemoryPublisher,
+    ConnectedMemoryBroker<Retaining>,
+) {
+    let broker = MemoryBroker::retaining(Retention::Messages(ruststream::nonzero!(64)));
+    let ingress = broker.publisher();
+    let observer = connected(&broker).await;
+    (broker, ingress, observer)
+}
+
+/// Asserts that exactly one [`Event`] carrying `id` was published to `name`.
+#[allow(dead_code)]
+pub(crate) async fn expect_id<Log: LogMode>(
+    observer: &ConnectedMemoryBroker<Log>,
+    name: &str,
+    id: u64,
+) {
+    let seen = testing::expect_published(observer, name, 1, Duration::from_secs(2)).await;
+    assert_eq!(seen.len(), 1, "expected one publish on {name}");
+    let event: Event = serde_json::from_slice(seen[0].payload()).expect("decodes");
+    assert_eq!(event.id, id, "the event published on {name}");
+}
+
+/// The next batch a stream fills a fresh slot with, or `None` where the subscription ended: the
+/// slot a service never sees, lent for one fill the way the runtime lends it.
+#[allow(dead_code)]
+pub(crate) async fn filled<Message, Fill>(
+    stream: &mut Pin<&mut Fill>,
+) -> Option<Result<Vec<Message>, Fill::Error>>
+where
+    Fill: ruststream::BatchStream<Vec<Message>>,
+{
+    let mut slot = Vec::new();
+    let step = poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot)).await;
+    step.map(|filled| filled.map(|()| slot))
+}
+
+/// A batch stream whose messages are read into another type as they are filled: a broker that
+/// wraps the bus's deliveries in its own.
+#[allow(dead_code)]
+pub(crate) struct Reading<Inner, From, To> {
+    inner: Pin<Box<Inner>>,
+    lent: Vec<From>,
+    read: fn(From) -> To,
+}
+
+#[allow(dead_code)]
+impl<Inner, From, To> Reading<Inner, From, To> {
+    /// Fills `slot`s with what `inner` fills, each message passed through `read`.
+    pub(crate) fn new(inner: Inner, read: fn(From) -> To) -> Self {
+        Self {
+            inner: Box::pin(inner),
+            lent: Vec::new(),
+            read,
+        }
+    }
+}
+
+// Boxed and plain owned parts only; nothing is pinned in place.
+impl<Inner, From, To> Unpin for Reading<Inner, From, To> {}
+
+impl<Inner, From, To> ruststream::BatchStream<Vec<To>> for Reading<Inner, From, To>
+where
+    Inner: ruststream::BatchStream<Vec<From>>,
+{
+    type Error = Inner::Error;
+
+    fn poll_fill(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        slot: &mut Vec<To>,
+    ) -> Poll<Option<Result<(), Self::Error>>> {
+        let this = &mut *self;
+        let step = ready!(this.inner.as_mut().poll_fill(cx, &mut this.lent));
+        slot.extend(this.lent.drain(..).map(this.read));
+        Poll::Ready(step)
+    }
+}

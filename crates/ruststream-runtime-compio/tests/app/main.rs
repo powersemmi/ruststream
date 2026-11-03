@@ -7,6 +7,7 @@ mod connect;
 mod harness;
 mod health;
 mod lifecycle;
+mod methods;
 mod replies;
 mod scope;
 mod shutdown;
