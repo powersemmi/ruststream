@@ -18,8 +18,8 @@
 
 use std::future::ready;
 
-use ruststream::asyncapi;
 #[cfg(feature = "asyncapi")]
+use ruststream::asyncapi;
 use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 use ruststream::nonzero;
