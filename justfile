@@ -219,7 +219,8 @@ test-no-alloc:
 test:
     # The examples' tests are modules of one test binary, so `--tests` builds none per example;
     # `check` compiles every example on its own. `--tests` leaves the doc examples out, so they
-    # run on their own line.
+    # run on their own line. The all-features build has `defmt` compiled and no `DefmtLogger`
+    # selected; `link_defmt_unselected` is the test that links and runs it.
     cargo test --workspace {{ embassy_tests_exclude }} --all-features --tests
     cargo test --workspace {{ embassy_tests_exclude }} --all-features --doc
     # The embassy runtime's host tests: the embedded runner and the local bus.

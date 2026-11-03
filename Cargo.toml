@@ -992,6 +992,12 @@ name = "embedded_diagnostics_alloc"
 path = "tests/embedded_diagnostics_alloc.rs"
 required-features = ["embassy", "memory", "macros", "testing", "alloc", "log", "tracing"]
 
+# A host build with `defmt` compiled links and runs while the app selects another logger or none.
+[[test]]
+name = "link_defmt_unselected"
+path = "tests/link_defmt_unselected.rs"
+required-features = ["tokio", "memory", "macros", "testing", "defmt", "tracing"]
+
 [[test]]
 name = "ui_no_alloc"
 path = "tests/ui_no_alloc.rs"
