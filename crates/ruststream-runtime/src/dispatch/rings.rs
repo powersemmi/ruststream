@@ -368,12 +368,22 @@ pub fn open<Item, Failure>(
     let mut rings = Vec::with_capacity(count);
     for index in 0..count {
         let (producer, consumer) = RingBuffer::new(RING);
-        start(Drain {
+        let started = start(Drain {
             signals: Arc::clone(&signals),
             index,
             ring: consumer,
-        })?;
+        });
         rings.push(producer);
+        if let Err(failure) = started {
+            // A thread already parked on its empty ring is woken to find it abandoned.
+            Feed {
+                rings,
+                signals,
+                keyed,
+            }
+            .let_go();
+            return Err(failure);
+        }
     }
     Ok(Feed {
         rings,
@@ -464,6 +474,9 @@ impl<Item> Feed<Item> {
                         error = %err,
                         "subscriber stream error",
                     );
+                    // A broker that keeps answering with errors fills no ring, so nothing else
+                    // here would hand the executor a turn.
+                    yield_once().await;
                 }
                 Turn::Ended => {
                     shutdown.stream_ended(name);
@@ -511,6 +524,20 @@ impl<Item> Feed<Item> {
         })
         .await
     }
+}
+
+/// Completes on its second poll, having woken its task: the executor runs its other tasks first.
+async fn yield_once() {
+    let mut yielded = false;
+    poll_fn(|cx| {
+        if yielded {
+            return Poll::Ready(());
+        }
+        yielded = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    })
+    .await;
 }
 
 /// Logs why the loop stopped handing deliveries on, where it is not shutdown.
@@ -699,6 +726,24 @@ mod tests {
         assert_eq!(*seen, (0..200).collect::<Vec<_>>());
     }
 
+    /// A stream that answers every poll with a ready error still lets the other tasks of the loop's
+    /// executor run, so shutdown can be raised and heard.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_stream_of_ready_errors_hands_the_executor_a_turn() {
+        let (mut feed, threads) = start(1, false, || async move |_item: u32| {});
+        let stop = Arc::new(Stop::default());
+        let raising = Arc::clone(&stop);
+        // Runs only when the reading task yields; the executor has one thread.
+        let raiser = tokio::spawn(async move { raising.raise() });
+        let items = stream::repeat_with(|| Err::<u32, _>("broker down"));
+        feed.read(items, "failing", &*stop, |_| None).await;
+        raiser.await.expect("the raiser ran");
+        feed.let_go();
+        for thread in threads {
+            thread.join().expect("the thread ends cleanly");
+        }
+    }
+
     /// A thread that cannot start refuses the subscription, and the threads already started end
     /// instead of waiting on a loop that will never run.
     #[test]
@@ -716,6 +761,33 @@ mod tests {
         assert_eq!(opened.err(), Some("no thread for ring 1"));
         for thread in started {
             thread.join().expect("the started thread ends");
+        }
+    }
+
+    /// A thread that already parked on its empty ring is woken when a later one cannot start, so
+    /// it finds its ring abandoned and ends rather than sleeping with its guard forever.
+    #[test]
+    fn a_thread_parked_before_a_failed_start_is_woken() {
+        let mut parked: Option<Arc<Signals>> = None;
+        let mut started = Vec::new();
+        let opened = open::<u32, _>(2, false, |drain| {
+            if let Some(signals) = &parked {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !signals.parked[0].load(Ordering::SeqCst) {
+                    assert!(Instant::now() < deadline, "the first thread never parked");
+                    thread::yield_now();
+                }
+                return Err("no thread for ring 1");
+            }
+            parked = Some(Arc::clone(&drain.signals));
+            started.push(thread::spawn(move || {
+                block_on(drain.work(async move |_item: u32| {}));
+            }));
+            Ok(())
+        });
+        assert_eq!(opened.err(), Some("no thread for ring 1"));
+        for thread in started {
+            thread.join().expect("the parked thread ends");
         }
     }
 
