@@ -3,20 +3,16 @@
 //! `TracingLogger` is selected.
 //!
 //! The selection is process-wide, so the phases run in order inside one test of this binary.
-// The tokio harness's futures are not `Send`; the test drives them on its own thread.
-#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "asyncapi",
     feature = "macros",
     feature = "memory",
-    feature = "testing",
     feature = "tokio"
 ))]
 
 use ruststream::asyncapi::build_spec;
 use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
-use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 use tracing::Level;
 use tracing::subscriber::set_default;
@@ -46,33 +42,31 @@ fn service(logger: bool) -> impl App {
     setup.with_broker(MemoryBroker::new(), |b| b.include(accept))
 }
 
-/// Starts the service, which selects its logger, then generates the document of a second copy
-/// (the generator runs as the command line runs it) and returns the schema gaps it reports.
-async fn document(logger: bool) -> Vec<String> {
-    let tb = TestApp::start(service(logger)).await.expect("start");
+/// Generates the document of the service as the command line does, without starting it, and
+/// returns the schema gaps it reports.
+fn document(logger: bool) -> Vec<String> {
     let spec = build_spec(&service(logger));
-    tb.shutdown().await.expect("shutdown");
     spec.messages_without_schema()
         .into_iter()
         .map(str::to_owned)
         .collect()
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn the_generator_reports_only_through_the_logger_the_app_selected() {
+#[test]
+fn the_generator_reports_only_through_the_logger_the_app_selected() {
     let traced = Traced::at(Level::DEBUG);
 
     // No logger selected: the gap is in the document and nowhere else.
     {
         let _scope = set_default(traced.clone());
-        assert_eq!(document(false).await, ["Order".to_owned()]);
+        assert_eq!(document(false), ["Order".to_owned()]);
     }
     assert!(traced.lines().is_empty(), "{:?}", traced.lines());
 
     // `TracingLogger`: the warning reaches the subscriber with the subscription and the type.
     {
         let _scope = set_default(traced.clone());
-        document(true).await;
+        document(true);
     }
     let lines: Vec<String> = traced
         .lines()
