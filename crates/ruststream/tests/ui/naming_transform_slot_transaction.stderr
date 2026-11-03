@@ -6,23 +6,23 @@ error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does 
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
 help: the following other types implement trait `TransactionalPublisher`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/transaction.rs
+  ::: $WORKSPACE/crates/memory/src/capability/transaction.rs
    |
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
 note: required by a bound in `ruststream::runtime::SlotTransactions::begin::{anon_assoc#0}`
-  --> $WORKSPACE/crates/ruststream-runtime/src/handle/outs/any_entry.rs
+  --> $WORKSPACE/crates/runtime/src/handle/outs/any_entry.rs
    |
    |         Self::Wire: TransactionalPublisher;
    |                     ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `SlotTransactions::begin::{anon_assoc#0}`
@@ -35,18 +35,18 @@ error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does 
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
 help: the following other types implement trait `TransactionalPublisher`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/transaction.rs
+  ::: $WORKSPACE/crates/memory/src/capability/transaction.rs
    |
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
@@ -67,18 +67,18 @@ error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does 
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
 help: the following other types implement trait `TransactionalPublisher`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/transaction.rs
+  ::: $WORKSPACE/crates/memory/src/capability/transaction.rs
    |
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
@@ -99,24 +99,24 @@ error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does 
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
 help: the following other types implement trait `TransactionalPublisher`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/transaction.rs
+  ::: $WORKSPACE/crates/memory/src/capability/transaction.rs
    |
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
    = note: required for `SlotPublisher<ruststream::runtime::NamedDestinationSend<MemoryPublisher>, Audit>` to implement `TransactionalPublisher`
 note: required because it's used within this `async` fn body
-  --> $WORKSPACE/crates/ruststream-runtime/src/publish/transaction.rs
+  --> $WORKSPACE/crates/runtime/src/publish/transaction.rs
    |
    |       pub async fn commit(mut self) -> Result<(), P::Error> {
    |  ___________________________________________________________^
@@ -148,18 +148,18 @@ error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does 
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
 help: the following other types implement trait `TransactionalPublisher`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/transaction.rs
+  ::: $WORKSPACE/crates/memory/src/capability/transaction.rs
    |
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
@@ -180,18 +180,18 @@ error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does 
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
 help: the following other types implement trait `TransactionalPublisher`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/transaction.rs
+  ::: $WORKSPACE/crates/memory/src/capability/transaction.rs
    |
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
@@ -212,18 +212,18 @@ error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does 
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
 help: the following other types implement trait `TransactionalPublisher`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/transaction.rs
+  ::: $WORKSPACE/crates/memory/src/capability/transaction.rs
    |
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
@@ -248,18 +248,18 @@ error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does 
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
 help: the following other types implement trait `TransactionalPublisher`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/transaction.rs
+  ::: $WORKSPACE/crates/memory/src/capability/transaction.rs
    |
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`

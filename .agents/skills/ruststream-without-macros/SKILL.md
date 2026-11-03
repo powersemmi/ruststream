@@ -157,5 +157,5 @@ line (`run`, `asyncapi gen`) is what the macro path adds.
 | a reply type with only `Serialize` | add `OutgoingDestination` and `MessageHeaders` impls |
 
 The exact mapping from a handler shape to its axes is the macro expansion in
-`crates/ruststream-macros/src/expand/unified.rs` of the core repository. Component pages show
+`crates/macros/src/expand/unified.rs` of the core repository. Component pages show
 every topic with a Manual tab: <https://powersemmi.github.io/ruststream/latest/components/>.

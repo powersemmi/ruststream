@@ -12,7 +12,7 @@ error[E0308]: mismatched types
    = note: expected reference `&Progress`
               found reference `&Done`
 note: method defined here
-  --> $WORKSPACE/crates/ruststream-runtime/src/handle/outs/any_entry.rs
+  --> $WORKSPACE/crates/runtime/src/handle/outs/any_entry.rs
    |
    |     fn message<'a, T, Index>(
    |        ^^^^^^^

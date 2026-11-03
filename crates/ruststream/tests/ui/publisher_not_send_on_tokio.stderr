@@ -11,7 +11,7 @@ note: captured value is not `Send` because `&` references cannot be sent unless 
 19 |         &self,
    |         ^^^^^ has type `&RcPublisher` which is not `Send`, because `RcPublisher` is not `Sync`
 note: required by a bound in `Publisher::publish::{anon_assoc#0}`
-  --> $WORKSPACE/crates/ruststream-core/src/publisher.rs
+  --> $WORKSPACE/crates/core/src/publisher.rs
    |
    |     ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> + MaybeSend;
    |                                                                                   ^^^^^^^^^ required by this bound in `Publisher::publish::{anon_assoc#0}`
@@ -30,7 +30,7 @@ note: required because it appears within the type `RcPublisher`
    |        ^^^^^^^^^^^
    = note: required for `RcPublisher` to implement `ruststream::runtime::MaybeSendSync`
 note: required by a bound in `Publisher`
-  --> $WORKSPACE/crates/ruststream-core/src/publisher.rs
+  --> $WORKSPACE/crates/core/src/publisher.rs
    |
    | pub trait Publisher: MaybeSendSync + Clone {
    |                      ^^^^^^^^^^^^^ required by this bound in `Publisher`
@@ -49,7 +49,7 @@ note: required because it appears within the type `RcPublisher`
    |        ^^^^^^^^^^^
    = note: required for `RcPublisher` to implement `ruststream::runtime::MaybeSendSync`
 note: required by a bound in `Publisher`
-  --> $WORKSPACE/crates/ruststream-core/src/publisher.rs
+  --> $WORKSPACE/crates/core/src/publisher.rs
    |
    | pub trait Publisher: MaybeSendSync + Clone {
    |                      ^^^^^^^^^^^^^ required by this bound in `Publisher`

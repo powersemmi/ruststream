@@ -1,0 +1,27 @@
+error[E0277]: `RcBroker` is not a broker this runtime runs
+  --> tests/ui/broker_not_send_on_compio.rs:41:80
+   |
+41 |     let _app = RustStream::new(AppInfo::new("local", "0.1.0")).register_broker(broker);
+   |                                                                                ^^^^^^ not a `Broker`
+   |
+help: the trait `SendBroker` is not implemented for `RcBroker`
+  --> tests/ui/broker_not_send_on_compio.rs:10:1
+   |
+10 | struct RcBroker {
+   | ^^^^^^^^^^^^^^^
+   = note: this runtime moves a broker and its connected form across threads, so it runs brokers whose types are `Send + Sync + 'static` and implement `Broker`
+   = note: a broker whose client holds `Rc` or `RefCell` runs on the embedded runner; to run here, keep the client's shared state in `Arc` and `Mutex`
+help: the trait `BrokerRegistration` is implemented for `Bindable<B>`
+  --> $WORKSPACE/crates/core/src/bindable.rs
+   |
+   | impl<B: SendBroker> BrokerRegistration for Bindable<B> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `RcBroker` to implement `BrokerRegistration`
+note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::register_broker`
+  --> src/app/service.rs
+   |
+   |     pub fn register_broker<R>(mut self, broker: R) -> Self
+   |            --------------- required by a bound in this associated function
+   |     where
+   |         R: BrokerRegistration,
+   |            ^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::register_broker`

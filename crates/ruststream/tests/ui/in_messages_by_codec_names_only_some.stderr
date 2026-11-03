@@ -11,7 +11,7 @@ help: the trait `ruststream::runtime::NamedByFrame<Registry, OrderCancelled>` is
    | ^^^^^^^^^^^^^^^
    = note: a set declared with `#[in_messages(by_codec)]` decodes only under a codec that implements `FrameNames` for each of its models: mount it in a scope or router whose codec does
 help: `Subscribing` implements trait `ruststream::runtime::RouterMount<R, Def>`
-  --> $WORKSPACE/crates/ruststream-runtime/src/router/local.rs
+  --> $WORKSPACE/crates/runtime/src/router/local.rs
    |
    | / impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
    | |     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
@@ -22,7 +22,7 @@ help: `Subscribing` implements trait `ruststream::runtime::RouterMount<R, Def>`
    | |     Def::Handler: 'static,
    | |__________________________^ `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/router/form_eager.rs
+  ::: $WORKSPACE/crates/runtime/src/router/form_eager.rs
    |
    | / impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
    | |     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for forms::Subscribing
@@ -53,7 +53,7 @@ error[E0277]: `Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEven
    = help: the trait `Handler<MemoryMessage>` is not implemented for `Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, Registry, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), FnBody<on_event, for<'a, 'b, 'c, 'd> fn(BodyTag<on_event>, &'a OrderEvent, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), ruststream::prelude::HandlerOutcome>> {on_event::<_>}>>>`
    = note: a handler is a named type with an `impl Handler<MemoryMessage>` whose `handle` method returns the settlement, or a closure `|msg: &MemoryMessage, ctx: &mut Context| async { .. }` whose future does not borrow its arguments
 help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, Input, DecodeCodec, Inner>`
-  --> $WORKSPACE/crates/ruststream-runtime/src/typed.rs
+  --> $WORKSPACE/crates/runtime/src/typed.rs
    |
    | / impl<M, Input, DecodeCodec, Inner, Cx, St> Handler<M, Cx, St>
    | |     for Typed<M, Input, DecodeCodec, Inner>
@@ -69,7 +69,7 @@ help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, 
    = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, Registry, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), FnBody<on_event, for<'a, 'b, 'c, 'd> fn(BodyTag<on_event>, &'a OrderEvent, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), ruststream::prelude::HandlerOutcome>> {on_event::<_>}>>>>, ())` to implement `RouterDef<ruststream::memory::MemoryBroker>`
    = note: required for `Router<ruststream::memory::MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, Registry, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), FnBody<on_event, for<'a, 'b, 'c, 'd> fn(BodyTag<on_event>, &'a OrderEvent, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), ruststream::prelude::HandlerOutcome>> {on_event::<_>}>>>>, ruststream::runtime::ChainHead<()>), Registry>` to implement `ruststream::runtime::MountRoutes<ruststream::memory::MemoryBroker>`
 note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker_codec`
-  --> $WORKSPACE/crates/ruststream-runtime-tokio/src/app/service.rs
+  --> $WORKSPACE/crates/runtime-tokio/src/app/service.rs
    |
    |     pub fn with_broker_codec<R, C, F, Chain, Routes>(
    |            ----------------- required by a bound in this associated function

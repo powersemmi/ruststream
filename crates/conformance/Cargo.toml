@@ -1,0 +1,70 @@
+[package]
+name = "ruststream-conformance"
+# Every file under `tests/` is a module of one test binary: one link instead of one per file.
+autotests = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The broker contract suite of the RustStream messaging framework; broker crates use it through `ruststream`."
+keywords = ["messaging", "conformance", "broker", "pubsub", "ruststream"]
+categories = ["asynchronous", "development-tools::testing"]
+readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["alloc"]
+# The suites of the `Send` family (the routing contract, the lifecycle ladder and the capability
+# suites), which keep headers and payloads on the heap. Without it the crate holds the suites of
+# the local family, which run against a bus of fixed size.
+# They spawn a broker's work on a multi-thread runtime, so they ask `Send` of the contract types
+# and take the runtime's `std` form, whose shared state sits behind a mutex.
+alloc = [
+    "ruststream-core/alloc",
+    "ruststream-core/send",
+    "ruststream-runtime/std",
+]
+# The checks on the document a broker's descriptors and bindings produce.
+asyncapi = [
+    "alloc",
+    "dep:ruststream-asyncapi",
+    "dep:ruststream-runtime-tokio",
+    "dep:serde_json",
+    "ruststream-runtime/asyncapi",
+]
+
+[dependencies]
+ruststream-core = { workspace = true, features = ["testing"] }
+ruststream-runtime = { workspace = true, features = ["testing"] }
+ruststream-runtime-tokio = { workspace = true, optional = true }
+ruststream-asyncapi = { workspace = true, optional = true }
+bytes = { workspace = true, features = ["std"] }
+inventory.workspace = true
+futures = { workspace = true, features = ["std", "async-await", "executor"] }
+thiserror = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["test-util"] }
+serde_json = { workspace = true, optional = true, features = ["std"] }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
+# The doc examples are a broker author's code, so they import the facade; the unit tests run the
+# suite against the in-memory broker through it. A path dependency without a version is dropped
+# on publish.
+ruststream = { path = "../ruststream", features = ["macros", "memory", "json", "testing", "conformance", "asyncapi"] }
+# The readiness suite is proved against the local bus, whose stream ends on shutdown.
+ruststream-memory = { path = "../memory", features = ["embassy", "testing"] }
+schemars = "1"
+
+[lints]
+workspace = true
+
+[[test]]
+name = "suite"
+path = "tests/main.rs"

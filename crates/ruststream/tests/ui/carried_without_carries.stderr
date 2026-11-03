@@ -7,7 +7,7 @@ error[E0277]: the subscription `MemorySource` does not carry `Row`
    = help: the trait `ruststream_runtime::input::SourceCarries<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
    = note: mount it on a subscription whose deliveries implement `Carries<Row>`; a `Row` that arrives as bytes derives `Deserialize` instead and rides the codec
 help: `Subscribing` implements trait `ruststream::runtime::RouterMount<R, Def>`
-  --> $WORKSPACE/crates/ruststream-runtime/src/router/local.rs
+  --> $WORKSPACE/crates/runtime/src/router/local.rs
    |
    | / impl<B, Routes, RouteCodec, RouteLayers, Pipe, Def>
    | |     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>
@@ -18,7 +18,7 @@ help: `Subscribing` implements trait `ruststream::runtime::RouterMount<R, Def>`
    | |     Def::Handler: 'static,
    | |__________________________^ `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, LocalPipeline<Pipe>>, Def>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/router/form_eager.rs
+  ::: $WORKSPACE/crates/runtime/src/router/form_eager.rs
    |
    | / impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
    | |     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for forms::Subscribing
@@ -40,7 +40,7 @@ error[E0277]: `Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, rus
    = help: the trait `Handler<MemoryMessage>` is not implemented for `Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Row, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), ruststream::prelude::HandlerOutcome>> {handle::<_>}>>>`
    = note: a handler is a named type with an `impl Handler<MemoryMessage>` whose `handle` method returns the settlement, or a closure `|msg: &MemoryMessage, ctx: &mut Context| async { .. }` whose future does not borrow its arguments
 help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, Input, DecodeCodec, Inner>`
-  --> $WORKSPACE/crates/ruststream-runtime/src/typed.rs
+  --> $WORKSPACE/crates/runtime/src/typed.rs
    |
    | / impl<M, Input, DecodeCodec, Inner, Cx, St> Handler<M, Cx, St>
    | |     for Typed<M, Input, DecodeCodec, Inner>
@@ -56,7 +56,7 @@ help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, 
    = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Row, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), ruststream::prelude::HandlerOutcome>> {handle::<_>}>>>>, ())` to implement `RouterDef<MemoryBroker>`
    = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, ruststream_runtime::input::Carried<Row>, ruststream_runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ruststream_runtime::handle::eager::SoloBody<SoloCarried<Row>, (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a Row, &'b (), &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<(), ruststream::prelude::HandlerOutcome>> {handle::<_>}>>>>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountRoutes<MemoryBroker>`
 note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker`
-  --> $WORKSPACE/crates/ruststream-runtime-tokio/src/app/service.rs
+  --> $WORKSPACE/crates/runtime-tokio/src/app/service.rs
    |
    |     pub fn with_broker<R, F, Chain, Routes>(
    |            ----------- required by a bound in this associated function

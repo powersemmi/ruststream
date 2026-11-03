@@ -11,22 +11,22 @@ help: the trait `BatchSubscriber` is not implemented for `OneAtATime`
    | ^^^^^^^^^^^^^^^^^
    = note: a handler taking `&[T]` is handed whole batches: mount it on a subscription kind that batches. A broker whose transport has no native batches gives its subscriber this capability through the `Buffered` adapter (see `BatchSubscriber` and `Buffered`)
 help: the following other types implement trait `BatchSubscriber`
-  --> $WORKSPACE/crates/ruststream-memory/src/capability.rs
+  --> $WORKSPACE/crates/memory/src/capability.rs
    |
    | impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySubscriber<Log>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/local/heap/subscriber.rs
+  ::: $WORKSPACE/crates/memory/src/local/heap/subscriber.rs
    |
    | impl<const CAP: usize> BatchSubscriber for LocalMemorySubscriber<CAP> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `LocalMemorySubscriber<CAP>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime-tokio/src/buffered.rs
+  ::: $WORKSPACE/crates/runtime-tokio/src/buffered.rs
    |
    | impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `BufferedSubscriber<S>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime-embassy/src/frames.rs
+  ::: $WORKSPACE/crates/runtime-embassy/src/frames.rs
    |
    | impl BatchSubscriber for FrameSubscriber {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime_embassy::frames::FrameSubscriber`

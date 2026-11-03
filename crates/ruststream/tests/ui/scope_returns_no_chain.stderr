@@ -7,7 +7,7 @@ error[E0277]: the `with_broker` closure must return the mount chain
   = help: the trait `MountChain` is not implemented for `()`
   = note: return the scope or the chain its `include` opens: `|b| b.include(a).include(b)`, every `Out` slot bound with `.out(marker, policy)`; a broker that mounts nothing is `|b| b`
 help: the following other types implement trait `MountChain`
- --> $WORKSPACE/crates/ruststream-runtime/src/router/chain.rs
+ --> $WORKSPACE/crates/runtime/src/router/chain.rs
   |
   | / impl<B, Routes, RouteCodec, Layers, Pipe> MountChain
   | |     for Router<B, Routes, RouteCodec, Layers, Pipe>
@@ -18,7 +18,7 @@ help: the following other types implement trait `MountChain`
   | |     Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
   | |________________________________________________________________________^ `RouterWith<Mount, R, Def, Attach, Last>`
   |
- ::: $WORKSPACE/crates/ruststream-runtime-tokio/src/app/include/mod.rs
+ ::: $WORKSPACE/crates/runtime-tokio/src/app/include/mod.rs
   |
   | / impl<B, Layers, C, State, Pipeline, Pre> MountChain
   | |     for BrokerScope<B, Layers, C, State, Pipeline, Pre>
@@ -26,7 +26,7 @@ help: the following other types implement trait `MountChain`
   | |     B: SendBroker,
   | |__________________^ `ruststream::runtime::BrokerScope<B, Layers, C, State, Pipeline, Pre>`
   |
- ::: $WORKSPACE/crates/ruststream-runtime-compio/src/app/include.rs
+ ::: $WORKSPACE/crates/runtime-compio/src/app/include.rs
   |
   | / impl<B, Layers, C, State, Pipeline, Pre> MountChain
   | |     for BrokerScope<B, Layers, C, State, Pipeline, Pre>
@@ -34,7 +34,7 @@ help: the following other types implement trait `MountChain`
   | |     B: SendBroker,
   | |__________________^ `ruststream::runtime::compio::BrokerScope<B, Layers, C, State, Pipeline, Pre>`
 note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker`
- --> $WORKSPACE/crates/ruststream-runtime-tokio/src/app/service.rs
+ --> $WORKSPACE/crates/runtime-tokio/src/app/service.rs
   |
   |     pub fn with_broker<R, F, Chain, Routes>(
   |            ----------- required by a bound in this associated function

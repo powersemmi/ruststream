@@ -7,7 +7,7 @@ error[E0277]: this subscriber's batch size is already named
    = note: `batch(n)` is the one batching parameter the framework carries; the broker's own batching options ride its subscription source
 help: the trait `BatchStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<Batch<Order>, (), (), (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a [Order], &'b (), &'c mut Context<'d, (), _>) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {handle::<_>}>, Probed>>, Name, (Open, Open, Open, Fixed), ()>`
       but it is implemented for `SubscriberBuilder<Sealed<HandleValue<Batch<Order>, (), (), (), FnBody<handle, for<'a, 'b, 'c, 'd> fn(BodyTag<handle>, &'a [Order], &'b (), &'c mut Context<'d, (), _>) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {handle::<_>}>, Probed>>, Name, (Open, Open, Open, Open), _>`
-  --> $WORKSPACE/crates/ruststream-runtime/src/settings.rs
+  --> $WORKSPACE/crates/runtime/src/settings.rs
    |
    | / impl<Def, Src, W, F, P, DC, Size> BatchStep<Size>
    | |     for SubscriberBuilder<Def, Src, (W, F, P, Open), DC>

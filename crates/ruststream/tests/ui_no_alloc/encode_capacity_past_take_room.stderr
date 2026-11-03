@@ -25,7 +25,7 @@ note: the method call chain might not have had the expected associated types
    |                                             | `MountSteps::ReplyRoom` is `Unbounded` here
    |                                             this expression has type `Router<LocalMemoryBroker<4>, (), (), Identity, LocalPipeline>`
 note: required by a bound in `encode_capacity`
-  --> $WORKSPACE/crates/ruststream-runtime-embassy/src/workers.rs
+  --> $WORKSPACE/crates/runtime-embassy/src/workers.rs
    |
    |     fn encode_capacity<const N: usize>(self) -> Self::WithEncode<N>
    |        --------------- required by a bound in this associated function
