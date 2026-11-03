@@ -195,3 +195,22 @@ required-features = ["embassy", "json"]
 name = "embedded_readiness"
 path = "tests/embedded_readiness.rs"
 required-features = ["embassy", "json"]
+
+# The room a device service's mount names for encoding its replies, through the embedded `TestApp`.
+[[test]]
+name = "embedded_encode_capacity"
+path = "tests/embedded_encode_capacity.rs"
+required-features = ["embassy", "json"]
+
+# A retry declaration on a subscription whose broker moves a spent delivery itself, through the
+# embedded `TestApp`.
+[[test]]
+name = "embedded_retry_moved"
+path = "tests/embedded_retry_moved.rs"
+required-features = ["embassy", "json"]
+
+# A subscription that refuses its retry set-up fails the embedded start.
+[[test]]
+name = "embedded_retry_startup"
+path = "tests/embedded_retry_startup.rs"
+required-features = ["embassy", "json"]
