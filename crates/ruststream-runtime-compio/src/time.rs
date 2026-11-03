@@ -121,6 +121,9 @@ pub(crate) fn after(now: Instant, delay: Duration) -> Instant {
 
 /// Waits until `duration` has passed on the app's clock.
 ///
+/// One compio runtime per thread drives its timers: a thread runs its runtimes one after another,
+/// as every core thread of the runner does.
+///
 /// # Examples
 ///
 /// A handler that backs off before it answers; under the harness, `advance` moves the sleep:
