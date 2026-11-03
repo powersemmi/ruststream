@@ -16,6 +16,8 @@ use ruststream_runtime::{
 };
 use ruststream_runtime_compio::testing::Runnable;
 
+use super::hooks::HookTasks;
+
 /// Polls `future` once and drops it: the hand-over of a hook is its first poll.
 async fn poll_once<Fut: Future>(future: Fut) {
     let mut future = pin!(future);
@@ -34,6 +36,7 @@ async fn poll_once<Fut: Future>(future: Fut) {
 /// through [`published`](Self::published).
 pub struct BrokerHandle<'a> {
     pub(super) coordinator: &'a Coordinator,
+    pub(super) hooks: HookTasks,
     pub(super) runnable: Runnable,
     pub(super) scope_id: usize,
     pub(super) broker: &'a dyn TestableBroker,
@@ -52,6 +55,7 @@ impl fmt::Debug for BrokerHandle<'_> {
 /// would publish. After the broker takes the message, the publish lets the app handle it.
 pub struct InjectSink<'a> {
     coordinator: &'a Coordinator,
+    hooks: HookTasks,
     runnable: Runnable,
     scope_id: usize,
     broker: &'a dyn TestableBroker,
@@ -91,7 +95,7 @@ impl PublishSink for InjectSink<'_> {
         // on a subscriber does, and finishes when the test advances the clock or shuts the app
         // down.
         poll_once(hooks).await;
-        super::settled(self.coordinator, &self.runnable)
+        super::settled(self.coordinator, &self.runnable, &self.hooks)
             .await
             .map_err(Into::into)
     }
@@ -111,6 +115,7 @@ impl<'a> BrokerHandle<'a> {
     {
         let sink = InjectSink {
             coordinator: self.coordinator,
+            hooks: self.hooks.clone(),
             runnable: self.runnable.clone(),
             scope_id: self.scope_id,
             broker: self.broker,
