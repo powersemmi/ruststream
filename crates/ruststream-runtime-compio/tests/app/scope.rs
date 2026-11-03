@@ -8,16 +8,14 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use futures::StreamExt;
-use futures::channel::mpsc;
 use ruststream_core::{BytesMut, OutgoingMessage, Publisher};
-use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
+use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish};
 use ruststream_runtime::{
     AppInfo, BlanketLayer, Context, Handler, HandlerMetadata, HandlerOutcome, Router, subscriber,
 };
 use ruststream_runtime_compio::{Cores, RustStream, RustStreamError};
 
-use super::support::{On, direct, wire, within};
+use super::support::{On, acks_of, direct, tapped, wire};
 
 fn one_core() -> Cores {
     Cores::new(NonZeroUsize::MIN).unpinned().without_signals()
@@ -67,7 +65,7 @@ impl BlanketLayer for Counting {
 fn a_handler_attached_to_an_open_subscription_is_wrapped_by_the_global_layer() {
     let (open, line) = direct();
     let poster = line.poster();
-    let mut acked = line.acked;
+    let mut line = line;
     let count = Arc::new(AtomicUsize::new(0));
 
     let got = Arc::new(Mutex::new(None));
@@ -87,7 +85,7 @@ fn a_handler_attached_to_an_open_subscription_is_wrapped_by_the_global_layer() {
         });
 
     app.run_until(one_core(), async move {
-        *slot.lock().expect("got") = within(acked.next()).await.flatten();
+        *slot.lock().expect("got") = line.acks(1).await.first().copied();
     })
     .expect("the run ends cleanly");
 
@@ -101,7 +99,7 @@ fn a_router_mounted_on_the_scope_serves_its_handlers_under_the_global_layer() {
     let log = super::support::Log::default();
     let (source, line) = wire("orders", &log);
     let poster = line.poster();
-    let mut acked = line.acked;
+    let mut line = line;
     let count = Arc::new(AtomicUsize::new(0));
     let router = Router::<LocalMemoryBroker<8>>::new()
         .include(subscriber(source, On(|_| ready(Ok(())))).build());
@@ -117,7 +115,7 @@ fn a_router_mounted_on_the_scope_serves_its_handlers_under_the_global_layer() {
         .with_broker(LocalMemoryBroker::<8>::new(), |b| b.include_router(router));
 
     app.run_until(one_core(), async move {
-        *slot.lock().expect("got") = within(acked.next()).await.flatten();
+        *slot.lock().expect("got") = line.acks(1).await.first().copied();
     })
     .expect("the run ends cleanly");
 
@@ -128,7 +126,7 @@ fn a_router_mounted_on_the_scope_serves_its_handlers_under_the_global_layer() {
 
 #[test]
 fn a_scope_startup_publish_reaches_the_subscription_the_scope_opened() {
-    let (seen, mut heard) = mpsc::unbounded();
+    let (source, mut heard) = tapped("seed");
     let got = Arc::new(Mutex::new(None));
     let slot = Arc::clone(&got);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(
@@ -145,21 +143,12 @@ fn a_scope_startup_publish_reaches_the_subscription_the_scope_opened() {
                     )
                     .await
             })
-            .include(
-                subscriber(
-                    LocalMemorySource::new("seed"),
-                    On(move |position| {
-                        let _ = seen.unbounded_send(position);
-                        ready(Ok(()))
-                    }),
-                )
-                .build(),
-            )
+            .include(subscriber(source, On(|_| ready(Ok(())))).build())
         },
     );
 
     app.run_until(one_core(), async move {
-        *slot.lock().expect("got") = within(heard.next()).await.flatten();
+        *slot.lock().expect("got") = acks_of(&mut heard, 1).await.first().copied();
     })
     .expect("the run ends cleanly");
 

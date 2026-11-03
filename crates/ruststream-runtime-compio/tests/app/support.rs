@@ -19,7 +19,8 @@ use ruststream_core::{
 };
 use ruststream_core::{BytesMut, OutgoingMessage, Publisher};
 use ruststream_memory::local::{
-    ConnectedLocalMemoryBroker, LocalMemoryError, LocalMemoryPublisher,
+    ConnectedLocalMemoryBroker, LocalMemoryError, LocalMemoryMessage, LocalMemoryPublisher,
+    LocalMemorySource, LocalMemorySubscriber,
 };
 use ruststream_runtime::{
     Context, Deserialized, Handle, HandlerOutcome, Input, IntoSource, SoloDeserialized,
@@ -140,6 +141,13 @@ impl Line {
             .expect("the subscription reads the line");
     }
 
+    /// The next `count` settlements the subscription reports, in the order the broker saw them.
+    /// It is a run's signal: it resolves when the broker has seen the acknowledgements, and a
+    /// stuck run ends it after ten seconds with fewer, which the caller's assertion reports.
+    pub(crate) async fn acks(&mut self, count: usize) -> Vec<usize> {
+        acks_of(&mut self.acked, count).await
+    }
+
     /// Ends the subscription's stream, as a server that deletes the queue does.
     pub(crate) fn end(&mut self) {
         self.post = None;
@@ -152,6 +160,13 @@ impl Line {
             settled: self.settled.clone(),
         }
     }
+}
+
+/// The next `count` settlements a [`Tapped`] subscription reports, as [`Line::acks`] gives them.
+pub(crate) async fn acks_of(acked: &mut UnboundedReceiver<usize>, count: usize) -> Vec<usize> {
+    within(acked.by_ref().take(count).collect::<Vec<_>>())
+        .await
+        .unwrap_or_default()
 }
 
 /// A [`Line`]'s posting end, which a lifecycle hook can own.
@@ -294,6 +309,99 @@ impl Subscriber for Open {
     }
 }
 
+/// A subscription to a name on the connected bus that reports its settlements to the test, so a
+/// scenario that publishes through the bus learns about the delivery from the broker.
+#[derive(Clone)]
+pub(crate) struct Tapped {
+    name: &'static str,
+    settled: UnboundedSender<usize>,
+}
+
+/// A [`Tapped`] subscription to `name`, and the settlements it reports.
+pub(crate) fn tapped(name: &'static str) -> (Tapped, UnboundedReceiver<usize>) {
+    let (settled, acked) = mpsc::unbounded();
+    (Tapped { name, settled }, acked)
+}
+
+impl IntoSource for Tapped {
+    type Source = Self;
+
+    fn into_source(self) -> Self {
+        self
+    }
+}
+
+impl SubscriptionSource<ConnectedLocalMemoryBroker<8>> for Tapped {
+    type Subscriber = TappedOpen;
+    type Copies = BrokerMoves;
+
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    async fn subscribe(
+        self,
+        connected: &ConnectedLocalMemoryBroker<8>,
+    ) -> Result<TappedOpen, LocalMemoryError> {
+        let inner = LocalMemorySource::new(self.name)
+            .subscribe(connected)
+            .await?;
+        Ok(TappedOpen {
+            inner,
+            settled: self.settled,
+        })
+    }
+}
+
+/// The open subscription of a [`Tapped`] source.
+pub(crate) struct TappedOpen {
+    inner: LocalMemorySubscriber<8>,
+    settled: UnboundedSender<usize>,
+}
+
+impl Subscriber for TappedOpen {
+    type Message = Heard;
+    type Error = Infallible;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Heard, Infallible>> + '_ {
+        let settled = &self.settled;
+        self.inner.stream().map(move |next| {
+            next.map(|inner| Heard {
+                inner,
+                settled: settled.clone(),
+            })
+        })
+    }
+}
+
+/// A delivery of the bus whose settlement is reported to the test.
+pub(crate) struct Heard {
+    inner: LocalMemoryMessage<8>,
+    settled: UnboundedSender<usize>,
+}
+
+impl IncomingMessage for Heard {
+    fn payload(&self) -> &[u8] {
+        self.inner.payload()
+    }
+
+    fn headers(&self) -> &HeaderMap {
+        self.inner.headers()
+    }
+}
+
+impl Settle for Heard {
+    async fn ack(self) -> Result<(), AckError> {
+        let position = usize::from_be_bytes(self.inner.payload().try_into().expect("a numbered"));
+        let _ = self.settled.unbounded_send(position);
+        self.inner.ack().await
+    }
+
+    fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+        self.inner.nack(requeue)
+    }
+}
+
 /// The text of a delivery, as a handler reads it.
 pub(crate) struct Reading<'a>(pub(crate) &'a [u8]);
 
@@ -351,7 +459,7 @@ pub(crate) fn on_runtime<Out>(test: impl Future<Output = Out>) -> Out {
 
 /// What `signal` yields, or `None` once ten seconds pass, so a delivery that never comes ends a
 /// run's signal instead of hanging it. The future is `Send`, which a run's signal must be.
-pub(crate) async fn within<Out>(signal: impl Future<Output = Out> + Send) -> Option<Out> {
+async fn within<Out>(signal: impl Future<Output = Out> + Send) -> Option<Out> {
     let late = sleep(Duration::from_secs(10));
     match select(pin!(signal), pin!(late)).await {
         Either::Left((out, _)) => Some(out),

@@ -91,7 +91,7 @@ fn run_until_serves_a_delivery_and_returns_when_the_signal_resolves() {
     let log = Log::default();
     let (source, line) = wire("orders", &log);
     let poster = line.poster();
-    let mut acked = line.acked;
+    let mut line = line;
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .after_startup(async move |_state: Arc<()>| {
@@ -103,7 +103,7 @@ fn run_until_serves_a_delivery_and_returns_when_the_signal_resolves() {
         });
 
     app.run_until(cores(1), async move {
-        assert_eq!(acked.next().await, Some(7));
+        assert_eq!(line.acks(1).await, [7]);
     })
     .expect("the run ends cleanly");
 
@@ -115,7 +115,7 @@ fn a_workers_mount_on_three_cores_delivers_through_the_fabric_and_acks() {
     let log = Log::default();
     let (source, line) = wire("orders", &log);
     let poster = line.poster();
-    let mut acked = line.acked;
+    let mut line = line;
     let threads = Log::default();
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
@@ -144,10 +144,8 @@ fn a_workers_mount_on_three_cores_delivers_through_the_fabric_and_acks() {
     app.run_until(cores(3), {
         let seen = Arc::clone(&seen);
         async move {
-            for _ in 0..4 {
-                let position = acked.next().await.expect("an ack");
-                seen.lock().expect("seen").insert(position);
-            }
+            let acked = line.acks(4).await;
+            seen.lock().expect("seen").extend(acked);
         }
     })
     .expect("the run ends cleanly");
