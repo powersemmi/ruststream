@@ -252,8 +252,13 @@ impl Drop for Orphan {
             };
             mem::replace(&mut *timers, next)
         };
-        // Outside the lock: dropping a waker may run a destructor of its task.
-        drop(gone);
+        // Outside the lock: a sleep waiting on another core polls again, finds the wheel orphaned
+        // and arms itself where it runs; a waker only dropped would leave it waiting for good.
+        for slot in gone.slots {
+            if let Some(waker) = slot.waker {
+                waker.wake();
+            }
+        }
     }
 }
 

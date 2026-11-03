@@ -1,5 +1,6 @@
 //! The sleep on the wall clock: `Send` however far it has got, and no allocation per timer.
 
+use std::future::poll_fn;
 use std::iter;
 use std::pin::Pin;
 use std::sync::mpsc;
@@ -238,4 +239,48 @@ fn a_sleep_of_an_ended_runtime_stays_pending_once_the_next_runtime_has_slept() {
             "the old sleep ended early"
         );
     });
+}
+
+#[test]
+fn a_sleep_waiting_on_another_core_goes_on_when_the_core_that_armed_it_ends() {
+    let (to_other, from_first) = mpsc::channel::<Sleep>();
+    let (armed, wait_armed) = mpsc::channel::<()>();
+    let (waiting, wait_waiting) = mpsc::channel::<()>();
+    let (done, wait_done) = mpsc::channel::<()>();
+
+    let first = thread::spawn(move || {
+        test_runtime()
+            .expect("a compio runtime")
+            .block_on(async move {
+                let mut sleep = time::sleep(DELAY);
+                assert!(poll_once(&mut sleep).is_pending());
+                to_other.send(sleep).expect("the other core is up");
+                armed.send(()).expect("the test waits");
+                // The runtime ends once the other core waits on the sleep.
+                while wait_waiting.try_recv().is_err() {
+                    time::sleep(Duration::from_millis(1)).await;
+                }
+            });
+    });
+    thread::spawn(move || {
+        wait_armed.recv().expect("the first core armed its sleep");
+        let mut sleep = from_first.recv().expect("the sleep was handed over");
+        let mut announced = false;
+        test_runtime()
+            .expect("a compio runtime")
+            .block_on(poll_fn(move |cx| {
+                let poll = Pin::new(&mut sleep).poll(cx);
+                if !announced {
+                    announced = true;
+                    waiting.send(()).expect("the first core waits");
+                }
+                poll
+            }));
+        done.send(()).expect("the test waits");
+    });
+    first.join().expect("the first core ended");
+    assert!(
+        wait_done.recv_timeout(Duration::from_secs(5)).is_ok(),
+        "the sleep never woke after the core that armed it ended",
+    );
 }
