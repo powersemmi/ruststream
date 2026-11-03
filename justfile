@@ -112,11 +112,11 @@ check:
     cargo clippy -p ruststream-runtime --no-default-features --lib -- -D warnings
     cargo clippy -p ruststream-runtime --no-default-features --features postcard,json-core --lib \
         -- -D warnings
-    cargo clippy --manifest-path crates/runtime-noalloc/Cargo.toml --lib --tests \
+    cargo clippy --manifest-path checks/noalloc/runtime/Cargo.toml --lib --tests \
         -- -D warnings
     # The embedded runner without `alloc`, and the crate that runs its unit tests.
     cargo clippy -p ruststream-runtime-embassy --no-default-features --lib -- -D warnings
-    cargo clippy --manifest-path crates/runtime-embassy-noalloc/Cargo.toml --lib --tests \
+    cargo clippy --manifest-path checks/noalloc/runtime-embassy/Cargo.toml --lib --tests \
         -- -D warnings
     RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --target thumbv6m-none-eabi
@@ -210,7 +210,7 @@ test-no-alloc:
             echo "error: the framework's alloc feature is on in: $graph" >&2; exit 1; \
         fi; \
     done
-    tree="$(cargo tree --manifest-path crates/memory-noalloc/Cargo.toml --features testing --all-targets -e features -i ruststream-core -i ruststream-runtime)"; \
+    tree="$(cargo tree --manifest-path checks/noalloc/memory/Cargo.toml --features testing --all-targets -e features -i ruststream-core -i ruststream-runtime)"; \
     if printf '%s\n' "$tree" | grep -E 'ruststream-(core|runtime) feature "alloc"'; then \
         echo "error: the framework's alloc feature is on in the local bus crate" >&2; exit 1; \
     fi
@@ -227,13 +227,13 @@ test-no-alloc:
     # The device build's own futures, without the harness that wraps them in the test above.
     cargo test --no-default-features --features embassy,memory,macros --test embedded_future_size
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test ui_no_alloc
-    cargo test --manifest-path crates/memory-noalloc/Cargo.toml --features testing
+    cargo test --manifest-path checks/noalloc/memory/Cargo.toml --features testing
     # The runtime's own unit tests of the variant: its dev-dependencies turn `alloc` on, so the
     # sources build as a crate of their own that has none.
-    cargo test --manifest-path crates/runtime-noalloc/Cargo.toml --lib
-    cargo test --manifest-path crates/runtime-noalloc/Cargo.toml --lib --features postcard,json-core
+    cargo test --manifest-path checks/noalloc/runtime/Cargo.toml --lib
+    cargo test --manifest-path checks/noalloc/runtime/Cargo.toml --lib --features postcard,json-core
     # The same for the embedded runner.
-    cargo test --manifest-path crates/runtime-embassy-noalloc/Cargo.toml --lib
+    cargo test --manifest-path checks/noalloc/runtime-embassy/Cargo.toml --lib
 
 test:
     # The examples' tests are modules of one test binary, so `--tests` builds none per example;

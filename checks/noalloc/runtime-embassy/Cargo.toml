@@ -7,19 +7,15 @@ license = "Apache-2.0"
 repository = "https://github.com/powersemmi/ruststream"
 description = "The embedded runner without `alloc`, built from the runner's own sources so its in-crate tests run: the runner's dev-dependencies turn `alloc` on."
 publish = false
-build = "../runtime-embassy/build.rs"
-
-# A workspace of its own: a member of the main workspace would unify `alloc` on through its
-# neighbours, which is the one thing this crate exists to avoid.
-[workspace]
+build = "../../../crates/runtime-embassy/build.rs"
 
 [lib]
 name = "ruststream_runtime_embassy_noalloc"
-path = "../runtime-embassy/src/lib.rs"
+path = "../../../crates/runtime-embassy/src/lib.rs"
 
 [dependencies]
-ruststream-core = { path = "../core", default-features = false }
-ruststream-runtime = { path = "../runtime", default-features = false }
+ruststream-core = { path = "../../../crates/core", default-features = false }
+ruststream-runtime = { path = "../../../crates/runtime", default-features = false }
 futures-core = { version = "0.3", default-features = false }
 embassy-time = "0.5.1"
 embassy-sync = "0.8"

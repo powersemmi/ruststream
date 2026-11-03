@@ -7,15 +7,11 @@ license = "Apache-2.0"
 repository = "https://github.com/powersemmi/ruststream"
 description = "The local bus without `alloc`, built from the memory crate's own sources so its in-crate tests and doc examples run: that crate's dev-dependencies turn `alloc` on."
 publish = false
-build = "../memory/build.rs"
-
-# A workspace of its own: a member of the main workspace would unify `alloc` on through its
-# neighbours, which is the one thing this crate exists to avoid.
-[workspace]
+build = "../../../crates/memory/build.rs"
 
 [lib]
 name = "ruststream_memory"
-path = "../memory/src/lib.rs"
+path = "../../../crates/memory/src/lib.rs"
 
 [features]
 default = ["embassy"]
@@ -30,8 +26,8 @@ testing = [
 ]
 
 [dependencies]
-ruststream-core = { path = "../core", default-features = false }
-ruststream-runtime = { path = "../runtime", default-features = false }
+ruststream-core = { path = "../../../crates/core", default-features = false }
+ruststream-runtime = { path = "../../../crates/runtime", default-features = false }
 embassy-sync = "0.8"
 futures-core = { version = "0.3", default-features = false }
 heapless = { version = "0.9", default-features = false }
@@ -46,7 +42,7 @@ critical-section = { version = "1.1", features = ["std"] }
 # Counts this thread's allocations, so a test reads that a publish costs none.
 allocation-counter = "0.8.1"
 # The local suites of the contract, run against the fixed bus (`tests/`, under `testing`).
-ruststream-conformance = { path = "../conformance", default-features = false }
+ruststream-conformance = { path = "../../../crates/conformance", default-features = false }
 tokio = { version = "1.49", features = ["rt", "macros", "time", "test-util"] }
 
 # The sources are the memory crate's, and name features this build never has.

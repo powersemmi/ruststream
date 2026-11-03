@@ -622,7 +622,7 @@ jobs:
               exit 1
             fi
           done
-          tree="$(cargo tree --locked --manifest-path crates/memory-noalloc/Cargo.toml \
+          tree="$(cargo tree --locked --manifest-path checks/noalloc/memory/Cargo.toml \
             --features testing --all-targets -e features -i ruststream-core -i ruststream-runtime)"
           if printf '%s\n' "$tree" | grep -E 'ruststream-(core|runtime) feature "alloc"'; then
             echo "::error::the framework's alloc feature is on in the local bus crate"
@@ -632,12 +632,12 @@ jobs:
             --test embedded_no_alloc
           cargo test --locked --no-default-features --features embassy,memory,macros,testing,log \
             --test embedded_diagnostics
-          cargo test --locked --manifest-path crates/memory-noalloc/Cargo.toml \
+          cargo test --locked --manifest-path checks/noalloc/memory/Cargo.toml \
             --features testing
-          cargo test --locked --manifest-path crates/runtime-noalloc/Cargo.toml --lib
-          cargo test --locked --manifest-path crates/runtime-noalloc/Cargo.toml --lib \
+          cargo test --locked --manifest-path checks/noalloc/runtime/Cargo.toml --lib
+          cargo test --locked --manifest-path checks/noalloc/runtime/Cargo.toml --lib \
             --features postcard,json-core
-          cargo test --locked --manifest-path crates/runtime-embassy-noalloc/Cargo.toml --lib
+          cargo test --locked --manifest-path checks/noalloc/runtime-embassy/Cargo.toml --lib
 
       # Plain `cargo test`, the first command a contributor runs. Every target that needs a
       # non-default feature gates itself (a crate-level `cfg` or `required-features`), and only

@@ -7,15 +7,11 @@ license = "Apache-2.0"
 repository = "https://github.com/powersemmi/ruststream"
 description = "The delivery body without `alloc`, built from the runtime's own sources so its in-crate tests run: the runtime's dev-dependencies turn `alloc` on."
 publish = false
-build = "../runtime/build.rs"
-
-# A workspace of its own: a member of the main workspace would unify `alloc` on through its
-# neighbours, which is the one thing this crate exists to avoid.
-[workspace]
+build = "../../../crates/runtime/build.rs"
 
 [lib]
 name = "ruststream_runtime_noalloc"
-path = "../runtime/src/lib.rs"
+path = "../../../crates/runtime/src/lib.rs"
 
 [features]
 default = []
@@ -23,7 +19,7 @@ postcard = ["dep:postcard"]
 json-core = ["dep:serde-json-core"]
 
 [dependencies]
-ruststream-core = { path = "../core", default-features = false }
+ruststream-core = { path = "../../../crates/core", default-features = false }
 futures = { version = "0.3", default-features = false }
 serde = { version = "1.0.69", default-features = false, features = ["derive"] }
 thiserror = { version = "2", default-features = false }

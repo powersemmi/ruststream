@@ -1,0 +1,8 @@
+# The framework's crates built from their own sources without `alloc`, so their in-crate tests and
+# doc examples run in the build a device without a heap gets: each crate's dev-dependencies turn
+# `alloc` on in the main workspace. A workspace of its own for the same reason: a member of the
+# main workspace would unify `alloc` on through its neighbours. Each command names one member, so
+# the members' features stay apart.
+[workspace]
+members = ["memory", "runtime", "runtime-embassy"]
+resolver = "3"
