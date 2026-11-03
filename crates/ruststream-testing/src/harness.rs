@@ -582,7 +582,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// A handler that keeps itself runnable does not hold the shutdown: the paused clock moves on
     /// while it waits, so the shutdown timeout fires and the handler is aborted. With no shutdown
-    /// timeout, such a handler fails the shutdown.
+    /// timeout, such a handler fails the shutdown, after the harness has aborted it, shut the brokers
+    /// down and run the `after_shutdown` hooks.
     ///
     /// # Errors
     ///
@@ -591,7 +592,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// [`RustStreamError::Shutdown`] when a broker fails to shut down, and
     /// [`RustStreamError::Join`] when a dispatch task panicked.
     pub async fn shutdown(self) -> Result<(), RustStreamError> {
-        let teardown = Teardown {
+        let mut teardown = Teardown {
             shutdown: self.shutdown,
             handles: self.handles,
             hooks: self
@@ -613,7 +614,15 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         // paused clock moves on while it waits.
         let stopped = match until_idle(&self.quiescence, teardown.run()).await {
             Ok(stopped) => stopped,
-            Err(kept_running) => Err(RustStreamError::Dispatch(kept_running.to_string())),
+            Err(kept_running) => {
+                // The wait was given up, not the teardown: what it had not reached is still in
+                // `teardown`. A second run with no time to wait aborts the loops that are left
+                // and goes on to the brokers and the `after_shutdown` hooks, so a test that
+                // catches this error does not go on with a handler running or a broker open.
+                teardown.shutdown_timeout = Some(Duration::ZERO);
+                let _ = until_idle(&self.quiescence, teardown.run()).await;
+                Err(RustStreamError::Dispatch(kept_running.to_string()))
+            }
         };
         // The handlers are done or aborted: the hooks they left waiting go with them.
         let _ = until_idle(&self.quiescence, self.hook_failures.stop()).await;

@@ -2,12 +2,18 @@
 //! passes meanwhile and the shutdown timeout fires; the harness's paused clock moves the same way,
 //! so a shutdown ends by its timeout, and a wait with no timeout to end it fails.
 
+use std::convert::Infallible;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishError, RustStream, RustStreamError};
+use ruststream::memory::prelude::{Broker, Publish, PublishExt};
+use ruststream::runtime::{
+    AppInfo, Bound, HandlerOutcome, PublishError, RustStream, RustStreamError, State,
+};
 use ruststream::testing::{TestApp, TestError};
-use ruststream::{Outgoing, subscriber};
+use ruststream::{FromRef, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::task;
 use tokio::time::{self, Instant};
@@ -196,4 +202,106 @@ async fn a_handler_parked_on_a_timer_sees_exactly_its_wait_pass_during_a_settle(
 
     assert_eq!(before.elapsed(), SLEEP);
     tb.shutdown().await.expect("shutdown");
+}
+
+/// How often the spinning handler has run, and what `after_shutdown` saw of the broker.
+#[derive(Clone)]
+struct Ticks(Arc<AtomicU64>);
+
+/// A farewell the `after_shutdown` hook publishes, to show whether the broker still takes it.
+#[derive(Outgoing, Serialize, Deserialize)]
+#[outgoing(name = "farewells")]
+struct Farewell {
+    id: u64,
+}
+
+#[derive(FromRef)]
+struct SpinState {
+    ticks: Ticks,
+    #[from_ref(skip)]
+    farewells: Bound<MemoryBroker, Publish>,
+}
+
+/// Counts every turn it takes and never ends.
+#[subscriber("spin")]
+async fn on_spin(spin: &Spin, State(ticks): State<Ticks>) -> HandlerOutcome {
+    let _ = spin.id;
+    loop {
+        ticks.0.fetch_add(1, Ordering::Relaxed);
+        task::yield_now().await;
+    }
+}
+
+/// A job the test publishes, to the destination it names.
+#[derive(Outgoing, Serialize, Deserialize)]
+#[outgoing(name = "spin")]
+struct Spin {
+    id: u64,
+}
+
+/// A failed shutdown still leaves nothing behind: the handler is gone, the broker is shut down
+/// and `after_shutdown` has run.
+#[tokio::test(start_paused = true)]
+async fn a_failed_shutdown_stops_the_handler_closes_the_broker_and_runs_after_shutdown() {
+    let ticks = Ticks(Arc::new(AtomicU64::new(0)));
+    let after_ran = Arc::new(AtomicBool::new(false));
+    let broker_open = Arc::new(AtomicBool::new(true));
+    let broker = MemoryBroker::new().bindable();
+    let farewells = broker.bind(Publish);
+    let (state_ticks, hook_ran, hook_open) = (
+        ticks.clone(),
+        Arc::clone(&after_ran),
+        Arc::clone(&broker_open),
+    );
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .on_startup(async move |()| {
+            Ok::<_, Infallible>(SpinState {
+                ticks: state_ticks,
+                farewells,
+            })
+        })
+        .after_shutdown(async move |state: Arc<SpinState>| {
+            let open = match state.farewells.clone().live().await {
+                Ok(publisher) => publisher
+                    .message(&Farewell { id: 1 })
+                    .publish()
+                    .await
+                    .is_ok(),
+                Err(_) => false,
+            };
+            hook_open.store(open, Ordering::Relaxed);
+            hook_ran.store(true, Ordering::Relaxed);
+            Ok::<_, Infallible>(())
+        })
+        .with_broker(broker, |b| b.include(on_spin));
+    let tb = TestApp::start(app).await.expect("start");
+    let _ = tb
+        .broker::<MemoryBroker>()
+        .message(&Spin { id: 1 })
+        .publish()
+        .await;
+
+    let stopped = tb.shutdown().await;
+
+    assert!(
+        matches!(&stopped, Err(RustStreamError::Dispatch(reason)) if reason.contains("did not go idle")),
+        "the shutdown returned {stopped:?}",
+    );
+    let at_return = ticks.0.load(Ordering::Relaxed);
+    for _ in 0..200 {
+        task::yield_now().await;
+    }
+    assert_eq!(
+        ticks.0.load(Ordering::Relaxed),
+        at_return,
+        "the handler kept running after the shutdown returned",
+    );
+    assert!(
+        after_ran.load(Ordering::Relaxed),
+        "after_shutdown did not run"
+    );
+    assert!(
+        !broker_open.load(Ordering::Relaxed),
+        "the broker was still open in after_shutdown"
+    );
 }
