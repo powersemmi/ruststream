@@ -752,4 +752,10 @@ impl<Layers, State, Pipeline, Phase> Described for RustStream<Layers, State, Pip
     fn described_handlers(&self) -> &[HandlerMetadata] {
         &self.handlers
     }
+
+    fn select_logger(&self) {
+        if let Some(select) = self.logger {
+            select();
+        }
+    }
 }
