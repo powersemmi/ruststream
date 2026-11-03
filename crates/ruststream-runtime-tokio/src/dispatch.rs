@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::task::Poll;
 
 use bytes::BytesMut;
-use tokio::task::{JoinError, JoinHandle};
 use ruststream_core::diag::error;
+use tokio::task::{JoinError, JoinHandle};
 
 use ruststream_core::{BatchSlot, BatchStream};
 use ruststream_runtime::DeliverySlot as Slot;

@@ -5,26 +5,23 @@
 #![allow(clippy::future_not_send)]
 #![cfg(not(ruststream_alloc))]
 
-use std::convert::Infallible;
 use std::error::Error;
 use std::sync::{Mutex, Once, PoisonError};
 use std::thread;
 use std::time::Duration;
 
 use futures::executor::block_on;
-use futures::{Stream, StreamExt};
 use log::{Level, LevelFilter, Log, Metadata, Record};
+use ruststream::diagnostics::LogLogger;
 use ruststream::memory::local::{
     LocalMemoryBroker, LocalMemoryBus, LocalMemoryPublish, LocalMemorySource,
 };
-use ruststream::runtime::{
-    EmbeddedApp, Failures, HandlerOutcome, IntoSource, Mounts, SubscriberSettings,
-};
+use ruststream::runtime::{EmbeddedApp, Failures, HandlerOutcome, Mounts, SubscriberSettings};
 use ruststream::testing::embedded::TestApp;
-use ruststream::{
-    AckError, Broker, BrokerMoves, Deserialized, Headers, IncomingMessage, Outgoing, Serialized,
-    Settle, Subscriber, SubscriptionSource, subscriber,
-};
+use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
+
+#[path = "embedded_unacknowledged/mod.rs"]
+mod unacknowledged;
 
 /// Keeps the warnings and errors the framework logs, as text.
 struct Records(Mutex<Vec<String>>);
@@ -109,7 +106,7 @@ type Tight = LocalMemoryBroker<1>;
 static TIGHT_BUS: LocalMemoryBus<1> = LocalMemoryBus::new();
 
 fn quoted_app(bus: Tight) -> EmbeddedApp<impl Mounts> {
-    EmbeddedApp::new().with_broker(bus, |b| {
+    EmbeddedApp::new().logger(LogLogger).with_broker(bus, |b| {
         b.include(on_stuck)
             .include(on_quote)
             .out_reply(LocalMemoryPublish)
@@ -175,6 +172,7 @@ fn an_error_on_a_batch_outcome_is_logged_as_never_running() -> Result<(), Box<dy
         block_on(async {
             let scenario = async {
                 let app = EmbeddedApp::new()
+                    .logger(LogLogger)
                     .with_broker(LocalMemoryBroker::<4>::new(&BATCH_BUS), |b| {
                         b.include(on_batched.batch::<3>())
                     });
@@ -207,121 +205,11 @@ fn an_error_on_a_batch_outcome_is_logged_as_never_running() -> Result<(), Box<dy
     Ok(())
 }
 
-/// The bus of the unsupported scenario, and its connected form.
-type Wide = LocalMemoryBroker<2>;
-type Wired = <Wide as Broker>::Connected;
-
-/// The subscription of a transport that has no acknowledgement to give: it reads the local bus and
-/// answers every settlement [`AckError::Unsupported`], as MQTT `QoS 0` or a socket does.
-#[derive(Clone, Copy)]
-struct Unacknowledged(&'static str);
-
-/// The deliveries of [`Unacknowledged`].
-struct Unacknowledging(<LocalMemorySource as SubscriptionSource<Wired>>::Subscriber);
-
-/// One delivery of the bus whose settlement the transport cannot perform.
-struct Unsettled(
-    <<LocalMemorySource as SubscriptionSource<Wired>>::Subscriber as Subscriber>::Message,
-);
-
-impl Unacknowledged {
-    const fn new(name: &'static str) -> Self {
-        Self(name)
-    }
-}
-
-impl IntoSource for Unacknowledged {
-    type Source = Self;
-
-    fn into_source(self) -> Self {
-        self
-    }
-}
-
-impl SubscriptionSource<Wired> for Unacknowledged {
-    type Subscriber = Unacknowledging;
-    type Copies = BrokerMoves;
-
-    fn name(&self) -> &str {
-        self.0
-    }
-
-    fn subscribe(
-        self,
-        connected: &Wired,
-    ) -> impl Future<Output = Result<Unacknowledging, <Wide as Broker>::Error>> {
-        let opened = LocalMemorySource::new(self.0).subscribe(connected);
-        async move { Ok(Unacknowledging(opened.await?)) }
-    }
-}
-
-impl Subscriber for Unacknowledging {
-    type Message = Unsettled;
-    type Error = Infallible;
-
-    fn stream(&mut self) -> impl Stream<Item = Result<Unsettled, Infallible>> + '_ {
-        self.0.stream().map(|delivery| match delivery {
-            Ok(delivery) => Ok(Unsettled(delivery)),
-            Err(never) => match never {},
-        })
-    }
-}
-
-impl IncomingMessage for Unsettled {
-    fn payload(&self) -> &[u8] {
-        self.0.payload()
-    }
-
-    fn headers(&self) -> &Headers {
-        self.0.headers()
-    }
-}
-
-impl Settle for Unsettled {
-    async fn ack(self) -> Result<(), AckError> {
-        // The bus would requeue what is dropped unsettled, and a transport that settles nothing
-        // does not redeliver.
-        self.0.nack(false).await?;
-        Err(AckError::Unsupported)
-    }
-
-    async fn nack(self, _requeue: bool) -> Result<(), AckError> {
-        self.0.nack(false).await?;
-        Err(AckError::Unsupported)
-    }
-}
-
-/// Acknowledges a reading the transport cannot acknowledge.
-#[subscriber(Unacknowledged::new("readings"))]
-async fn on_reading(reading: &Job<'_>) -> HandlerOutcome {
-    let _ = reading.0;
-    HandlerOutcome::ack()
-}
-
-/// A reading for the board.
-#[derive(Outgoing, Serialized)]
-#[outgoing(name = "readings")]
-struct Reading(&'static [u8]);
-
-/// The bus of the unsupported scenario.
-static UNSUPPORTED_BUS: LocalMemoryBus<2> = LocalMemoryBus::new();
-
 #[test]
 fn an_acknowledgement_the_transport_reports_unsupported_is_logged_with_its_subscription()
 -> Result<(), Box<dyn Error>> {
     record();
-    block_on(async {
-        let app =
-            EmbeddedApp::new().with_broker(Wide::new(&UNSUPPORTED_BUS), |b| b.include(on_reading));
-        let tb = TestApp::start(app).await?;
-        tb.broker::<Wide>()
-            .message(&Reading(b"21"))
-            .publish()
-            .await?;
-        tb.settle().await?;
-        tb.shutdown().await?;
-        Ok::<(), Box<dyn Error>>(())
-    })?;
+    block_on(unacknowledged::run(LogLogger))?;
 
     let lines = about("readings");
     assert_eq!(lines.len(), 1, "{lines:?}");

@@ -20,9 +20,9 @@
 //! just `name`, and a message with its format arguments last. Machinery for the crates of the
 //! family; the loggers and [`Logger`] are the public part.
 
-use core::fmt::{self, Debug, Display, Formatter};
 #[cfg(any(feature = "log", feature = "defmt"))]
 use core::cell::Cell;
+use core::fmt::{self, Debug, Display, Formatter};
 #[cfg(any(diag_tracing, feature = "log", feature = "defmt"))]
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -284,6 +284,26 @@ pub fn selected() -> Selected {
     }
 }
 
+/// Runs `emit` when the app selected `TracingLogger`. Inlined, so the closure is the event's code.
+#[cfg(diag_tracing)]
+#[doc(hidden)]
+#[inline]
+pub fn when_tracing(selected: Selected, emit: impl FnOnce()) {
+    if matches!(selected, Selected::Tracing) {
+        emit();
+    }
+}
+
+/// Runs `emit` with the sink when the app selected `LogLogger` or `DefmtLogger`.
+#[cfg(any(feature = "log", feature = "defmt"))]
+#[doc(hidden)]
+#[inline]
+pub fn when_sink(selected: Selected, emit: impl FnOnce(&'static dyn Sink)) {
+    if let Selected::Sink(sink) = selected {
+        emit(sink);
+    }
+}
+
 /// An event's field.
 #[doc(hidden)]
 pub trait Entry {
@@ -409,9 +429,9 @@ macro_rules! __diag {
 #[macro_export]
 macro_rules! __diag_trace {
     ($selected:ident, $level:ident, $($event:tt)*) => {
-        if let $crate::diag::Selected::Tracing = $selected {
+        $crate::diag::when_tracing($selected, || {
             $crate::diag::private::tracing::$level!($($event)*)
-        }
+        })
     };
 }
 
@@ -522,7 +542,7 @@ macro_rules! __diag_level {
 #[macro_export]
 macro_rules! __diag_sink {
     ($selected:ident, $level:ident, $target:expr, $message:expr, $fields:expr) => {
-        if let $crate::diag::Selected::Sink(sink) = $selected {
+        $crate::diag::when_sink($selected, |sink| {
             // One `match`, so the temporaries the fields and the message borrow live through the
             // call.
             match ($target, $message, $fields) {
@@ -533,7 +553,7 @@ macro_rules! __diag_sink {
                     fields: &$crate::diag::Show(&fields),
                 }),
             }
-        }
+        })
     };
 }
 

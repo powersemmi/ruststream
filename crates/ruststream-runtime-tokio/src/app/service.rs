@@ -6,9 +6,9 @@ use std::{
 };
 
 use crate::SendBroker;
-use ruststream_core::diag::Logger;
 use crate::bindable::BrokerRegistration;
 use crate::{DescribeServer, ServerSpec};
+use ruststream_core::diag::Logger;
 use ruststream_runtime::codec::Codec;
 
 use tokio_util::task::TaskTracker;
@@ -501,8 +501,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// # fn main() {}
     /// ```
     #[must_use]
-    pub fn logger<L: Logger>(mut self, logger: L) -> Self {
-        let _ = logger;
+    pub fn logger<L: Logger>(mut self, _logger: L) -> Self {
         self.logger = Some(L::select);
         self
     }

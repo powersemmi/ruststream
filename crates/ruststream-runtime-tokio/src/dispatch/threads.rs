@@ -37,12 +37,12 @@ use std::time::{Duration, Instant};
 use futures::Stream;
 use futures::task::AtomicWaker;
 use rtrb::{Consumer, Producer, RingBuffer};
+use ruststream_core::diag::error;
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
 use tokio::task::coop::consume_budget;
 use tokio_util::task::TaskTracker;
-use ruststream_core::diag::error;
 
 use super::{Shutdown, Turn, key_index};
 

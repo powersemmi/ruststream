@@ -19,6 +19,7 @@ use std::cell::RefCell;
 use std::io;
 use std::sync::{Arc, Mutex, Once, PoisonError};
 
+use ruststream_core::diag::{Logger as _, TracingLogger};
 use tracing::Level;
 use tracing::subscriber::set_global_default;
 use tracing_subscriber::fmt::MakeWriter;
@@ -81,6 +82,8 @@ pub(crate) fn shared_text() -> String {
 }
 
 fn install_subscriber() {
+    // The framework reports nothing until a logger is selected; this suite reads `tracing`.
+    TracingLogger::select();
     static GLOBAL: Once = Once::new();
     GLOBAL.call_once(|| {
         let subscriber = tracing_subscriber::fmt()

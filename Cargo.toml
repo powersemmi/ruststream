@@ -986,6 +986,12 @@ name = "logger_tokio"
 path = "tests/logger_tokio.rs"
 required-features = ["tokio", "memory", "macros", "testing", "log"]
 
+# The embedded runner of the heap variant reports through the logger the app selects.
+[[test]]
+name = "embedded_diagnostics_alloc"
+path = "tests/embedded_diagnostics_alloc.rs"
+required-features = ["embassy", "memory", "macros", "testing", "alloc", "log", "tracing"]
+
 [[test]]
 name = "ui_no_alloc"
 path = "tests/ui_no_alloc.rs"

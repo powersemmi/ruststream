@@ -23,6 +23,8 @@ use core::convert::Infallible;
 use std::sync::Mutex;
 
 #[cfg(feature = "json")]
+use ruststream_core::diag::{Logger as _, TracingLogger};
+#[cfg(feature = "json")]
 use tracing::field::{Field, Visit};
 #[cfg(feature = "json")]
 use tracing::subscriber::{self, DefaultGuard};
@@ -168,6 +170,7 @@ fn capture_events() -> (Arc<Mutex<Vec<String>>>, DefaultGuard) {
         }
     }
 
+    TracingLogger::select();
     let events = Arc::new(Mutex::new(Vec::new()));
     let guard =
         subscriber::set_default(tracing_subscriber::registry().with(Capture(Arc::clone(&events))));

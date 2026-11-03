@@ -3,6 +3,8 @@
 //! subscription and message type, and the level the user's backend filters at silences or shows it.
 //!
 //! The selection is process-wide, so the phases run in order inside one test of this binary.
+// The tokio harness's futures are not `Send`; the test drives them on its own thread.
+#![allow(clippy::future_not_send)]
 #![cfg(all(
     feature = "macros",
     feature = "memory",
@@ -11,22 +13,21 @@
     feature = "tokio"
 ))]
 
-use std::fmt::Write as _;
 use std::future::ready;
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::atomic::Ordering;
 
-use log::{LevelFilter, Log, Metadata, Record};
+use log::LevelFilter;
 use ruststream::PublishOutcome;
 use ruststream::diagnostics::{LogLogger, TracingLogger};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, PairError, Take};
-use tracing::field::{Field, Visit};
-use tracing::span::{Attributes, Id, Record as SpanRecord};
+use tracing::Level;
 use tracing::subscriber::set_default;
-use tracing::{Event, Level, Metadata as TracingMetadata, Subscriber};
+
+mod logger_capture;
+use logger_capture::{RECORDS, Traced, rank, take_records};
 
 /// A job, as its bytes.
 #[derive(Deserialized)]
@@ -59,14 +60,13 @@ impl Publisher for Refuser {
     type Error = MemoryError;
     type Options = ();
 
-    async fn publish<'msg>(
+    fn publish<'msg>(
         &self,
         msg: OutgoingMessage<'msg, BytesMut>,
         options: Option<&Self::Options>,
-    ) -> PublishOutcome<'msg, MemoryError, Take> {
-        let _ = (&self.inner, options);
-        let _ = msg;
-        Err(MemoryError::ShutDown.into())
+    ) -> impl Future<Output = PublishOutcome<'msg, MemoryError, Take>> {
+        let _ = (&self.inner, options, msg);
+        ready(Err(MemoryError::ShutDown.into()))
     }
 }
 
@@ -83,114 +83,8 @@ impl PublishPolicy<ConnectedMemoryBroker> for Refusing {
     }
 }
 
-/// The `tracing` events of the framework a scope saw, filtered at `level`.
-#[derive(Clone)]
-struct Traced {
-    level: Arc<AtomicU8>,
-    lines: Arc<Mutex<Vec<String>>>,
-}
-
-impl Traced {
-    fn at(level: Level) -> Self {
-        Self {
-            level: Arc::new(AtomicU8::new(rank(level))),
-            lines: Arc::default(),
-        }
-    }
-
-    fn lines(&self) -> Vec<String> {
-        self.lines
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-    }
-}
-
-/// Orders levels so that a larger number is more verbose.
-fn rank(level: Level) -> u8 {
-    match level {
-        Level::ERROR => 1,
-        Level::WARN => 2,
-        Level::INFO => 3,
-        Level::DEBUG => 4,
-        Level::TRACE => 5,
-    }
-}
-
-/// Writes an event's fields as ` name=value`.
-struct Fields(String);
-
-impl Visit for Fields {
-    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
-            let _ = write!(self.0, "{value:?}");
-        } else {
-            let _ = write!(self.0, " {}={value:?}", field.name());
-        }
-    }
-}
-
-impl Subscriber for Traced {
-    fn enabled(&self, metadata: &TracingMetadata<'_>) -> bool {
-        rank(*metadata.level()) <= self.level.load(Ordering::Relaxed)
-    }
-
-    fn new_span(&self, _: &Attributes<'_>) -> Id {
-        Id::from_u64(1)
-    }
-
-    fn record(&self, _: &Id, _: &SpanRecord<'_>) {}
-
-    fn record_follows_from(&self, _: &Id, _: &Id) {}
-
-    fn event(&self, event: &Event<'_>) {
-        let mut text = Fields(String::new());
-        event.record(&mut text);
-        self.lines
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(format!(
-                "{} {}: {}",
-                event.metadata().level(),
-                event.metadata().target(),
-                text.0
-            ));
-    }
-
-    fn enter(&self, _: &Id) {}
-
-    fn exit(&self, _: &Id) {}
-}
-
-/// The `log` records of the process, as text.
-struct Records(Mutex<Vec<String>>);
-
-impl Log for Records {
-    fn enabled(&self, _: &Metadata<'_>) -> bool {
-        true
-    }
-
-    fn log(&self, record: &Record<'_>) {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(format!(
-                "{} {}: {}",
-                record.level(),
-                record.target(),
-                record.args()
-            ));
-    }
-
-    fn flush(&self) {}
-}
-
-static RECORDS: Records = Records(Mutex::new(Vec::new()));
-
-/// The records written since the last call.
-fn take_records() -> Vec<String> {
-    std::mem::take(&mut *RECORDS.0.lock().unwrap_or_else(PoisonError::into_inner))
-}
+/// No lines.
+const NONE: [String; 0] = [];
 
 /// The logger an app selects.
 #[derive(Clone, Copy)]
@@ -233,7 +127,10 @@ fn assert_lost_reply(lines: &[String]) {
         .collect();
     let lines = lines.as_slice();
     assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(lines[0].starts_with("WARN ruststream::dispatch:"), "{lines:?}");
+    assert!(
+        lines[0].starts_with("WARN ruststream::dispatch:"),
+        "{lines:?}"
+    );
     assert!(lines[0].contains("message lost"), "{lines:?}");
     assert!(lines[0].contains("subscription=jobs"), "{lines:?}");
     assert!(lines[0].contains("message_type="), "{lines:?}");
@@ -252,7 +149,7 @@ async fn the_framework_reports_only_through_the_logger_the_app_selected() {
         lose_a_reply(Choice::Nothing).await;
     }
     assert!(traced.lines().is_empty(), "{:?}", traced.lines());
-    assert!(take_records().is_empty());
+    assert_eq!(take_records(), NONE);
 
     // `TracingLogger`: the tracing subscriber hears it, the log crate does not.
     {
@@ -260,7 +157,7 @@ async fn the_framework_reports_only_through_the_logger_the_app_selected() {
         lose_a_reply(Choice::Tracing).await;
     }
     assert_lost_reply(&traced.lines());
-    assert!(take_records().is_empty());
+    assert_eq!(take_records(), NONE);
 
     // The subscriber's level silences the warning, and the same event shows at the next level.
     let silenced = Traced::at(Level::ERROR);
@@ -288,7 +185,7 @@ async fn the_framework_reports_only_through_the_logger_the_app_selected() {
     // `log::max_level()` silences the warning, and the same event shows at the next level.
     log::set_max_level(LevelFilter::Error);
     lose_a_reply(Choice::Log).await;
-    assert!(take_records().is_empty());
+    assert_eq!(take_records(), NONE);
     log::set_max_level(LevelFilter::Warn);
     lose_a_reply(Choice::Log).await;
     assert_lost_reply(&take_records());

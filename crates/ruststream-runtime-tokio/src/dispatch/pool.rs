@@ -14,9 +14,9 @@ use std::task::Poll;
 
 use bytes::BytesMut;
 use futures::Stream;
+use ruststream_core::diag::error;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use ruststream_core::diag::error;
 
 use super::{
     DispatchFailure, Handler, HeadersOnDemand, Hosted, Shutdown, Slot, Turn, Workers, dispatch,

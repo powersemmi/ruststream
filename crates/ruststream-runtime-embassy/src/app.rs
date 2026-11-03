@@ -125,8 +125,8 @@ pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 #[derive(Debug)]
 #[must_use = "an app does nothing until it runs"]
 pub struct EmbeddedApp<M> {
-    mounts: M,
     logger: Option<fn()>,
+    mounts: M,
 }
 
 /// What an [`EmbeddedApp`] holds: its state, its brokers with their routes, and its hooks.
@@ -518,8 +518,7 @@ impl<M> EmbeddedApp<M> {
     /// # let _ = app(LocalMemoryBroker::new());
     /// # }
     /// ```
-    pub fn logger<L: Logger>(mut self, logger: L) -> Self {
-        let _ = logger;
+    pub fn logger<L: Logger>(mut self, _logger: L) -> Self {
         self.logger = Some(L::select);
         self
     }

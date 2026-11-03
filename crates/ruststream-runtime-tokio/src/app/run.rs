@@ -8,11 +8,11 @@ use std::{fmt, sync::Arc, time::Duration};
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
 
+use ruststream_core::diag::{debug, info, warn};
 #[cfg(unix)]
 use tokio::signal::ctrl_c;
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
-use ruststream_core::diag::{debug, info, warn};
 
 use crate::HandlerMetadata;
 use crate::bindable::Bound;
