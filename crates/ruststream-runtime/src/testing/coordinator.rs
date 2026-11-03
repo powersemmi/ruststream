@@ -341,6 +341,14 @@ impl Coordinator {
         }
     }
 
+    /// Whether this coordinator's harness runs the app on the test's tokio runtime, where a
+    /// deferred copy waits on a tokio timer the harness fires; a harness that runs the app on
+    /// another runner leaves the copy to that runner's clock.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn times_on_tokio(&self) -> bool {
+        matches!(self.inner.hooks.runner, HookRunner::Thread)
+    }
+
     /// Starts a step of the test: the step budget counts the deliveries dispatched from here.
     #[doc(hidden)]
     pub fn begin_step(&self) {

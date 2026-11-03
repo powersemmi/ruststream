@@ -1,0 +1,458 @@
+//! The [`TestApp`] harness of the compio runner, over the test's own compio runtime.
+//!
+//! It runs a service's production app in process, every broker connected in process, and moves the
+//! clock the app reads through the runner's virtual clock.
+//!
+//! The facade re-exports it as `ruststream::testing::compio::TestApp` when the build enables the
+//! `compio` runtime.
+
+use std::any::{TypeId, type_name};
+use std::fmt;
+use std::future::poll_fn;
+use std::pin::{Pin, pin};
+use std::task::Poll;
+use std::time::Duration;
+
+use futures::future::{self, Either};
+use ruststream_runtime::ConnectedLifecycle;
+use ruststream_runtime::OutSlot;
+use ruststream_runtime::testing::{Coordinator, PublishedAssertions, TestError, Within};
+use ruststream_runtime_compio::testing::{
+    Quiescence, Runnable, VirtualClock, armed_timers, require_io_uring,
+};
+use ruststream_runtime_compio::{
+    App, InProcessError, InProcessStart, RunningApp, RustStreamError, StateSource, yield_now,
+};
+
+mod brokers;
+mod handle;
+mod hooks;
+
+pub use brokers::TestBrokers;
+use brokers::registration_of;
+pub use handle::{BrokerHandle, InjectSink};
+use hooks::HookTasks;
+
+/// The default cap on dispatched deliveries before a step gives up driving a reaction to
+/// quiescence: a guard against a handler that requeues forever.
+const MAX_STEPS: usize = 10_000;
+
+/// The most turns the harness gives the app in a row while a task of it stays runnable: a guard
+/// against a task that keeps waking itself, such as a loop around `yield_now`. A reaction that
+/// converges ends long before it, and the cost of reaching it is a few milliseconds.
+const MAX_ROUNDS: usize = 50_000;
+
+/// The most times the harness moves the clock for one wait: a guard against work that always arms
+/// another deadline, such as a hook that sleeps in a loop. The embedded harness bounds its clock
+/// moves the same way and answers with the same error.
+const MAX_ADVANCES: usize = 10_000;
+
+/// A test harness around a compio service's production app.
+///
+/// Takes the app `main` builds, unchanged. [`start`](Self::start) connects each of its brokers
+/// through the broker's [`InProcess`](ruststream_runtime::testing::InProcess) transition instead
+/// of `connect`, runs the app as the only core of the test's own compio runtime, and then drives
+/// input through a broker addressed by its production type. A publish returns once the app has
+/// handled everything it set off, up to what waits on the clock.
+///
+/// The harness holds the runner's virtual clock from `start` until it is dropped: the app's
+/// retries, batch deadlines and `ruststream::time::sleep` wait until [`advance`](Self::advance)
+/// moves the clock; a startup hook that sleeps on it is released by the harness itself. Work that waits on compio's own timers or on I/O is not advanced: with nothing
+/// else to run and no timer of the clock armed, `settle` returns [`TestError::Stalled`]. One
+/// `TestApp` runs at a time on a thread.
+///
+/// # Examples
+///
+/// ```
+/// use compio::runtime::Runtime;
+/// use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
+/// use ruststream::runtime::compio::{AppInfo, RustStream};
+/// use ruststream::runtime::HandlerOutcome;
+/// use ruststream::testing::compio::TestApp;
+/// use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
+///
+/// type Bus = LocalMemoryBroker<4>;
+///
+/// /// A temperature frame, as the sensor sends its bytes.
+/// #[derive(Deserialized)]
+/// struct Reading<'a>(&'a [u8]);
+///
+/// #[subscriber(LocalMemorySource::new("sensors/temp"))]
+/// async fn on_reading(reading: &Reading<'_>) -> HandlerOutcome {
+///     let _ = reading.0;
+///     HandlerOutcome::ack()
+/// }
+///
+/// /// The app `main` runs, and the one the test hands the harness.
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("sensors", "0.1.0"))
+///         .with_broker(Bus::new(), |b| b.include(on_reading))
+/// }
+///
+/// /// A frame as the test's sensor sends it.
+/// #[derive(Outgoing, Serialized)]
+/// #[outgoing(name = "sensors/temp")]
+/// struct Sent(&'static [u8]);
+///
+/// async fn reads_the_temperature() -> Result<(), Box<dyn std::error::Error>> {
+///     let tb = TestApp::start(app()).await?;
+///     tb.broker::<Bus>().message(&Sent(b"21")).publish().await?;
+///
+///     tb.broker::<Bus>()
+///         .subscriber("sensors/temp")
+///         .assert_called_once()
+///         .with_raw(b"21")
+///         .settled(HandlerOutcome::ack());
+///     tb.shutdown().await?;
+///     Ok(())
+/// }
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// #     Runtime::new()?.block_on(reads_the_temperature())
+/// # }
+/// ```
+pub struct TestApp {
+    running: RunningApp,
+    coordinator: Coordinator,
+    clock: VirtualClock,
+    quiescence: Quiescence,
+    hooks: HookTasks,
+}
+
+impl fmt::Debug for TestApp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TestApp")
+            .field("brokers", &self.running.connected().count())
+            .field("hooks", &self.hooks)
+            .finish_non_exhaustive()
+    }
+}
+
+impl TestApp {
+    /// Starts the service's `app` in process: the app's real `on_startup`, each broker's
+    /// in-process connect, the subscriptions, then `after_startup`, in the production order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TestError::NoTransport`] if a broker of the app has no in-process mode,
+    /// [`TestError::Startup`] if a lifecycle hook fails, [`TestError::Connect`] if a broker fails
+    /// to connect in process, or [`TestError::Subscribe`] if a subscription fails to open.
+    ///
+    /// # Panics
+    ///
+    /// Panics if another `TestApp` is alive on this thread: the clock is one per thread. Also
+    /// panics where `RUSTSTREAM_COMPIO_REQUIRE_IO_URING=1` is set and the test's runtime is not
+    /// on `io_uring` (Linux).
+    ///
+    /// # Examples
+    ///
+    /// See [`TestApp`].
+    pub async fn start<A: App>(app: A) -> Result<Self, TestError> {
+        Self::run(app, StateSource::App).await
+    }
+
+    /// Starts the service's `app` in process with a state the test builds in place of the one
+    /// the app's `on_startup` produces.
+    ///
+    /// `build` runs once every broker is connected, before any subscription delivers, and
+    /// receives the brokers so the state can hold what it needs of them
+    /// ([`TestBrokers::broker`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`start`](Self::start), except that the app's `on_startup` does not run.
+    ///
+    /// # Panics
+    ///
+    /// As [`start`](Self::start).
+    pub async fn with_state<A, Build>(app: A, build: Build) -> Result<Self, TestError>
+    where
+        A: App,
+        Build: FnOnce(&TestBrokers<'_>) -> A::State + Send + 'static,
+    {
+        let build = Box::new(move |connected: &[&(dyn ConnectedLifecycle + 'static)]| {
+            build(&TestBrokers { connected })
+        });
+        Self::run(app, StateSource::Built(build)).await
+    }
+
+    async fn run<A: App>(app: A, state: StateSource<A::State>) -> Result<Self, TestError> {
+        // The test built this runtime itself, so a fallback to polling is caught here.
+        require_io_uring();
+        // Taken before the app starts, so every task of its startup is followed.
+        let quiescence = Quiescence::take();
+        let clock = VirtualClock::take();
+        let coordinator = Coordinator::in_place(MAX_STEPS);
+        let hooks = HookTasks::new(coordinator.clone());
+        let start = InProcessStart::new(coordinator.clone(), registration_of, state);
+        // A hook of the startup that sleeps on the app's clock, or the unwind of a failed startup,
+        // is released by the clock the way the shutdown's work is.
+        let started = driven(app.start_in_process(start), &hooks, &quiescence, &clock).await;
+        let running = match started {
+            Ok(Ok(running)) => running,
+            Ok(Err(mut failure)) => {
+                // The startup failed after it had started loops: they are stopped and the brokers
+                // closed before the error is returned, as the shutdown does, and a handler that
+                // keeps itself runnable ends the wait.
+                let unwound = driven(failure.unwind_kept(), &hooks, &quiescence, &clock).await;
+                if unwound.is_err() {
+                    let _ = driven(failure.finish_unwind_now(), &hooks, &quiescence, &clock).await;
+                }
+                hooks.cancel().await;
+                return Err(startup_error(failure.into_error()));
+            }
+            Err(kept_running) => {
+                hooks.cancel().await;
+                return Err(kept_running);
+            }
+        };
+        Ok(Self {
+            running,
+            coordinator,
+            clock,
+            quiescence,
+            hooks,
+        })
+    }
+
+    /// Lets the app handle everything already delivered to it, up to what waits on the clock.
+    ///
+    /// A publish settles on its own; this is for work the test set off another way.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TestError::NotQuiescent`] if the app keeps producing work,
+    /// [`TestError::KeptRunning`] if a task of it keeps itself runnable (a loop around
+    /// `yield_now`), and [`TestError::Stalled`] if a delivery waits on something nothing wakes.
+    pub async fn settle(&self) -> Result<(), TestError> {
+        settled(&self.coordinator, &self.quiescence.reader(), &self.hooks).await
+    }
+
+    /// Moves the virtual clock forward by `by` and lets the app handle what fell due: a retry
+    /// copy, a batch deadline, a handler that slept on `ruststream::time::sleep`.
+    ///
+    /// # Errors
+    ///
+    /// As [`settle`](Self::settle).
+    pub async fn advance(&self, by: Duration) -> Result<(), TestError> {
+        self.clock.advance(by);
+        self.settle().await
+    }
+
+    /// Stops the app the way a signal stops it: the `on_shutdown` hooks, the subscriptions, the
+    /// handlers and continuations in flight, every broker in reverse order, and the
+    /// `after_shutdown` hooks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TestError::Failed`] with the runner's error if the app stopped on a failure
+    /// before or during the shutdown, or a broker failed to shut down, and
+    /// [`TestError::KeptRunning`] if a task keeps itself runnable and the app has no shutdown
+    /// timeout to end it. A shutdown timeout fires on the virtual clock even then, and aborts the
+    /// task as it does in production. A shutdown that fails this way has still cancelled the
+    /// task, shut the brokers down and run the `after_shutdown` hooks.
+    ///
+    /// A hook registered with `on_publish` or `on_call` that still waits is released by the clock
+    /// and runs to its end, and a hook that waits on something nothing wakes is dropped where it
+    /// waits, before the shutdown returns. A failed assertion in a hook panics here.
+    pub async fn shutdown(self) -> Result<(), TestError> {
+        let Self {
+            mut running,
+            coordinator,
+            clock,
+            quiescence,
+            hooks,
+        } = self;
+        let stopped = match driven(running.shutdown_kept(), &hooks, &quiescence, &clock).await {
+            Ok(stopped) => stopped,
+            Err(kept_running) => {
+                // The wait was given up, not the teardown: what it had not reached is still in
+                // `running`. A second run with no time to wait cancels the loops that are left
+                // and goes on to the brokers and the `after_shutdown` hooks, so a test that
+                // catches this error does not go on with a handler running or a broker open.
+                // The clock moves on while it runs, so an `after_shutdown` hook that sleeps on
+                // the app's clock ends; a task that is left busy ends the wait again, and the
+                // error already in hand is the one returned.
+                let _ = driven(running.finish_shutdown_now(), &hooks, &quiescence, &clock).await;
+                hooks.cancel().await;
+                return Err(kept_running);
+            }
+        };
+        // A hook that waits on the app's clock is released by it and ends, its failure kept for
+        // the raise below. One that waits on something nothing wakes is dropped where it waits.
+        let _ = driven(hooks.ended(), &hooks, &quiescence, &clock).await;
+        hooks.cancel().await;
+        drop(clock);
+        coordinator.hooks().raise_failure();
+        stopped.map_err(|err| TestError::Failed(Box::new(err)))
+    }
+
+    /// Addresses the broker of type `B`, the production type the app was built with.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the app has no broker of type `B`, or more than one.
+    #[must_use]
+    pub fn broker<B: ruststream_core::Broker + 'static>(&self) -> BrokerHandle<'_> {
+        let mut matches = self
+            .running
+            .connected()
+            .enumerate()
+            .filter(|(_, (_, connected))| connected.broker_type() == TypeId::of::<B>());
+        let (scope_id, (_, connected)) = matches
+            .next()
+            .unwrap_or_else(|| panic!("the app has no broker of type {}", type_name::<B>()));
+        assert!(
+            matches.next().is_none(),
+            "the app has more than one broker of type {}",
+            type_name::<B>(),
+        );
+        let broker = registration_of(TypeId::of::<B>())
+            .and_then(|registration| registration.resolve(connected.as_any()))
+            .expect("an in-process broker connected through its registration");
+        BrokerHandle {
+            coordinator: &self.coordinator,
+            hooks: self.hooks.clone(),
+            runnable: self.quiescence.reader(),
+            scope_id,
+            broker,
+            name: connected.name(),
+        }
+    }
+
+    /// Asserts on what was published through the [`Out`](ruststream_runtime::Out) slot marked
+    /// `M`: exactly the messages the handlers sent through that slot, with their destinations
+    /// and headers, across all brokers.
+    #[must_use]
+    pub fn out<M: OutSlot>(&self) -> PublishedAssertions<()> {
+        PublishedAssertions::captured(&self.coordinator, M::NAME, Within::ALL)
+    }
+}
+
+/// Drives the reaction to a standstill: everything delivered is handled, and what remains waits on
+/// the virtual clock.
+///
+/// The app is settled once no task of its runtime is runnable and either nothing is in flight or a
+/// timer of the virtual clock waits: the work that remains is the clock's to release. Nothing
+/// runnable, a delivery in flight and no timer armed is [`TestError::Stalled`]: the delivery waits
+/// on something neither the app nor the clock wakes (a handler that sleeps on `compio::time`
+/// directly, whose timer `advance` does not move, ends here too).
+///
+/// compio exposes no signal that its runtime is idle, so the runner follows its own tasks
+/// ([`Quiescence`]). The harness yields first, which lets every task woken before the yield run,
+/// and reads the count after.
+async fn settled(
+    coordinator: &Coordinator,
+    runnable: &Runnable,
+    hooks: &HookTasks,
+) -> Result<(), TestError> {
+    // The step budget counts from here; `drive` begins it again only when it is made anew.
+    coordinator.begin_step();
+    let mut drive: Option<Pin<Box<_>>> = None;
+    let mut rounds = 0_usize;
+    let settled = loop {
+        yield_now().await;
+        hooks.start();
+        // The budget is read before `drive` is: both measure from the same step, so `drive` would
+        // report the same exhaustion, with however many deliveries ran in this turn on top.
+        if coordinator.exhausted() {
+            break Err(TestError::NotQuiescent {
+                processed: coordinator.step_processed(),
+            });
+        }
+        let drive_now = drive.get_or_insert_with(|| Box::pin(coordinator.drive()));
+        // `drive` is ready exactly when nothing is in flight; its error is the exhaustion above.
+        let nothing_in_flight = poll_fn(|cx| Poll::Ready(drive_now.as_mut().poll(cx)))
+            .await
+            .is_ready();
+        if nothing_in_flight {
+            // Read again at the next look: work may have been set off since.
+            drive = None;
+        }
+        if runnable.count() > 0 {
+            rounds += 1;
+            if rounds >= MAX_ROUNDS {
+                break Err(TestError::KeptRunning { turns: MAX_ROUNDS });
+            }
+            continue;
+        }
+        break if nothing_in_flight || armed_timers() > 0 {
+            Ok(())
+        } else {
+            Err(TestError::Stalled)
+        };
+    };
+    coordinator.hooks().raise_failure();
+    settled
+}
+
+/// Runs `work` to its end, moving the clock from one armed deadline to the next while the app is
+/// idle: what the app holds that waits on the clock runs to its end.
+///
+/// A task that keeps itself runnable does not stop the clock: after [`MAX_ROUNDS`] turns the app
+/// counts as idle to the clock, the way a busy handler does not stop time under a real runtime, so
+/// a shutdown timeout fires and aborts it.
+///
+/// # Errors
+///
+/// [`TestError::Stalled`] if `work` waits and nothing is runnable or armed on the clock, and
+/// [`TestError::KeptRunning`] if a task stays runnable and no deadline is armed to end it, or if
+/// the clock has moved [`MAX_ADVANCES`] times and `work` still waits.
+async fn driven<Work: Future>(
+    work: Work,
+    hooks: &HookTasks,
+    quiescence: &Quiescence,
+    clock: &VirtualClock,
+) -> Result<Work::Output, TestError> {
+    let runnable = quiescence.reader();
+    // `work` is polled here, not spawned, so its own wakes are followed too: a hook that yields
+    // is runnable, not stalled.
+    let mut work = pin!(quiescence.follow(work));
+    for _advance in 0..MAX_ADVANCES {
+        let idle = pin!(idle(hooks, &runnable));
+        match future::select(work.as_mut(), idle).await {
+            Either::Left((done, _)) => return Ok(done),
+            Either::Right((busy, _)) => {
+                if !clock.advance_to_next() {
+                    return Err(if busy {
+                        TestError::KeptRunning { turns: MAX_ROUNDS }
+                    } else {
+                        TestError::Stalled
+                    });
+                }
+            }
+        }
+    }
+    Err(TestError::KeptRunning {
+        turns: MAX_ADVANCES,
+    })
+}
+
+/// Resolves once no task of the app's runtime is runnable, after the harness has yielded to them,
+/// with `false`; or with `true` once a task has stayed runnable for [`MAX_ROUNDS`] turns.
+async fn idle(hooks: &HookTasks, runnable: &Runnable) -> bool {
+    for _round in 0..MAX_ROUNDS {
+        yield_now().await;
+        hooks.start();
+        if runnable.count() == 0 {
+            return false;
+        }
+    }
+    true
+}
+
+/// The harness's error for an app that stopped while it started.
+fn startup_error(err: RustStreamError) -> TestError {
+    match err {
+        RustStreamError::Connect(source) => match source.downcast::<InProcessError>() {
+            Ok(failure) => match *failure {
+                InProcessError::NoTransport(broker) => TestError::NoTransport(broker),
+                InProcessError::Connect { broker, source } => TestError::Connect { broker, source },
+                other => TestError::Startup(Box::new(other)),
+            },
+            Err(source) => TestError::Startup(source),
+        },
+        RustStreamError::Startup(source) => TestError::Startup(source),
+        RustStreamError::Subscribe(source) => TestError::Subscribe(source),
+        other => TestError::Startup(Box::new(other)),
+    }
+}

@@ -13,6 +13,8 @@ use core::any::{Any, TypeId, type_name};
 use core::fmt;
 use core::time::Duration;
 use ruststream_core::MaybeSendSync;
+#[cfg(ruststream_alloc)]
+use std::sync::{Mutex, PoisonError};
 
 use tokio::time;
 use tokio::time::Instant;
@@ -455,6 +457,46 @@ impl TestableRegistration {
         }
     }
 
+    /// The registration of the broker type `broker`: one built by
+    /// [`register_testable_broker!`](crate::register_testable_broker), or one the type
+    /// [enrolled](Self::enroll) itself.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn lookup(broker: TypeId) -> Option<&'static Self> {
+        Self::registered().find(|registration| registration.registers(broker))
+    }
+
+    /// Every registration: those listed at link time, then those enrolled so far.
+    #[doc(hidden)]
+    pub fn registered() -> impl Iterator<Item = &'static Self> {
+        let enrolled = ENROLLED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        inventory::iter::<Self>.into_iter().chain(enrolled)
+    }
+
+    /// Enrolls the broker type `B` for [`lookup`](Self::lookup), once per type.
+    ///
+    /// It is for a broker whose type carries a value (a capacity) that no crate can list in
+    /// advance: the broker enrolls itself from its constructor, for the type it was built as.
+    #[doc(hidden)]
+    pub fn enroll<B>()
+    where
+        B: InProcess + SendBroker,
+        B::Connected: TestableBroker + DefaultPublish,
+        <<B::Connected as DefaultPublish>::Policy as PublishPolicy<B::Connected>>::Live: Publisher,
+    {
+        let registration: &'static Self = &const { Self::of::<B>() };
+        let mut enrolled = ENROLLED.lock().unwrap_or_else(PoisonError::into_inner);
+        if !enrolled
+            .iter()
+            .any(|known| known.registers(TypeId::of::<B>()))
+        {
+            enrolled.push(registration);
+        }
+    }
+
     #[cfg(ruststream_alloc)]
     /// Whether this registration is the one for the broker type `broker`.
     #[doc(hidden)]
@@ -520,6 +562,10 @@ where
 
 #[cfg(ruststream_alloc)]
 inventory::collect!(TestableRegistration);
+
+#[cfg(ruststream_alloc)]
+/// The broker types that enrolled themselves, beside the ones listed at link time.
+static ENROLLED: Mutex<Vec<&'static TestableRegistration>> = Mutex::new(Vec::new());
 
 #[cfg(ruststream_alloc)]
 /// Registers a production broker type with the test harness, so

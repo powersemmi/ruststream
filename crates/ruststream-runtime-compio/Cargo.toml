@@ -1,0 +1,70 @@
+[package]
+name = "ruststream-runtime-compio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The compio runner of the RustStream messaging framework: one runtime per core, the clock, the shutdown and the core launcher; services use it through `ruststream`."
+keywords = ["messaging", "async", "compio", "io-uring", "ruststream"]
+categories = ["asynchronous", "network-programming"]
+readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+# The virtual clock the test harness moves: `CompioClock` and `time::sleep` read it where a lease
+# is held on the thread, and compio's own timers everywhere else.
+testing = ["ruststream-runtime/testing"]
+
+[dependencies]
+ruststream-core = { workspace = true, features = ["std"] }
+# The compio runner reports through the loggers of `ruststream-core`, `tracing` among them, as the
+# tokio runner does.
+ruststream-runtime = { workspace = true, features = ["compio", "tracing"] }
+bytes = { workspace = true, features = ["std"] }
+# `polling` is the driver a host falls back to when it refuses an io_uring (a container profile that
+# blocks it, an old kernel, no memory for the ring).
+compio = { workspace = true, features = ["polling"] }
+crossbeam-queue.workspace = true
+event-listener.workspace = true
+futures = { workspace = true, features = ["std", "async-await"] }
+# Finds the CPUs the process may run on, so a restricted cgroup is pinned inside its own set.
+core_affinity = "0.8.3"
+pin-project-lite.workspace = true
+thiserror = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+# The compile-fail snapshots.
+trybuild = "1"
+# The latch a teardown test waits on until a handler holds its delivery.
+event-listener = "5.4.2"
+# Runs the termination-signal test in a child process: the signal reaches the whole process.
+rusty-fork = "0.3.1"
+# The brokers the builder and the run tests mount handlers on: the tokio one to describe an app, the
+# local one, which needs no reactor, to run one.
+ruststream-memory = { workspace = true, features = ["std", "embassy", "alloc"] }
+# Counts the allocations of the thread a closure runs on, so a test reads what a sleep or a delivery
+# costs.
+allocation-counter = "0.8.1"
+# The app-level tests are a service's code: they import the facade and ride its compio `TestApp`. A
+# path dependency without a version is dropped on publish.
+ruststream = { path = "../..", default-features = false, features = ["compio", "macros", "memory", "json", "testing"] }
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true
+
+# The tests of the virtual clock need the `testing` feature.
+[[test]]
+name = "time"
+path = "tests/time/main.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "tasks"
+path = "tests/tasks/main.rs"
+required-features = ["testing"]

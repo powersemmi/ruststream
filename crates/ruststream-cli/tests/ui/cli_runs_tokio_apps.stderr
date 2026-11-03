@@ -11,8 +11,8 @@ help: the trait `ruststream_runtime_tokio::app::app_trait::App` is implemented f
   | / impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
   | |     for RustStream<Layers, State, Pipeline, Phase>
   | |__________________________________________________^
-note: required by a bound in `run_main`
- --> src/lib.rs
+note: required by a bound in `ruststream_cli::run_main`
+ --> src/entry.rs
   |
   | pub fn run_main<A, F>(build: F) -> ExitCode
   |        -------- required by a bound in this function

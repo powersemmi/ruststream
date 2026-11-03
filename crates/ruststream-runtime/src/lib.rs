@@ -75,20 +75,28 @@ mod testkit;
 #[doc(hidden)]
 pub use inventory;
 
+#[cfg(ruststream_alloc)]
+mod app_info;
 mod batch;
 mod batch_inject;
 mod batch_publishing;
 mod context;
 mod coop;
 mod copied;
+#[cfg(feature = "compio")]
+mod core_ctx;
 mod dispatch;
 // Boxed futures per layer: the stack serves the heap variant.
+#[cfg(ruststream_alloc)]
+mod described;
 #[cfg(ruststream_alloc)]
 mod dynstack;
 mod extract;
 mod failure;
 mod handle;
 mod handler;
+#[cfg(ruststream_alloc)]
+mod health_state;
 mod host;
 mod in_messages;
 mod inject;
@@ -149,6 +157,8 @@ pub(crate) type SourceBatch<B, S> = <SourceSubscriber<B, S> as BatchSubscriber>:
 // The definition-trait dispatch SPI the retired legacy emission used to implement in user
 // crates is internal machinery now: the modules stay, but only what the crate's own mounts
 // reach through this path is re-exported.
+#[cfg(ruststream_alloc)]
+pub use app_info::AppInfo;
 #[doc(hidden)]
 pub use batch::{
     BATCH_CAPACITY, BatchHandler, BatchOutcomes, BatchVec, TakenBatch, batch_verdict, uniform_batch,
@@ -156,6 +166,13 @@ pub use batch::{
 #[cfg(not(ruststream_alloc))]
 pub use batch::{BatchSize, FitsBatch, Outcomes};
 pub use context::{After, AfterError, AfterThen, Context};
+#[cfg(feature = "compio")]
+pub use core_ctx::{Core, CoreGuard};
+#[cfg(ruststream_alloc)]
+pub use described::Described;
+#[cfg(feature = "std")]
+#[doc(hidden)]
+pub use dispatch::rings::{Drain, Feed, RING, key_index, open as open_rings};
 #[doc(hidden)]
 pub use dispatch::{
     Delivery, EncodeRoom, Gated, HeadersAtOnce, HeadersOnDemand, LendHeaders, Lent, Parks,
@@ -164,6 +181,8 @@ pub use dispatch::{
 pub use dispatch::{Placement, RETRY_COUNT_HEADER, Workers};
 #[cfg(ruststream_alloc)]
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
+#[doc(hidden)]
+pub use extract::{AnyContext, ContextOf, FoldedContext, JoinSlot};
 pub use extract::{Ctx, CtxKey, FromContext, FromRef, Headers, State};
 #[doc(hidden)]
 pub use failure::DispatchFailure;
@@ -197,6 +216,8 @@ pub use handle::{
 #[doc(hidden)]
 pub use handler::IntoOutcome;
 pub use handler::{ContinuationFuture, Handler, HandlerOutcome};
+#[cfg(ruststream_alloc)]
+pub use health_state::{HealthState, SubscriptionCount, SubscriptionEnd};
 #[cfg(ruststream_alloc)]
 #[doc(hidden)]
 pub use host::Copying;

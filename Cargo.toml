@@ -3,6 +3,7 @@ members = [
     "crates/ruststream-core",
     "crates/ruststream-runtime",
     "crates/ruststream-runtime-tokio",
+    "crates/ruststream-runtime-compio",
     "crates/ruststream-memory",
     "crates/ruststream-asyncapi",
     "crates/ruststream-observability",
@@ -73,6 +74,11 @@ defmt = "1"
 quanta = "0.13.0"
 pin-project-lite = "0.2"
 
+# The compio runner: one runtime per core. The pin is a beta and moves to 0.20 final when it
+# ships (0.x releases break on the minor); the default driver is io-uring on Linux and polling elsewhere.
+compio = { version = "=0.20.0-beta.1", features = ["time", "signal"] }
+# The parked wait of a shutdown: one `Event` that every core's loop listens on.
+event-listener = "5.4"
 # The embedded runner. Every one builds without `std`; a device binary picks the executor's
 # platform and the time driver, a host test picks `platform-std` and the mock driver.
 embassy-executor = "0.10"
@@ -97,12 +103,13 @@ ruststream-core = { version = "=0.8.0", path = "crates/ruststream-core", default
 ruststream-runtime = { version = "=0.8.0", path = "crates/ruststream-runtime", default-features = false }
 ruststream-runtime-tokio = { version = "=0.8.0", path = "crates/ruststream-runtime-tokio" }
 ruststream-runtime-embassy = { version = "=0.8.0", path = "crates/ruststream-runtime-embassy" }
+ruststream-runtime-compio = { version = "=0.8.0", path = "crates/ruststream-runtime-compio" }
 # Without its default `std`: the facade's runtime feature picks the tokio side or the embassy side.
 ruststream-memory = { version = "=0.8.0", path = "crates/ruststream-memory", default-features = false }
 ruststream-asyncapi = { version = "=0.8.0", path = "crates/ruststream-asyncapi" }
 ruststream-observability = { version = "=0.8.0", path = "crates/ruststream-observability" }
 ruststream-testing = { version = "=0.8.0", path = "crates/ruststream-testing" }
-ruststream-cli = { version = "=0.8.0", path = "crates/ruststream-cli" }
+ruststream-cli = { version = "=0.8.0", path = "crates/ruststream-cli", default-features = false }
 ruststream-conformance = { version = "=0.8.0", path = "crates/ruststream-conformance" }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases
@@ -436,6 +443,15 @@ required-features = ["macros", "memory", "json", "asyncapi"]
 [[example]]
 name = "subscribers"
 required-features = ["macros", "memory", "json", "tokio"]
+
+[[example]]
+name = "compio_runtime"
+required-features = ["compio", "testing", "macros", "memory", "json"]
+
+[[example]]
+name = "manual_compio_runtime"
+path = "examples/manual/compio_runtime.rs"
+required-features = ["compio", "testing", "memory", "json"]
 
 [[example]]
 name = "memory_broker"
@@ -1014,6 +1030,13 @@ name = "asyncapi_logger"
 path = "tests/asyncapi_logger.rs"
 required-features = ["tokio", "memory", "macros", "asyncapi"]
 
+# The generator reports through the logger a compio app selects; the selection is process-wide, so
+# the test owns a binary.
+[[test]]
+name = "asyncapi_logger_compio"
+path = "tests/asyncapi_logger_compio.rs"
+required-features = ["compio", "memory", "macros", "asyncapi"]
+
 [[test]]
 name = "logger_tokio_unacknowledged"
 path = "tests/logger_tokio_unacknowledged.rs"
@@ -1100,6 +1123,7 @@ tokio = [
     "alloc",
     "dep:ruststream-runtime-tokio",
     "dep:ruststream-cli",
+    "ruststream-cli/tokio",
     "ruststream-memory?/std",
     "ruststream-testing?/tokio",
 ]
@@ -1107,6 +1131,15 @@ embassy = [
     "dep:ruststream-runtime-embassy",
     "ruststream-memory?/embassy",
     "ruststream-testing?/embassy",
+]
+# The compio runner: one runtime per core, on io_uring where the kernel has it.
+compio = [
+    "alloc",
+    "dep:ruststream-runtime-compio",
+    "dep:ruststream-cli",
+    "ruststream-cli/compio",
+    "ruststream-memory?/local",
+    "ruststream-testing?/compio",
 ]
 # The loggers an app selects with `.logger(..)`; each feature compiles its logger into the crates
 # that report, and nothing is reported until the app selects one. The tokio runner turns `tracing`
@@ -1196,6 +1229,7 @@ ruststream-core.workspace = true
 ruststream-runtime.workspace = true
 ruststream-runtime-tokio = { workspace = true, optional = true }
 ruststream-runtime-embassy = { workspace = true, optional = true }
+ruststream-runtime-compio = { workspace = true, optional = true }
 ruststream-memory = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }
@@ -1239,6 +1273,12 @@ required-features = ["memory", "json", "macros", "tokio"]
 name = "middleware"
 harness = false
 required-features = ["memory", "json", "macros", "tokio"]
+
+# The compio runner on one core: instructions per delivery, and no allocation after the start.
+[[bench]]
+name = "consume_compio"
+harness = false
+required-features = ["compio", "memory", "macros", "json"]
 
 # The embedded app without `alloc`: instructions per delivery, and zero allocations.
 [[bench]]
@@ -1313,6 +1353,8 @@ required-features = ["memory", "json", "macros", "tokio"]
 
 [dev-dependencies]
 futures = "0.3"
+# The runtime a compio example's test runs its `TestApp` on.
+compio.workspace = true
 # The thread-mode executor of the `std` platform, which the app attribute's task runs on in the
 # embedded batch gate. It does not turn `alloc` on.
 embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }

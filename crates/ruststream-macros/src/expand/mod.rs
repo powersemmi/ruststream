@@ -18,8 +18,7 @@ use crate::parse::{
 
 use params::{
     BodyDecl, OutParam, Shape, collect_extractors, ctx_extractor_key, from_headers_ty,
-    is_context_param, is_main_runtime_key, message_param, split_outs, state_type,
-    subst_elided_lifetime,
+    is_context_param, message_param, split_outs, state_type, subst_elided_lifetime,
 };
 
 pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
@@ -85,22 +84,29 @@ fn context_type(func: &ItemFn) -> TokenStream2 {
     quote!(())
 }
 
-/// The context type projected from the first `Ctx<K>` extractor parameter's key, for handlers
-/// without a `&mut Context` parameter. Emitted as `<K as ContextField>::Context`, so the
-/// compiler resolves the type; further `Ctx` keys are checked against it by the extractor
-/// bounds. Purely syntactic (the last path segment `Ctx` with exactly one type argument): a
-/// type alias hides the shape and falls back to `()`. `Ctx<MainRuntime>` reads no broker
-/// context and extracts under any, so it names none.
+/// The context type projected from the `Ctx<K>` extractor parameters' keys, for handlers without
+/// a `&mut Context` parameter. Emitted as a fold of the keys' `CtxKey::Slot` types, so the
+/// compiler resolves it whatever a key is called or imported as: a runner's handle yields to the
+/// next key, and the first key that names a context sets it. Further `Ctx` keys are checked
+/// against it by the extractor bounds. Purely syntactic (the last path segment `Ctx` with
+/// exactly one type argument): a type alias hides the shape and falls back to `()`.
 fn inferred_context_type(func: &ItemFn) -> TokenStream2 {
-    for arg in func.sig.inputs.iter().skip(1) {
-        if let FnArg::Typed(PatType { ty, .. }) = arg
-            && let Some(key) = ctx_extractor_key(ty)
-            && !is_main_runtime_key(key)
-        {
-            return quote!(<#key as ::ruststream::ContextField>::Context);
-        }
-    }
-    quote!(())
+    let mut keys = func.sig.inputs.iter().skip(1).filter_map(|arg| match arg {
+        FnArg::Typed(PatType { ty, .. }) => ctx_extractor_key(ty),
+        FnArg::Receiver(_) => None,
+    });
+    let Some(first) = keys.next() else {
+        return quote!(());
+    };
+    let slot = keys.fold(
+        quote!(<#first as ::ruststream::runtime::CtxKey>::Slot),
+        |joined, key| {
+            quote!(<#joined as ::ruststream::runtime::JoinSlot<
+                <#key as ::ruststream::runtime::CtxKey>::Slot,
+            >>::Joined)
+        },
+    );
+    quote!(<#slot as ::ruststream::runtime::FoldedContext>::Context)
 }
 
 /// The predicates binding each extractor type to `FromContext` for the handler's context `C`

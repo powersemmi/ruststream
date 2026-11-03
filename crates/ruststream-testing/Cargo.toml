@@ -45,6 +45,16 @@ embassy = [
     "dep:assert_no_alloc",
     "ruststream/embassy",
 ]
+# `TestApp` over the compio runner's app, on the test's own compio runtime: one core, and the
+# runner's virtual clock in place of compio's timers.
+compio = [
+    "dep:ruststream-runtime-compio",
+    "ruststream-runtime-compio/testing",
+    "dep:inventory",
+    "dep:critical-section",
+    "dep:futures",
+    "ruststream/compio",
+]
 # The value-encoding entry points, which encode with the default codec these features select.
 json = ["ruststream-runtime/json"]
 cbor = ["ruststream-runtime/cbor"]
@@ -55,7 +65,9 @@ ruststream-core = { workspace = true, features = ["testing"] }
 ruststream-runtime = { workspace = true, features = ["testing"] }
 ruststream-runtime-tokio = { workspace = true, optional = true, features = ["testing"] }
 ruststream-runtime-embassy = { workspace = true, optional = true }
+ruststream-runtime-compio = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
+futures = { workspace = true, optional = true, features = ["std", "async-await"] }
 serde = { workspace = true, features = ["std"] }
 # Lets the live injection await the publisher's pairing, whose future the contract does not
 # ask to be `Send`, on a single-thread runtime: the task never leaves its thread, and the wrapper
@@ -90,6 +102,8 @@ ruststream = { path = "../..", default-features = false, features = ["macros", "
 # A device service's handlers and app, as the embedded tests write them.
 embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
 embassy-futures.workspace = true
+# The runtime a compio test runs its `TestApp` on.
+compio.workspace = true
 futures-core.workspace = true
 
 [lints]
@@ -289,3 +303,79 @@ required-features = ["tokio", "json"]
 name = "tokio_busy"
 path = "tests/tokio_busy.rs"
 required-features = ["tokio", "json"]
+
+# A compio service's handler runs and acknowledges, through the compio `TestApp`.
+[[test]]
+name = "compio_handler"
+path = "tests/compio_handler.rs"
+required-features = ["compio", "json"]
+
+# A compio service whose subscription asks for dedicated threads, through the compio `TestApp`.
+[[test]]
+name = "compio_threads"
+path = "tests/compio_threads.rs"
+required-features = ["compio", "json"]
+
+# A compio service's reply is published, through the compio `TestApp`.
+[[test]]
+name = "compio_reply"
+path = "tests/compio_reply.rs"
+required-features = ["compio", "json"]
+
+# A delayed retry of a compio service, through the compio `TestApp` and its virtual clock.
+[[test]]
+name = "compio_retry"
+path = "tests/compio_retry.rs"
+required-features = ["compio", "json"]
+
+# What the compio `TestApp` takes for settled: the clock's waits, a long reaction, a stall.
+[[test]]
+name = "compio_quiescence"
+path = "tests/compio_quiescence.rs"
+required-features = ["compio", "json"]
+
+# A compio shutdown that fails on a busy handler still stops it and closes the brokers.
+[[test]]
+name = "compio_busy"
+path = "tests/compio_busy.rs"
+required-features = ["compio", "json"]
+
+# The `.error` of a compio service's failed reply, through the compio `TestApp`.
+[[test]]
+name = "compio_error"
+path = "tests/compio_error.rs"
+required-features = ["compio", "json"]
+
+# The compio `TestApp` refuses a test runtime that fell back to polling where the environment asks
+# for `io_uring`.
+[[test]]
+name = "compio_driver"
+path = "tests/compio_driver.rs"
+required-features = ["compio"]
+
+# An app that settles, and one that cannot start, through the compio `TestApp`.
+[[test]]
+name = "compio_startup"
+path = "tests/compio_startup.rs"
+required-features = ["compio", "json"]
+
+# A local memory broker of any capacity through the compio `TestApp`, and a broker type with no
+# in-process mode.
+[[test]]
+name = "compio_capacity"
+path = "tests/compio_capacity.rs"
+required-features = ["compio", "json"]
+
+
+
+# The compio runner reports through the logger the app selects, through the compio `TestApp`.
+[[test]]
+name = "compio_logger"
+path = "tests/compio_logger.rs"
+required-features = ["compio", "json"]
+
+# A destination hook runs on the test's own publish, through the compio `TestApp`.
+[[test]]
+name = "compio_hooks"
+path = "tests/compio_hooks.rs"
+required-features = ["compio", "json"]

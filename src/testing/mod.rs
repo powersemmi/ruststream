@@ -12,5 +12,10 @@ pub use ruststream_runtime::testing::{
 pub mod embedded {
     pub use ruststream_testing::embedded::{BrokerHandle, InjectSink, TestApp};
 }
+/// The harness of the compio runner's app, driven on the test's own compio runtime.
+#[cfg(all(feature = "testing", feature = "compio"))]
+pub mod compio {
+    pub use ruststream_testing::compio::{BrokerHandle, InjectSink, TestApp, TestBrokers};
+}
 #[cfg(all(feature = "testing", feature = "tokio"))]
 pub use ruststream_testing::{BrokerHandle, InjectSink, TestApp, TestBrokers};

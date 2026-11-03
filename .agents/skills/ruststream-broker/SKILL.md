@@ -116,11 +116,11 @@ A client that holds `Rc` or `RefCell` (a thread-per-core client, an embedded net
 no `Send` futures to promise. The lifecycle traits (`Broker`, `ConnectedBroker`, `Subscribe`,
 `SubscriptionSource`, `PublishPolicy`) carry no `Send`, so it implements them as they are. The
 per-message traits (`Subscriber`, `Settle`, `Publisher` and the capability traits) are one trait
-per concept for every runtime: their futures ask for `Send` when `tokio` is on and for nothing on
+per concept for every runtime: their futures ask for `Send` when `tokio` or `compio` is on and for nothing on
 the embedded runner alone, so the same impl serves a device and a server. `IncomingMessage` gives
 the accessors of a delivery. Error types stay `Send + Sync + 'static`. A build with both runtime
 features takes the stricter bound, so a type that holds `Rc` does not compile next to tokio. The
-tokio runner asks for `Send + Sync` where it spawns a subscription loop. The suites of the local family
+tokio and compio runners ask for `Send + Sync` where they hand a delivery to a task or a core. The suites of the local family
 (`run_local_suite`, `local_lifecycle`) come with the facade's `conformance` feature, which turns
 tokio on, so they check such a client in a build where its types are `Send`.
 

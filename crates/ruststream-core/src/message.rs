@@ -700,8 +700,8 @@ pub trait IncomingMessage {
 /// A delivery implements [`IncomingMessage`] for what it carries and this trait for what
 /// the broker does with it once the handler is done. Consumers call either [`ack`] or
 /// [`nack`] exactly once, and the consuming `self` receiver makes a double settlement a
-/// compile-time error. A delivery is `Send + Sync` with the tokio runner in the build, and
-/// need not be without it, so a broker whose deliveries hold `Rc` or `RefCell` implements this
+/// compile-time error. A delivery is `Send + Sync` with the tokio or the compio runner in the
+/// build, and need not be without them, so a broker whose deliveries hold `Rc` or `RefCell` implements this
 /// same trait for the embedded runner.
 ///
 /// The two delayed-redelivery methods are optional, and a broker that overrides none of

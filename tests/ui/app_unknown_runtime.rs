@@ -4,7 +4,7 @@
 use ruststream::app;
 use ruststream::runtime::{AppInfo, RustStream};
 
-// The runtime an app runs on is named by the attribute: `tokio` or `embassy`.
+// The runtime an app runs on is named by the attribute: `tokio`, `embassy` or `compio`.
 #[app(runtime = smol)]
 fn build() -> RustStream {
     RustStream::new(AppInfo::new("svc", "0.1.0"))

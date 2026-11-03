@@ -66,13 +66,18 @@
 //! The core traits, the router, middleware and dispatch are always present. Every feature is
 //! additive and opt-in.
 //!
-//! The runtime runs the app's subscriptions. `tokio` and `embassy` provide one each, and they
-//! build together: the handlers are the same for both, and the app picks its runner. A function
-//! marked `#[ruststream::app]` runs on tokio, and `#[ruststream::app(runtime = embassy)]` runs on
-//! embassy.
+//! The runtime runs the app's subscriptions. `tokio`, `compio` and `embassy` provide one each: the
+//! handlers are the same for all of them, and the app picks its runner. `tokio` builds beside
+//! either of the others. A function marked `#[ruststream::app]` runs on tokio,
+//! `#[ruststream::app(runtime = compio, cores = n)]` runs on compio, and
+//! `#[ruststream::app(runtime = embassy)]` runs on embassy.
 //!
 //! * `tokio` (default): the [`runtime::RustStream`] application object on tokio's runtime, its
 //!   lifecycle and the generated entry point ([`runtime::cli`]).
+//! * `compio`: the compio runner, one single-threaded runtime per core with `io_uring` where the
+//!   kernel has it, core 0 receiving and `workers(n)` and `threads(n)` placed across the cores. A
+//!   handler is `Send`, as on tokio. Its items are in [`runtime::compio`], and the harness is
+//!   `testing::compio::TestApp`.
 //! * `embassy`: the embedded runner on embassy's executor and clock, for a device with no
 //!   operating system. Its items (the `EmbeddedApp` application object, its `Control` and
 //!   `Health`, the `EmbassyClock`) are re-exported in [`runtime`], where their reference is.
@@ -152,8 +157,9 @@
 //! the codec stay explicit, since those are the choices a service makes for itself.
 
 #![forbid(unsafe_code)]
-// The embassy runtime runs on a device with no standard library; the tokio runner needs it.
-#![cfg_attr(not(feature = "tokio"), no_std)]
+// The embassy runtime runs on a device with no standard library; the tokio and compio runners
+// need it.
+#![cfg_attr(not(any(feature = "tokio", feature = "compio")), no_std)]
 
 #[cfg(any(ruststream_alloc, feature = "testing"))]
 extern crate alloc;
@@ -264,7 +270,10 @@ pub mod diagnostics {
 }
 
 // The bus is the runtime's: the tokio one, or the local one on embassy.
-#[cfg(all(feature = "memory", any(feature = "tokio", feature = "embassy")))]
+#[cfg(all(
+    feature = "memory",
+    any(feature = "tokio", feature = "embassy", feature = "compio")
+))]
 pub mod memory;
 
 pub mod runtime;
@@ -418,8 +427,8 @@ pub mod __private {
     pub use alloc::vec::Vec as BatchVec;
     #[cfg(not(ruststream_alloc))]
     pub use ruststream_runtime::BatchVec;
-    // What the tokio `main` that `#[ruststream::app]` generates returns.
-    #[cfg(feature = "tokio")]
+    // What the tokio or compio `main` that `#[ruststream::app]` generates returns.
+    #[cfg(any(feature = "tokio", feature = "compio"))]
     pub use std::process::ExitCode;
     /// Reports the error an embassy app stopped on, which the task `#[ruststream::app]` emits
     /// calls.

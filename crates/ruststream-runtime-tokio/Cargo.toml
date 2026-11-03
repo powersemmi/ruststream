@@ -30,7 +30,6 @@ ruststream-runtime = { workspace = true, features = ["tokio", "tracing"] }
 bytes = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["std", "async-await", "executor"] }
 crossbeam-queue.workspace = true
-rtrb.workspace = true
 thiserror = { workspace = true, features = ["std"] }
 pin-project-lite = { workspace = true, optional = true }
 tokio.workspace = true

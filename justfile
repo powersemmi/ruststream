@@ -19,6 +19,9 @@ export CARGO_BUILD_WARNINGS := env("CARGO_BUILD_WARNINGS", "deny")
 # benchmarks - it compiles a recording branch into every delivery.
 bench_features := "memory,macros,json,tokio"
 
+# A compio service's production surface: the compio runner over the local memory bus, no tokio.
+compio_bench_features := "compio,memory,macros,json"
+
 # The members a test or coverage leg leaves out: the embedded runner's own tests link embassy-time's
 # mock driver, and the embedded harness is a time driver of its own, so one binary cannot hold both.
 # Its legs below build it alone.
@@ -49,6 +52,7 @@ check:
     # No clippy here: this feature combination has clippy lints of its own that no gate has ever
     # run, and cleaning them is not what a benchmark change is for.
     cargo check --benches --no-default-features --features {{ bench_features }}
+    cargo check --bench consume_compio --no-default-features --features {{ compio_bench_features }}
     cargo check --workspace {{ embassy_tests_exclude }} --lib --bins --tests --examples \
         --all-features
     # The probe always asks for `macros`, `json` and `tokio`, and a workspace build unifies a
@@ -162,6 +166,12 @@ check:
     if [ -n "$tree" ]; then \
         echo "error: the embassy set pulls tokio into the facade:" >&2; echo "$tree" >&2; exit 1; \
     fi
+    # The compio set keeps tokio out of the facade's dependency graph.
+    tree="$(cargo tree -p ruststream --no-default-features --features {{ compio_bench_features }} \
+        -e normal -i tokio)"; \
+    if [ -n "$tree" ]; then \
+        echo "error: the compio set pulls tokio into the facade:" >&2; echo "$tree" >&2; exit 1; \
+    fi
     # Rustdoc sees what rustc cannot: broken intra-doc links and redundant targets. CI gates on
     # it, so a link to an item a refactor removed must fail here rather than three jobs later.
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
@@ -175,7 +185,7 @@ check:
         --manifest-path Cargo.toml --config external-types.toml
     cargo +nightly-2026-03-20 check-external-types --no-default-features \
         --features {{ embassy_set }} --manifest-path Cargo.toml --config external-types.toml
-    for manifest in crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do \
+    for manifest in crates/ruststream-{core,runtime,runtime-tokio,runtime-compio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do \
         cargo +nightly-2026-03-20 check-external-types --all-features \
             --manifest-path "$manifest" --config external-types.toml || exit 1; \
     done
@@ -327,6 +337,8 @@ bench *ARGS:
     cargo bench -p ruststream-runtime-embassy --bench embedded_idle --no-run
     cargo bench --no-default-features --features embassy,memory,macros --bench embedded_idle_no_alloc \
         --no-run
+    cargo bench --no-default-features --features {{ compio_bench_features }} --bench consume_compio \
+        --no-run
     status=0
     cargo bench {{ gated_benches }} --no-fail-fast \
         --no-default-features --features {{ bench_features }} \
@@ -343,6 +355,11 @@ bench *ARGS:
     # The same app without `alloc`: its floor is zero allocations, the start included.
     cargo bench --no-default-features --features embassy,memory,macros \
         --bench embedded_idle_no_alloc --no-fail-fast \
+        -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
+    # The compio runner on one core, over the local bus: its floor holds a delivery to zero
+    # allocations after the start.
+    cargo bench --no-default-features --features {{ compio_bench_features }} \
+        --bench consume_compio --no-fail-fast \
         -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
     python3 scripts/bench_results.py --messages "$messages" target/bench-summary.json \
         docs/benchmarks/results.json

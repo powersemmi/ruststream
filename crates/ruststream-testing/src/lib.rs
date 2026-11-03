@@ -8,6 +8,8 @@
 // The harness polls the app on the test's own task; the app's cold path carries no Send.
 #![allow(clippy::future_not_send)]
 
+#[cfg(feature = "compio")]
+pub mod compio;
 #[cfg(feature = "embassy")]
 pub mod embedded;
 #[cfg(feature = "tokio")]

@@ -136,7 +136,7 @@ pub(crate) enum HookRunner {
 #[allow(missing_debug_implementations)]
 pub struct Hooks {
     /// Where the hooks run, fixed by the harness that made the coordinator.
-    runner: HookRunner,
+    pub(crate) runner: HookRunner,
     /// Whether any hook was ever registered: a test that registers none pays this load alone.
     registered: AtomicBool,
     calls: Mutex<Vec<OnCall>>,

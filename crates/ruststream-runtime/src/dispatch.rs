@@ -60,6 +60,8 @@ pub use delivery::{Delivery, Lent, Slot};
 pub use headers::{HeadersAtOnce, HeadersOnDemand, LendHeaders};
 pub(crate) use settle::{settle_outcome, settle_reacting};
 pub use workers::{Placement, Workers};
+#[cfg(feature = "std")]
+pub(crate) mod rings;
 
 /// Header carrying the framework's own retry count.
 ///

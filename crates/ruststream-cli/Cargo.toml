@@ -16,6 +16,11 @@ readme = "../../README.md"
 all-features = true
 
 [features]
+default = ["tokio"]
+# The tokio entry point: `run_main`, `run_main_on`, `AppRuntime` and the run error of a tokio app.
+tokio = ["dep:tokio", "dep:ruststream-runtime-tokio"]
+# The compio entry point: `compio::run_main` and the run error of a compio app.
+compio = ["dep:ruststream-runtime-compio"]
 # The `asyncapi gen` subcommand of a service.
 asyncapi = ["dep:ruststream-asyncapi", "dep:serde_json", "dep:serde_norway"]
 # The console logger a service's entry point installs.
@@ -25,28 +30,32 @@ tool = ["dep:clap", "dep:anyhow"]
 
 [dependencies]
 ruststream-runtime = { workspace = true, features = ["std"] }
-ruststream-runtime-tokio.workspace = true
+ruststream-runtime-tokio = { workspace = true, optional = true }
+ruststream-runtime-compio = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
-tokio.workspace = true
+tokio = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true, features = ["std"] }
 serde_norway = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 
 [dev-dependencies]
+ruststream-core.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_norway = "0.9"
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
 # The doc examples are a service's code, so they import the facade; the unit tests reach the
 # in-memory broker through it. A path dependency without a version is dropped on publish.
-ruststream = { path = "../..", features = ["macros", "memory", "json"] }
+ruststream = { path = "../..", features = ["macros", "memory", "json", "compio"] }
 # The compile-fail snapshot that holds an embedded app out of the CLI.
 ruststream-runtime-embassy.workspace = true
 ruststream-memory = { workspace = true, features = ["embassy", "alloc"] }
 trybuild = "1"
+# Runs the termination-signal test in a child process: the signal reaches the whole process.
+rusty-fork = "0.3.1"
 
 [lints]
 workspace = true

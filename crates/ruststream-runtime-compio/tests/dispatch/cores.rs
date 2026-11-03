@@ -1,0 +1,97 @@
+//! Where the parts of a subscription run: the placement table, and core 0 receiving everything.
+
+use std::pin::pin;
+use std::sync::Arc;
+use std::task::{Context, Waker};
+use std::thread;
+
+use futures::channel::mpsc;
+use ruststream_runtime::Workers;
+use ruststream_runtime_compio::dispatch::{
+    DispatchUnit, Fabric, Layout, Mount, spawn_dispatch_workers,
+};
+
+use crate::support::{Msg, channel, collect, failure, hosted, nonzero, on_cores, reporting};
+
+#[test]
+fn threads_three_on_three_cores_is_a_startup_error_naming_the_mount() {
+    let refused = Layout::plan(
+        3,
+        &[Mount {
+            name: "scans",
+            workers: Workers::threads(nonzero(3)),
+        }],
+    )
+    .expect_err("three dedicated cores leave none for core 0");
+    assert!(refused.to_string().contains("`scans`: 3"), "{refused}");
+}
+
+#[test]
+fn the_stream_of_a_worker_mount_is_read_on_core_zero_only() {
+    let (polled, home) = on_cores(3, async |fabric, stop, tasks| {
+        let workers = Workers::pool(nonzero(3));
+        let layout = Layout::plan(
+            3,
+            &[Mount {
+                name: "orders",
+                workers,
+            }],
+        )
+        .expect("fits");
+        let (feed, subscriber) = channel();
+        let polled = Arc::clone(&subscriber.polled);
+        let (seen, mut reports) = mpsc::unbounded();
+        let looped = spawn_dispatch_workers(
+            subscriber,
+            reporting(seen),
+            stop.clone(),
+            Arc::from("orders"),
+            Arc::new(()),
+            hosted(tasks),
+            failure(&stop),
+            workers,
+            &fabric,
+            layout.cores(0),
+        )
+        .expect("the workers start");
+        for position in 0..30 {
+            feed.unbounded_send(Msg::numbered(position, None))
+                .expect("the loop reads");
+        }
+        collect(&mut reports, 30).await;
+        drop(looped);
+        (polled, thread::current().id())
+    });
+    let polled = polled.lock().expect("lock").clone();
+    polled.first().expect("the stream was polled");
+    assert!(
+        polled.iter().all(|thread| *thread == home),
+        "the stream was polled off core 0"
+    );
+}
+
+#[test]
+fn a_worker_mailed_to_a_core_that_never_started_does_not_hold_the_teardown() {
+    let fabric = Fabric::open(2);
+    let guard = fabric.worker_guard();
+    fabric
+        .run_on(1, "orders", DispatchUnit::Worker, move || {
+            let _held = guard;
+            unreachable!("no core serves this mailbox")
+        })
+        .expect("the mailbox is open");
+
+    let mut gone = pin!(fabric.workers_gone());
+
+    assert!(
+        gone.as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_ready(),
+        "the teardown waits for a worker no core will ever start"
+    );
+}
+
+#[test]
+fn a_fabric_is_shown_with_the_count_of_its_cores() {
+    assert!(format!("{:?}", Fabric::open(3)).contains("cores: 3"));
+}

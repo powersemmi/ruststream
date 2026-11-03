@@ -190,6 +190,14 @@ of `on_startup`. Builder methods such as `app().state(..)` do not exist for this
 `start`, `publish`, `settle` and `advance` return `Result`; the test returns
 `Result<(), Box<dyn Error>>` and uses `?`.
 
+### A compio service rides the compio `TestApp`
+
+`ruststream::testing::compio::TestApp` drives a compio app on the test's own compio runtime, as the
+one core, with the same `start`, `broker::<B>()`, `settle`, `advance` and `out::<M>()`. The test is a
+plain `#[test]` that blocks on `compio::runtime::Runtime::new()?.block_on(..)`. `advance` moves the
+runner's virtual clock, which a handler reads through `ruststream::runtime::compio::time::sleep`.
+See the `ruststream` skill, `references/compio.md`.
+
 ### A device service rides the embedded `TestApp`
 
 `ruststream::testing::embedded::TestApp` drives an `EmbeddedApp` on the host with embassy-time's

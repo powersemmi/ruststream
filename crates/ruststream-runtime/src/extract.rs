@@ -14,6 +14,7 @@ use alloc::format;
 use core::any::type_name;
 use core::convert::Infallible;
 use core::fmt;
+use core::marker::PhantomData;
 use ruststream_core::{MaybeSend, MaybeSync};
 
 use ruststream_core::diag::warn;
@@ -22,6 +23,8 @@ use serde::de::DeserializeOwned;
 use crate::ContextField;
 
 use super::context::Context;
+#[cfg(feature = "compio")]
+use super::core_ctx::Core;
 use super::failure::FailurePolicy;
 use super::handler::HandlerOutcome;
 #[cfg(feature = "tokio")]
@@ -243,7 +246,7 @@ pub struct Ctx<K: CtxKey>(pub K::Value);
 /// A key the [`Ctx`] extractor takes: every [`ContextField`], which reads the broker's
 /// per-delivery context, and
 /// [`MainRuntime`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.MainRuntime.html),
-/// which binds the app's runtime.
+/// which binds the app's runtime, and `Core`, which binds the core of the compio runner.
 ///
 /// Sealed: a new key implements [`ContextField`].
 ///
@@ -272,21 +275,87 @@ pub struct Ctx<K: CtxKey>(pub K::Value);
 /// # fn main() {}
 /// ```
 pub trait CtxKey: sealed::Sealed {
+    /// The context the key reads from, for the macros to project the handler's context type:
+    /// [`ContextOf`] for a [`ContextField`], [`AnyContext`] for a runner's handle, which reads
+    /// none and extracts under any.
+    #[doc(hidden)]
+    type Slot;
+
     /// The owned value the extractor binds.
     type Value: MaybeSend + 'static;
 }
 
 impl<K: ContextField> CtxKey for K {
+    type Slot = ContextOf<K::Context>;
     type Value = K::Value;
+}
+
+/// The context a [`ContextField`] key reads from. Macro machinery.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct ContextOf<Context>(PhantomData<fn() -> Context>);
+
+/// The slot of a key that reads no broker context. Macro machinery.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct AnyContext;
+
+/// Two keys' slots folded into one: an [`AnyContext`] yields to the other, so a handler's
+/// context is the first context a key names, whatever order the keys come in. Macro machinery.
+#[doc(hidden)]
+pub trait JoinSlot<Other> {
+    /// The folded slot.
+    type Joined;
+}
+
+impl JoinSlot<Self> for AnyContext {
+    type Joined = Self;
+}
+
+impl<Context> JoinSlot<ContextOf<Context>> for AnyContext {
+    type Joined = ContextOf<Context>;
+}
+
+impl<Context> JoinSlot<AnyContext> for ContextOf<Context> {
+    type Joined = Self;
+}
+
+impl<Context, Other> JoinSlot<ContextOf<Other>> for ContextOf<Context> {
+    type Joined = Self;
+}
+
+/// The handler context a folded slot stands for: the named context, or `()` when no key named
+/// one. Macro machinery.
+#[doc(hidden)]
+pub trait FoldedContext {
+    /// The context type.
+    type Context;
+}
+
+impl FoldedContext for AnyContext {
+    type Context = ();
+}
+
+impl<Context> FoldedContext for ContextOf<Context> {
+    type Context = Context;
 }
 
 #[cfg(feature = "tokio")]
 impl CtxKey for MainRuntime {
+    type Slot = AnyContext;
+    type Value = Self;
+}
+
+#[cfg(feature = "compio")]
+impl CtxKey for Core {
+    type Slot = AnyContext;
     type Value = Self;
 }
 
 mod sealed {
     use super::ContextField;
+    #[cfg(feature = "compio")]
+    use super::Core;
     #[cfg(feature = "tokio")]
     use super::MainRuntime;
 
@@ -296,6 +365,9 @@ mod sealed {
 
     #[cfg(feature = "tokio")]
     impl Sealed for MainRuntime {}
+
+    #[cfg(feature = "compio")]
+    impl Sealed for Core {}
 }
 
 impl<K: CtxKey> fmt::Debug for Ctx<K>
@@ -334,6 +406,22 @@ where
     ) -> impl Future<Output = Result<Self, Infallible>> + MaybeSend {
         let value = ctx.main_runtime().clone();
         async move { Ok(Self(value)) }
+    }
+}
+
+/// The core the handler runs on: read where the handler runs, not where the delivery arrived.
+#[cfg(feature = "compio")]
+impl<C, S> FromContext<C, S> for Ctx<Core>
+where
+    C: MaybeSend,
+    S: MaybeSync,
+{
+    type Rejection = Infallible;
+    fn from_context(
+        _ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<Self, Infallible>> + MaybeSend {
+        let core = Core::current();
+        async move { Ok(Self(core)) }
     }
 }
 
@@ -526,5 +614,24 @@ mod tests {
     fn a_context_field_parameter_shows_its_value_when_debugged() {
         // The extractor is what a handler sees, so its Debug has to reach the value itself.
         assert_eq!(format!("{:?}", Ctx::<Offset>(42)), "Ctx(42)");
+    }
+
+    #[cfg(feature = "compio")]
+    #[tokio::test]
+    async fn the_core_extractor_binds_the_core_the_thread_is() {
+        use core::num::NonZeroUsize;
+
+        use super::super::core_ctx::Core;
+
+        let _core = Core::new(2, NonZeroUsize::new(4).expect("four is not zero")).enter();
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = headers_with("7");
+        let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+
+        let Ctx(core) = <Ctx<Core> as FromContext<(), ()>>::from_context(&mut ctx)
+            .await
+            .expect("the core extractor never rejects");
+        assert_eq!((core.index(), core.count().get()), (2, 4));
     }
 }

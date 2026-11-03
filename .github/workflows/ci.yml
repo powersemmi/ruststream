@@ -22,6 +22,7 @@ env:
   # with all of them. The embassy set is the facade of a device service, the one build that
   # leaves tokio out of the dependency graph. The justfile keeps the same set.
   EMBASSY_FEATURES: cbor,embassy,json,macros,memory,msgpack
+  COMPIO_FEATURES: compio,memory,macros,json
   # The embedded runner's own tests link embassy-time's mock driver and the embedded harness is a
   # time driver of its own, so one binary cannot hold both: its legs run alone.
   EMBASSY_TESTS_EXCLUDE: --exclude ruststream-runtime-embassy
@@ -177,11 +178,12 @@ jobs:
           cargo clippy --locked --workspace $EMBASSY_TESTS_EXCLUDE --lib --bins --tests --examples \
             --all-features -- -D warnings
           cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+          cargo check --locked --bench consume_compio --no-default-features --features compio,memory,macros,json
 
       # The embassy runtime alone, as a device service builds it: the facade with the embassy
       # set, where every target that needs tokio names it and drops out, then the embedded runner
       # and the local bus. The set keeps tokio out of the facade's dependency graph.
-      - name: Embassy runtime (lints, dependency graph)
+      - name: Embassy and compio runtimes (lints, dependency graph)
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         env:
           CARGO_BUILD_WARNINGS: deny
@@ -200,6 +202,13 @@ jobs:
             echo "$tree"
             exit 1
           fi
+          tree="$(cargo tree --locked -p ruststream --no-default-features \
+            --features "$COMPIO_FEATURES" -e normal -i tokio)"
+          if [ -n "$tree" ]; then
+            echo "::error::the compio set pulls tokio into the facade"
+            echo "$tree"
+            exit 1
+          fi
 
       # Allow-list in external-types.toml, one for every published crate: the facade shows the
       # crates behind it only as re-exports, so each is checked where its items are defined. The
@@ -213,7 +222,7 @@ jobs:
             --manifest-path Cargo.toml --config external-types.toml
           cargo +nightly-2026-03-20 check-external-types --no-default-features \
             --features "$EMBASSY_FEATURES" --manifest-path Cargo.toml --config external-types.toml
-          for manifest in crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
+          for manifest in crates/ruststream-{core,runtime,runtime-tokio,runtime-compio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
             cargo +nightly-2026-03-20 check-external-types --all-features \
               --manifest-path "$manifest" --config external-types.toml
           done
@@ -231,7 +240,8 @@ jobs:
         run: |
           cargo publish --locked --dry-run -p ruststream-macros \
             -p ruststream-core -p ruststream-runtime -p ruststream-runtime-tokio \
-            -p ruststream-runtime-embassy -p ruststream-memory -p ruststream-asyncapi \
+            -p ruststream-runtime-embassy -p ruststream-runtime-compio -p ruststream-memory \
+            -p ruststream-asyncapi \
             -p ruststream-observability -p ruststream-testing -p ruststream-conformance \
             -p ruststream-cli -p ruststream
 
@@ -365,7 +375,9 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-minimal
+          RUSTSTREAM_COMPIO_REQUIRE_IO_URING: '1'
         run: |
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
           cargo check --locked --workspace --examples --all-features
           cargo test --locked --workspace $EMBASSY_TESTS_EXCLUDE --all-features --no-fail-fast --tests
           cargo test --locked --workspace $EMBASSY_TESTS_EXCLUDE --all-features --no-fail-fast --doc
@@ -473,7 +485,9 @@ jobs:
       - name: cargo check (benchmarks)
         env:
           CARGO_BUILD_WARNINGS: deny
-        run: cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+        run: |
+          cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+          cargo check --locked --bench consume_compio --no-default-features --features compio,memory,macros,json
 
       # The `DefaultCodec` fallback aliases (cbor, then msgpack) are cfg'd out whenever `json` is
       # on, so neither the workspace build nor the workspace tests ever compile them. Build
@@ -498,11 +512,22 @@ jobs:
         env:
           RUN_UI_TESTS: '1'
           REQUIRE_UI_TESTS: '1'
+          RUSTSTREAM_COMPIO_REQUIRE_IO_URING: '1'
         # `--tests` and not every target: the examples' tests are modules of one test binary, so
         # an example needs no binary of its own, and clippy has already compiled each one.
         # The embassy runtime's legs build the facade with the other runtime, so they are runs of
         # their own, and the report below merges every run's profile.
         run: |
+          # The compio tests must run on io_uring: the ring locks memory against the process's
+          # memlock limit, and a hosted runner's default is too small for a test binary's many
+          # rings. The limit is raised for this shell and inherited by cargo and the tests. What
+          # the host offers is printed first, so a refusal can be read from the log.
+          echo "kernel: $(uname -r)"
+          echo "memlock before: $(ulimit -l)"
+          echo "cgroup memory.max: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo unknown)"
+          echo "io_uring_disabled: $(sysctl -n kernel.io_uring_disabled 2>/dev/null || echo absent)"
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
+          echo "memlock after: $(ulimit -l)"
           cargo llvm-cov --locked --no-report --workspace $EMBASSY_TESTS_EXCLUDE --all-features \
             --no-fail-fast --tests
           cargo llvm-cov --locked --no-report -p ruststream-runtime-embassy --no-fail-fast --tests
@@ -680,7 +705,9 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "beta"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-beta
-        run: cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+        run: |
+          cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+          cargo check --locked --bench consume_compio --no-default-features --features compio,memory,macros,json
 
       - name: cargo test (beta)
         if: "!cancelled() && steps.stable.outcome == 'success'"
@@ -708,7 +735,9 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-floor
-        run: cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+        run: |
+          cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+          cargo check --locked --bench consume_compio --no-default-features --features compio,memory,macros,json
 
       - name: cargo test (1.95)
         if: "!cancelled() && steps.stable.outcome == 'success'"

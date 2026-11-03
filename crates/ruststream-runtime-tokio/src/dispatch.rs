@@ -2,7 +2,6 @@
 //! its dedicated threads, all driving the shared delivery body of `ruststream-runtime`.
 
 use std::future::poll_fn;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::task::Poll;
@@ -14,8 +13,8 @@ use tokio::task::{JoinError, JoinHandle};
 use ruststream_core::{BatchSlot, BatchStream};
 use ruststream_runtime::DeliverySlot as Slot;
 use ruststream_runtime::{
-    BatchHandler, DispatchFailure, Handler, HeadersOnDemand, Placement, RetryCopies, Turn, Workers,
-    dispatch, placed, run_batch, run_sequential,
+    BatchHandler, DispatchFailure, Handler, HeadersOnDemand, Placement, RING, RetryCopies, Turn,
+    Workers, dispatch, key_index, placed, run_batch, run_sequential,
 };
 
 pub(crate) use crate::detach::{Hosted, on_thread};
@@ -171,16 +170,6 @@ where
             )
             .await;
     }))
-}
-
-pub(super) fn key_index(key: &[u8], workers: usize) -> usize {
-    let mut hasher = DefaultHasher::new();
-    key.hash(&mut hasher);
-    // The modulo keeps the value below `workers`, which is a usize.
-    #[allow(clippy::cast_possible_truncation)]
-    {
-        (hasher.finish() % workers as u64) as usize
-    }
 }
 
 /// What a finished worker handed back, or nothing and a log line where it failed.
@@ -356,7 +345,7 @@ where
     let count = workers.count().get();
     // A slot per place a batch can wait: a full ring and a batch in hand for each thread, and the
     // one being filled.
-    let most = count * (threads::RING + 1) + 1;
+    let most = count * (RING + 1) + 1;
     let stock = slots::Stock::<S::Batch>::new(most);
     let threads = Threads::start(&shared.name, count, false, |own| {
         let shared = Arc::clone(&shared);

@@ -15,9 +15,11 @@ mod log_capture;
 
 mod app_cli_coverage;
 mod app_dispatch;
+mod app_methods;
 mod app_start;
 mod app_trait;
 mod asyncapi;
+mod asyncapi_compio;
 mod batch_reply_context;
 mod batch_router_coverage;
 mod batch_seek;

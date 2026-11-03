@@ -14,7 +14,11 @@ use ruststream_core::{
     Take,
 };
 #[cfg(feature = "testing")]
-use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, TestableBroker};
+use ruststream_core::{IfSend, SendBroker};
+#[cfg(feature = "testing")]
+use ruststream_runtime::testing::{
+    Backlog, Coordinator, InProcess, TestableBroker, TestableRegistration,
+};
 use thiserror::Error;
 
 use super::LocalMemorySubscriber;
@@ -69,8 +73,8 @@ use super::bus::Bus;
 /// assert_eq!(celsius, Ok(vec![21]));
 /// ```
 ///
-/// Without the tokio runner the bus belongs to the task that holds it: it is shared by `Rc`, so
-/// it is not `Send`. Next to the tokio runner it is shared by `Arc` and its state sits behind a
+/// Without the tokio or the compio runner the bus belongs to the task that holds it: it is shared
+/// by `Rc`, so it is not `Send`. Next to either of them it is shared by `Arc` and its state sits behind a
 /// critical section, so it moves between threads.
 pub struct LocalMemoryBroker<const CAP: usize> {
     bus: Shared<Bus<CAP>>,
@@ -115,6 +119,8 @@ impl<const CAP: usize> LocalMemoryBroker<CAP> {
                  above zero",
             );
         }
+        #[cfg(feature = "testing")]
+        <IfSend<Enrolling, NotEnrolling> as Enrol<Self>>::enrol();
         Self {
             bus: Sharing::new(Bus::new()),
         }
@@ -483,6 +489,38 @@ impl<const CAP: usize> InProcess for LocalMemoryBroker<CAP> {
     fn connect_in_process(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
         self.connect()
     }
+}
+
+// The harness finds a broker by the type the app was built on, and a capacity is part of the
+// type, so no list of capacities can be written down in advance: a broker enrolls the type it was
+// built as, from its constructor. Only a build with the `send` feature can enroll, as only such a
+// broker runs on the runners that look types up.
+#[cfg(feature = "testing")]
+trait Enrol<Bus> {
+    fn enrol();
+}
+
+#[cfg(feature = "testing")]
+struct Enrolling;
+
+#[cfg(feature = "testing")]
+struct NotEnrolling;
+
+#[cfg(feature = "testing")]
+impl<Bus> Enrol<Bus> for Enrolling
+where
+    Bus: InProcess + SendBroker,
+    Bus::Connected: TestableBroker + DefaultPublish,
+    <<Bus::Connected as DefaultPublish>::Policy as PublishPolicy<Bus::Connected>>::Live: Publisher,
+{
+    fn enrol() {
+        TestableRegistration::enroll::<Bus>();
+    }
+}
+
+#[cfg(feature = "testing")]
+impl<Bus> Enrol<Bus> for NotEnrolling {
+    fn enrol() {}
 }
 
 #[cfg(feature = "testing")]

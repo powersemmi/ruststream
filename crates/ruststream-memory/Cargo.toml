@@ -48,6 +48,8 @@ embassy = [
 # The in-process transport the test harness drives the broker through. It does not turn the
 # framework's `alloc` on: the fixed local bus keeps its publish log in the harness's own
 # bookkeeping, which runs in a section the failing allocator of a no-heap test lets through.
+# The name the compio runner's users enable the same broker under.
+local = ["embassy"]
 testing = [
     "ruststream-runtime/testing",
     "ruststream-core/testing",

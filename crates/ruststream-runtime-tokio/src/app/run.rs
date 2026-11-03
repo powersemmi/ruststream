@@ -19,7 +19,8 @@ use crate::bindable::Bound;
 use crate::shutdown::Shutdown;
 use crate::{Connected, PairError, PublishPolicy, SendBroker};
 
-use super::health::{HealthProbe, HealthState};
+use super::HealthState;
+use super::health::HealthProbe;
 use super::service::RegisteredBroker;
 use super::teardown::{
     ConnectedEntry, ShutdownHooks, Teardown, drain_continuations, drain_handles,

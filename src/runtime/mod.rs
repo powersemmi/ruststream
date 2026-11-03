@@ -45,6 +45,8 @@ pub use ruststream_runtime::{
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
 #[doc(hidden)]
+pub use ruststream_runtime::{AnyContext, ContextOf, FoldedContext, JoinSlot};
+#[doc(hidden)]
 pub use ruststream_runtime::{
     AnyOutPos, BindSlotsBody, MaybeSendSink, MaybeSendSync, SelectEntry, SlotEntry, SlotPublish,
     SlotTransactions,
@@ -159,6 +161,9 @@ pub use ruststream_runtime_tokio::{
 
 #[cfg(feature = "tokio")]
 pub mod cli;
+
+#[cfg(feature = "compio")]
+pub mod compio;
 
 // The embedded runner's cross-broker tokens, beside the multi-thread runner's `Bindable` and
 // `Bound`: a publish policy bound to another broker of the same app.

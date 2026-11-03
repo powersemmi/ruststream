@@ -1,0 +1,761 @@
+//! The [`RustStream`] builder: construction, configuration and handler registration.
+
+use std::{
+    borrow::Cow, collections::BTreeMap, error::Error as StdError, fmt, marker::PhantomData,
+    sync::Arc, time::Duration,
+};
+
+use crate::SendBroker;
+use crate::bindable::BrokerRegistration;
+use crate::{DescribeServer, ServerSpec};
+use ruststream_core::diag::Logger;
+use ruststream_runtime::Workers;
+use ruststream_runtime::codec::Codec;
+
+use crate::HandlerMetadata;
+use crate::MountChain;
+use crate::ScopeDelivery;
+use crate::bindable::ConnectedSlot;
+use crate::dispatch::{Layout, LayoutError, Mount};
+use crate::sink::CoreSink;
+use crate::{BoxError, BrokerCell, BrokerLifecycle};
+use crate::{Described, PublishIdentity, PublishLayer, PublishStack};
+use crate::{Identity, Stack};
+use crate::{SubscriptionEnd, Tasks};
+
+use super::include::MountRoutes;
+use super::scope::BrokerScope;
+use super::{AppInfo, Launch, LifecycleHook, LifecyclePhase, Mounted, StateInit};
+
+/// The delivery context of a mount: recorded into the harness where a test drives the app.
+#[cfg_attr(not(feature = "testing"), allow(unused_variables))]
+fn scope_delivery(launch: &Launch, scope_id: usize) -> ScopeDelivery {
+    let scope = ScopeDelivery::new();
+    #[cfg(feature = "testing")]
+    if let Some(hooks) = &launch.harness {
+        return scope.with_harness(Arc::clone(&hooks.0), scope_id, 0);
+    }
+    scope
+}
+
+/// The top-level application object.
+///
+/// `RustStream` binds one or more brokers, the handlers attached to each, and the service
+/// lifecycle into a single runnable unit. Handlers are registered through [`with_broker`], which
+/// hands a scope bound to that broker; nothing connects or subscribes until the app runs. Brokers are
+/// held type-erased (only their lifecycle), so a single service can mix broker types.
+///
+/// The type parameter `Layers` is the global middleware stack applied to every per-message
+/// handler registered on a broker scope, whether directly or via
+/// [`include_router`](BrokerScope::include_router) (batch handlers are the exception: a
+/// per-message layer cannot wrap a whole-batch handler); it defaults to the no-op [`Identity`]
+/// and grows as [`layer`] is called. Add all layers before [`with_broker`], since a layer only
+/// applies to handlers registered after it.
+///
+/// The type parameter `Phase` tracks the builder phase at compile time: [`new`](Self::new)
+/// starts in [`Setup`], where the state ([`on_startup`]), the middleware stack ([`layer`]) and
+/// the publish pipeline ([`publish_layer`](Self::publish_layer)) are still configurable; the
+/// first [`with_broker`] moves it to [`Wired`], where those methods no longer exist - so a
+/// configuration call that would silently not apply to already-registered handlers does not
+/// compile. `Phase` defaults to [`Wired`], the built service; `Setup` lives inside a builder
+/// chain and is rarely written out.
+///
+/// [`with_broker`]: Self::with_broker
+/// [`layer`]: Self::layer
+/// [`on_startup`]: Self::on_startup
+pub struct RustStream<Layers = Identity, State = (), Pipeline = PublishIdentity, Phase = Wired> {
+    pub(super) info: AppInfo,
+    pub(super) brokers: Vec<RegisteredBroker>,
+    pub(super) starters: Vec<Mounted<State>>,
+    pub(super) handlers: Vec<HandlerMetadata>,
+    pub(super) servers: BTreeMap<String, ServerSpec>,
+    pub(super) publish_pipeline: Pipeline,
+    pub(super) state_init: StateInit<State>,
+    pub(super) after_startup: Vec<LifecycleHook<State>>,
+    pub(super) on_shutdown: Vec<LifecycleHook<State>>,
+    pub(super) after_shutdown: Vec<LifecycleHook<State>>,
+    pub(super) shutdown_timeout: Option<Duration>,
+    pub(super) subscription_end: SubscriptionEnd,
+    /// Selects the logger the app reports through, when it starts.
+    pub(super) logger: Option<fn()>,
+    /// Tracks post-settle `and_after` continuations spawned during dispatch, so a graceful
+    /// shutdown drains them after the dispatch loops stop. Shared (cloned) into every
+    /// [`Delivery`].
+    pub(super) continuations: Tasks,
+    pub(super) global: Layers,
+    // `fn() -> Phase` keeps the marker out of auto-trait and variance considerations, matching
+    // the router builder's broker marker.
+    pub(super) phase: PhantomData<fn() -> Phase>,
+}
+
+/// [`RustStream`] phase marker: the builder is still being configured - the state type, the
+/// middleware stack, and the publish pipeline may change, and no broker is registered yet.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Setup;
+
+/// [`RustStream`] phase marker: at least one broker (with its handlers) is registered, so the
+/// state type, the middleware stack, and the publish pipeline are fixed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Wired;
+
+/// A broker held by the app for lifecycle management, paired with its optional label.
+///
+/// The label is the broker's stable runtime identity and its `AsyncAPI` server name; it is `Some`
+/// for a broker registered through [`with_broker_labeled`](RustStream::with_broker_labeled) (or its
+/// codec variant) and `None` otherwise.
+// Machinery the harness crate drives, hidden from the docs; it holds erased closures and
+// futures that have no useful `Debug`.
+#[allow(missing_debug_implementations)]
+pub struct RegisteredBroker {
+    /// The broker, erased.
+    pub lifecycle: Box<dyn BrokerLifecycle>,
+    /// The label it was registered under, if any.
+    pub label: Option<String>,
+}
+
+impl<Layers, State, Pipeline, Phase> fmt::Debug for RustStream<Layers, State, Pipeline, Phase> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RustStream")
+            .field("info", &self.info)
+            .field("brokers", &self.brokers.len())
+            .field("handlers", &self.handlers.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl RustStream<Identity, (), PublishIdentity, Setup> {
+    /// Creates an empty service with the given metadata, no global middleware, and the unit
+    /// application state `()`. Produce a typed state with [`on_startup`](Self::on_startup).
+    #[must_use]
+    pub fn new(info: AppInfo) -> Self {
+        Self {
+            info,
+            brokers: Vec::new(),
+            starters: Vec::new(),
+            handlers: Vec::new(),
+            servers: BTreeMap::new(),
+            publish_pipeline: PublishIdentity,
+            state_init: Box::new(|| Box::pin(async { Ok(()) })),
+            after_startup: Vec::new(),
+            on_shutdown: Vec::new(),
+            after_shutdown: Vec::new(),
+            shutdown_timeout: None,
+            subscription_end: SubscriptionEnd::default(),
+            logger: None,
+            continuations: Tasks::default(),
+            global: Identity,
+            phase: PhantomData,
+        }
+    }
+}
+
+impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
+    /// Adds a global middleware layer, applied to every handler registered later.
+    ///
+    /// The first layer added runs outermost. Only available before the first
+    /// [`with_broker`](Self::with_broker): a layer added later could not wrap the handlers
+    /// already registered, so that ordering does not compile.
+    #[must_use]
+    pub fn layer<N>(self, layer: N) -> RustStream<Stack<N, Layers>, State, Pipeline, Setup> {
+        RustStream {
+            info: self.info,
+            brokers: self.brokers,
+            starters: self.starters,
+            handlers: self.handlers,
+            servers: self.servers,
+            publish_pipeline: self.publish_pipeline,
+            state_init: self.state_init,
+            after_startup: self.after_startup,
+            on_shutdown: self.on_shutdown,
+            after_shutdown: self.after_shutdown,
+            shutdown_timeout: self.shutdown_timeout,
+            subscription_end: self.subscription_end,
+            logger: self.logger,
+            continuations: self.continuations,
+            global: Stack::new(layer, self.global),
+            phase: PhantomData,
+        }
+    }
+
+    /// Produces the typed application state at startup, transitioning the app's state type from the
+    /// previous `State` to `State2`.
+    ///
+    /// The hook runs once before brokers connect; its future can `await` (open a database pool,
+    /// connect a client), and the produced `State2` is shared with every handler (read via
+    /// [`Context::state`](crate::Context::state)) and the read-only lifecycle hooks. A
+    /// failing hook aborts startup. The initial state is `()` (from [`new`](Self::new)), so the
+    /// first call's hook receives `()`.
+    ///
+    /// Only available before the first [`with_broker`](Self::with_broker): the call fixes the
+    /// app's state type, and handlers registered against a different state type could not be
+    /// carried across - so that ordering does not compile.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a lifecycle hook ([`after_startup`](Self::after_startup),
+    /// [`on_shutdown`](Self::on_shutdown), [`after_shutdown`](Self::after_shutdown)) was
+    /// registered first: hooks close over the state type and cannot be carried across the state
+    /// change. Register hooks after `on_startup`.
+    #[must_use]
+    pub fn on_startup<F, Fut, State2, E>(
+        self,
+        hook: F,
+    ) -> RustStream<Layers, State2, Pipeline, Setup>
+    where
+        F: FnOnce(State) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<State2, E>> + Send,
+        State: Send + 'static,
+        State2: Send + Sync + 'static,
+        E: StdError + Send + Sync + 'static,
+    {
+        assert!(
+            self.after_startup.is_empty()
+                && self.on_shutdown.is_empty()
+                && self.after_shutdown.is_empty(),
+            "on_startup must be called before lifecycle hooks are registered: hooks close over \
+             the state type and cannot be carried across the state change"
+        );
+        let prev = self.state_init;
+        RustStream {
+            info: self.info,
+            brokers: self.brokers,
+            // Provably empty: with_broker (the only way to add starters) leaves Setup.
+            starters: Vec::new(),
+            handlers: self.handlers,
+            servers: self.servers,
+            publish_pipeline: self.publish_pipeline,
+            state_init: Box::new(move || {
+                Box::pin(async move {
+                    let prev_state = prev().await?;
+                    hook(prev_state).await.map_err(BoxError::from)
+                })
+            }),
+            after_startup: Vec::new(),
+            on_shutdown: Vec::new(),
+            after_shutdown: Vec::new(),
+            shutdown_timeout: self.shutdown_timeout,
+            subscription_end: self.subscription_end,
+            logger: self.logger,
+            continuations: self.continuations,
+            global: self.global,
+            phase: PhantomData,
+        }
+    }
+
+    /// Adds an outgoing publish middleware, run on every publish a handler makes before it
+    /// reaches the broker (a Confluent / Avro envelope, publish metrics, dead-letter): a
+    /// `reply(..)` form's reply and every message that leaves through an injected
+    /// [`Out`](crate::Out) slot alike, each under the transforms its own mount site
+    /// named. It composes into the
+    /// pipeline type parameter, so the *last* one added wraps the rest and runs outermost (unlike the
+    /// consume-side [`layer`](Self::layer), where the first added is outermost); the middleware must
+    /// be [`Clone`] (the pipeline is cloned into each publishing handler and each slot). Only
+    /// available before
+    /// the first [`with_broker`](Self::with_broker): a middleware added later could not wrap the
+    /// publishers already handed out, so that ordering does not compile.
+    ///
+    /// A handler mounted through [`include_router`](BrokerScope::include_router) is the one
+    /// exception on the slot side: a router's routes are typed before the app that mounts them,
+    /// so its slots carry their own `.out(marker, policy).transform(..)` steps and not this
+    /// chain (its replies still travel it).
+    #[must_use]
+    pub fn publish_layer<M>(
+        self,
+        middleware: M,
+    ) -> RustStream<Layers, State, PublishStack<M, Pipeline>, Setup>
+    where
+        M: PublishLayer + Clone + 'static,
+    {
+        // Prepend `middleware` as the new outermost wrapper: the publish pipeline stays a statically
+        // composed type (no `dyn` dispatch), and the last one added runs outermost.
+        RustStream {
+            info: self.info,
+            brokers: self.brokers,
+            starters: self.starters,
+            handlers: self.handlers,
+            servers: self.servers,
+            publish_pipeline: PublishStack::new(middleware, self.publish_pipeline),
+            state_init: self.state_init,
+            after_startup: self.after_startup,
+            on_shutdown: self.on_shutdown,
+            after_shutdown: self.after_shutdown,
+            shutdown_timeout: self.shutdown_timeout,
+            subscription_end: self.subscription_end,
+            logger: self.logger,
+            continuations: self.continuations,
+            global: self.global,
+            phase: PhantomData,
+        }
+    }
+}
+
+impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> {
+    /// Rebuilds the app under a different phase marker; the fields move as they are.
+    fn into_phase<Q>(self) -> RustStream<Layers, State, Pipeline, Q> {
+        RustStream {
+            info: self.info,
+            brokers: self.brokers,
+            starters: self.starters,
+            handlers: self.handlers,
+            servers: self.servers,
+            publish_pipeline: self.publish_pipeline,
+            state_init: self.state_init,
+            after_startup: self.after_startup,
+            on_shutdown: self.on_shutdown,
+            after_shutdown: self.after_shutdown,
+            shutdown_timeout: self.shutdown_timeout,
+            subscription_end: self.subscription_end,
+            logger: self.logger,
+            continuations: self.continuations,
+            global: self.global,
+            phase: PhantomData,
+        }
+    }
+
+    /// Adds a hook run after brokers connect and handlers are spawned (for example, to publish an
+    /// initial message or signal readiness). A failing hook aborts startup.
+    #[must_use]
+    pub fn after_startup<F, Fut, E>(self, hook: F) -> Self
+    where
+        State: Send + Sync + 'static,
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send,
+        E: StdError + Send + Sync + 'static,
+    {
+        self.push_lifecycle_hook(LifecyclePhase::AfterStartup, hook)
+    }
+
+    /// Adds a hook run when shutdown begins, while brokers are still connected. Errors are logged.
+    #[must_use]
+    pub fn on_shutdown<F, Fut, E>(self, hook: F) -> Self
+    where
+        State: Send + Sync + 'static,
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send,
+        E: StdError + Send + Sync + 'static,
+    {
+        self.push_lifecycle_hook(LifecyclePhase::OnShutdown, hook)
+    }
+
+    /// Adds a hook run after brokers have shut down (for final async resource teardown). Errors are
+    /// logged.
+    #[must_use]
+    pub fn after_shutdown<F, Fut, E>(self, hook: F) -> Self
+    where
+        State: Send + Sync + 'static,
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send,
+        E: StdError + Send + Sync + 'static,
+    {
+        self.push_lifecycle_hook(LifecyclePhase::AfterShutdown, hook)
+    }
+
+    fn push_lifecycle_hook<F, Fut, E>(mut self, phase: LifecyclePhase, hook: F) -> Self
+    where
+        State: Send + Sync + 'static,
+        F: FnOnce(Arc<State>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send,
+        E: StdError + Send + Sync + 'static,
+    {
+        let boxed: LifecycleHook<State> = Box::new(move |state| {
+            Box::pin(async move { hook(state).await.map_err(BoxError::from) })
+        });
+        match phase {
+            LifecyclePhase::AfterStartup => self.after_startup.push(boxed),
+            LifecyclePhase::OnShutdown => self.on_shutdown.push(boxed),
+            LifecyclePhase::AfterShutdown => self.after_shutdown.push(boxed),
+        }
+        self
+    }
+
+    /// Sets how long the running app waits for in-flight handlers to finish after shutdown is
+    /// triggered. After the timeout, the remaining handler tasks are aborted. The same bound then
+    /// applies to draining post-settle `and_after` continuations; on timeout they are abandoned
+    /// (they are at-most-once side effects, so this loses follow-up work, never a settlement).
+    /// Defaults to waiting indefinitely.
+    #[must_use]
+    pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
+        self.shutdown_timeout = Some(timeout);
+        self
+    }
+
+    /// Replaces the service metadata given to [`new`](RustStream::new), the `info` object of the
+    /// generated `AsyncAPI` document.
+    #[must_use]
+    pub fn with_info(mut self, info: AppInfo) -> Self {
+        self.info = info;
+        self
+    }
+
+    /// Sets what a subscription's stream ending while the service runs does.
+    ///
+    /// The default, [`SubscriptionEnd::Log`], logs the end and lets the rest of the service run
+    /// on. [`SubscriptionEnd::FailFast`] tears the service down the way a
+    /// fail-fast handler failure does. An end during shutdown is never reported.
+    #[must_use]
+    pub fn on_subscription_end(mut self, on_end: SubscriptionEnd) -> Self {
+        self.subscription_end = on_end;
+        self
+    }
+
+    /// Selects the logger the framework reports through, when the app starts and before its
+    /// brokers connect.
+    ///
+    /// Nothing is reported until an app selects one. The selection is process-wide, like the
+    /// `log` crate's: two apps in one process share one logger, and the last to start decides.
+    /// Each logger hands an event to its backend, whose level filter decides what shows: a
+    /// `tracing` subscriber's filter, `log::max_level()`, defmt's level.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::diagnostics::TracingLogger;
+    /// use ruststream::memory::local::LocalMemoryBroker;
+    /// use ruststream::runtime::compio::{AppInfo, RustStream};
+    ///
+    /// /// What `main` runs: the framework reports through `tracing`.
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .logger(TracingLogger)
+    ///         .with_broker(LocalMemoryBroker::<4>::new(), |b| b)
+    /// }
+    /// # let _ = app;
+    /// ```
+    #[must_use]
+    pub fn logger<L: Logger>(mut self, _logger: L) -> Self {
+        self.logger = Some(L::select);
+        self
+    }
+
+    /// Registers a broker for lifecycle management only (connect / shutdown), without attaching
+    /// subscribers. Use for publish-only brokers.
+    #[must_use]
+    pub fn register_broker<R>(mut self, broker: R) -> Self
+    where
+        R: BrokerRegistration,
+    {
+        // No subscriptions read the slot, but a Bindable registration's tokens do.
+        let (broker, slot) = broker.into_parts();
+        self.brokers.push(RegisteredBroker {
+            lifecycle: Box::new(BrokerCell { broker, slot }),
+            label: None,
+        });
+        self
+    }
+
+    /// Records an `AsyncAPI` server (one per broker the service connects to).
+    ///
+    /// Build the [`ServerSpec`] directly, or get it from a broker that implements
+    /// [`DescribeServer`](crate::DescribeServer): `app.server("nats", broker.describe_server())`.
+    /// `build_spec` emits these in the document's `servers` section.
+    ///
+    /// For a self-describing broker, prefer
+    /// [`with_broker_labeled`](Self::with_broker_labeled), which derives this entry from the broker
+    /// under its label in one step; the in-memory broker describes itself too. Use this method for
+    /// a broker that does not implement `DescribeServer`, or to override a labeled broker's own
+    /// spec.
+    #[must_use]
+    pub fn server(mut self, name: impl Into<String>, spec: ServerSpec) -> Self {
+        self.servers.insert(name.into(), spec);
+        self
+    }
+
+    /// Registers a broker and the handlers attached to it.
+    ///
+    /// `build` receives a [`BrokerScope`] typed to this broker by value and returns the mount chain
+    /// its [`include`](BrokerScope::include) opens: `|b| b.include(confirm).out_reply(Publish)
+    /// .include(audit)`. The chain carries every registration's type, and the app mounts it once
+    /// the closure returns. The scope is a chain itself: a startup publish or a whole router is a
+    /// step on it ahead of the `include`s, and a broker the service only publishes to returns it
+    /// as it is, `|b| b`. The broker is then held for lifecycle management. Call this once per
+    /// broker.
+    ///
+    /// The scope carries no codec of its own, so macro handlers mounted with `b.include(handle)`
+    /// decode with the [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec). To decode with another codec
+    /// scope-wide, use [`with_broker_codec`](Self::with_broker_codec).
+    ///
+    /// The first call moves the builder to the [`Wired`] phase: the state, the middleware stack,
+    /// and the publish pipeline are fixed from here on, so a configuration call that could not
+    /// apply to this broker's handlers does not compile.
+    #[must_use]
+    pub fn with_broker<R, F, Chain, Routes>(
+        self,
+        broker: R,
+        build: F,
+    ) -> RustStream<Layers, State, Pipeline, Wired>
+    where
+        R: BrokerRegistration,
+        Layers: Clone,
+        Pipeline: Clone,
+        State: Send + Sync + 'static,
+        F: FnOnce(BrokerScope<R::Broker, Layers, (), State, Pipeline>) -> Chain,
+        Chain: MountChain<Routes = Routes>,
+        Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
+    {
+        let mut this = self.into_phase::<Wired>();
+        let (broker, slot) = broker.into_parts();
+        this.mount_scope(broker, slot, (), None, build);
+        this
+    }
+
+    /// Registers a broker with a scope-wide `codec`, replacing the
+    /// [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec) a codec-less scope decodes with.
+    ///
+    /// `build` receives a [`BrokerScope`] whose [`include`](BrokerScope::include) chain reads
+    /// the same as on a codec-less scope (`|b| b.include(handle)`) but decodes with `codec`. A
+    /// [`Router`](crate::Router) mounted in the scope can name a codec of its own with
+    /// [`with_codec`](crate::Router::with_codec), which wins for its handlers.
+    #[must_use]
+    pub fn with_broker_codec<R, C, F, Chain, Routes>(
+        self,
+        broker: R,
+        codec: C,
+        build: F,
+    ) -> RustStream<Layers, State, Pipeline, Wired>
+    where
+        R: BrokerRegistration,
+        C: Codec + Clone + 'static,
+        Layers: Clone,
+        Pipeline: Clone,
+        State: Send + Sync + 'static,
+        F: FnOnce(BrokerScope<R::Broker, Layers, C, State, Pipeline>) -> Chain,
+        Chain: MountChain<Routes = Routes>,
+        Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
+    {
+        let mut this = self.into_phase::<Wired>();
+        let (broker, slot) = broker.into_parts();
+        this.mount_scope(broker, slot, codec, None, build);
+        this
+    }
+
+    /// Registers a self-describing broker under `label`, along with the handlers attached to it.
+    ///
+    /// The `label` is the broker's stable identity in the service and the name of its `AsyncAPI`
+    /// server: the broker's [`describe_server`](DescribeServer::describe_server) coordinates are
+    /// recorded in the `servers` map under `label`, so the document stays in sync with the brokers
+    /// actually mounted, with no separate [`server`](Self::server) call. An explicit
+    /// [`server(label, spec)`](Self::server) entry for the same label takes precedence.
+    ///
+    /// Like [`with_broker`](Self::with_broker), the scope decodes with the
+    /// [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec); use
+    /// [`with_broker_labeled_codec`](Self::with_broker_labeled_codec) to name another.
+    #[must_use]
+    pub fn with_broker_labeled<R, F, Chain, Routes>(
+        self,
+        label: impl Into<String>,
+        broker: R,
+        build: F,
+    ) -> RustStream<Layers, State, Pipeline, Wired>
+    where
+        R: BrokerRegistration,
+        R::Broker: DescribeServer,
+        Layers: Clone,
+        Pipeline: Clone,
+        State: Send + Sync + 'static,
+        F: FnOnce(BrokerScope<R::Broker, Layers, (), State, Pipeline>) -> Chain,
+        Chain: MountChain<Routes = Routes>,
+        Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
+    {
+        let mut this = self.into_phase::<Wired>();
+        let (broker, slot) = broker.into_parts();
+        let label = this.record_server(label, &broker);
+        this.mount_scope(broker, slot, (), Some(label), build);
+        this
+    }
+
+    /// Registers a self-describing broker under `label` with a default `codec`.
+    ///
+    /// Combines [`with_broker_labeled`](Self::with_broker_labeled) (the label is the broker's
+    /// identity and `AsyncAPI` server name) with
+    /// [`with_broker_codec`](Self::with_broker_codec) (the scope's macro handlers decode with
+    /// `codec`).
+    #[must_use]
+    pub fn with_broker_labeled_codec<R, C, F, Chain, Routes>(
+        self,
+        label: impl Into<String>,
+        broker: R,
+        codec: C,
+        build: F,
+    ) -> RustStream<Layers, State, Pipeline, Wired>
+    where
+        R: BrokerRegistration,
+        R::Broker: DescribeServer,
+        C: Codec + Clone + 'static,
+        Layers: Clone,
+        Pipeline: Clone,
+        State: Send + Sync + 'static,
+        F: FnOnce(BrokerScope<R::Broker, Layers, C, State, Pipeline>) -> Chain,
+        Chain: MountChain<Routes = Routes>,
+        Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
+    {
+        let mut this = self.into_phase::<Wired>();
+        let (broker, slot) = broker.into_parts();
+        let label = this.record_server(label, &broker);
+        this.mount_scope(broker, slot, codec, Some(label), build);
+        this
+    }
+
+    /// Records `broker`'s server coordinates under `label` (keeping an explicit
+    /// [`server`](Self::server) entry already set for the same label), returning the owned label.
+    fn record_server<B: DescribeServer>(&mut self, label: impl Into<String>, broker: &B) -> String {
+        let label = label.into();
+        self.servers
+            .entry(label.clone())
+            .or_insert_with(|| broker.describe_server());
+        label
+    }
+
+    /// Runs `build` over a scope bound to `broker` and `codec`, mounts the chain it returns, and
+    /// drains what the scope collected into the app.
+    fn mount_scope<B, C, F, Chain, Routes>(
+        &mut self,
+        broker: B,
+        slot: ConnectedSlot<B>,
+        codec: C,
+        label: Option<String>,
+        build: F,
+    ) where
+        B: SendBroker,
+        Layers: Clone,
+        Pipeline: Clone,
+        State: Send + Sync + 'static,
+        F: FnOnce(BrokerScope<B, Layers, C, State, Pipeline>) -> Chain,
+        Chain: MountChain<Routes = Routes>,
+        Routes: MountRoutes<B, Layers, State, Pipeline>,
+    {
+        let chain = build(BrokerScope {
+            slot: Arc::clone(&slot),
+            pre: (),
+            pipeline: self.publish_pipeline.clone(),
+            codec,
+            _app: PhantomData,
+        });
+        let mut sink = CoreSink::new();
+        let mut startup_hooks = Vec::new();
+        // The chain registers in the order the closure wrote it: the scope's own steps first,
+        // then the mounts its `include` opened.
+        chain.finish().mount_routes(
+            &self.global,
+            &self.publish_pipeline,
+            &mut sink,
+            &mut startup_hooks,
+        );
+        self.collect_scope(broker, slot, startup_hooks, sink, label);
+    }
+
+    /// Drains a mounted scope's registrations into the app and holds the broker for lifecycle,
+    /// recording `label` as the broker's stable runtime identity (`None` when unlabeled).
+    ///
+    /// The broker itself is boxed into a [`BrokerCell`] whose consuming `connect` publishes the
+    /// typed connected form into a shared slot; each starter reads the slot at startup, after
+    /// every broker connected and before any subscription opens.
+    fn collect_scope<B>(
+        &mut self,
+        broker: B,
+        slot: ConnectedSlot<B>,
+        startup_hooks: Vec<LifecycleHook<State>>,
+        sink: CoreSink<B, State>,
+        label: Option<String>,
+    ) where
+        B: SendBroker,
+        State: Send + Sync + 'static,
+    {
+        self.after_startup.extend(startup_hooks);
+        let (starters, handlers) = sink.into_parts();
+        for ((bound, workers), meta) in starters.into_iter().zip(handlers) {
+            let slot = Arc::clone(&slot);
+            let tasks = self.continuations.clone();
+            // The index this broker will occupy once pushed below: the harness records the
+            // scope's deliveries under it.
+            let scope_id = self.brokers.len();
+            self.starters.push(Mounted {
+                workers,
+                start: Box::new(move |state, launch| {
+                    let scope_delivery = Arc::new(scope_delivery(&launch, scope_id));
+                    let connected = slot
+                        .lock()
+                        .expect("connected slot mutex poisoned")
+                        .clone()
+                        .expect("brokers connect before subscriptions open");
+                    bound(connected, state, scope_delivery, tasks, launch)
+                }),
+            });
+            // The scope's label is the name of this broker's AsyncAPI server, so every channel
+            // the scope mounts can say which server it lives on.
+            self.handlers
+                .push(meta.at_server(label.clone().map(Cow::Owned)));
+        }
+        self.brokers.push(RegisteredBroker {
+            lifecycle: Box::new(BrokerCell { broker, slot }),
+            label,
+        });
+    }
+
+    /// Returns metadata for every registered handler, in registration order. Input to the
+    /// `AsyncAPI` generator.
+    #[must_use]
+    pub fn handlers(&self) -> &[HandlerMetadata] {
+        &self.handlers
+    }
+
+    /// Returns the service metadata.
+    #[must_use]
+    pub fn info(&self) -> &AppInfo {
+        &self.info
+    }
+
+    /// Returns the registered `AsyncAPI` servers, keyed by name. Input to the `AsyncAPI` generator.
+    #[must_use]
+    pub fn servers(&self) -> &BTreeMap<String, ServerSpec> {
+        &self.servers
+    }
+
+    /// Places the mounts over `cores` cores: the cores each `workers(n)` and `threads(n)` mount
+    /// runs on, planned once at startup.
+    ///
+    /// # Errors
+    ///
+    /// [`LayoutError`] when the `threads` mounts ask for more than `cores - 1` cores, naming each
+    /// of them.
+    pub fn layout(&self, cores: usize) -> Result<Layout, LayoutError> {
+        self.layout_of(cores, |workers| workers)
+    }
+
+    /// [`layout`](Self::layout) over the policies `policy` makes of the declared ones.
+    pub(super) fn layout_of(
+        &self,
+        cores: usize,
+        policy: impl Fn(Workers) -> Workers,
+    ) -> Result<Layout, LayoutError> {
+        let mounts: Vec<Mount<'_>> = self
+            .handlers
+            .iter()
+            .zip(&self.starters)
+            .map(|(meta, mounted)| Mount {
+                name: &meta.name,
+                workers: policy(mounted.workers),
+            })
+            .collect();
+        Layout::plan(cores, &mounts)
+    }
+}
+
+impl<Layers, State, Pipeline, Phase> Described for RustStream<Layers, State, Pipeline, Phase> {
+    fn described_info(&self) -> &AppInfo {
+        &self.info
+    }
+
+    fn described_servers(&self) -> &BTreeMap<String, ServerSpec> {
+        &self.servers
+    }
+
+    fn described_handlers(&self) -> &[HandlerMetadata] {
+        &self.handlers
+    }
+
+    fn select_logger(&self) {
+        if let Some(select) = self.logger {
+            select();
+        }
+    }
+}

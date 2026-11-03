@@ -18,6 +18,8 @@ allowed_external_types = [
     "ruststream_runtime_tokio::*",
     "ruststream_runtime_embassy",
     "ruststream_runtime_embassy::*",
+    "ruststream_runtime_compio",
+    "ruststream_runtime_compio::*",
     "ruststream_memory",
     "ruststream_memory::*",
     "ruststream_asyncapi",

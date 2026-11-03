@@ -218,9 +218,12 @@ shutdown, [`ShutdownWait`]. The tokio runner, [`Tokio`], runs it: the app's life
 `advance` like every timer the framework arms.
 
 Each runtime is a cargo feature of the crate, and they add up. `tokio`, the default, provides the
-tokio runner and everything above. `embassy` provides the embedded runner on embassy's executor
+tokio runner and everything above. `compio` provides the compio runner, one runtime per core with
+`workers(n)` and `threads(n)` placed across the cores; an app picks it with
+`#[ruststream::app(runtime = compio)]` (`runtime::compio` is its module), and its
+delivery body is the shared one above. `embassy` provides the embedded runner on embassy's executor
 and clock; an app picks it with `#[ruststream::app(runtime = embassy)]`, and the handlers are the
-same for both runners. The embedded runner's items: its application object, `EmbeddedApp`, with the mount steps `MountSteps`, its
+same for every runner. The embedded runner's items: its application object, `EmbeddedApp`, with the mount steps `MountSteps`, its
 shutdown and health, `Control`, `Health` and `Stopping`, and its clock, `EmbassyClock`, are
 re-exported in this module. A delayed retry waits in a store the mount sizes with
 `retry_capacity`; a retry that finds the store full is a failed publish like any other, with its

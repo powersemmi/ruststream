@@ -180,6 +180,10 @@ SCENARIOS = [
         "embedded_idle_no_alloc/beside_fifteen_idle",
     ),
     Scenario(
+        "the compio runner on one core, JSON decode into a small struct",
+        "consume_compio/service",
+    ),
+    Scenario(
         "a delivery that asks to be redelivered, natively by the broker",
         "retry_copy/service",
         gated=False,

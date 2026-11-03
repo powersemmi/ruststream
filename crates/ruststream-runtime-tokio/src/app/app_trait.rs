@@ -6,8 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::HandlerMetadata;
 use crate::ServerSpec;
+use crate::{Described, HandlerMetadata};
 
 use super::{AppInfo, RunningApp, RustStream, RustStreamError};
 
@@ -73,7 +73,7 @@ mod sealed {
     note = "an EmbeddedApp runs on embassy: await `EmbeddedApp::run(&CONTROL)` in an embassy task; \
             the CLI, MainRuntime, metrics and OTel run on the tokio runtime"
 )]
-pub trait App: sealed::Sealed + Sized {
+pub trait App: sealed::Sealed + Described + Sized {
     /// Runs the service until an interrupt (`SIGINT` / `SIGTERM`), then shuts down gracefully.
     ///
     /// # Errors
@@ -110,11 +110,6 @@ pub trait App: sealed::Sealed + Sized {
     /// Metadata for every registered handler, in registration order: input to the `AsyncAPI`
     /// generator.
     fn handlers(&self) -> &[HandlerMetadata];
-
-    /// Applies the logger the app selected, so a tool that reads the app without running it (the
-    /// spec generator) reports through it too.
-    #[doc(hidden)]
-    fn select_logger(&self);
 }
 
 // `Pipeline: Send` is what makes the run futures `Send`: `run` consumes `self`, which holds the
@@ -152,6 +147,22 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
     }
 
     fn handlers(&self) -> &[HandlerMetadata] {
+        RustStream::handlers(self)
+    }
+}
+
+// Spelled as in the `App` impl above: the calls delegate to the inherent methods of the same names.
+#[allow(clippy::use_self)]
+impl<Layers, State, Pipeline, Phase> Described for RustStream<Layers, State, Pipeline, Phase> {
+    fn described_info(&self) -> &AppInfo {
+        RustStream::info(self)
+    }
+
+    fn described_servers(&self) -> &BTreeMap<String, ServerSpec> {
+        RustStream::servers(self)
+    }
+
+    fn described_handlers(&self) -> &[HandlerMetadata] {
         RustStream::handlers(self)
     }
 
