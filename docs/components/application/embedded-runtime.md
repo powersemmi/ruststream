@@ -44,7 +44,7 @@ Each part whose size the heap would decide has a fixed form.
 |---|---|
 | Headers of a message | `FixedHeaders` of 8 entries and 256 bytes; `insert` returns an error when the map is full |
 | Codec | `SliceCodec`, which encodes into a slice and decodes from one: `PostcardCodec` (`postcard`) and `JsonCoreCodec` (`json-core`) |
-| Continuation | held in a room of 128 bytes |
+| Continuation | held in a room of 128 bytes, aligned to 8 bytes |
 | Failures read by `.error` | borrowed from the subscription's fixed buffer: `async move \|failures: &Failures\| ..` |
 | `ctx.after(..)`, `ctx.after_ack(..)`, `ctx.after_settle(..)` | a delivery holds four registrations; one more returns an error, and nothing registered is dropped |
 | Batch | up to 16 messages, named at the mount with `.batch::<N>()`, of messages that deserialize themselves or that the mount's codec decodes; the outcomes are `Outcomes<HandlerOutcome, N>` |
@@ -71,6 +71,7 @@ A capacity is a const generic or a crate constant, and each is declared at one p
 The compiler holds the capacities that a mount names:
 
 - A continuation that captures more than 128 bytes does not build. The error is an overflow in `ROOM - size_of::<Work>()` that prints both numbers. It appears at `cargo build`, not at `cargo check`.
+- A continuation aligned to more than 8 bytes does not build either, and the error names the limit. A future that awaits an `embassy-time` timer is aligned to 8 bytes and fits on every core.
 - A batch size outside 1 to 16 is an error that names `.batch::<N>()` and the limit.
 - An `.encode_capacity::<N>()` past what the reply publisher can carry is an error that names both numbers. A publisher that keeps the payload (`Take`) is handed a buffer of 256 bytes; a publisher that only reads the bytes has no such limit.
 - A retry store, a pool or a worker count of zero does not build.
