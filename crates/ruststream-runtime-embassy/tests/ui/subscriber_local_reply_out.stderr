@@ -5,7 +5,7 @@ error[E0277]: a handler of the form `RawReplyOut` is not available on the embass
    |                                               ^^^^^^^ this handler takes `Out` slots in a form the embassy runtime does not mount
    |
    = help: the trait `ruststream_runtime::router::form_out::SlotsOn<RawReplyOut>` is not implemented for `LocalPipeline`
-   = note: on the embassy runtime a batch handler takes no `Out` parameter (publish from a handler that takes one message at a time), and a handler with an `Out` parameter does not reply (publish the reply through a slot of its own)
+   = note: on the embassy runtime a handler with an `Out` parameter does not reply (publish the reply through a slot of its own)
 help: the following other types implement trait `ruststream_runtime::router::form_out::SlotsOn<Form>`
   --> $WORKSPACE/crates/ruststream-runtime/src/router/form_out.rs
    |

@@ -15,6 +15,7 @@ use core::task::Poll;
 use core::time::Duration;
 
 use embassy_sync::waitqueue::WakerRegistration;
+use futures::FutureExt as _;
 use futures::future::join;
 use ruststream_core::diag::error;
 use ruststream_runtime::{
@@ -191,12 +192,29 @@ impl<'host, Inner> WorkerHost<'host, Inner> {
 
     /// Runs `worker`, the worker's deliveries, beside its continuation slot's driver, and ends the
     /// driver when the worker has ended.
-    pub(crate) async fn around(&self, worker: impl Future<Output = ()>) {
-        let worker = async {
-            worker.await;
-            self.slot.close();
-        };
-        join(worker, self.slot.drive()).await;
+    ///
+    /// Not an `async fn`: the combinators hold the worker's future without a frame of their own, so
+    /// the app's future nests no deeper for the slot than for the join.
+    pub(crate) fn around(
+        &self,
+        worker: impl Future<Output = ()>,
+    ) -> impl Future<Output = ((), ())> {
+        self.around_then(worker, || {})
+    }
+
+    /// [`around`](Self::around) that also runs `then` when the worker has ended, in the same step.
+    pub(crate) fn around_then(
+        &self,
+        worker: impl Future<Output = ()>,
+        then: impl FnOnce(),
+    ) -> impl Future<Output = ((), ())> {
+        join(
+            worker.map(|()| {
+                self.slot.close();
+                then();
+            }),
+            self.slot.drive(),
+        )
     }
 }
 

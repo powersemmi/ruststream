@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! TRYBUILD=overwrite RUN_UI_TESTS=1 cargo test --no-default-features \
-//!     --features embassy,memory,macros,testing --test ui_no_alloc
+//!     --features embassy,memory,macros,testing,postcard --test ui_no_alloc
 //! ```
 #![cfg(not(ruststream_alloc))]
 

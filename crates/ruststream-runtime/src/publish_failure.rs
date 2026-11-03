@@ -608,7 +608,9 @@ pub(crate) use boxed::Fan;
 #[cfg(ruststream_alloc)]
 pub use boxed::{ErrorHook, Failures, Reaction, publish_done, publish_lost};
 #[cfg(not(ruststream_alloc))]
-pub use fixed::FailureSlot;
+pub(crate) use fixed::Unpublished;
+#[cfg(not(ruststream_alloc))]
+pub use fixed::{BatchFan, FailureSlot, Gathers, NoFan};
 #[cfg(not(ruststream_alloc))]
 pub use fixed::{ErrorHook, Failures, Reaction, publish_done, publish_lost};
 

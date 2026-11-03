@@ -35,7 +35,15 @@ ruststream = { version = "0.8", default-features = false, features = ["embassy",
 - The local bus is a `LocalMemoryBus<MESSAGES, PAYLOAD, SUBSCRIPTIONS>` declared as a `static`;
   the app function receives `LocalMemoryBroker::new(&BUS)`. The binary supplies
   `critical-section`.
-- A batch is `.batch::<N>()` with N from 1 to 16, of messages that deserialize themselves.
+- A batch is `.batch::<N>()` with N from 1 to 16, of messages that deserialize themselves or that
+  the mount's codec decodes. Its outcomes are `Outcomes<HandlerOutcome, N>`, and a batch handler
+  mounted with `reply` returns `Outcomes<Reply, N>`, one reply per element.
+- A batch mount takes `.retry_capacity::<CAP>()` (at least N, at most 1024), `.max_attempts(n)
+  .dead_letter(..)` and `.out_retry(..)`; `retry_after` and dead letters work per element. A
+  uniform `.error` reads every failed copy once, and a second uniform-`.error` batch waits for the
+  first. A batch handler takes `Out` slots, but not a reply and `Out` together. An app with a
+  batch handler that takes `Out` beside a retry store or several other batch routes sets
+  `#![recursion_limit = "256"]`.
 - State is borrowed, `async |state: &State| ..`, and a state that holds a heap type (`Rc`) frees
   it inside the app's poll; a `static` counter does not.
 

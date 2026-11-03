@@ -10,17 +10,13 @@ use serde::Serialize;
 use super::{
     BatchPublishTransform, PublishContext, PublishPipeline, Transactional, TypedPublisher,
 };
-#[cfg(ruststream_alloc)]
 use crate::HeaderSet;
 use crate::codec::ActiveCodec as Codec;
-#[cfg(ruststream_alloc)]
 use crate::copied::CopiedPayload;
 use crate::lifecycle::BoxError;
 use crate::publish::sealed::Sealed;
 #[cfg(not(ruststream_alloc))]
-#[cfg(ruststream_alloc)]
 use crate::publish_failure::Failed;
-#[cfg(ruststream_alloc)]
 use crate::publish_failure::FailedMessage;
 use crate::publish_failure::Refusal;
 use crate::{PayloadForm, Publisher, TransactionalPublisher};
@@ -34,48 +30,42 @@ use crate::{PayloadForm, Publisher, TransactionalPublisher};
 #[derive(Debug)]
 pub struct BatchRefusal {
     /// The first reply that did not go out.
-    #[cfg(ruststream_alloc)]
     lost_from: usize,
-    /// The refused reply and what came back for it, when a publish was refused.
-    refused: Option<(usize, Refusal)>,
-    /// The cause when no single reply was refused: the transaction could not begin or commit.
-    error: Option<BoxError>,
+    /// Why they did not.
+    cause: Cause,
 }
 
-/// The cause of a batch reply refused with no error of its own.
-#[cfg(ruststream_alloc)]
-fn refused_reply() -> BoxError {
-    BoxError::from("a batch reply was refused")
+/// Why a batch's replies did not all go out.
+#[derive(Debug)]
+enum Cause {
+    /// The reply at the index was refused, with what came back for it.
+    Refused(usize, Refusal),
+    /// No single reply was refused: the transaction could not begin or commit.
+    Whole(BoxError),
 }
 
 impl BatchRefusal {
     /// The refusal of the reply at `index`, with every reply from `lost_from` on lost.
-    fn at(index: usize, #[cfg(ruststream_alloc)] lost_from: usize, refusal: Refusal) -> Self {
+    fn at(index: usize, lost_from: usize, refusal: Refusal) -> Self {
         Self {
-            #[cfg(ruststream_alloc)]
             lost_from,
-            refused: Some((index, refusal)),
-            error: None,
+            cause: Cause::Refused(index, refusal),
         }
     }
 
     /// A failure of the batch as a whole, which loses every reply.
     fn whole(error: BoxError) -> Self {
         Self {
-            #[cfg(ruststream_alloc)]
             lost_from: 0,
-            refused: None,
-            error: Some(error),
+            cause: Cause::Whole(error),
         }
     }
 
     /// The cause alone.
-    #[cfg(ruststream_alloc)]
     pub(crate) fn into_error(self) -> BoxError {
-        match (self.refused, self.error) {
-            (Some((_, refusal)), _) => refusal.into_error(),
-            (None, Some(error)) => error,
-            (None, None) => refused_reply(),
+        match self.cause {
+            Cause::Refused(_, refusal) => refusal.into_error(),
+            Cause::Whole(error) => error,
         }
     }
 
@@ -95,41 +85,81 @@ impl BatchRefusal {
         encode: impl Fn(&T) -> CopiedPayload,
         lent: impl FnOnce(usize, usize) -> CopiedPayload,
     ) -> (BoxError, Vec<FailedMessage>) {
-        let Self {
-            lost_from,
-            refused,
-            error,
-        } = self;
-        let (refused_at, refusal) = match refused {
-            Some((index, refusal)) => (Some(index), Some(refusal)),
-            None => (None, None),
+        let Self { lost_from, cause } = self;
+        let (cause, refused_at, mut sent) = match cause {
+            Cause::Refused(index, refusal) => {
+                let (error, message) = refusal.into_message(name, lent);
+                (error, Some(index), Some(message))
+            }
+            Cause::Whole(error) => (error, None, None),
         };
-        let mut sent = refusal.map(|refusal| refusal.into_message(name, lent));
-        let mut cause = error;
         let lost = replies
             .iter()
             .enumerate()
             .skip(lost_from)
             .map(|(index, reply)| {
                 if Some(index) == refused_at
-                    && let Some((error, message)) = sent.take()
+                    && let Some(message) = sent.take()
                 {
-                    cause = Some(error);
                     return message;
                 }
                 FailedMessage::new(name, Some(encode(reply)), HeaderSet::new())
             })
             .collect();
-        (cause.unwrap_or_else(|| refused_reply()), lost)
+        (cause, lost)
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl BatchRefusal {
+    /// The replies a refused batch publish lost, each as a [`Failed`] with the batch's cause, in
+    /// the batch's order: the refused reply as it was sent, the others encoded again.
+    ///
+    /// The list is the call's own fixed buffer of `ELEMENTS`, the most replies a batch holds: the
+    /// mount fixes the batch size at compile time, and the buffer is as large.
+    ///
+    /// # Panics
+    ///
+    /// When the batch holds more replies than `ELEMENTS`, which the mount's batch size rules out.
+    pub(crate) fn into_failed<T, const ELEMENTS: usize>(
+        self,
+        name: &str,
+        replies: &[T],
+        encode: impl Fn(&T) -> CopiedPayload,
+        lent: impl FnOnce(usize, usize) -> CopiedPayload,
+    ) -> heapless::Vec<Failed, ELEMENTS> {
+        let Self { lost_from, cause } = self;
+        let (cause, refused_at, mut sent) = match cause {
+            Cause::Refused(index, refusal) => {
+                let (error, message) = refusal.into_message(name, lent);
+                (error, Some(index), Some(message))
+            }
+            Cause::Whole(error) => (error, None, None),
+        };
+        let mut lost = heapless::Vec::new();
+        for (index, reply) in replies.iter().enumerate().skip(lost_from) {
+            let message = match sent.take() {
+                Some(message) if Some(index) == refused_at => message,
+                other => {
+                    sent = other;
+                    FailedMessage::new(name, Some(encode(reply)), HeaderSet::new())
+                }
+            };
+            // A batch is at most as many replies as the mount's size, which the buffer is made for.
+            assert!(
+                lost.push(Failed::new(cause, message)).is_ok(),
+                "a batch holds at most as many replies as its mount's size"
+            );
+        }
+        lost
     }
 }
 
 impl fmt::Display for BatchRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.refused, &self.error) {
-            (Some((_, refusal)), _) => fmt::Display::fmt(refusal, f),
-            (None, Some(error)) => fmt::Display::fmt(error, f),
-            (None, None) => f.write_str("a batch reply was refused"),
+        match &self.cause {
+            Cause::Refused(_, refusal) => fmt::Display::fmt(refusal, f),
+            Cause::Whole(error) => fmt::Display::fmt(error, f),
         }
     }
 }
@@ -202,14 +232,7 @@ where
             let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
             self.publish_batched(name, reply, pipeline, cx, slot)
                 .await
-                .map_err(|refusal| {
-                    BatchRefusal::at(
-                        index,
-                        #[cfg(ruststream_alloc)]
-                        index,
-                        refusal,
-                    )
-                })?;
+                .map_err(|refusal| BatchRefusal::at(index, index, refusal))?;
         }
         Ok(())
     }
@@ -260,12 +283,7 @@ where
             {
                 abort_quietly(publisher).await;
                 // The transaction is aborted, so every reply of the batch is lost.
-                return Err(BatchRefusal::at(
-                    index,
-                    #[cfg(ruststream_alloc)]
-                    0,
-                    refusal,
-                ));
+                return Err(BatchRefusal::at(index, 0, refusal));
             }
         }
         // Per the TransactionalPublisher contract a failed commit closes the transaction, so

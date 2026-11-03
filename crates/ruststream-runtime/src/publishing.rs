@@ -102,7 +102,6 @@ pub(crate) trait EncodeReply: MaybeSendSync {
     /// The bytes this reply encodes to with `codec`, for a continuation after a failed batch.
     /// Empty when the codec rejects it.
     #[doc(hidden)]
-    #[cfg(ruststream_alloc)]
     fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> CopiedPayload;
 }
 
@@ -127,7 +126,6 @@ impl<Reply: Serialize + MaybeSendSync> EncodeReply for Reply {
         stack.publish(name, self, pipeline, cx, encode)
     }
 
-    #[cfg(ruststream_alloc)]
     fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> CopiedPayload {
         codec.encode(self).map_or_else(|_| empty_payload(), freeze)
     }
@@ -156,7 +154,6 @@ where
         stack.publish_pair(name, &self.headers, &self.body, pipeline, cx, encode)
     }
 
-    #[cfg(ruststream_alloc)]
     fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> CopiedPayload {
         codec
             .encode(&self.body)

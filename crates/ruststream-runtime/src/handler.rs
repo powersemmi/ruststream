@@ -4,6 +4,8 @@
 use alloc::boxed::Box;
 #[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
+#[cfg(not(ruststream_alloc))]
+use core::mem;
 #[cfg(ruststream_alloc)]
 use core::pin::Pin;
 use core::{convert::Infallible, fmt, time::Duration};
@@ -424,19 +426,19 @@ impl HandlerOutcome {
     /// first.
     ///
     /// The closure is one-shot, like an [`and_after`](Self::and_after) continuation, so it may
-    /// own what it captures. A single delivery's `Failures` holds one failure. On the Tokio runner
-    /// an outcome returned for a whole batch runs the closure once, with the failure of every
-    /// element whose copy failed, in the batch's order; its `and_after` runs once, when at least
-    /// one element's copy was published. A batch handler that needs a reaction per element
-    /// returns one outcome per element instead.
+    /// own what it captures. A single delivery's `Failures` holds one failure. An outcome
+    /// returned for a whole batch runs the closure once, with the failure of every element whose
+    /// copy failed, in the batch's order; its `and_after` runs once, when at least one element's
+    /// copy was published. A batch handler that needs a reaction per element returns one outcome
+    /// per element instead.
     ///
     /// Without `.error` a failed copy is logged with the subscription, the destination, the
     /// message type and the error, and is lost. On a mount whose broker retries and dead-letters
     /// natively the runtime publishes nothing, so the continuation never runs; a warning names the
-    /// subscription each time such an outcome is returned. A batch route of the embedded runner
-    /// publishes nothing either, and its outcomes that ask for a copy meet the same warning. With
-    /// the Tokio runner on, the closure and its future are `Send`; on the embedded runtime alone
-    /// they carry no `Send`.
+    /// subscription each time such an outcome is returned. The same holds for a mount of the
+    /// embedded runner that names no `retry_capacity`: it keeps no copy, so nothing is published.
+    /// With the Tokio runner on, the closure and its future are `Send`; on the embedded runtime
+    /// alone they carry no `Send`.
     ///
     /// # Cancel safety
     ///
@@ -540,6 +542,14 @@ impl HandlerOutcome {
     /// settled and before the worker takes its next delivery. Attaching a second one replaces the
     /// first.
     ///
+    /// An outcome returned for a whole batch runs the closure once, with the failure of every
+    /// element whose copy failed, in the batch's order, once the last element's copy is reported:
+    /// a copy that waits for its delay is reported when it is published. The failures of a batch
+    /// are gathered in one place per mount, so a second batch outcome with an `.error` waits for
+    /// the first to run its closure; with `retry_after` the wait lasts the delay of the first
+    /// batch's copies. Outcomes without an `.error`, one outcome per element, and copies that go
+    /// out at once do not wait.
+    ///
     /// # Cancel safety
     ///
     /// At-most-once, like [`and_after`](Self::and_after): the message is already settled when the
@@ -614,6 +624,20 @@ impl HandlerOutcome {
     pub(crate) fn and_after_boxed(mut self, after: Continuation) -> Self {
         self.after = Some(after);
         self
+    }
+
+    /// Takes the `.error` and the continuation a uniform batch outcome shares between its
+    /// elements off this one, the last of them, leaving its status. `None` for any other outcome.
+    #[cfg(not(ruststream_alloc))]
+    pub(crate) fn take_shared(&mut self) -> Option<(ErrorHook, Option<Continuation>)> {
+        let status = self.outcome.status();
+        match mem::replace(&mut self.outcome, Settlement::Plain(status)) {
+            Settlement::Erroring((_, hook)) if hook.is_shared() => Some((hook, self.after.take())),
+            other => {
+                self.outcome = other;
+                None
+            }
+        }
     }
 
     /// Takes the outcome apart: its status, its post-settle continuation and its `.error`.

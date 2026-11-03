@@ -9,6 +9,7 @@
 
 use std::cell::Cell;
 use std::error::Error;
+use std::iter::once;
 use std::rc::Rc;
 use std::thread;
 use std::time::Duration;
@@ -19,8 +20,9 @@ use ruststream::Headers;
 use ruststream::memory::local::{
     LocalMemoryBroker, LocalMemoryBus, LocalMemoryPublish, LocalMemorySource,
 };
+use ruststream::nonzero;
 use ruststream::runtime::{
-    EmbeddedApp, Failures, HandlerOutcome, MountSteps, Mounts, RETRY_COUNT_HEADER,
+    EmbeddedApp, Failures, HandlerOutcome, MountSteps, Mounts, Outcomes, RETRY_COUNT_HEADER,
     SubscriberSettings,
 };
 use ruststream::runtime::{
@@ -597,6 +599,465 @@ fn a_refused_reply_too_large_to_keep_reaches_the_error_continuation_without_byte
         tb.advance(Duration::from_secs(1)).await?;
 
         assert_eq!(unreadable.0.get(), 1, "failures that kept no bytes");
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+/// The batch bus of the batch retry scenarios, this test's own: four jobs per subscription.
+static BATCH_BUS: LocalMemoryBus<4> = LocalMemoryBus::new();
+
+/// A job the batch scenarios publish, to the destination they name.
+#[derive(Outgoing, Serialized)]
+struct Posted(&'static [u8]);
+
+/// The stack a batch scenario with a store of retry copies is held to: the store's records come
+/// on top of the batch's frames, which the build without optimisation lays out in full.
+const STORE_STACK: usize = 4 * BATCH_STACK;
+
+/// Runs a batch scenario on a thread of the stack [`STORE_STACK`] gives it.
+fn on_batch_stack(
+    scenario: impl AsyncFnOnce() -> Result<(), Box<dyn Error>> + Send + 'static,
+) -> Result<(), Box<dyn Error>> {
+    thread::Builder::new()
+        .stack_size(STORE_STACK)
+        .spawn(move || block_on(scenario()).map_err(|err| err.to_string()))?
+        .join()
+        .map_err(|_| "the batch scenario panicked")??;
+    Ok(())
+}
+
+/// Holds the handler for a second of the clock on a `gate` job, so the jobs behind it make one
+/// batch.
+async fn hold_on_gate(jobs: &[Job<'_>]) {
+    if jobs.iter().any(|job| job.0 == b"gate") {
+        embassy_time::Timer::after(embassy_time::Duration::from_secs(1)).await;
+    }
+}
+
+/// Asks one retry for the whole batch.
+#[subscriber(LocalMemorySource::new("bwhole"))]
+async fn on_whole(jobs: &[Job<'_>]) -> HandlerOutcome {
+    hold_on_gate(jobs).await;
+    if jobs.iter().any(|job| job.0 == b"gate") {
+        HandlerOutcome::ack()
+    } else {
+        HandlerOutcome::retry_after(LATER)
+    }
+}
+
+/// Asks a retry for every job but `ok`, which it acknowledges.
+#[subscriber(LocalMemorySource::new("beach"))]
+async fn on_each(jobs: &[Job<'_>]) -> Outcomes<HandlerOutcome, 3> {
+    hold_on_gate(jobs).await;
+    jobs.iter()
+        .map(|job| match job.0 {
+            b"ok" | b"gate" => HandlerOutcome::ack(),
+            _ => HandlerOutcome::retry_after(LATER),
+        })
+        .collect()
+}
+
+/// Asks a retry for every job but `ok`, and counts the copies it loses.
+#[subscriber(LocalMemorySource::new("blossy"))]
+async fn on_lossy(
+    jobs: &[Job<'_>],
+    ctx: &mut Context<'_, (), Counter>,
+) -> Outcomes<HandlerOutcome, 3> {
+    hold_on_gate(jobs).await;
+    jobs.iter()
+        .map(|job| match job.0 {
+            b"ok" | b"gate" => HandlerOutcome::ack(),
+            _ => {
+                let lost = ctx.state().clone();
+                HandlerOutcome::retry_after(LATER).error(async move |failures: &Failures| {
+                    lost.0
+                        .set(lost.0.get() + u32::try_from(failures.len()).unwrap_or(u32::MAX));
+                })
+            }
+        })
+        .collect()
+}
+
+/// Asks a retry for every job, one outcome each.
+#[subscriber(LocalMemorySource::new("bdead"))]
+async fn on_dead_jobs(jobs: &[Job<'_>]) -> Outcomes<HandlerOutcome, 3> {
+    hold_on_gate(jobs).await;
+    jobs.iter()
+        .map(|job| match job.0 {
+            b"gate" => HandlerOutcome::ack(),
+            _ => HandlerOutcome::retry_after(LATER),
+        })
+        .collect()
+}
+
+/// Takes what the cap sent away.
+#[subscriber(LocalMemorySource::new("bdeadletter"))]
+async fn on_dead_letter(job: &Job<'_>) -> HandlerOutcome {
+    let _ = job.0;
+    HandlerOutcome::ack()
+}
+
+/// Acks the batch and leaves one continuation that counts it.
+#[subscriber(LocalMemorySource::new("bthen"))]
+async fn on_then(jobs: &[Job<'_>], ctx: &mut Context<'_, (), Counter>) -> HandlerOutcome {
+    hold_on_gate(jobs).await;
+    if jobs.iter().any(|job| job.0 == b"gate") {
+        return HandlerOutcome::ack();
+    }
+    let ran = ctx.state().clone();
+    HandlerOutcome::ack().and_after(async move { ran.0.set(ran.0.get() + 1) })
+}
+
+/// Acks every job and leaves a continuation for each that counts it after a second.
+#[subscriber(LocalMemorySource::new("bthen.each"))]
+async fn on_then_each(
+    jobs: &[Job<'_>],
+    ctx: &mut Context<'_, (), Counter>,
+) -> Outcomes<HandlerOutcome, 3> {
+    hold_on_gate(jobs).await;
+    jobs.iter()
+        .map(|job| {
+            if job.0 == b"gate" {
+                return HandlerOutcome::ack();
+            }
+            let ran = ctx.state().clone();
+            HandlerOutcome::ack().and_after(async move {
+                embassy_time::Timer::after(embassy_time::Duration::from_secs(1)).await;
+                ran.0.set(ran.0.get() + 1);
+            })
+        })
+        .collect()
+}
+
+/// An app of one batch mount, built by `mount`, with a counter in its state.
+macro_rules! batch_app_of {
+    ($name:ident, $($mount:tt)+) => {
+        fn $name(bus: Bus) -> EmbeddedApp<impl Mounts<State = Counter>> {
+            EmbeddedApp::new()
+                .with_state(Counter::default())
+                .with_broker(bus, |b| b.$($mount)+)
+        }
+    };
+}
+
+batch_app_of!(
+    whole_app,
+    include(on_whole.batch::<3>()).retry_capacity::<3>()
+);
+batch_app_of!(
+    each_app,
+    include(on_each.batch::<3>()).retry_capacity::<3>()
+);
+batch_app_of!(
+    lossy_app,
+    include(on_lossy.batch::<3>()).retry_capacity::<3>()
+);
+batch_app_of!(
+    then_app,
+    include(on_then.batch::<3>()).include(on_then_each.batch::<3>())
+);
+
+fn dead_letter_app(bus: Bus) -> EmbeddedApp<impl Mounts<State = Counter>> {
+    EmbeddedApp::new()
+        .with_state(Counter::default())
+        .with_broker(bus, |b| {
+            b.include(on_dead_letter)
+                .include(on_dead_jobs.batch::<3>())
+                .max_attempts(nonzero!(2u32))
+                .dead_letter("bdeadletter")
+                .retry_capacity::<3>()
+        })
+}
+
+/// Publishes a gate to `to`, then `jobs` behind it, and lets the gate open: the jobs arrive as one
+/// batch.
+async fn publish_batch(
+    tb: &TestApp,
+    to: &str,
+    jobs: [&'static [u8]; 3],
+) -> Result<(), Box<dyn Error>> {
+    for job in once(&b"gate"[..]).chain(jobs) {
+        tb.broker::<Bus>()
+            .message(&Posted(job))
+            .to(to)
+            .publish()
+            .await?;
+    }
+    tb.advance(Duration::from_secs(1)).await?;
+    Ok(())
+}
+
+/// Starts `app` with a counter the test keeps a handle to.
+async fn start_batch_app<Built: Mounts<State = Counter> + 'static>(
+    app: fn(Bus) -> EmbeddedApp<Built>,
+) -> Result<(TestApp, Counter), Box<dyn Error>> {
+    let counter = Counter::default();
+    let shared = counter.clone();
+    let tb = TestApp::with_state(app(Bus::new(&BATCH_BUS)), move |_| shared).await?;
+    Ok((tb, counter))
+}
+
+#[test]
+fn a_whole_batch_retry_makes_no_allocation_of_the_framework() -> Result<(), Box<dyn Error>> {
+    on_batch_stack(async || {
+        let (tb, _counter) = start_batch_app(whole_app).await?;
+        publish_batch(&tb, "bwhole", [b"a", b"b", b"c"]).await?;
+        tb.advance(LATER).await?;
+
+        tb.broker::<Bus>()
+            .subscriber("bwhole")
+            .assert_batch_sizes(&[1, 3, 3]);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn elements_with_mixed_outcomes_make_no_allocation_of_the_framework() -> Result<(), Box<dyn Error>>
+{
+    on_batch_stack(async || {
+        let (tb, _counter) = start_batch_app(each_app).await?;
+        publish_batch(&tb, "beach", [b"a", b"ok", b"c"]).await?;
+        tb.advance(LATER).await?;
+
+        let batches = tb.broker::<Bus>().subscriber("beach").batches_raw();
+        let copies: Vec<Vec<u8>> = batches
+            .iter()
+            .skip(2)
+            .flatten()
+            .map(|one| one.to_vec())
+            .collect();
+        assert_eq!(copies, [b"a".to_vec(), b"c".to_vec()]);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_full_store_reaches_the_error_continuation_of_a_batch_element_without_allocation()
+-> Result<(), Box<dyn Error>> {
+    on_batch_stack(async || {
+        let (tb, lost) = start_batch_app(lossy_app).await?;
+        publish_batch(&tb, "blossy", [b"a", b"b", b"c"]).await?;
+        publish_batch(&tb, "blossy", [b"d", b"ok", b"e"]).await?;
+
+        assert_eq!(lost.0.get(), 2);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn the_element_that_reaches_the_cap_goes_to_the_dead_letter_without_allocation()
+-> Result<(), Box<dyn Error>> {
+    on_batch_stack(async || {
+        let (tb, _counter) = start_batch_app(dead_letter_app).await?;
+        tb.broker::<Bus>()
+            .message(&Posted(b"a"))
+            .to("bdead")
+            .publish()
+            .await?;
+        tb.advance(Duration::from_millis(4500)).await?;
+        for job in [&b"gate"[..], &b"n"[..]] {
+            tb.broker::<Bus>()
+                .message(&Posted(job))
+                .to("bdead")
+                .publish()
+                .await?;
+        }
+        tb.advance(Duration::from_millis(600)).await?;
+        tb.advance(Duration::from_millis(500)).await?;
+
+        let bus = tb.broker::<Bus>();
+        bus.subscriber("bdead").assert_batch_sizes(&[1, 1, 2]);
+        bus.subscriber("bdeadletter").assert_called_once();
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn the_continuations_of_a_batch_make_no_allocation_of_the_framework() -> Result<(), Box<dyn Error>>
+{
+    on_batch_stack(async || {
+        let (tb, ran) = start_batch_app(then_app).await?;
+        publish_batch(&tb, "bthen", [b"a", b"b", b"c"]).await?;
+        assert_eq!(ran.0.get(), 1, "one continuation for the whole batch");
+
+        publish_batch(&tb, "bthen.each", [b"a", b"b", b"c"]).await?;
+        // The worker's one slot holds a continuation at a time, and the clock moves in the steps
+        // the test takes: each continuation waits its second after the one before it.
+        for _ in 0..3 {
+            tb.advance(Duration::from_secs(1)).await?;
+        }
+        assert_eq!(ran.0.get(), 4, "and one for each element of the next");
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+/// What the uniform outcomes of the fan scenarios were told: how many handler calls there were,
+/// how many times an `.error` ran, the payload digits of the failures it read (in the order it
+/// read them), and how many continuations followed.
+#[derive(Clone, Default)]
+struct Tally(Rc<TallyCells>);
+
+#[derive(Default)]
+struct TallyCells {
+    calls: Cell<u32>,
+    errors: Cell<u32>,
+    lost: Cell<u32>,
+    thens: Cell<u32>,
+    acked: Cell<u32>,
+}
+
+/// How long the first call's copies hold their records: past every scenario below.
+const FILL: Duration = Duration::from_secs(60);
+
+/// The first call asks a retry for the batch and reads no failure; later calls ask the same with an
+/// `.error` that reads every failed copy and a `.then`, except a lone `z`, which is acknowledged.
+#[subscriber(LocalMemorySource::new("bfan"))]
+async fn on_fan(jobs: &[Job<'_>], ctx: &mut Context<'_, (), Tally>) -> HandlerOutcome {
+    hold_on_gate(jobs).await;
+    if jobs.iter().any(|job| job.0 == b"gate") {
+        return HandlerOutcome::ack();
+    }
+    // A copy that came back is acknowledged: the scenarios follow the first deliveries.
+    if ctx.headers().get_str(RETRY_COUNT_HEADER).is_some() {
+        return HandlerOutcome::ack();
+    }
+    let tally = ctx.state().clone();
+    let call = tally.0.calls.get();
+    tally.0.calls.set(call + 1);
+    if call == 0 {
+        return HandlerOutcome::retry_after(FILL);
+    }
+    if jobs.iter().any(|job| job.0 == b"z") {
+        return HandlerOutcome::ack().and_after(async move {
+            tally.0.acked.set(tally.0.acked.get() + 1);
+        });
+    }
+    let after = tally.clone();
+    HandlerOutcome::retry_after(LATER)
+        .and_after(async move { after.0.thens.set(after.0.thens.get() + 1) })
+        .error(async move |failures: &Failures| {
+            tally.0.errors.set(tally.0.errors.get() + 1);
+            for failed in failures {
+                let digit = failed
+                    .message()
+                    .payload()
+                    .and_then(|payload| payload.first())
+                    .map_or(0, |byte| u32::from(byte - b'0'));
+                tally.0.lost.set(tally.0.lost.get() * 10 + digit);
+            }
+        })
+}
+
+fn fan_app(bus: Bus) -> EmbeddedApp<impl Mounts<State = Tally>> {
+    EmbeddedApp::new()
+        .with_state(Tally::default())
+        .with_broker(bus, |b| {
+            b.include(on_fan.batch::<3>()).retry_capacity::<3>()
+        })
+}
+
+/// Starts the fan app with a tally the test keeps a handle to.
+async fn start_fan_app() -> Result<(TestApp, Tally), Box<dyn Error>> {
+    let tally = Tally::default();
+    let shared = tally.clone();
+    let tb = TestApp::with_state(fan_app(Bus::new(&BATCH_BUS)), move |_| shared).await?;
+    Ok((tb, tally))
+}
+
+/// Publishes a gate to `bfan`, then `jobs` behind it, and lets the gate open: the jobs arrive as
+/// one batch.
+async fn publish_jobs(tb: &TestApp, jobs: &[&'static [u8]]) -> Result<(), Box<dyn Error>> {
+    for job in once(&b"gate"[..]).chain(jobs.iter().copied()) {
+        tb.broker::<Bus>()
+            .message(&Posted(job))
+            .to("bfan")
+            .publish()
+            .await?;
+    }
+    tb.advance(Duration::from_secs(1)).await?;
+    Ok(())
+}
+
+#[test]
+fn a_uniform_error_reads_every_failed_copy_of_the_batch_once_after_the_last_copy_is_reported()
+-> Result<(), Box<dyn Error>> {
+    on_batch_stack(async || {
+        let (tb, tally) = start_fan_app().await?;
+        // Two records go to the first batch's copies, so of the next three jobs one waits for its
+        // delay and two find no record.
+        publish_jobs(&tb, &[b"1", b"2"]).await?;
+        publish_jobs(&tb, &[b"3", b"4", b"5"]).await?;
+        assert_eq!(
+            tally.0.errors.get(),
+            0,
+            "the delayed copy has not been reported"
+        );
+
+        tb.advance(LATER).await?;
+        assert_eq!(tally.0.errors.get(), 1, "one call for the batch");
+        assert_eq!(
+            tally.0.lost.get(),
+            45,
+            "both failures, in the order of the batch"
+        );
+        assert_eq!(
+            tally.0.thens.get(),
+            1,
+            "a copy went out, so the follow-up runs"
+        );
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_uniform_batch_where_every_copy_failed_calls_the_error_and_not_the_follow_up()
+-> Result<(), Box<dyn Error>> {
+    on_batch_stack(async || {
+        let (tb, tally) = start_fan_app().await?;
+        publish_jobs(&tb, &[b"1", b"2", b"3"]).await?;
+        publish_jobs(&tb, &[b"4", b"5", b"6"]).await?;
+
+        assert_eq!(tally.0.errors.get(), 1);
+        assert_eq!(tally.0.lost.get(), 456);
+        assert_eq!(tally.0.thens.get(), 0, "no copy went out");
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+#[test]
+fn a_second_uniform_error_waits_for_the_first_and_reads_only_its_own_failures()
+-> Result<(), Box<dyn Error>> {
+    on_batch_stack(async || {
+        let (tb, tally) = start_fan_app().await?;
+        publish_jobs(&tb, &[b"1", b"2"]).await?;
+        publish_jobs(&tb, &[b"3", b"4", b"5"]).await?;
+        // The first outcome waits for its delayed copy. An outcome with no `.error` goes on at
+        // once; one with an `.error` waits, though every copy of it would fail now.
+        publish_jobs(&tb, &[b"z"]).await?;
+        assert_eq!(
+            tally.0.acked.get(),
+            1,
+            "an outcome without an `.error` does not wait"
+        );
+        publish_jobs(&tb, &[b"6", b"7", b"8"]).await?;
+        assert_eq!(tally.0.errors.get(), 0, "neither outcome has been told");
+
+        // The first copy goes out and its outcome is told. Of the next outcome's copies one takes
+        // the record that is free again and two find none.
+        tb.advance(LATER).await?;
+        tb.advance(Duration::from_secs(1)).await?;
+        assert_eq!(tally.0.errors.get(), 1);
+        assert_eq!(tally.0.lost.get(), 45);
+        tb.advance(LATER).await?;
+        assert_eq!(tally.0.errors.get(), 2);
+        assert_eq!(tally.0.lost.get(), 4_578, "each call read its own failures");
         tb.shutdown().await?;
         Ok(())
     })

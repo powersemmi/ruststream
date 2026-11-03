@@ -30,7 +30,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 ## Components
 
 - [Application](https://powersemmi.github.io/ruststream/latest/components/application/): the `RustStream` value, `#[ruststream::app]`, lifecycle hooks, running the service and the `ruststream` command
-- [Embedded runtime](https://powersemmi.github.io/ruststream/latest/components/application/embedded-runtime/): a device service on embassy, the build without `alloc` (fixed headers, slice codecs, a continuation room, the capacities a mount names) and its `log` or `defmt` diagnostics
+- [Embedded runtime](https://powersemmi.github.io/ruststream/latest/components/application/embedded-runtime/): a device service on embassy, the build without `alloc` (fixed headers, slice codecs, a continuation room, the capacities a mount names, batches with their retries, replies and `Out` slots) and its `log` or `defmt` diagnostics
 - [State](https://powersemmi.github.io/ruststream/latest/components/application/state/): shared application state, and dependency injection containers wired into it
 - [Testing](https://powersemmi.github.io/ruststream/latest/components/application/testing/): `TestApp`, the test client that runs a service's production app in process, one page per function
 - [Starting and stopping](https://powersemmi.github.io/ruststream/latest/components/application/testing/starting-and-stopping/): `TestApp::start`, `start_live`, `with_state`, `shutdown`

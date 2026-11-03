@@ -13,32 +13,19 @@ use alloc::borrow::ToOwned;
 use alloc::string::String;
 #[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
-#[cfg(ruststream_alloc)]
 use core::fmt;
-#[cfg(ruststream_alloc)]
 use core::num::NonZeroUsize;
-use ruststream_core::MaybeSendSync;
-#[cfg(ruststream_alloc)]
-use ruststream_core::{BatchSlot, MaybeSend};
+use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync};
 
-#[cfg(ruststream_alloc)]
 use crate::batch::{BatchVec, Gather};
-#[cfg(ruststream_alloc)]
 use crate::{BuildBatchContext, Settle};
 
-#[cfg(ruststream_alloc)]
 use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
-#[cfg(ruststream_alloc)]
 use super::context::Context;
 use super::dispatch::Workers;
-use super::failure::FailurePolicies;
-#[cfg(ruststream_alloc)]
-use super::failure::FailurePolicy;
-#[cfg(ruststream_alloc)]
+use super::failure::{FailurePolicies, FailurePolicy};
 use super::host::SendHost;
-#[cfg(ruststream_alloc)]
-use super::input::DecodeWith;
-use super::input::InputKind;
+use super::input::{DecodeWith, InputKind};
 #[cfg(ruststream_alloc)]
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 
@@ -116,7 +103,6 @@ pub trait BatchInjectDef: MaybeSendSync {
 ///
 /// The same state-generic shape as [`SliceHandler`](super::SliceHandler); see
 /// [`PublishingCall`](super::PublishingCall) for the rationale.
-#[cfg(ruststream_alloc)]
 pub(crate) trait BatchInjectCall<S>: BatchInjectDef {
     /// Runs the handler body on one decoded batch, with the resolved injections.
     fn call(
@@ -145,22 +131,20 @@ pub(crate) fn batch_inject_metadata<D: BatchInjectDef>(name: &str, def: &D) -> H
 
 /// The batch handler built from a [`BatchInjectDef`] once its injections resolved: decode
 /// the batch, run the body with them, settle every delivery.
-#[cfg(ruststream_alloc)]
-pub(crate) struct BatchInjectHandler<Def: BatchInjectDef, DecodeCodec> {
+#[doc(hidden)]
+pub struct BatchInjectHandler<Def: BatchInjectDef, DecodeCodec> {
     pub(crate) def: Def,
     pub(crate) codec: DecodeCodec,
     pub(crate) injections: Def::Injections,
     pub(crate) decode: FailurePolicy,
 }
 
-#[cfg(ruststream_alloc)]
 impl<Def: BatchInjectDef, DecodeCodec> fmt::Debug for BatchInjectHandler<Def, DecodeCodec> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BatchInjectHandler").finish_non_exhaustive()
     }
 }
 
-#[cfg(ruststream_alloc)]
 impl<Batch, Msg, Def, DecodeCodec, State> BatchHandler<Batch, Def::Context, State>
     for BatchInjectHandler<Def, DecodeCodec>
 where
@@ -184,7 +168,6 @@ where
         taken.extend(slot.drain());
     }
 
-    #[cfg(ruststream_alloc)]
     async fn handle_batch<Host: SendHost<Def::Context>>(
         &self,
         batch: &mut BatchVec<Msg>,

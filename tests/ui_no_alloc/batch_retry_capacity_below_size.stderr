@@ -1,0 +1,25 @@
+error[E0277]: the store `ruststream::runtime::Room<2>` cannot hold the retries of a batch of `ruststream_runtime::batch::store::BatchSize<4>`
+  --> tests/ui_no_alloc/batch_retry_capacity_below_size.rs:15:77
+   |
+15 |     EmbeddedApp::new().with_broker(bus, |b| b.include(on_jobs.batch::<4>()).retry_capacity::<2>())
+   |                                                                             ^^^^^^^^^^^^^^ `retry_capacity` is smaller than the batch
+   |
+   = help: the trait `ruststream_runtime_embassy::batch_plan::Enough<ruststream::runtime::Room<2>, ruststream_runtime::batch::store::BatchSize<4>>` is not implemented for `typenum::Less`
+   = note: a batch that retries whole needs one record per element: name a capacity of at least the batch size
+help: the following other types implement trait `ruststream_runtime_embassy::batch_plan::Enough<Store, Size>`
+  --> crates/ruststream-runtime-embassy/src/batch_plan.rs
+   |
+   | impl<Store, Size> Enough<Store, Size> for Greater {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `typenum::Greater`
+   |
+   | impl<Store, Size> Enough<Store, Size> for Equal {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `typenum::Equal`
+   = note: required for `ruststream::runtime::Room<2>` to implement `ruststream_runtime_embassy::batch_plan::Holds<ruststream_runtime::batch::store::BatchSize<4>>`
+note: required by a bound in `retry_capacity`
+  --> crates/ruststream-runtime-embassy/src/workers.rs
+   |
+   |     fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP>
+   |        -------------- required by a bound in this associated function
+   |     where
+   |         Room<CAP>: Holds<Self::Batch>;
+   |                    ^^^^^^^^^^^^^^^^^^ required by this bound in `MountSteps::retry_capacity`

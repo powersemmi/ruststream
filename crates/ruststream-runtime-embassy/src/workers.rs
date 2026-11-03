@@ -33,25 +33,42 @@ use ruststream_core::FixedBuf;
 use ruststream_core::diag::error;
 use ruststream_core::{BuildContext, IncomingMessage, Settle, Subscriber};
 use ruststream_runtime::{
-    Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, EncodeRoom, Halt, Handler,
-    HeadersAtOnce, HostDetach, KeepCopies, Keeping, LocalPipeline, NoCopies, OneTaskDispatch,
-    OneTaskPlanned, OneTaskRoute, Parks, PrepareCopy, PrepareKept, ReplyRoom, RetryCopies,
-    RetryDestinationsDeclared, Router, RouterCommit, RouterWith, ShutdownWait, dispatch, idle,
+    BatchWidth, Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, EncodeRoom, Halt,
+    Handler, HeadersAtOnce, HostDetach, KeepCopies, Keeping, LocalPipeline, NoCopies,
+    OneTaskDispatch, OneTaskPlanned, OneTaskRoute, Parks, PrepareCopy, PrepareKept, ReplyRoom,
+    RetryCopies, RetryDestinationsDeclared, Router, RouterCommit, RouterWith, ShutdownWait,
+    dispatch, idle,
 };
 
+use crate::batch_plan::Holds;
 use crate::copies::CopyStore;
 use crate::hooks::{AppState, borrowed};
 #[cfg(not(ruststream_alloc))]
 use crate::host::WorkerHost;
 use crate::mailbox::{Mailbox, join_workers};
 
+/// What a plan names in its type and holds no value of: the room, the encode buffer and the
+/// batch size of its route.
+type Shape<Capacity, Encoding, Size> = PhantomData<(Capacity, Encoding, fn() -> Size)>;
+
 /// The plan of one registration on the embedded runner: its workers and the room it keeps for
 /// retry copies, [`NoRoom`] for none.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct EmbeddedPlan<WorkerSet, Capacity, Encoding = Encode<DEFAULT_ENCODE_CAPACITY>> {
+pub struct EmbeddedPlan<WorkerSet, Capacity, Encoding = Encode<DEFAULT_ENCODE_CAPACITY>, Size = ()>
+{
     workers: WorkerSet,
-    room: PhantomData<(Capacity, Encoding)>,
+    room: Shape<Capacity, Encoding, Size>,
+}
+
+impl<WorkerSet, Capacity, Encoding, Size> EmbeddedPlan<WorkerSet, Capacity, Encoding, Size> {
+    /// The same plan with no room for retry copies.
+    pub(crate) fn without_room(self) -> EmbeddedPlan<WorkerSet, NoRoom, Encoding, Size> {
+        EmbeddedPlan {
+            workers: self.workers,
+            room: PhantomData,
+        }
+    }
 }
 
 /// The room, in bytes, of a worker's encode buffer when a registration names none.
@@ -277,7 +294,9 @@ impl<const WORKERS: usize> WorkerSet for Keyed<WORKERS> {
 impl<L: WorkerSet, Enc: EncodeSize> OneTaskDispatch for EmbeddedPlan<L, NoRoom, Enc> {
     type Copies = NoCopies;
 
-    async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
+    // Not an `async fn`: a frame of its own would sit between the caller and the workers for
+    // nothing.
+    fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
         _path: Option<Path>,
@@ -285,7 +304,8 @@ impl<L: WorkerSet, Enc: EncodeSize> OneTaskDispatch for EmbeddedPlan<L, NoRoom, 
         state: &AppState<State>,
         host: &Host,
         parked: &Cell<bool>,
-    ) where
+    ) -> impl Future<Output = ()>
+    where
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
@@ -295,7 +315,6 @@ impl<L: WorkerSet, Enc: EncodeSize> OneTaskDispatch for EmbeddedPlan<L, NoRoom, 
     {
         self.workers
             .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, host, parked)
-            .await;
     }
 }
 
@@ -724,6 +743,9 @@ pub trait MountSteps: Sized {
     /// The room the registration keeps so far.
     #[doc(hidden)]
     type Room;
+    /// The registration's batch size as a type: `()` for a single delivery.
+    #[doc(hidden)]
+    type Batch;
     /// Runs the registration on `workers`.
     #[doc(hidden)]
     fn run_on<Next>(self, workers: Next) -> Self::WithWorkers<Next>;
@@ -748,7 +770,13 @@ pub trait MountSteps: Sized {
     /// the delivery it copies is still at hand to read, and the copy leaves as they left it,
     /// with the publish settings they wrote. They read the destination and do not name one.
     ///
-    fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP>;
+    ///
+    /// A batch mount keeps a record for each element its handler retries at once, so the capacity
+    /// is at least the batch's size: a smaller one does not compile, and the error names both
+    /// numbers. Without `alloc` the capacity of a batch mount is at most 1024.
+    fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP>
+    where
+        Room<CAP>: Holds<Self::Batch>;
 
     /// Gives each worker of the registration `N` bytes to encode a reply into, 256 by default.
     ///
@@ -815,7 +843,7 @@ impl SoFar for () {
     }
 }
 
-impl<L, R, E> SoFar for EmbeddedPlan<L, R, E> {
+impl<L, R, E, Z> SoFar for EmbeddedPlan<L, R, E, Z> {
     type WorkerSet = L;
     type Room = R;
     type Encoding = E;
@@ -829,16 +857,22 @@ impl<B, Head, Routes, RouteCodec, RouteLayers, Pipe> MountSteps
     for Router<B, (Head, Routes), RouteCodec, RouteLayers, LocalPipeline<Pipe>>
 where
     B: Broker,
-    Head: OneTaskPlanned<Plan: SoFar, Route: ReplyRoom<B>>,
+    Head: OneTaskPlanned<Plan: SoFar, Route: ReplyRoom<B> + BatchWidth>,
 {
     type ReplyRoom = <Head::Route as ReplyRoom<B>>::Room;
+    type Batch = <Head::Route as BatchWidth>::Size;
 
     type WithWorkers<Next> = Router<
         B,
         (
             Dispatched<
                 Head::Route,
-                EmbeddedPlan<Next, <Head::Plan as SoFar>::Room, <Head::Plan as SoFar>::Encoding>,
+                EmbeddedPlan<
+                    Next,
+                    <Head::Plan as SoFar>::Room,
+                    <Head::Plan as SoFar>::Encoding,
+                    <Head::Route as BatchWidth>::Size,
+                >,
             >,
             Routes,
         ),
@@ -855,6 +889,7 @@ where
                     <Head::Plan as SoFar>::WorkerSet,
                     Room<CAP>,
                     <Head::Plan as SoFar>::Encoding,
+                    <Head::Route as BatchWidth>::Size,
                 >,
             >,
             Routes,
@@ -872,6 +907,7 @@ where
                     <Head::Plan as SoFar>::WorkerSet,
                     <Head::Plan as SoFar>::Room,
                     Encode<N>,
+                    <Head::Route as BatchWidth>::Size,
                 >,
             >,
             Routes,
@@ -889,7 +925,10 @@ where
         })
     }
 
-    fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP> {
+    fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP>
+    where
+        Room<CAP>: Holds<Self::Batch>,
+    {
         const {
             assert!(
                 CAP > 0,
@@ -929,6 +968,7 @@ where
     type WithCapacity<const CAP: usize> = <Attach::Out as MountSteps>::WithCapacity<CAP>;
     type WithEncode<const N: usize> = <Attach::Out as MountSteps>::WithEncode<N>;
     type Room = <Attach::Out as MountSteps>::Room;
+    type Batch = <Attach::Out as MountSteps>::Batch;
 
     type ReplyRoom = <Attach::Out as MountSteps>::ReplyRoom;
 
@@ -943,7 +983,10 @@ where
         self.build().encode_capacity::<N>()
     }
 
-    fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP> {
+    fn retry_capacity<const CAP: usize>(self) -> Self::WithCapacity<CAP>
+    where
+        Room<CAP>: Holds<Self::Batch>,
+    {
         self.build().retry_capacity::<CAP>()
     }
 }

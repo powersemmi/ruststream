@@ -44,6 +44,8 @@ use super::dispatch::{Slot, Workers, settle_outcome};
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handle::Deserialized;
 use super::handler::{Continuation, HandlerOutcome, HandlerResult};
+#[cfg(not(ruststream_alloc))]
+use super::host::KeptCopies;
 use super::host::{HostDetach, PrepareKept, SendHost};
 use super::input::{DecodeWith, InputKind, REPORTED};
 #[cfg(ruststream_alloc)]
@@ -52,6 +54,8 @@ use super::metadata::HandlerMetadata;
 use super::publish_failure::ErrorHook;
 #[cfg(ruststream_alloc)]
 use super::publish_failure::Fan;
+#[cfg(not(ruststream_alloc))]
+use super::publish_failure::Gathers;
 #[cfg(all(test, feature = "json"))]
 use crate::codec::ActiveCodec as Codec;
 #[cfg(feature = "testing")]
@@ -218,14 +222,50 @@ impl UniformFan {
     }
 }
 
-/// A uniform outcome handed out element by element, without `alloc`: every element settles by
-/// the status, and the last carries the `.error` and the continuation. A batch route on the
-/// embedded runner publishes no copy for an element, so that `.error` meets the warning that says
-/// it never runs.
+/// A uniform outcome handed out element by element, without `alloc`: every element settles by the
+/// status. Where the mount has a fan ([`gather`](Self::gather)), each element carries a part of
+/// the `.error` and `.then` the fan holds; where it has none, the last element carries them, and
+/// a batch route without a store meets the warning that says the `.error` never runs.
 #[cfg(not(ruststream_alloc))]
 pub(crate) struct UniformFan {
     status: HandlerResult,
     tail: Option<(Option<Continuation>, Option<ErrorHook>)>,
+    /// The index of the next element, once the fan holds the outcome's `.error`.
+    parts: Option<usize>,
+}
+
+/// What one element of a uniform outcome settles by.
+#[cfg(not(ruststream_alloc))]
+pub(crate) enum Element {
+    /// An outcome of its own.
+    Whole(HandlerOutcome),
+    /// The status, and the element's index in the outcome its mount's fan gathers.
+    Part(HandlerResult, usize),
+}
+
+#[cfg(not(ruststream_alloc))]
+impl Element {
+    /// The share of the next element of an outcome whose results are `outcome`: a part when
+    /// `parts` counts the elements the mount's fan gathers, the outcome itself otherwise.
+    pub(crate) fn of(outcome: HandlerOutcome, parts: &mut Option<usize>) -> Self {
+        match parts {
+            Some(next) => {
+                let index = *next;
+                *next += 1;
+                Self::Part(outcome.outcome(), index)
+            }
+            None => Self::Whole(outcome),
+        }
+    }
+
+    /// The status the element settles by.
+    #[cfg(feature = "testing")]
+    pub(crate) fn status(&self) -> HandlerResult {
+        match self {
+            Self::Whole(outcome) => outcome.outcome(),
+            Self::Part(status, _) => *status,
+        }
+    }
 }
 
 #[cfg(not(ruststream_alloc))]
@@ -235,6 +275,39 @@ impl UniformFan {
         Self {
             status,
             tail: Some((after, error)),
+            parts: None,
+        }
+    }
+
+    /// Hands the outcome's `.error` and `.then` to the mount's `fan` for `elements` elements,
+    /// waiting while an earlier outcome is still gathering. An outcome with no `.error` stays
+    /// with its last element.
+    pub(crate) async fn gather<Host: HostDetach>(&mut self, host: &Host, elements: usize) {
+        let Some(fan) = host.kept().and_then(KeptCopies::fan) else {
+            return;
+        };
+        let Some((after, error)) = self.tail.take() else {
+            return;
+        };
+        let Some(error) = error else {
+            self.tail = Some((after, None));
+            return;
+        };
+        fan.begin(error, after, elements).await;
+        self.parts = Some(0);
+    }
+
+    /// The share of the next element: a part when the fan holds the `.error`, the outcome
+    /// [`element`](Self::element) hands out otherwise.
+    #[inline]
+    pub(crate) fn slot(&mut self, last: bool) -> Element {
+        match self.parts.as_mut() {
+            Some(next) => {
+                let index = *next;
+                *next += 1;
+                Element::Part(self.status, index)
+            }
+            None => Element::Whole(self.element(last)),
         }
     }
 
@@ -248,8 +321,9 @@ impl UniformFan {
         let Some((after, error)) = self.tail.take() else {
             return own;
         };
+        // The mount's fan takes the hook off the last element, if it has one.
         let own = match error {
-            Some(error) => own.error_hook(error),
+            Some(error) => own.error_hook(error.shared()),
             None => own,
         };
         match after {

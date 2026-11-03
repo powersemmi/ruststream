@@ -17,6 +17,7 @@ mod builder;
 mod builders;
 mod chain;
 mod fold;
+mod fold_batch;
 mod fold_inject;
 mod fold_plan;
 mod fold_publish;
@@ -58,9 +59,14 @@ pub use fold::{
     Balance, OpenLayered, OpenRoutes, OpenedBatchRoute, OpenedRoute, RunRoutes, RunsBatches,
 };
 #[doc(hidden)]
+pub use fold_batch::{
+    OneTaskBatchDispatch, OneTaskBatchRoute, OpenBatchRoute, OpenedBatchDispatch,
+    SequentialBatchPlan,
+};
+#[doc(hidden)]
 pub use fold_plan::{
-    Dispatched, OneTaskDispatch, OneTaskPlanned, OneTaskRoute, OpenedDispatch, SequentialPlan,
-    UnboundRetry,
+    BatchWidth, Dispatched, OneTaskDispatch, OneTaskPlanned, OneTaskRoute, OpenedDispatch,
+    SequentialPlan, UnboundRetry,
 };
 #[doc(hidden)]
 pub use fold_retry::{OneTaskRetriedRoute, OneTaskRouteSource};
@@ -86,6 +92,7 @@ pub use routes::{RetryDestinationsDeclared, RouteMetadata, RouteSubscription};
 
 use crate::Connected;
 use crate::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch};
+use crate::settings::BatchSized;
 use crate::subscriber_def::SubscriberDef;
 use crate::typed::Typed;
 
@@ -116,6 +123,7 @@ pub(crate) type BatchTypedRoute<B, S, D, C> = BatchRoute<
     S,
     TypedBatch<SourceMessage<B, S>, <D as BatchDef>::Input, C, <D as BatchDef>::Handler>,
     <D as BatchDef>::Context,
+    <D as BatchSized>::Size,
 >;
 
 /// The router that mounting a [`BatchDef`] `D` on source `S` (decoded with `C`) onto `R`
@@ -129,6 +137,7 @@ type DeserializedBatchRoute<B, S, D, F> = BatchRoute<
     S,
     DeserializedBatch<LocalSourceMessage<B, S>, F, <D as BatchDef>::Handler>,
     <D as BatchDef>::Context,
+    <D as BatchSized>::Size,
 >;
 
 /// The router that mounting a self-deserializing [`BatchDef`] `D` on source `S` onto `R`
@@ -142,6 +151,7 @@ type CarriedBatchRoute<B, S, D, T> = BatchRoute<
     S,
     CarriedBatch<S, Connected<B>, T, <D as BatchDef>::Handler>,
     <D as BatchDef>::Context,
+    <D as BatchSized>::Size,
 >;
 
 /// The router that mounting a carried [`BatchDef`] `D` on source `S` onto `R` produces.
@@ -155,7 +165,7 @@ type InjectedRouter<B, S, D, C, E, RC, RL, RP, R> =
 
 /// The batch counterpart of [`InjectedRouter`].
 type BatchInjectedRouter<B, S, D, C, E, RC, RL, RP, R> =
-    Router<B, (BatchInjectRoute<S, D, C, E>, R), RC, RL, RP>;
+    Router<B, (BatchInjectRoute<S, D, C, E, <D as BatchSized>::Size>, R), RC, RL, RP>;
 
 /// The router that mounting a publishing [`PublishingDef`](crate::PublishingDef) `D` on
 /// source `S` (decoded with `C`, replying through the policy `RP` and resolving its startup
@@ -171,8 +181,16 @@ pub(crate) type RawReplyRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
 /// The router that mounting a batch publishing
 /// [`BatchPublishingDef`](crate::BatchPublishingDef) `D` on source `S` (decoded with `C`,
 /// replying through the policy `Reply`) onto `R` produces.
-type BatchPublishingRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
-    Router<B, (BatchPublishingRoute<S, D, C, Reply, E>, R), RC, RL, RP>;
+type BatchPublishingRouter<B, S, D, C, Reply, E, RC, RL, RP, R> = Router<
+    B,
+    (
+        BatchPublishingRoute<S, D, C, Reply, E, <D as BatchSized>::Size>,
+        R,
+    ),
+    RC,
+    RL,
+    RP,
+>;
 
 /// The router that [`Router::merge`] produces: the merged router becomes one registration in the
 /// list.

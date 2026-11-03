@@ -1,0 +1,27 @@
+error[E0277]: a handler of the form `BatchPublishingOut` is not available on the embassy runtime
+  --> tests/ui/subscriber_local_batch_reply_out.rs:39:11
+   |
+39 |         b.include(answer.batch(nonzero!(3)))
+   |           ^^^^^^^ this handler takes `Out` slots in a form the embassy runtime does not mount
+   |
+   = help: the trait `ruststream_runtime::router::form_out::SlotsOn<BatchPublishingOut>` is not implemented for `LocalPipeline`
+   = note: on the embassy runtime a handler with an `Out` parameter does not reply (publish the reply through a slot of its own)
+help: the following other types implement trait `ruststream_runtime::router::form_out::SlotsOn<Form>`
+  --> $WORKSPACE/crates/ruststream-runtime/src/router/form_out.rs
+   |
+   |           impl SlotsOn<$form> for PublishIdentity {}
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `PublishIdentity`
+   |
+   |           impl<Head: PublishLayer, Tail: PublishPipeline> SlotsOn<$form> for PublishStack<Head, Tail> {}
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `PublishStack<Head, Tail>`
+...
+   | / slot_form! {
+   | |     forms::Out => InjectMount, NoReply, RouterOut,
+   | |     forms::BatchOut => BatchInjectMount, NoReply, RouterOut,
+   | |     forms::PublishingOut => PublishInjectMount, DefaultReply, RouterPublishingOut,
+   | |     forms::RawReplyOut => RawReplyInjectMount, DefaultReply, RouterPublishingOut,
+   | |     forms::BatchPublishingOut => BatchPublishInjectMount, DefaultReply, RouterPublishingOut,
+   | | }
+   | |_- in this macro invocation
+   = note: required for `BatchPublishingOut` to implement `ruststream::runtime::RouterMount<Router<ruststream::memory::local::LocalMemoryBroker<4>, (), (), Identity, LocalPipeline>, SubscriberBuilder<FnBody<answer, for<'a, 'b, 'c, 'd> fn(BodyTag<answer>, &'a [Reading], &'b Outs<(_,)>, &'c mut ruststream::prelude::Context<'d, (), _>) -> impl Future<Output = Result<Vec<Answer>, Vec<HandlerOutcome>>> {answer::<_, _>}>, LocalMemorySource, (Open, Open, Open, Fixed)>>`
+   = note: this error originates in the macro `slot_form` (in Nightly builds, run with -Z macro-backtrace for more info)

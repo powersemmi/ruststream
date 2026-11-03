@@ -14,10 +14,8 @@ use alloc::vec::Vec;
 use core::any::type_name;
 use ruststream_core::MaybeSendSync;
 
-#[cfg(ruststream_alloc)]
 use crate::batch::BatchResult;
 use crate::batch::BatchVec;
-#[cfg(ruststream_alloc)]
 use crate::batch_publishing::BatchPublishingCall;
 use crate::batch_publishing::BatchPublishingDef;
 use crate::context::Context;
@@ -34,7 +32,6 @@ use super::axis::{
     Axis, AxisDocs, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis, SoloCarried,
     SoloDeserialized, SoloPair, SoloSet,
 };
-#[cfg(ruststream_alloc)]
 use super::axis::{Batch, BatchPair, BatchSet};
 use super::docs::DocState;
 use super::eager::construct;
@@ -684,7 +681,6 @@ where
 }
 
 /// Applies the batch reply contract: one reply per element, or one outcome per element.
-#[cfg(ruststream_alloc)]
 pub(super) fn batch_reply_verdict<R>(
     verdict: Result<BatchVec<R>, BatchVec<HandlerOutcome>>,
     batch_len: usize,
@@ -711,7 +707,6 @@ pub(super) fn batch_reply_verdict<R>(
     }
 }
 
-#[cfg(ruststream_alloc)]
 impl<T, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
     for Sealed<ReplyValue<HandleValue<Batch<T>, BatchVec<R>, (), C, H, Doc>, Dest>>
 where
@@ -728,7 +723,6 @@ where
     S: MaybeSendSync,
     H: Handle<[T], BatchVec<R>, (), C, S>,
 {
-    #[cfg(ruststream_alloc)]
     async fn call(
         &self,
         batch: &[T],
@@ -740,7 +734,6 @@ where
     }
 }
 
-#[cfg(ruststream_alloc)]
 impl<T, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
     for Sealed<ReplyValue<HandleValue<BatchSet<T>, BatchVec<R>, (), C, H, Doc>, Dest>>
 where
@@ -757,7 +750,6 @@ where
     S: MaybeSendSync,
     H: Handle<[T], BatchVec<R>, (), C, S>,
 {
-    #[cfg(ruststream_alloc)]
     async fn call(
         &self,
         batch: &[T],
@@ -769,7 +761,6 @@ where
     }
 }
 
-#[cfg(ruststream_alloc)]
 impl<Hd, P, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
     for Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, BatchVec<R>, (), C, H, Doc>, Dest>>
 where
@@ -787,7 +778,6 @@ where
     S: MaybeSendSync,
     H: Handle<[Message<Hd, P>], BatchVec<R>, (), C, S>,
 {
-    #[cfg(ruststream_alloc)]
     async fn call(
         &self,
         batch: &[Message<Hd, P>],

@@ -11,6 +11,7 @@ use alloc::sync::Arc;
 #[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::fmt;
+use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 #[cfg(ruststream_alloc)]
 use ruststream_core::{MaybeSend, MaybeSendSync};
@@ -85,10 +86,10 @@ pub struct InjectRoute<Source, Def, DecodeCodec, Extra> {
     not(ruststream_alloc),
     expect(
         dead_code,
-        reason = "the one-task fold mounts this registration form in a later piece; the multi-thread mount reads it"
+        reason = "only the multi-thread mount reads the worker count of a batch registration"
     )
 )]
-pub struct BatchInjectRoute<Source, Def, DecodeCodec, Extra> {
+pub struct BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size = ()> {
     pub(super) source: Source,
     pub(super) def: Def,
     pub(super) codec: DecodeCodec,
@@ -98,6 +99,8 @@ pub struct BatchInjectRoute<Source, Def, DecodeCodec, Extra> {
     pub(super) workers: Workers,
     /// The size the subscription opens its batches at, from the registration's `batch(n)`.
     pub(super) batch_size: NonZeroUsize,
+    /// The size as a type: `BatchSize<N>` without `alloc`, `()` with it.
+    pub(super) _size: PhantomData<fn() -> Size>,
 }
 
 /// See the publishing routes: a deferred route holds no built handler, so its `Debug` and its
@@ -123,7 +126,7 @@ macro_rules! debug_by_metadata {
 
 debug_by_metadata!(
     InjectRoute<Source, Def, DecodeCodec, Extra>,
-    BatchInjectRoute<Source, Def, DecodeCodec, Extra>,
+    BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size>,
 );
 
 /// Implements the three per-route marker impls the mount chain reads: the retry position is
@@ -143,12 +146,13 @@ macro_rules! impl_route_markers {
 
 impl_route_markers!(
     InjectRoute<Source, Def, DecodeCodec, Extra>,
-    BatchInjectRoute<Source, Def, DecodeCodec, Extra>,
+    BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size>,
 );
 
 impl_destination_declared!(
     [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra>,
-    [Source, Def, DecodeCodec, Extra] BatchInjectRoute<Source, Def, DecodeCodec, Extra>,
+    [Source, Def, DecodeCodec, Extra, Size]
+        BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size>,
 );
 
 impl<B, Source, Def, DecodeCodec, Extra> RouteSubscription<B>
@@ -163,8 +167,8 @@ where
     type Context = Def::Context;
 }
 
-impl<B, Source, Def, DecodeCodec, Extra> RouteSubscription<B>
-    for BatchInjectRoute<Source, Def, DecodeCodec, Extra>
+impl<B, Source, Def, DecodeCodec, Extra, Size> RouteSubscription<B>
+    for BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size>
 where
     B: Broker,
     Source: SubscriptionSource<Connected<B>>,
@@ -256,8 +260,8 @@ where
 }
 
 #[cfg(ruststream_alloc)]
-impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
-    for BatchInjectRoute<Source, Def, DecodeCodec, Extra>
+impl<B, Source, Def, DecodeCodec, Extra, Size, State, RetryPipeline>
+    MountRoute<B, State, RetryPipeline> for BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size>
 where
     B: Broker + 'static,
     Source: SubscriptionSource<Connected<B>> + MaybeSend + 'static,
@@ -300,6 +304,7 @@ where
             policies,
             workers,
             batch_size,
+            ..
         } = self;
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_batch::<_, _, _, _, Def::Context, _>(
@@ -355,7 +360,7 @@ mod tests {
         assert!(rendered.contains("InjectRoute"), "{rendered}");
         assert!(rendered.contains("jobs"), "{rendered}");
 
-        let batched = BatchInjectRoute {
+        let batched: BatchInjectRoute<_, _, _, _, ()> = BatchInjectRoute {
             source: Name::new("bulk-jobs"),
             def: (),
             codec: JsonCodec,
@@ -364,6 +369,7 @@ mod tests {
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
             batch_size: crate::nonzero!(8),
+            _size: PhantomData,
         };
         let rendered = format!("{batched:?}");
         assert!(rendered.contains("BatchInjectRoute"), "{rendered}");

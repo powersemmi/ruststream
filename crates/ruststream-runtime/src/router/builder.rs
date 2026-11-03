@@ -451,8 +451,8 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     }
 }
 
-impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
-    Router<B, (BatchRoute<S, H, Cx>, Routes), RouteCodec, RouteLayers, RoutePipe>
+impl<B, S, H, Cx, Size, Routes, RouteCodec, RouteLayers, RoutePipe>
+    Router<B, (BatchRoute<S, H, Cx, Size>, Routes), RouteCodec, RouteLayers, RoutePipe>
 {
     /// Sets the concurrency policy of the batch registration just added (the preceding batch
     /// `include` call), replacing its default.

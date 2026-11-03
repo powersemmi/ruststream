@@ -107,11 +107,74 @@ name = "embedded_retry"
 path = "tests/embedded_retry.rs"
 required-features = ["embassy", "json"]
 
+# A delayed retry of a batch handler of a device service, kept in its mount's store, through the
+# embedded `TestApp`.
+[[test]]
+name = "embedded_batch_retry"
+path = "tests/embedded_batch_retry.rs"
+required-features = ["embassy", "json"]
+
+# The reply buffer a batch handler's mount names while it keeps no room for retries, through the
+# embedded `TestApp`.
+[[test]]
+name = "embedded_batch_encode"
+path = "tests/embedded_batch_encode.rs"
+required-features = ["embassy", "json"]
+
+# The destination a batch handler's mount names for its retry copies, through the embedded
+# `TestApp`.
+[[test]]
+name = "embedded_batch_out_retry"
+path = "tests/embedded_batch_out_retry.rs"
+required-features = ["embassy", "json"]
+
 # A cap on delayed retries of a device service: the runtime's copies spend it, then the delivery
 # goes to the dead-letter destination, through the embedded `TestApp`.
 [[test]]
 name = "embedded_dead_letter"
 path = "tests/embedded_dead_letter.rs"
+required-features = ["embassy", "json"]
+
+# A cap on delayed retries of a batch handler of a device service: the element that reaches it goes
+# to the dead-letter destination, through the embedded `TestApp`.
+[[test]]
+name = "embedded_batch_dead_letter"
+path = "tests/embedded_batch_dead_letter.rs"
+required-features = ["embassy", "json"]
+
+# Continuations of a batch handler of a device service: one for a whole batch, one for each
+# element, through the embedded `TestApp`.
+[[test]]
+name = "embedded_batch_continuation"
+path = "tests/embedded_batch_continuation.rs"
+required-features = ["embassy", "json"]
+
+# The replies of a batch handler of a device service: one per element, and the `.error` of the ones
+# the bus refuses, through the embedded `TestApp`.
+[[test]]
+name = "embedded_batch_reply"
+path = "tests/embedded_batch_reply.rs"
+required-features = ["embassy", "json"]
+
+# A batch handler of a device service that publishes through `Out` slots, through the embedded
+# `TestApp`.
+[[test]]
+name = "embedded_batch_out"
+path = "tests/embedded_batch_out.rs"
+required-features = ["embassy", "json"]
+
+# The `.error` of a batch handler's uniform outcome on a device service, through the embedded
+# `TestApp`.
+[[test]]
+name = "embedded_batch_error"
+path = "tests/embedded_batch_error.rs"
+required-features = ["embassy", "json"]
+
+# A batch handler of a device service that takes values the mount's codec decodes, through the
+# embedded `TestApp`.
+[[test]]
+name = "embedded_batch_input"
+path = "tests/embedded_batch_input.rs"
 required-features = ["embassy", "json"]
 
 # A device service relaying to a second bus through a token minted before the scopes.

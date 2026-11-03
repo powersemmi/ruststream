@@ -37,9 +37,9 @@ use ruststream_core::PayloadBuf;
 use super::builder::Router;
 use super::fold::{OpenLayered, OpenedRoute, RunRoutes};
 use super::local::LocalPipeline;
-use super::routes::{DeclaredRoute, RetryDestinationsDeclared, SubscribeRoute};
-use super::routes_inject::InjectRoute;
-use super::routes_publish::{PublishingRoute, RawReplyRoute};
+use super::routes::{BatchRoute, DeclaredRoute, RetryDestinationsDeclared, SubscribeRoute};
+use super::routes_inject::{BatchInjectRoute, InjectRoute};
+use super::routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 
 /// How an opened single-message route runs on a runner that hosts the app in one task.
 ///
@@ -145,7 +145,9 @@ pub struct SequentialPlan;
 impl OneTaskDispatch for SequentialPlan {
     type Copies = NoCopies;
 
-    async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
+    // Not an `async fn`: a frame of its own would sit between the caller and the loop for
+    // nothing.
+    fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
         _path: Option<Path>,
@@ -153,7 +155,8 @@ impl OneTaskDispatch for SequentialPlan {
         state: StateRef<'_, State>,
         host: &Host,
         parked: &Cell<bool>,
-    ) where
+    ) -> impl Future<Output = ()>
+    where
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
@@ -161,9 +164,7 @@ impl OneTaskDispatch for SequentialPlan {
         Host: Detach,
         Path: PrepareCopy<Cx>,
     {
-        route
-            .run_sequential(signal, state, host, parked, PayloadBuf::new())
-            .await;
+        route.run_sequential(signal, state, host, parked, PayloadBuf::new())
     }
 }
 
@@ -183,6 +184,55 @@ pub struct OpenedDispatch<Sub, Body, Cx, Layers, Plan, Path> {
     pub(super) layers: Layers,
     pub(super) plan: Plan,
     pub(super) path: Option<Path>,
+}
+
+/// How many elements a registration's batch holds, as a type: `()` for a single-message route
+/// and for any build with `alloc`, `BatchSize<N>` for a batch route without it. A mount step that
+/// sizes a store reads it. Machinery; never named directly.
+#[doc(hidden)]
+pub trait BatchWidth {
+    /// The batch's size as a type.
+    type Size;
+}
+
+impl<S, H, Cx> BatchWidth for SubscribeRoute<S, H, Cx> {
+    type Size = ();
+}
+
+impl<S, H, Cx, Size> BatchWidth for BatchRoute<S, H, Cx, Size> {
+    type Size = Size;
+}
+
+impl<Source, Def, DecodeCodec, Wiring, Extra> BatchWidth
+    for PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>
+{
+    type Size = ();
+}
+
+impl<Source, Def, DecodeCodec, Wiring, Extra, Size> BatchWidth
+    for BatchPublishingRoute<Source, Def, DecodeCodec, Wiring, Extra, Size>
+{
+    type Size = Size;
+}
+
+impl<Source, Def, DecodeCodec, Wiring, Extra> BatchWidth
+    for RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>
+{
+    type Size = ();
+}
+
+impl<Source, Def, DecodeCodec, Extra> BatchWidth for InjectRoute<Source, Def, DecodeCodec, Extra> {
+    type Size = ();
+}
+
+impl<Source, Def, DecodeCodec, Extra, Size> BatchWidth
+    for BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size>
+{
+    type Size = Size;
+}
+
+impl<Route: BatchWidth, Dead> BatchWidth for DeclaredRoute<Route, Dead> {
+    type Size = Route::Size;
 }
 
 /// A registration a runner's mount steps give a plan: a plain one, with no plan yet (`()`), or
@@ -214,9 +264,12 @@ macro_rules! impl_planless {
 
 impl_planless!(
     SubscribeRoute<S, H, Cx>,
+    BatchRoute<S, H, Cx, Size>,
     PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>,
+    BatchPublishingRoute<Source, Def, DecodeCodec, Wiring, Extra, Size>,
     InjectRoute<Source, Def, DecodeCodec, Extra>,
+    BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size>,
 );
 
 // A plan changes how deliveries run, never where their retry copies go.
@@ -325,6 +378,7 @@ pub trait OpenOneTaskRoute<B: Broker, State> {
 pub trait UnboundRetry {}
 
 impl<S, H, Cx> UnboundRetry for SubscribeRoute<S, H, Cx> {}
+impl<S, H, Cx, Size> UnboundRetry for BatchRoute<S, H, Cx, Size> {}
 impl<Source, Def, DecodeCodec, Wiring, Extra> UnboundRetry
     for PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>
 {
@@ -333,8 +387,16 @@ impl<Source, Def, DecodeCodec, Wiring, Extra> UnboundRetry
     for RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>
 {
 }
+impl<Source, Def, DecodeCodec, Wiring, Extra, Size> UnboundRetry
+    for BatchPublishingRoute<Source, Def, DecodeCodec, Wiring, Extra, Size>
+{
+}
 impl<Source, Def, DecodeCodec, Extra> UnboundRetry
     for InjectRoute<Source, Def, DecodeCodec, Extra>
+{
+}
+impl<Source, Def, DecodeCodec, Extra, Size> UnboundRetry
+    for BatchInjectRoute<Source, Def, DecodeCodec, Extra, Size>
 {
 }
 impl<Route: UnboundRetry, Dead> UnboundRetry for DeclaredRoute<Route, Dead> {}
@@ -384,7 +446,13 @@ open_plain!(
     [Source, Def, DecodeCodec, Wiring, Extra] PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     [Source, Def, DecodeCodec, Wiring, Extra] RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra>,
-    [Route, Dead] DeclaredRoute<Route, Dead>,
+    [S, H, Cx, Dead] DeclaredRoute<SubscribeRoute<S, H, Cx>, Dead>,
+    [Source, Def, DecodeCodec, Wiring, Extra, Dead]
+        DeclaredRoute<PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>, Dead>,
+    [Source, Def, DecodeCodec, Wiring, Extra, Dead]
+        DeclaredRoute<RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>, Dead>,
+    [Source, Def, DecodeCodec, Extra, Dead]
+        DeclaredRoute<InjectRoute<Source, Def, DecodeCodec, Extra>, Dead>,
 );
 
 // A declared registration opens as the one it wraps, with the declaration its mount chain made.
@@ -517,7 +585,13 @@ open_dispatched!(
     [Source, Def, DecodeCodec, Wiring, Extra] PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     [Source, Def, DecodeCodec, Wiring, Extra] RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>,
     [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra>,
-    [Route, Dead] DeclaredRoute<Route, Dead>,
+    [S, H, Cx, Dead] DeclaredRoute<SubscribeRoute<S, H, Cx>, Dead>,
+    [Source, Def, DecodeCodec, Wiring, Extra, Dead]
+        DeclaredRoute<PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>, Dead>,
+    [Source, Def, DecodeCodec, Wiring, Extra, Dead]
+        DeclaredRoute<RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>, Dead>,
+    [Source, Def, DecodeCodec, Extra, Dead]
+        DeclaredRoute<InjectRoute<Source, Def, DecodeCodec, Extra>, Dead>,
 );
 
 impl<State, Sub, Body, Cx, Layers, Plan, Path> RunRoutes<State>

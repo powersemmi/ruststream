@@ -88,7 +88,7 @@ pub struct HandleRoute<S, H> {
 /// because the adapter handlers are generic over it.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct BatchRoute<S, H, Cx = ()> {
+pub struct BatchRoute<S, H, Cx = (), Size = ()> {
     pub(super) source: S,
     pub(super) handler: H,
     pub(super) meta: Meta,
@@ -97,6 +97,8 @@ pub struct BatchRoute<S, H, Cx = ()> {
     /// The size the subscription opens its batches at, from the registration's `batch(n)`.
     pub(super) batch_size: NonZeroUsize,
     pub(super) _context: PhantomData<fn() -> Cx>,
+    /// The size as a type: `BatchSize<N>` without `alloc`, `()` with it.
+    pub(super) _size: PhantomData<fn() -> Size>,
 }
 
 #[cfg(ruststream_alloc)]
@@ -177,7 +179,7 @@ pub(super) use impl_destination_declared;
 
 impl_destination_declared!(
     [S, H, Cx] SubscribeRoute<S, H, Cx>,
-    [S, H, Cx] BatchRoute<S, H, Cx>,
+    [S, H, Cx, Size] BatchRoute<S, H, Cx, Size>,
     [S, H] HandleRoute<S, H>,
     [Route, Dead] DeclaredRoute<Route, Dead>,
 );
@@ -400,7 +402,7 @@ macro_rules! impl_retry_open {
     )+};
 }
 
-impl_retry_open!(SubscribeRoute<S, H, Cx>, BatchRoute<S, H, Cx>);
+impl_retry_open!(SubscribeRoute<S, H, Cx>, BatchRoute<S, H, Cx, Size>);
 
 /// Implements [`RouteMetadata`] for the routes that carry their metadata in a `meta` field, which
 /// is every route a mount site produces.
@@ -416,7 +418,7 @@ macro_rules! impl_route_metadata {
 
 impl_route_metadata!(
     SubscribeRoute<S, H, Cx>,
-    BatchRoute<S, H, Cx>,
+    BatchRoute<S, H, Cx, Size>,
     HandleRoute<S, H>,
 );
 
@@ -436,7 +438,17 @@ macro_rules! impl_route_subscription {
     )+};
 }
 
-impl_route_subscription!(SubscribeRoute<S, H, Cx>, BatchRoute<S, H, Cx>);
+impl_route_subscription!(SubscribeRoute<S, H, Cx>);
+
+impl<B, S, H, Cx, Size> RouteSubscription<B> for BatchRoute<S, H, Cx, Size>
+where
+    B: Broker,
+    S: SubscriptionSource<Connected<B>>,
+{
+    type Source = S;
+    type Copies = <S as SubscriptionSource<Connected<B>>>::Copies;
+    type Context = Cx;
+}
 
 /// One registration's `AsyncAPI` metadata, collected independently of the app state type (so
 /// [`Router::handlers`](crate::Router::handlers) works whatever state the handlers read).
@@ -453,7 +465,7 @@ impl<S, H, Cx> RouteMeta for SubscribeRoute<S, H, Cx> {
 }
 
 #[cfg(ruststream_alloc)]
-impl<S, H, Cx> RouteMeta for BatchRoute<S, H, Cx> {
+impl<S, H, Cx, Size> RouteMeta for BatchRoute<S, H, Cx, Size> {
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         out.push(self.meta.clone());
     }
@@ -517,7 +529,8 @@ where
 }
 
 #[cfg(ruststream_alloc)]
-impl<B, S, H, Cx, State, RetryPipeline> MountRoute<B, State, RetryPipeline> for BatchRoute<S, H, Cx>
+impl<B, S, H, Cx, Size, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
+    for BatchRoute<S, H, Cx, Size>
 where
     B: Broker + 'static,
     S: SubscriptionSource<Connected<B>> + MaybeSend + 'static,

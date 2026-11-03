@@ -2,9 +2,7 @@
 //! mounts through the inject machinery, bound to the include site's policies, with the body
 //! adapted to the dispatch contracts here.
 
-#[cfg(ruststream_alloc)]
 use crate::batch::BatchResult;
-#[cfg(ruststream_alloc)]
 use crate::batch_inject::BatchInjectCall;
 use crate::batch_inject::BatchInjectDef;
 use crate::context::Context;
@@ -28,9 +26,7 @@ use crate::handle::axis::{
     Axis, AxisDocs, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis, SoloCarried,
     SoloDeserialized, SoloPair, SoloSet,
 };
-#[cfg(ruststream_alloc)]
 use crate::handle::axis::{Batch, BatchPair, BatchSet};
-#[cfg(ruststream_alloc)]
 use crate::handle::eager::run_batch;
 use crate::handle::eager::{construct, settle_solo};
 use crate::handle::value::{HandleValue, Sealed};
@@ -305,7 +301,6 @@ where
     }
 }
 
-#[cfg(ruststream_alloc)]
 impl<T, C, S, H, Doc, E> BatchInjectCall<S>
     for Sealed<HandleValue<Batch<T>, (), Outs<E>, C, H, Doc>>
 where
@@ -327,7 +322,6 @@ where
     }
 }
 
-#[cfg(ruststream_alloc)]
 impl<T, C, S, H, Doc, E> BatchInjectCall<S>
     for Sealed<HandleValue<BatchSet<T>, (), Outs<E>, C, H, Doc>>
 where
@@ -349,7 +343,6 @@ where
     }
 }
 
-#[cfg(ruststream_alloc)]
 impl<Hd, P, C, S, H, Doc, E> BatchInjectCall<S>
     for Sealed<HandleValue<BatchPair<Hd, P>, (), Outs<E>, C, H, Doc>>
 where

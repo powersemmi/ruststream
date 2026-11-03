@@ -14,6 +14,7 @@ use alloc::vec::Vec;
 #[cfg(ruststream_alloc)]
 use core::any::type_name;
 use core::fmt;
+use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 #[cfg(ruststream_alloc)]
 use ruststream_core::{MaybeSend, MaybeSendSync};
@@ -30,7 +31,7 @@ use crate::{Broker, Connected, SubscriptionSource};
 use crate::Meta;
 use crate::batch_publishing::BatchPublishingDef;
 #[cfg(ruststream_alloc)]
-use crate::batch_publishing::{BatchPublishingCall, BatchPublishingHandler};
+use crate::batch_publishing::{BatchPublishingCall, BatchPublishingHandler, ReplyLoss};
 use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
 #[cfg(ruststream_alloc)]
@@ -138,7 +139,7 @@ pub struct RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
         reason = "the one-task fold mounts this registration form in a later piece; the multi-thread mount reads it"
     )
 )]
-pub struct BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
+pub struct BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra, Size = ()> {
     pub(super) source: Source,
     pub(super) def: Def,
     pub(super) codec: DecodeCodec,
@@ -149,6 +150,8 @@ pub struct BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
     pub(super) workers: Workers,
     /// The size the subscription opens its batches at, from the registration's `batch(n)`.
     pub(super) batch_size: NonZeroUsize,
+    /// The size as a type: `BatchSize<N>` without `alloc`, `()` with it.
+    pub(super) _size: PhantomData<fn() -> Size>,
 }
 
 /// Renders the deferred routes by the registration they carry: they hold no built handler to
@@ -175,7 +178,7 @@ macro_rules! debug_by_metadata {
 debug_by_metadata!(
     PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
     RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
-    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra, Size>,
 );
 
 /// Implements [`RetryOpen`] for the reply-publishing routes: none of them has bound the
@@ -189,7 +192,7 @@ macro_rules! impl_retry_open {
 impl_retry_open!(
     PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
     RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
-    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra, Size>,
 );
 
 /// Implements [`RouteMetadata`] for the deferred reply-publishing routes: each carries its
@@ -207,7 +210,7 @@ macro_rules! impl_route_metadata {
 impl_route_metadata!(
     PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
     RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
-    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra, Size>,
 );
 
 /// Reads the subscription's declarations off the deferred reply-publishing routes. The one-by-one
@@ -230,7 +233,7 @@ macro_rules! impl_route_subscription {
 impl_route_subscription!(
     PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> via PublishingDef,
     RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra> via PublishingDef,
-    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> via BatchPublishingDef,
+    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra, Size> via BatchPublishingDef,
 );
 
 impl_destination_declared!(
@@ -238,8 +241,8 @@ impl_destination_declared!(
         PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
     [Source, Def, DecodeCodec, ReplySource, Extra]
         RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
-    [Source, Def, DecodeCodec, ReplySource, Extra]
-        BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    [Source, Def, DecodeCodec, ReplySource, Extra, Size]
+        BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra, Size>,
 );
 
 #[cfg(ruststream_alloc)]
@@ -483,9 +486,9 @@ where
 }
 
 #[cfg(ruststream_alloc)]
-impl<B, Source, Def, DecodeCodec, ReplySource, Extra, BatchReply, State, RetryPipeline>
+impl<B, Source, Def, DecodeCodec, ReplySource, Extra, Size, BatchReply, State, RetryPipeline>
     MountRoute<B, State, RetryPipeline>
-    for BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>
+    for BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra, Size>
 where
     B: Broker + 'static,
     // The subscription side: batches open against the connected form.
@@ -503,6 +506,7 @@ where
     Def::Context: BuildBatchContext<SourceMessage<B, Source>> + MaybeSendSync + 'static,
     DecodeCodec: MaybeSendSync + 'static,
     Extra: MaybeSendSync + 'static,
+    Size: ReplyLoss + 'static,
     // The reply side: the source pairs at startup into a batch reply wiring (plain or
     // transactional) that reads the batch's context while publishing each reply.
     ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + MaybeSend + 'static,
@@ -538,6 +542,7 @@ where
             policies,
             workers,
             batch_size,
+            ..
         } = self;
         // A batch's replies answer many deliveries at once, so the position never offers a
         // transform the right to name where one goes; what it does fix is the codec.
@@ -581,7 +586,7 @@ where
                 let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                     .await
                     .map_err(BoxError::from)?;
-                let handler = BatchPublishingHandler {
+                let handler: BatchPublishingHandler<_, _, _, PP, Size> = BatchPublishingHandler {
                     def,
                     codec,
                     publisher,
@@ -590,6 +595,7 @@ where
                     decode: policies.decode,
                     #[cfg(feature = "testing")]
                     origin,
+                    size: PhantomData,
                 };
                 Ok((subscriber, handler, delivery, retry))
             },
@@ -647,6 +653,7 @@ mod tests {
             policies: FailurePolicies::default(),
             workers: Workers::sequential(),
             batch_size: crate::nonzero!(8),
+            _size: PhantomData::<fn()>,
         };
         let rendered = format!("{batch_publishing:?}");
         assert!(rendered.contains("BatchPublishingRoute"), "{rendered}");

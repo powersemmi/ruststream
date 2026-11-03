@@ -47,7 +47,7 @@ Each part whose size the heap would decide has a fixed form.
 | Continuation | held in a room of 128 bytes |
 | Failures read by `.error` | borrowed from the subscription's fixed buffer: `async move \|failures: &Failures\| ..` |
 | `ctx.after(..)`, `ctx.after_ack(..)`, `ctx.after_settle(..)` | a delivery holds four registrations; one more returns an error, and nothing registered is dropped |
-| Batch | up to 16 messages, named at the mount with `.batch::<N>()`, of messages that deserialize themselves |
+| Batch | up to 16 messages, named at the mount with `.batch::<N>()`, of messages that deserialize themselves or that the mount's codec decodes; the outcomes are `Outcomes<HandlerOutcome, N>` |
 | Local bus | a `LocalMemoryBus` of fixed size that the board declares as a `static` |
 | State | hooks and handlers borrow it: `async \|state: &State\| ..` |
 
@@ -60,7 +60,7 @@ A capacity is a const generic or a crate constant, and each is declared at one p
 | Capacity | Where | Value |
 |---|---|---|
 | Messages, payload bytes and subscriptions of the bus | `LocalMemoryBus<MESSAGES, PAYLOAD, SUBSCRIPTIONS>` | `PAYLOAD` is 64 and `SUBSCRIPTIONS` is 8 unless named |
-| Delayed retries waiting at once | `.retry_capacity::<CAP>()` | a count above zero |
+| Delayed retries waiting at once | `.retry_capacity::<CAP>()` | a count above zero; on a batch mount at least `N`, and at most 1024 |
 | Bytes a reply is encoded into | `.encode_capacity::<N>()` | 256 unless named |
 | Workers of a subscription | `.pool::<N>()` or `.keyed::<N>()` | a count above zero |
 | Messages of a batch | `.batch::<N>()` | 1 to 16 |
@@ -74,6 +74,7 @@ The compiler holds the capacities that a mount names:
 - A batch size outside 1 to 16 is an error that names `.batch::<N>()` and the limit.
 - An `.encode_capacity::<N>()` past what the reply publisher can carry is an error that names both numbers. A publisher that keeps the payload (`Take`) is handed a buffer of 256 bytes; a publisher that only reads the bytes has no such limit.
 - A retry store, a pool or a worker count of zero does not build.
+- A batch mount whose `.retry_capacity::<CAP>()` is below its batch size `N` is an error that names both numbers: a batch that retries whole needs one record per element.
 
 A capacity that a run exceeds is a failure the handler hears of:
 
@@ -94,7 +95,8 @@ The `.error` closure borrows the failure, so it does not copy the message into t
 
 ## Batches
 
-A batch handler takes a slice of messages that deserialize themselves, and the mount names the size.
+A batch handler takes a slice, and the mount names the size.
+The slice holds messages that deserialize themselves, or messages the mount's codec decodes.
 
 ```rust reference="tests/doc_device.rs#batch"
 ```
@@ -104,6 +106,42 @@ To settle each message on its own, it returns `Outcomes<HandlerOutcome, N>`, one
 
 ```rust reference="tests/doc_device.rs#batch-each"
 ```
+
+### Retries and dead letters
+
+A batch mount takes the steps of a single-message one: `.retry_capacity::<CAP>()`, `.max_attempts(n).dead_letter(..)` and `.out_retry(..)`.
+`retry_after` and dead letters work for each element, whether the handler returns one outcome for the batch or one per message.
+The store keeps one record for each element a batch retries at once, so `CAP` is at least `N`.
+
+```rust reference="tests/doc_device.rs#batch-retry"
+```
+
+### Replies
+
+A batch handler mounted with `reply` publishes one reply for each element, in the order of the slice, and returns them as `Outcomes<Reply, N>`.
+A reply the bus refuses is lost together with the replies behind it, and the `.error` continuation receives them; there are at most `N`.
+
+```rust reference="tests/doc_device.rs#batch-reply"
+```
+
+### Continuations
+
+An outcome that follows the whole batch has one `.error`, which reads every failed copy once, after the last copy is reported.
+Its `.then` runs once when at least one element succeeded.
+The failures of a batch gather in one place for the mount, so a second batch outcome with an `.error` waits until the first has run its closure.
+With `retry_after`, the wait lasts the delay of the first batch's copies.
+Outcomes without an `.error`, one outcome per element, and copies that go out at once do not wait.
+
+An outcome for one element carries its own `.then` and `.error`.
+Each lane of the mount has one continuation slot, so the continuations of the elements run one after another, in the order of the batch.
+
+### Out slots
+
+A batch handler may take `Out` slots and publish through them as a single-message handler does.
+A handler that both replies and takes `Out` is refused, as on a single delivery.
+
+An app with a batch handler that takes `Out` beside a retry store or several other batch routes may pass the compiler's default recursion limit.
+Such an app sets `#![recursion_limit = "256"]` in its crate root; every other combination builds on the default limit.
 
 ## Diagnostics
 

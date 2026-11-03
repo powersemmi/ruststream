@@ -36,6 +36,7 @@ mod read;
 pub use forward::CloneSource;
 
 use core::fmt;
+use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 use ruststream_core::MaybeSendSync;
@@ -57,8 +58,37 @@ use super::router::{IncludeDef, InputCodec};
 pub struct Open;
 
 /// A setting already named, in the attribute or by an earlier builder call.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Fixed;
+///
+/// `Size` is the batch size of the batch slot: `BatchSize<N>` where the build has no `alloc`, so
+/// the size is a type from the mount on, and `()` everywhere else.
+#[derive(Debug)]
+pub struct Fixed<Size = ()>(PhantomData<fn() -> Size>);
+
+impl<Size> Clone for Fixed<Size> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Size> Copy for Fixed<Size> {}
+
+impl<Size> Default for Fixed<Size> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<Size> PartialEq for Fixed<Size> {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl<Size> Eq for Fixed<Size> {}
+
+impl<Size> Hash for Fixed<Size> {
+    fn hash<State: Hasher>(&self, _state: &mut State) {}
+}
 
 /// The settings state of a definition whose attribute named none of them.
 pub type AllOpen = (Open, Open, Open, Open);
@@ -543,19 +573,20 @@ pub trait CapsBatches {}
     note = "`batch(n)` is the one batching parameter the framework carries; the broker's own \
             batching options ride its subscription source"
 )]
-pub trait BatchStep: Sized {
-    /// The builder with the batch size named.
+pub trait BatchStep<Size = ()>: Sized {
+    /// The builder with the batch size named; `Size` is the type the size travels in.
     type Out;
 
     /// Fixes the size of the batches the broker delivers.
     fn apply_batch(self, size: NonZeroUsize) -> Self::Out;
 }
 
-impl<Def, Src, W, F, P, DC> BatchStep for SubscriberBuilder<Def, Src, (W, F, P, Open), DC>
+impl<Def, Src, W, F, P, DC, Size> BatchStep<Size>
+    for SubscriberBuilder<Def, Src, (W, F, P, Open), DC>
 where
     Def: CapsBatches,
 {
-    type Out = SubscriberBuilder<Def, Src, (W, F, P, Fixed), DC>;
+    type Out = SubscriberBuilder<Def, Src, (W, F, P, Fixed<Size>), DC>;
 
     fn apply_batch(self, size: NonZeroUsize) -> Self::Out {
         let (def, source, (workers, failures, _open, codec)) = self.into_parts();
@@ -578,11 +609,20 @@ where
             timeout, a consumer group) ride its subscription source"
 )]
 pub trait BatchSized {
+    /// The size as a type: `BatchSize<N>` where the build has no `alloc`, so the capacities that
+    /// follow it can name it, and `()` otherwise.
+    #[doc(hidden)]
+    type Size;
+
     /// The size each delivered batch is capped at.
     fn batch_size(&self) -> NonZeroUsize;
 }
 
-impl<Def, Src, W, F, P, DC> BatchSized for SubscriberBuilder<Def, Src, (W, F, P, Fixed), DC> {
+impl<Def, Src, W, F, P, DC, Size> BatchSized
+    for SubscriberBuilder<Def, Src, (W, F, P, Fixed<Size>), DC>
+{
+    type Size = Size;
+
     fn batch_size(&self) -> NonZeroUsize {
         // `Fixed` is reachable only through `apply_batch`, which puts the value here; the
         // typestate is the guarantee, and this names it rather than inventing a default.
@@ -759,10 +799,15 @@ pub trait SubscriberSettings<Mk = AsDeclared>: IntoDeclared<Mk> {
     /// A batch lives in storage of that capacity, so the size is a number in the type and a size
     /// past it does not compile. The rest is as the build with `alloc` has it: the broker builds
     /// the batch, and a batch body (`&[T]` and friends) mounts only after this step.
+    ///
+    /// On the embedded runner the mount then takes `retry_capacity`, `max_attempts` with
+    /// `dead_letter`, and `out_retry`, and the body returns its outcomes as `Outcomes<_, SIZE>`.
     #[cfg(not(ruststream_alloc))]
-    fn batch<const SIZE: usize>(self) -> <<Self::Decl as Declared>::Settings as BatchStep>::Out
+    fn batch<const SIZE: usize>(
+        self,
+    ) -> <<Self::Decl as Declared>::Settings as BatchStep<BatchSize<SIZE>>>::Out
     where
-        <Self::Decl as Declared>::Settings: BatchStep,
+        <Self::Decl as Declared>::Settings: BatchStep<BatchSize<SIZE>>,
         BatchSize<SIZE>: FitsBatch,
     {
         self.into_declared()
@@ -1002,6 +1047,7 @@ mod tests {
 #[cfg(not(ruststream_alloc))]
 mod fixed_tests {
     use super::{BatchSized, Declared, SubscriberBuilder, SubscriberSettings};
+    use crate::batch::BatchSize;
     use crate::forms;
     use crate::input::Decoded;
     use crate::subscriber_def::SubscriberDef;
@@ -1039,5 +1085,52 @@ mod fixed_tests {
     fn the_batch_size_is_a_number_the_mount_names_in_its_type() {
         let built = Stub.name("orders").batch::<4>();
         assert_eq!(BatchSized::batch_size(&built), nonzero!(4));
+    }
+
+    /// Compiles only when the size the mount named is the builder's `Size`.
+    fn named_size<Built: BatchSized<Size = BatchSize<4>>>(_built: &Built) {}
+
+    #[test]
+    fn the_batch_size_reaches_the_builders_type() {
+        named_size(&Stub.name("orders").batch::<4>());
+    }
+}
+
+#[cfg(test)]
+mod fixed_marker_tests {
+    use core::hash::{Hash, Hasher};
+
+    use super::Fixed;
+
+    /// A size that is none of `Clone`, `Eq`, `Hash` or `Default`: the marker must not ask for
+    /// what its size does not offer.
+    struct Bare;
+
+    /// A hasher that records whether anything was fed to it.
+    #[derive(Default)]
+    struct Fed(bool);
+
+    impl Hasher for Fed {
+        fn finish(&self) -> u64 {
+            0
+        }
+
+        fn write(&mut self, _bytes: &[u8]) {
+            self.0 = true;
+        }
+    }
+
+    #[test]
+    fn a_marker_of_any_size_is_copy_default_equal_and_hashes_to_nothing() {
+        let marker = Fixed::<Bare>::default();
+        let copy = marker;
+        #[allow(clippy::clone_on_copy)] // the impl under test is `Clone`, not the `Copy` one
+        let cloned = marker.clone();
+        let mut hasher = Fed::default();
+        marker.hash(&mut hasher);
+
+        assert!(marker == copy);
+        assert!(marker == cloned);
+        assert!(!hasher.0, "a marker carries no state to hash");
     }
 }

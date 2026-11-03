@@ -81,6 +81,9 @@ embassy-sync = "0.8"
 embassy-time = "0.5.1"
 # Fixed-capacity collections: the embedded runner's headers, frames and pending stores.
 heapless = { version = "0.9", default-features = false }
+# Type-level numbers: the embedded runner compares a store's capacity with a batch's size at compile
+# time, with a message that names both.
+typenum = { version = "1.20", features = ["const-generics"] }
 # The room a continuation lives in on a device without a heap: a trait object stored in place,
 # whose capture size is checked when the code is built. No allocation, `no_std`.
 dyn-utils = { version = "0.1.1", default-features = false }
@@ -954,10 +957,35 @@ name = "embedded_no_alloc"
 path = "tests/embedded_no_alloc.rs"
 required-features = ["embassy", "memory", "macros", "testing"]
 
+# Batch routes written with the attributes, built without a `recursion_limit`, on the build
+# without `alloc`.
+[[test]]
+name = "embedded_no_alloc_batch"
+path = "tests/embedded_no_alloc_batch.rs"
+required-features = ["embassy", "memory", "macros", "testing", "postcard"]
+
+# A batch handler that takes values the mount's codec decodes, on the build without `alloc`.
+[[test]]
+name = "embedded_no_alloc_batch_input"
+path = "tests/embedded_no_alloc_batch_input.rs"
+required-features = ["embassy", "memory", "macros", "testing", "postcard"]
+
+# The replies of a batch handler, on the build without `alloc`.
+[[test]]
+name = "embedded_no_alloc_batch_reply"
+path = "tests/embedded_no_alloc_batch_reply.rs"
+required-features = ["embassy", "memory", "macros", "testing", "postcard"]
+
 # The `Out` slot of a handler of one message, on the build without `alloc`.
 [[test]]
 name = "embedded_no_alloc_out"
 path = "tests/embedded_no_alloc_out.rs"
+required-features = ["embassy", "memory", "macros", "testing", "postcard"]
+
+# The `Out` slots of a batch handler, on the build without `alloc`.
+[[test]]
+name = "embedded_no_alloc_batch_out"
+path = "tests/embedded_no_alloc_batch_out.rs"
 required-features = ["embassy", "memory", "macros", "testing", "postcard"]
 
 # A reply a naming transform sent past the fixed name room, on the build without `alloc`.
@@ -1011,7 +1039,7 @@ required-features = ["tokio", "memory", "macros", "testing", "defmt", "tracing"]
 [[test]]
 name = "ui_no_alloc"
 path = "tests/ui_no_alloc.rs"
-required-features = ["embassy", "memory", "macros", "testing"]
+required-features = ["embassy", "memory", "macros", "testing", "postcard"]
 
 [[test]]
 name = "local_family"
@@ -1285,6 +1313,9 @@ required-features = ["memory", "json", "macros", "tokio"]
 
 [dev-dependencies]
 futures = "0.3"
+# The thread-mode executor of the `std` platform, which the app attribute's task runs on in the
+# embedded batch gate. It does not turn `alloc` on.
+embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
 thiserror = "2"
 tracing = "0.1.29"
 serde = { version = "1", features = ["derive"] }
