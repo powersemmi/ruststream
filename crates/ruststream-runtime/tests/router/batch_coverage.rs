@@ -1,0 +1,231 @@
+//! Router registration kinds that the other router suites do not reach: the `handle` form (a
+//! subscriber created before connect), metadata collection over every route kind, and the startup
+//! failures of the two deferred publishing routes (a reply publisher that refuses to pair, a
+//! source that refuses to open).
+
+use crate::common;
+
+use std::future::ready;
+
+use common::{Order, Receipt, Wire};
+use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemoryMessage, MemoryPublisher, MemorySubscriber};
+use ruststream::runtime::{
+    HandlerMetadata, RouterHandlers, RustStreamError, subscriber as subscriber_def,
+};
+use ruststream::testing::TestApp;
+use ruststream::{
+    AddressedCopies, PairError, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource,
+};
+
+#[subscriber("brc-in", reply("brc-out"))]
+async fn brc_relay(o: &Order) -> Receipt {
+    Receipt { id: o.id }
+}
+
+#[subscriber("brc-batch-in", reply("brc-out"))]
+async fn brc_batch_relay(orders: &[Order]) -> Vec<Receipt> {
+    orders.iter().map(|o| Receipt { id: o.id }).collect()
+}
+
+/// The `handle` form attaches a handler to a subscriber created before the broker connects; the
+/// registration still mounts and dispatches once the app runs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_route_dispatches_through_a_prebuilt_subscriber() {
+    let broker = MemoryBroker::new();
+    // The subscriber is built here, before the app takes the broker: that pre-connect handle is
+    // exactly what this route kind mounts.
+    let subscriber = broker.subscribe("brc-handle");
+
+    let router = Router::<MemoryBroker>::new().handle(
+        subscriber,
+        |msg: &MemoryMessage, _ctx: &mut Context| {
+            let _ = msg.payload();
+            async move { HandlerOutcome::ack() }
+        },
+        HandlerMetadata::raw("brc-handle"),
+    );
+
+    let app = RustStream::new(AppInfo::new("brc", "0.1.0"))
+        .with_broker(broker, |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Wire::of(b"ping"))
+        .to("brc-handle")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("brc-handle")
+        .assert_called_once()
+        .with_raw(b"ping")
+        .settled(HandlerOutcome::ack());
+}
+
+/// A batch body carrying no behaviour: the route kind is what the metadata sweep below reads, not
+/// what the body does with the batch.
+struct MetaBatch;
+
+impl Handle<[Order]> for MetaBatch {
+    fn handle(
+        &self,
+        _orders: &[Order],
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
+        ready(Ok(()))
+    }
+}
+
+/// Every route kind contributes its metadata, in registration order, through both the inherent
+/// `handlers()` and the [`RouterHandlers`] surface a nested router is collected through.
+#[test]
+fn every_route_kind_reports_its_metadata_in_registration_order() {
+    let broker = MemoryBroker::new();
+
+    let router = Router::<MemoryBroker>::new()
+        .handle(
+            broker.subscribe("brc-meta-handle"),
+            |_msg: &MemoryMessage, _ctx: &mut Context| ready(HandlerOutcome::ack()),
+            HandlerMetadata::raw("brc-meta-handle"),
+        )
+        .include(
+            subscriber_def("brc-meta-batch", MetaBatch)
+                .batch(nonzero!(64))
+                .build(),
+        )
+        .include(brc_relay::<()>)
+        .out(Reply, Publish)
+        .build()
+        .include(brc_batch_relay::<()>.batch(nonzero!(64)))
+        .out(Reply, Publish)
+        .build();
+
+    let names: Vec<_> = router.handlers().into_iter().map(|m| m.name).collect();
+    assert_eq!(
+        names,
+        [
+            "brc-meta-handle",
+            "brc-meta-batch",
+            "brc-in",
+            "brc-batch-in"
+        ]
+    );
+
+    let mut nested = Vec::new();
+    RouterHandlers::collect_handlers(&router, &mut nested);
+    let nested: Vec<_> = nested.into_iter().map(|m| m.name).collect();
+    assert_eq!(nested, names);
+}
+
+/// A publish policy the broker refuses to pair. Router-mounted publishing routes pair their reply
+/// publisher at startup, so this is what a broker rejecting a producer looks like to the runtime.
+struct RefusedPublish;
+
+impl PublishPolicy<ConnectedMemoryBroker> for RefusedPublish {
+    type Live = MemoryPublisher;
+
+    fn pair(
+        self,
+        _connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<MemoryPublisher, PairError>> {
+        ready(Err(PairError::from_boxed(Box::from(
+            "the reply publisher was refused",
+        ))))
+    }
+}
+
+/// A source whose subscription never opens.
+#[derive(Clone)]
+struct ClosedSource;
+
+impl SubscriptionSource<ConnectedMemoryBroker> for ClosedSource {
+    type Subscriber = MemorySubscriber;
+    type Copies = AddressedCopies;
+
+    fn name(&self) -> &'static str {
+        "brc-closed"
+    }
+
+    fn subscribe(
+        self,
+        _connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<MemorySubscriber, MemoryError>> {
+        ready(Err(MemoryError::ShutDown))
+    }
+}
+
+// The descriptor addresses its own retry copies, and the subject it subscribes by is the address.
+impl RedeliveryAddressed<ConnectedMemoryBroker> for ClosedSource {
+    fn redelivery_address(
+        &self,
+        _connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> {
+        ready(Ok(RedeliveryAddress::new("brc-closed")))
+    }
+}
+
+/// The definition carries the source that never opens, so the failure is the source's own.
+#[subscriber(ClosedSource {}, reply("brc-out"))]
+async fn brc_closed_relay(order: &Order) -> Receipt {
+    Receipt { id: order.id }
+}
+
+fn assert_subscribe_error(result: Result<impl Sized, RustStreamError>, expected: &str) {
+    match result {
+        Ok(_) => panic!("startup must fail"),
+        Err(err) => {
+            assert!(
+                matches!(err, RustStreamError::Subscribe(_)),
+                "expected a subscription failure, got {err:?}"
+            );
+            let rendered = format!("{err}");
+            assert!(rendered.contains(expected), "{rendered}");
+        }
+    }
+}
+
+/// A reply publisher that cannot pair fails startup instead of dispatching without a publisher.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn publishing_route_reports_a_refused_reply_publisher() {
+    let router = Router::<MemoryBroker>::new()
+        .include(brc_relay::<()>)
+        .out(Reply, RefusedPublish)
+        .build();
+
+    let app = RustStream::new(AppInfo::new("brc-pair", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+
+    assert_subscribe_error(app.start().await, "the reply publisher was refused");
+}
+
+/// The same on the batch publishing route: pairing runs before the first batch, so a refusal is a
+/// startup failure, not a per-batch one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_publishing_route_reports_a_refused_reply_publisher() {
+    let router = Router::<MemoryBroker>::new()
+        .include(brc_batch_relay.batch(nonzero!(64)))
+        .out(Reply, RefusedPublish)
+        .build();
+
+    let app = RustStream::new(AppInfo::new("brc-batch-pair", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+
+    assert_subscribe_error(app.start().await, "the reply publisher was refused");
+}
+
+/// A source that refuses to open fails startup with the broker's own error, after the reply
+/// publisher has already paired.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn publishing_route_reports_a_source_that_never_opens() {
+    let router = Router::<MemoryBroker>::new()
+        .include(brc_closed_relay)
+        .out(Reply, Publish)
+        .build();
+
+    let app = RustStream::new(AppInfo::new("brc-source", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+
+    assert_subscribe_error(app.start().await, "the memory broker is shut down");
+}

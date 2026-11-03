@@ -1,5 +1,7 @@
 [package]
 name = "ruststream-testing"
+# Every file under `tests/` is a module of one test binary: one link instead of one per file.
+autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -57,7 +59,7 @@ compio = [
 ]
 # The value-encoding entry points, which encode with the default codec these features select.
 json = ["ruststream-runtime/json"]
-cbor = ["ruststream-runtime/cbor"]
+cbor = ["ruststream-runtime/cbor", "ruststream/cbor"]
 msgpack = ["ruststream-runtime/msgpack"]
 
 [dependencies]
@@ -105,204 +107,11 @@ embassy-futures.workspace = true
 # The runtime a compio test runs its `TestApp` on.
 compio.workspace = true
 futures-core.workspace = true
+schemars = "1"
+thiserror = "2"
 
 [lints]
 workspace = true
-
-# A device service's app driven on the host through the embedded `TestApp`.
-[[test]]
-name = "embedded"
-path = "tests/embedded.rs"
-required-features = ["embassy", "json"]
-
-# A delayed retry of a device service, kept in its mount's store, through the embedded `TestApp`.
-[[test]]
-name = "embedded_retry"
-path = "tests/embedded_retry.rs"
-required-features = ["embassy", "json"]
-
-# A delayed retry of a batch handler of a device service, kept in its mount's store, through the
-# embedded `TestApp`.
-[[test]]
-name = "embedded_batch_retry"
-path = "tests/embedded_batch_retry.rs"
-required-features = ["embassy", "json"]
-
-# The reply buffer a batch handler's mount names while it keeps no room for retries, through the
-# embedded `TestApp`.
-[[test]]
-name = "embedded_batch_encode"
-path = "tests/embedded_batch_encode.rs"
-required-features = ["embassy", "json"]
-
-# The destination a batch handler's mount names for its retry copies, through the embedded
-# `TestApp`.
-[[test]]
-name = "embedded_batch_out_retry"
-path = "tests/embedded_batch_out_retry.rs"
-required-features = ["embassy", "json"]
-
-# A cap on delayed retries of a device service: the runtime's copies spend it, then the delivery
-# goes to the dead-letter destination, through the embedded `TestApp`.
-[[test]]
-name = "embedded_dead_letter"
-path = "tests/embedded_dead_letter.rs"
-required-features = ["embassy", "json"]
-
-# A cap on delayed retries of a batch handler of a device service: the element that reaches it goes
-# to the dead-letter destination, through the embedded `TestApp`.
-[[test]]
-name = "embedded_batch_dead_letter"
-path = "tests/embedded_batch_dead_letter.rs"
-required-features = ["embassy", "json"]
-
-# Continuations of a batch handler of a device service: one for a whole batch, one for each
-# element, through the embedded `TestApp`.
-[[test]]
-name = "embedded_batch_continuation"
-path = "tests/embedded_batch_continuation.rs"
-required-features = ["embassy", "json"]
-
-# The replies of a batch handler of a device service: one per element, and the `.error` of the ones
-# the bus refuses, through the embedded `TestApp`.
-[[test]]
-name = "embedded_batch_reply"
-path = "tests/embedded_batch_reply.rs"
-required-features = ["embassy", "json"]
-
-# A batch handler of a device service that publishes through `Out` slots, through the embedded
-# `TestApp`.
-[[test]]
-name = "embedded_batch_out"
-path = "tests/embedded_batch_out.rs"
-required-features = ["embassy", "json"]
-
-# The `.error` of a batch handler's uniform outcome on a device service, through the embedded
-# `TestApp`.
-[[test]]
-name = "embedded_batch_error"
-path = "tests/embedded_batch_error.rs"
-required-features = ["embassy", "json"]
-
-# A batch handler of a device service that takes values the mount's codec decodes, through the
-# embedded `TestApp`.
-[[test]]
-name = "embedded_batch_input"
-path = "tests/embedded_batch_input.rs"
-required-features = ["embassy", "json"]
-
-# A device service relaying to a second bus through a token minted before the scopes.
-[[test]]
-name = "embedded_bindable"
-path = "tests/embedded_bindable.rs"
-required-features = ["embassy", "json"]
-
-# The input forms a device handler takes: a decoded value, a message pair and a message set.
-[[test]]
-name = "embedded_input"
-path = "tests/embedded_input.rs"
-required-features = ["embassy", "json"]
-
-# The same device service declared without the macros.
-[[test]]
-name = "embedded_manual"
-path = "tests/embedded_manual.rs"
-required-features = ["embassy", "json"]
-
-# The continuations a device service's deliveries leave behind, through the embedded `TestApp`.
-[[test]]
-name = "embedded_continuation"
-path = "tests/embedded_continuation.rs"
-required-features = ["embassy", "json"]
-
-# A continuation holding what is not `Send`, on the embedded runtime alone.
-[[test]]
-name = "embedded_continuation_local"
-path = "tests/embedded_continuation_local.rs"
-required-features = ["embassy", "json"]
-
-# An app that never settles, reported by the embedded `TestApp`.
-[[test]]
-name = "embedded_quiescence"
-path = "tests/embedded_quiescence.rs"
-required-features = ["embassy", "json"]
-
-# One service whose handlers mount on a tokio app and on an embedded app, in one build.
-[[test]]
-name = "both_runtimes"
-path = "tests/both_runtimes.rs"
-required-features = ["tokio", "embassy", "json"]
-
-# What a handler's `.error` continuation is told when a copy the runtime publishes is lost: a
-# store with no free record, a bus that refuses the copy, through the embedded `TestApp`.
-[[test]]
-name = "embedded_error"
-path = "tests/embedded_error.rs"
-required-features = ["embassy", "json"]
-
-# An `.error` continuation holding what is not `Send`, on the embedded runtime alone.
-[[test]]
-name = "embedded_error_local"
-path = "tests/embedded_error_local.rs"
-required-features = ["embassy", "json"]
-
-[[test]]
-name = "embedded_error_out"
-path = "tests/embedded_error_out.rs"
-required-features = ["embassy", "json"]
-
-[[test]]
-name = "embedded_out_continuation"
-path = "tests/embedded_out_continuation.rs"
-required-features = ["embassy", "json"]
-
-[[test]]
-name = "embedded_error_reply"
-path = "tests/embedded_error_reply.rs"
-required-features = ["embassy", "json"]
-
-[[test]]
-name = "embedded_spill"
-path = "tests/embedded_spill.rs"
-required-features = ["embassy", "json"]
-
-# An idle subscription whose subscriber hands out a readiness probe is not polled on a neighbour's
-# wakes, through the embedded `TestApp`.
-[[test]]
-name = "embedded_readiness"
-path = "tests/embedded_readiness.rs"
-required-features = ["embassy", "json"]
-
-# The room a device service's mount names for encoding its replies, through the embedded `TestApp`.
-[[test]]
-name = "embedded_encode_capacity"
-path = "tests/embedded_encode_capacity.rs"
-required-features = ["embassy", "json"]
-
-# A retry declaration on a subscription whose broker moves a spent delivery itself, through the
-# embedded `TestApp`.
-[[test]]
-name = "embedded_retry_moved"
-path = "tests/embedded_retry_moved.rs"
-required-features = ["embassy", "json"]
-
-# A subscription that refuses its retry set-up fails the embedded start.
-[[test]]
-name = "embedded_retry_startup"
-path = "tests/embedded_retry_startup.rs"
-required-features = ["embassy", "json"]
-
-# The tokio `TestApp` reports a reaction that never settles, with the deliveries it counted.
-[[test]]
-name = "tokio_quiescence"
-path = "tests/tokio_quiescence.rs"
-required-features = ["tokio", "json"]
-
-# The tokio `TestApp` ends a wait on a task that keeps itself runnable, on the paused clock.
-[[test]]
-name = "tokio_busy"
-path = "tests/tokio_busy.rs"
-required-features = ["tokio", "json"]
 
 # A compio service's handler runs and acknowledges, through the compio `TestApp`.
 [[test]]
@@ -366,8 +175,6 @@ name = "compio_capacity"
 path = "tests/compio_capacity.rs"
 required-features = ["compio", "json"]
 
-
-
 # The compio runner reports through the logger the app selects, through the compio `TestApp`.
 [[test]]
 name = "compio_logger"
@@ -379,3 +186,7 @@ required-features = ["compio", "json"]
 name = "compio_hooks"
 path = "tests/compio_hooks.rs"
 required-features = ["compio", "json"]
+
+[[test]]
+name = "suite"
+path = "tests/main.rs"

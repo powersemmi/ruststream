@@ -1,5 +1,7 @@
 [package]
 name = "ruststream-observability"
+# Every file under `tests/` is a module of one test binary: one link instead of one per file.
+autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -58,6 +60,19 @@ opentelemetry_sdk = { version = "0.33", default-features = false, features = ["t
 # The doc examples are a service's code, so they import the facade; a path dependency without a
 # version is dropped on publish.
 ruststream = { path = "../ruststream", features = ["macros", "memory", "json", "testing", "metrics", "logging", "otel"] }
+allocation-counter = "0.8.1"
+schemars = "1"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "suite"
+path = "tests/main.rs"
+
+# The OpenTelemetry metrics own their process: `init()` installs the global tracing subscriber
+# and providers, and the batch-size histogram binds to the global meter at the first batch the
+# process dispatches, so a test running beside them would decide what they observe.
+[[test]]
+name = "otel_metrics"
+path = "tests/otel_metrics.rs"

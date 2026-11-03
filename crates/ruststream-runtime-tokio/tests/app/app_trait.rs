@@ -1,0 +1,63 @@
+//! The sealed `App` trait: a builder returns `impl App`, and the service runs and exposes its
+//! AsyncAPI metadata through the trait without naming the concrete `RustStream<L, St, PP>` type.
+
+use std::sync::Arc;
+
+use ruststream::ServerSpec;
+use ruststream::asyncapi;
+use ruststream::codec::JsonCodec;
+use ruststream::memory::MemoryBroker;
+use ruststream::runtime::{App, AppInfo, RustStream};
+use ruststream::subscriber;
+use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
+use tokio::task::{LocalSet, spawn_local};
+
+#[derive(Serialize, Deserialize)]
+struct Order {
+    id: u64,
+}
+
+#[subscriber("orders")]
+async fn handle(_order: &Order) {}
+
+// The concrete return type would be `RustStream<Identity, (), PublishIdentity>` with a server and
+// a handler baked in; `impl App` hides it.
+fn build() -> impl App {
+    RustStream::new(AppInfo::new("svc", "0.2.0").description("demo"))
+        .server("mem", ServerSpec::new("mem://local", "memory"))
+        .with_broker_codec(MemoryBroker::new(), JsonCodec, |b| b.include(handle))
+}
+
+#[test]
+fn metadata_is_readable_through_the_trait() {
+    let app = build();
+    assert_eq!(app.info().title, "svc");
+    assert_eq!(app.info().version, "0.2.0");
+    assert_eq!(app.info().description.as_deref(), Some("demo"));
+    assert!(app.servers().contains_key("mem"));
+    assert_eq!(app.handlers().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_impl_app_runs_and_shuts_down_through_the_trait() {
+    // The run is not `Send`, so it is driven on a local set of the test.
+    LocalSet::new()
+        .run_until(async move {
+            let shutdown = Arc::new(Notify::new());
+            let signal = Arc::clone(&shutdown);
+            // `run_until` is reached only through `App` here; spawning it proves the future is `Send`.
+            let run = spawn_local(build().run_until(async move { signal.notified().await }));
+            shutdown.notify_one();
+            run.await.expect("join").expect("run");
+        })
+        .await;
+}
+
+#[test]
+fn build_spec_reads_an_impl_app() {
+    let spec = asyncapi::build_spec(&build());
+    assert_eq!(spec.info.title, "svc");
+    assert!(spec.servers.contains_key("mem"));
+    assert!(spec.channels.contains_key("orders"));
+}

@@ -1,5 +1,7 @@
 [package]
 name = "ruststream-macros"
+# Every file under `tests/` is a module of one test binary: one link instead of one per file.
+autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -26,5 +28,15 @@ quote = "1"
 # `visit-mut` rewrites elided lifetimes in input types (the `Deserialized` view spellings).
 syn = { version = "3", features = ["full", "visit-mut"] }
 
+[dev-dependencies]
+# The expansions are tested the way a service meets them: through the facade.
+ruststream = { path = "../ruststream", features = ["macros", "memory", "json", "testing"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
+
 [lints]
 workspace = true
+
+[[test]]
+name = "suite"
+path = "tests/main.rs"

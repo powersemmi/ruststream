@@ -1,5 +1,7 @@
 [package]
 name = "ruststream-runtime-tokio"
+# Every file under `tests/` is a module of one test binary: one link instead of one per file.
+autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -46,7 +48,11 @@ schemars = "1"
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std", "registry"] }
 # The doc examples are a service's code, so they import the facade; the unit tests reach the
 # in-memory broker through it. A path dependency without a version is dropped on publish.
-ruststream = { path = "../ruststream", features = ["macros", "memory", "json", "asyncapi", "testing", "conformance", "poll-diagnostics"] }
+ruststream = { path = "../ruststream", features = ["macros", "memory", "json", "asyncapi", "testing", "conformance", "poll-diagnostics", "cbor", "logging"] }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "suite"
+path = "tests/main.rs"

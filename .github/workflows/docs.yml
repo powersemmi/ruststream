@@ -14,7 +14,6 @@ on:
       - crates/ruststream/examples/**
       # the testing and conformance guides embed their snippets from these test files
       - crates/ruststream/tests/doc_*.rs
-      - crates/ruststream/tests/conformance_self.rs
       - scripts/lint_doc_fences.py
       - scripts/check_doc_i18n.py
       - scripts/check_doc_parity.py

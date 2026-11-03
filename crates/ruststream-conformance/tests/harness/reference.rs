@@ -1,0 +1,130 @@
+//! Runs the conformance harness against the reference `MemoryBroker` impl.
+//!
+//! If this test fails, either `MemoryBroker` regressed or the harness expectations are
+//! inconsistent.
+
+use ruststream::{
+    conformance::{capabilities, harness, lifecycle},
+    memory::{MemoryBroker, MemorySource, Retaining, Retention},
+    nonzero,
+    testing::Backlog,
+};
+
+/// The suites that read a broker's publish log back - the routing contract's log check and the
+/// seeking capability - need a broker that keeps one.
+fn replaying() -> MemoryBroker<Retaining> {
+    MemoryBroker::retaining(Retention::Messages(nonzero!(64)))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_conformance_suite() {
+    harness::run_suite(replaying).await;
+}
+
+// `make_source` / `make_publisher` must stay closures: their bounds are higher-ranked
+// (`Fn(&str) -> _` / `Fn(&B) -> _`), so a bare method path - which binds one concrete lifetime -
+// would not type-check.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_lifecycle() {
+    harness::lifecycle(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+// Every broker the factory builds is a clone of one bus, so the second connection reaches what the
+// first one published, the way two connections reach one server.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_flushes_at_shutdown() {
+    let bus = MemoryBroker::new();
+    lifecycle::shutdown_flushes(
+        move || bus.clone(),
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+        Backlog::Missed,
+    )
+    .await;
+}
+
+// The connected form is a cheap, cloneable handle on the bus.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_clones_close_with_the_original() {
+    lifecycle::shared_handle_closes(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_request_reply_suite() {
+    capabilities::request_reply(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.requester(),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_batches_suite() {
+    capabilities::batches(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_transactions_suite() {
+    capabilities::transactions(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_owned_transactions_suite() {
+    capabilities::owned_transactions(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_passes_seeking_suite() {
+    capabilities::seeking(
+        replaying,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+/// The in-memory broker has no network address and no binding, so nothing it describes can leak a
+/// password. A broker configured from a URL runs this with the password it was configured with.
+#[test]
+fn memory_broker_describes_without_credentials() {
+    harness::describes_without_credentials(
+        &MemoryBroker::new(),
+        &MemorySource::new("orders"),
+        "hunter2",
+    );
+}

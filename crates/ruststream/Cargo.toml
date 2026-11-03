@@ -942,14 +942,6 @@ name = "examples"
 path = "tests/examples.rs"
 required-features = ["tokio"]
 
-# The OpenTelemetry metrics own their process: `init()` installs the global tracing subscriber
-# and providers, and the batch-size histogram binds to the global meter at the first batch the
-# process dispatches, so a test running beside them would decide what they observe.
-[[test]]
-name = "otel_metrics"
-path = "tests/otel_metrics.rs"
-required-features = ["tokio"]
-
 [package]
 name = "ruststream"
 version.workspace = true
