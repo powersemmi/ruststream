@@ -64,13 +64,13 @@ The state of a service in this build holds no heap type either: a `static` count
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="crates/ruststream-testing/tests/embedded/app.rs#out"
+```rust reference="crates/testing/tests/embedded/app.rs#out"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="crates/ruststream-testing/tests/embedded/manual.rs#out"
+```rust reference="crates/testing/tests/embedded/manual.rs#out"
 ```
 
 </TabItem>
@@ -81,13 +81,13 @@ The state of a service in this build holds no heap type either: a `static` count
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="crates/ruststream-testing/tests/embedded/app.rs#on-publish"
+```rust reference="crates/testing/tests/embedded/app.rs#on-publish"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="crates/ruststream-testing/tests/embedded/manual.rs#on-publish"
+```rust reference="crates/testing/tests/embedded/manual.rs#on-publish"
 ```
 
 </TabItem>
@@ -98,13 +98,13 @@ The state of a service in this build holds no heap type either: a `static` count
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="crates/ruststream-testing/tests/embedded/app.rs#with-state"
+```rust reference="crates/testing/tests/embedded/app.rs#with-state"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="crates/ruststream-testing/tests/embedded/manual.rs#with-state"
+```rust reference="crates/testing/tests/embedded/manual.rs#with-state"
 ```
 
 </TabItem>

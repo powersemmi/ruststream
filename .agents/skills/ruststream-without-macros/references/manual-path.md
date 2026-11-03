@@ -343,7 +343,7 @@ A `Router` adds two steps of its own, each applying to the registration just inc
 clauses, and `.layer(..)` wraps that one registration outside its decode step.
 `Router::with_codec` sets the decode codec of everything included after it.
 
-Read the expansion in `crates/ruststream-macros/src/expand/unified.rs` when you need the exact
+Read the expansion in `crates/macros/src/expand/unified.rs` when you need the exact
 mapping from a handler shape to the axes and the form marker: it is the only place the whole table
 is written down.
 

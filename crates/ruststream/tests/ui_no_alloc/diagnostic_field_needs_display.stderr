@@ -13,7 +13,7 @@ help: the trait `std::fmt::Display` is not implemented for `Opaque`
 3 | struct Opaque;
   | ^^^^^^^^^^^^^
 note: required by a bound in `ruststream_core::diag::shown`
- --> $WORKSPACE/crates/ruststream-core/src/diag.rs
+ --> $WORKSPACE/crates/core/src/diag.rs
   |
   | pub const fn shown<'value, Value: Display + ?Sized>(
   |                                   ^^^^^^^ required by this bound in `shown`

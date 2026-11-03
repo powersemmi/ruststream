@@ -1,0 +1,41 @@
+[package]
+name = "ruststream-firmware-noalloc"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+repository = "https://github.com/powersemmi/ruststream"
+description = "A firmware binary for a Cortex-M that mounts a subscriber on the embassy runner and defines no global allocator: it links only while the facade's no-alloc build brings in no heap dependency."
+publish = false
+
+# A workspace of its own: a member of the main workspace would unify `alloc` on through its
+# neighbours, and its linker script and target would reach every workspace build.
+[workspace]
+
+[features]
+# The slice codecs the embedded runtime page lists; with neither, the handler reads its payload
+# as bytes and no codec is named.
+postcard = ["ruststream/postcard", "dep:serde"]
+json-core = ["ruststream/json-core", "dep:serde"]
+# The app selects `DefmtLogger`; `defmt-rtt` is the global logger that carries the lines to a probe.
+defmt = ["ruststream/defmt", "dep:defmt-rtt"]
+# defmt is compiled into the build and the app selects no logger.
+defmt-unselected = ["ruststream/defmt"]
+
+[dependencies]
+ruststream = { path = "../../crates/ruststream", default-features = false, features = ["embassy", "memory", "macros"] }
+serde = { version = "1", default-features = false, features = ["derive"], optional = true }
+# The executor the app's task runs on: a Cortex-M thread-mode executor, `platform-cortex-m` picks the
+# architecture and the `executor-thread` feature gives `Executor::run`.
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+embassy-time = "0.5.1"
+# The tick source `embassy-time` links against, over the core's SysTick: a firmware names its
+# board's timer here, and this one runs on every Cortex-M.
+embassy-time-driver = "0.2.2"
+systick-timer = { version = "0.2.3", features = ["embassy-time-driver"] }
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
+panic-halt = "1"
+# The global logger of a defmt firmware: RTT, which a probe reads. The critical section its
+# buffer locks through is the one `cortex-m` provides above, for a single core.
+defmt-rtt = { version = "1", optional = true }

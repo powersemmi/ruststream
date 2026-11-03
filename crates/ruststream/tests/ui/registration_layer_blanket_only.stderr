@@ -21,7 +21,7 @@ help: the trait `Layer<Typed<MemoryMessage, ruststream_runtime::input::Decoded<O
              Stack<Inner, Outer>
              TracingLayer
 note: required by a bound in `Router::<B, (ruststream_runtime::router::routes::SubscribeRoute<S, H, Cx>, Routes), RouteCodec, RouteLayers, RoutePipe>::layer`
-  --> $WORKSPACE/crates/ruststream-runtime/src/router/builder.rs
+  --> $WORKSPACE/crates/runtime/src/router/builder.rs
    |
    |     pub fn layer<N>(
    |            ----- required by a bound in this associated function

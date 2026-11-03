@@ -29,35 +29,35 @@ A publish through a broker handle settles on its own.
 
 A service with one handler, and the test that publishes to it and reads what it received:
 
-```rust reference="crates/ruststream-testing/tests/compio_handler.rs#service"
+```rust reference="crates/testing/tests/compio_handler.rs#service"
 ```
 
-```rust reference="crates/ruststream-testing/tests/compio_handler.rs#test"
+```rust reference="crates/testing/tests/compio_handler.rs#test"
 ```
 
 ### Replies
 
 A reply is recorded on its destination, and `published::<M>(name)` reads it:
 
-```rust reference="crates/ruststream-testing/tests/compio_reply.rs#service"
+```rust reference="crates/testing/tests/compio_reply.rs#service"
 ```
 
-```rust reference="crates/ruststream-testing/tests/compio_reply.rs#published"
+```rust reference="crates/testing/tests/compio_reply.rs#published"
 ```
 
 ### Out slots
 
 `tb.out::<M>()` opens the record of the `Out` slot marked `M`, as the [`out`](./records/out.md) page describes:
 
-```rust reference="crates/ruststream-testing/tests/compio_reply.rs#out"
+```rust reference="crates/testing/tests/compio_reply.rs#out"
 ```
 
 ### A retry on the virtual clock
 
 A delayed retry is redelivered once `advance` has moved the clock past its delay:
 
-```rust reference="crates/ruststream-testing/tests/compio_retry.rs#service"
+```rust reference="crates/testing/tests/compio_retry.rs#service"
 ```
 
-```rust reference="crates/ruststream-testing/tests/compio_retry.rs#advance"
+```rust reference="crates/testing/tests/compio_retry.rs#advance"
 ```

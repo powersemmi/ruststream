@@ -7,7 +7,7 @@ error[E0277]: no codec is available to decode this subscriber's input
    = help: the trait `ruststream::runtime::DefinitionInputCodec<ruststream_runtime::input::Decoded<Order>, ()>` is not implemented for `()`
    = note: enable a codec feature on `ruststream` (`json`, `cbor` or `msgpack`), name one for the scope (`with_broker_codec(broker, JsonCodec, |b| ..)`) or the registration (`.codec(JsonCodec)`), or give the input type its own decoding with `#[derive(Deserialized)]` so no codec is needed
 help: the trait `ruststream::runtime::DefinitionInputCodec<Input, Surface>` is conditionally implemented for `()`
-  --> $WORKSPACE/crates/ruststream-runtime/src/settings.rs
+  --> $WORKSPACE/crates/runtime/src/settings.rs
    |
    | impl<Input, Surface: InputCodec<Input>> DefinitionInputCodec<Input, Surface> for () {
    | ^^^^^^^^^^^^^^^^^^^^^-----------------^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -5,7 +5,7 @@
   "folders": [
     "docs",
     "src",
-    "crates/ruststream-macros",
+    "crates/macros",
     ".agents/skills",
     "website/static"
   ],

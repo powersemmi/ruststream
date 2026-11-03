@@ -54,6 +54,7 @@ jobs:
           filters: |
             rust:
               - 'crates/**'
+              - 'checks/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -214,7 +215,7 @@ jobs:
             --manifest-path crates/ruststream/Cargo.toml --config external-types.toml
           cargo +nightly-2026-03-20 check-external-types --no-default-features \
             --features "$EMBASSY_FEATURES" --manifest-path crates/ruststream/Cargo.toml --config external-types.toml
-          for manifest in crates/ruststream-{core,runtime,runtime-tokio,runtime-compio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
+          for manifest in crates/{core,runtime,runtime-tokio,runtime-compio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
             cargo +nightly-2026-03-20 check-external-types --all-features \
               --manifest-path "$manifest" --config external-types.toml
           done
@@ -320,7 +321,7 @@ jobs:
           # global allocator: it fails to link while any crate of the build needs a heap.
           for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do
             for features in "" postcard json-core; do
-              cargo build --locked --manifest-path crates/ruststream-firmware-noalloc/Cargo.toml \
+              cargo build --locked --manifest-path checks/firmware-noalloc/Cargo.toml \
                 --target $target ${features:+--features $features}
             done
           done
@@ -328,7 +329,7 @@ jobs:
           # and no logger selected, and the optimised ELF carries the framework's defmt code only
           # in the first.
           for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do
-            crates/ruststream-firmware-noalloc/check-defmt.sh $target
+            checks/firmware-noalloc/check-defmt.sh $target
           done
 
       # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
@@ -610,7 +611,7 @@ jobs:
               exit 1
             fi
           done
-          tree="$(cargo tree --locked --manifest-path crates/ruststream-memory-noalloc/Cargo.toml \
+          tree="$(cargo tree --locked --manifest-path crates/memory-noalloc/Cargo.toml \
             --features testing --all-targets -e features -i ruststream-core -i ruststream-runtime)"
           if printf '%s\n' "$tree" | grep -E 'ruststream-(core|runtime) feature "alloc"'; then
             echo "::error::the framework's alloc feature is on in the local bus crate"
@@ -620,12 +621,12 @@ jobs:
             --test embedded_no_alloc
           cargo test --locked --no-default-features --features embassy,memory,macros,testing,log \
             --test embedded_diagnostics
-          cargo test --locked --manifest-path crates/ruststream-memory-noalloc/Cargo.toml \
+          cargo test --locked --manifest-path crates/memory-noalloc/Cargo.toml \
             --features testing
-          cargo test --locked --manifest-path crates/ruststream-runtime-noalloc/Cargo.toml --lib
-          cargo test --locked --manifest-path crates/ruststream-runtime-noalloc/Cargo.toml --lib \
+          cargo test --locked --manifest-path crates/runtime-noalloc/Cargo.toml --lib
+          cargo test --locked --manifest-path crates/runtime-noalloc/Cargo.toml --lib \
             --features postcard,json-core
-          cargo test --locked --manifest-path crates/ruststream-runtime-embassy-noalloc/Cargo.toml --lib
+          cargo test --locked --manifest-path crates/runtime-embassy-noalloc/Cargo.toml --lib
 
       # Plain `cargo test`, the first command a contributor runs. Every target that needs a
       # non-default feature gates itself (a crate-level `cfg` or `required-features`), and only

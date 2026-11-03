@@ -9,7 +9,7 @@ error[E0599]: the method `transactional` exists for struct `RouterWith<ruststrea
    | |_____________|
    |
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/publish/wiring.rs
+  ::: $WORKSPACE/crates/runtime/src/publish/wiring.rs
    |
    |   pub struct InTransaction;
    |   ------------------------ doesn't satisfy `_: PublishingDirectly`

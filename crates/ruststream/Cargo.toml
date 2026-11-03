@@ -1255,7 +1255,7 @@ bytes-utils = { workspace = true, features = ["std"] }
 log = { workspace = true, features = ["std"] }
 # Builds the examples' tests into one test binary (`tests/examples.rs`) instead of a test
 # binary per example. Unpublished: a path dev-dependency without a version is dropped on publish.
-ruststream-example-suite = { path = "../ruststream-example-suite" }
+ruststream-example-suite = { path = "../../checks/example-suite" }
 
 [lints]
 workspace = true

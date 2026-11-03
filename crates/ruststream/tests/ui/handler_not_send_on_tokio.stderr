@@ -13,7 +13,7 @@ note: future is not `Send` as this value is used across an await
 18 |     tokio::task::yield_now().await;
    |                              ^^^^^ await occurs here, with `held` maybe used later
 note: required by a bound in `ruststream_runtime_tokio::app::include::<impl ruststream::runtime::BrokerScope<B, Layers, C, State, Pipeline, Pre>>::include`
-  --> $WORKSPACE/crates/ruststream-runtime-tokio/src/app/include/mod.rs
+  --> $WORKSPACE/crates/runtime-tokio/src/app/include/mod.rs
    |
    |     pub fn include<D, Mk>(
    |            ------- required by a bound in this associated function

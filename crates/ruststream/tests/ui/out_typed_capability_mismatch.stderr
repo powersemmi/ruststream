@@ -6,18 +6,18 @@ error[E0277]: `MemoryPublisher` does not support request / reply messaging
    |
    = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
 help: the following other types implement trait `RequestReply`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: RequestReply, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/request.rs
+  ::: $WORKSPACE/crates/memory/src/capability/request.rs
    |
    |   impl RequestReply for MemoryRequester {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
@@ -38,18 +38,18 @@ error[E0277]: `MemoryPublisher` does not support request / reply messaging
    |
    = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
 help: the following other types implement trait `RequestReply`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: RequestReply, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/request.rs
+  ::: $WORKSPACE/crates/memory/src/capability/request.rs
    |
    |   impl RequestReply for MemoryRequester {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
@@ -70,18 +70,18 @@ error[E0277]: `MemoryPublisher` does not support request / reply messaging
    |
    = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
 help: the following other types implement trait `RequestReply`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: RequestReply, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/request.rs
+  ::: $WORKSPACE/crates/memory/src/capability/request.rs
    |
    |   impl RequestReply for MemoryRequester {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
@@ -102,18 +102,18 @@ error[E0277]: `MemoryPublisher` does not support request / reply messaging
    |
    = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
 help: the following other types implement trait `RequestReply`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: RequestReply, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/request.rs
+  ::: $WORKSPACE/crates/memory/src/capability/request.rs
    |
    |   impl RequestReply for MemoryRequester {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
@@ -134,18 +134,18 @@ error[E0277]: `MemoryPublisher` does not support request / reply messaging
    |
    = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
 help: the following other types implement trait `RequestReply`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: RequestReply, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/request.rs
+  ::: $WORKSPACE/crates/memory/src/capability/request.rs
    |
    |   impl RequestReply for MemoryRequester {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`
@@ -168,18 +168,18 @@ error[E0277]: `MemoryPublisher` does not support request / reply messaging
    |
    = note: for an `Out<impl RequestReply, _>` slot, attach a policy whose live publisher correlates replies natively (NATS-style); Kafka and classic queues do not
 help: the following other types implement trait `RequestReply`
-  --> $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+  --> $WORKSPACE/crates/runtime/src/slot.rs
    |
    |   impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+  ::: $WORKSPACE/crates/runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: RequestReply, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body> RequestReply
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: $WORKSPACE/crates/ruststream-memory/src/capability/request.rs
+  ::: $WORKSPACE/crates/memory/src/capability/request.rs
    |
    |   impl RequestReply for MemoryRequester {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryRequester`

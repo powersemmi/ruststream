@@ -11,7 +11,7 @@ error[E0599]: no method named `on_startup` found for struct `ruststream::RustStr
   | |_________-^^^^^^^^^^
   |
 help: there is a method `start` with a similar name, but with different arguments
- --> $WORKSPACE/crates/ruststream-runtime-tokio/src/app/run.rs
+ --> $WORKSPACE/crates/runtime-tokio/src/app/run.rs
   |
   |     pub async fn start(self) -> Result<RunningApp, RustStreamError> {
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
