@@ -20,6 +20,9 @@ mod testing;
 pub use app_trait::App;
 pub use health::HealthProbe;
 pub use run::RunningApp;
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use run::StartFailure;
 pub use ruststream_runtime::{HealthState, SubscriptionCount, SubscriptionEnd};
 
 #[doc(hidden)]

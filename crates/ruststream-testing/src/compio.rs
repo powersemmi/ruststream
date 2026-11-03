@@ -181,14 +181,34 @@ impl TestApp {
         let start = InProcessStart::new(coordinator.clone(), registration_of, state);
         // A hook of the startup that sleeps on the app's clock, or the unwind of a failed startup,
         // is released by the clock the way the shutdown's work is.
-        let running = driven(
+        let started = driven(
             app.start_in_process(start),
             &coordinator,
             &quiescence,
             &clock,
         )
-        .await?
-        .map_err(startup_error)?;
+        .await;
+        let running = match started {
+            Ok(Ok(running)) => running,
+            Ok(Err(mut failure)) => {
+                // The startup failed after it had started loops: they are stopped and the brokers
+                // closed before the error is returned, as the shutdown does, and a handler that
+                // keeps itself runnable ends the wait.
+                let unwound =
+                    driven(failure.unwind_kept(), &coordinator, &quiescence, &clock).await;
+                if unwound.is_err() {
+                    let _ = driven(
+                        failure.finish_unwind_now(),
+                        &coordinator,
+                        &quiescence,
+                        &clock,
+                    )
+                    .await;
+                }
+                return Err(startup_error(failure.into_error()));
+            }
+            Err(kept_running) => return Err(kept_running),
+        };
         Ok(Self {
             running,
             coordinator,

@@ -17,6 +17,7 @@ use thiserror::Error;
 use crate::dispatch::Fabric;
 use crate::{BoxError, ConnectedLifecycle, Stop};
 
+use super::run::StartFailure;
 use super::run::Wiring;
 use super::service::RegisteredBroker;
 use super::teardown::ConnectedEntry;
@@ -189,15 +190,18 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
     /// # Errors
     ///
     /// As [`start`](Self::start); a broker with no in-process transition, or one that fails to
-    /// connect in process, is a [`RustStreamError::Connect`] carrying an [`InProcessError`].
+    /// connect in process, is a [`RustStreamError::Connect`] carrying an [`InProcessError`]. The
+    /// failure carries the unwind of what the startup had begun, which the caller drives.
     #[doc(hidden)]
     pub async fn start_in_process(
         self,
         start: InProcessStart<State>,
-    ) -> Result<RunningApp, RustStreamError> {
+    ) -> Result<RunningApp, StartFailure> {
         // The harness runs every subscription on the test's own runtime, so a `threads(n)` mount
         // is placed as `n` workers of it, as the dispatch will run it.
-        let layout = self.layout_of(1, on_runtime)?;
+        let layout = self
+            .layout_of(1, on_runtime)
+            .map_err(|err| StartFailure::before_loops(err.into()))?;
         let stop = Stop::new(self.subscription_end);
         self.start_on(layout, stop, Fabric::open(1), Wiring::InProcess(start))
             .await

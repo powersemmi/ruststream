@@ -13,7 +13,7 @@ use super::{AppInfo, RunningApp, RustStream, RustStreamError};
 
 mod sealed {
     #[cfg(feature = "testing")]
-    use crate::{InProcessStart, RunningApp, RustStreamError};
+    use crate::{InProcessStart, RunningApp, StartFailure};
 
     /// Closes [`App`](super::App) to [`RustStream`](super::RustStream), and carries what the test
     /// harness needs from an app a builder hands it as `impl App`.
@@ -27,7 +27,7 @@ mod sealed {
         fn start_in_process(
             self,
             start: InProcessStart<Self::State>,
-        ) -> impl Future<Output = Result<RunningApp, RustStreamError>>;
+        ) -> impl Future<Output = Result<RunningApp, StartFailure>>;
     }
 
     #[cfg(not(feature = "testing"))]
@@ -46,7 +46,7 @@ mod sealed {
         fn start_in_process(
             self,
             start: InProcessStart<State>,
-        ) -> impl Future<Output = Result<RunningApp, RustStreamError>> {
+        ) -> impl Future<Output = Result<RunningApp, StartFailure>> {
             super::RustStream::start_in_process(self, start)
         }
     }

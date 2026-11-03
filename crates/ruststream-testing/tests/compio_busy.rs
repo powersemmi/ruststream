@@ -6,20 +6,23 @@
 
 use std::convert::Infallible;
 use std::error::Error;
+use std::fmt;
 use std::future::poll_fn;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::Duration;
 
 use compio::runtime::Runtime;
-use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
+use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublisher, LocalMemorySource};
 use ruststream::runtime::compio::time::sleep;
 use ruststream::runtime::compio::{AppInfo, RustStream};
 use ruststream::runtime::{HandlerOutcome, State};
 use ruststream::testing::TestError;
 use ruststream::testing::compio::TestApp;
-use ruststream::{Deserialized, FromRef, Outgoing, Serialized, subscriber};
+use ruststream::{
+    BytesMut, Deserialized, FromRef, Outgoing, OutgoingMessage, Publisher, Serialized, subscriber,
+};
 
 type Bus = LocalMemoryBroker<4>;
 
@@ -147,6 +150,93 @@ fn an_after_shutdown_hook_that_sleeps_finishes_after_a_failed_shutdown()
         assert!(
             after_ran.load(Ordering::Relaxed),
             "after_shutdown did not finish",
+        );
+        Ok(())
+    })
+}
+
+/// The app's state, with the way into the bus the startup hook sets work off through.
+#[derive(FromRef)]
+struct Fed {
+    ticks: Ticks,
+    bus: Option<LocalMemoryPublisher<4>>,
+}
+
+/// Why the startup fails after it has set work running.
+#[derive(Debug)]
+struct NoConfig;
+
+impl fmt::Display for NoConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("no configuration")
+    }
+}
+
+impl Error for NoConfig {}
+
+#[test]
+fn a_failed_startup_stops_the_handler_it_set_running_and_closes_the_broker()
+-> Result<(), Box<dyn Error>> {
+    Runtime::new()?.block_on(async {
+        let ticks = Ticks(Arc::new(AtomicU64::new(0)));
+        let state_ticks = ticks.clone();
+        let unused = ticks.clone();
+        let app = RustStream::new(AppInfo::new("busy-start", "0.1.0"))
+            .on_startup(async move |(): ()| {
+                Ok::<_, Infallible>(Fed {
+                    ticks: unused,
+                    bus: None,
+                })
+            })
+            .after_startup(async move |fed: Arc<Fed>| {
+                let job = OutgoingMessage::produced("spin", BytesMut::from(&b"1"[..]));
+                if let Some(bus) = &fed.bus {
+                    let _ = bus.publish(job, None).await;
+                }
+                // The handler is given its turns, so it is running when the startup fails.
+                for _ in 0..10 {
+                    yield_once().await;
+                }
+                Err::<(), _>(NoConfig)
+            })
+            .with_broker(Bus::new(), |b| b.include(on_spin));
+        let kept = Arc::new(Mutex::new(None));
+        let keep = Arc::clone(&kept);
+        let started = TestApp::with_state(app, move |brokers| {
+            let bus = brokers.broker::<Bus>().publisher();
+            *keep.lock().expect("the test is the only user") = Some(bus.clone());
+            Fed {
+                ticks: state_ticks,
+                bus: Some(bus),
+            }
+        })
+        .await;
+        assert!(
+            matches!(started, Err(TestError::Startup(_))),
+            "the start returned {started:?}",
+        );
+        for _ in 0..10 {
+            yield_once().await;
+        }
+        let at_return = ticks.0.load(Ordering::Relaxed);
+        assert!(at_return > 0, "the handler never ran");
+        for _ in 0..200 {
+            yield_once().await;
+        }
+        assert_eq!(
+            ticks.0.load(Ordering::Relaxed),
+            at_return,
+            "the handler kept running after the start failed",
+        );
+        let bus = kept
+            .lock()
+            .expect("the test is the only user")
+            .take()
+            .expect("the state was built");
+        let job = OutgoingMessage::produced("spin", BytesMut::from(&b"2"[..]));
+        assert!(
+            bus.publish(job, None).await.is_err(),
+            "the broker was left open after the start failed",
         );
         Ok(())
     })

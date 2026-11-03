@@ -43,7 +43,7 @@ pub use app::{
 };
 #[cfg(feature = "testing")]
 #[doc(hidden)]
-pub use app::{Harness, InProcessError, InProcessStart, StateSource};
+pub use app::{Harness, InProcessError, InProcessStart, StartFailure, StateSource};
 #[doc(hidden)]
 pub use app::{
     Launch, MountRoutes, Mounted, ScopeRegistrations, ScopedHandle, ScopedRouter, ScopedStartup,

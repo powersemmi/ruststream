@@ -25,15 +25,12 @@ use crate::dispatch::{Fabric, Layout};
 use crate::time;
 use crate::{
     Connected, Cores, HandlerMetadata, PairError, PublishPolicy, SendBroker, ShutdownWait, Stop,
-    Tasks,
 };
 use ruststream_runtime::Halt;
 
 use super::health::{Consuming, HealthProbe, HealthReport};
 use super::service::RegisteredBroker;
-use super::teardown::{
-    ConnectedEntry, Held, Loop, ShutdownHooks, Teardown, drain_continuations, drain_handles,
-};
+use super::teardown::{ConnectedEntry, Held, Loop, ShutdownHooks, Teardown};
 use super::{HealthState, Launch, LifecycleHook, Mounted, RustStream, RustStreamError, StateInit};
 
 // The whole service is handed to core 0 across a thread boundary when the cores start, so
@@ -160,9 +157,13 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase>
     where
         Signal: Future<Output = ()>,
     {
-        let running = self
+        let running = match self
             .start_on(layout, stop, fabric, Wiring::production())
-            .await?;
+            .await
+        {
+            Ok(running) => running,
+            Err(failure) => return Err(failure.unwind().await),
+        };
         let stopping = running.stopping();
         if let Either::Right(((), _)) = future::select(pin!(shutdown), pin!(stopping)).await {
             running.say_why_it_stops();
@@ -218,8 +219,13 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
     pub async fn start(self) -> Result<RunningApp, RustStreamError> {
         let layout = self.layout(1)?;
         let stop = Stop::new(self.subscription_end);
-        self.start_on(layout, stop, Fabric::open(1), Wiring::production())
+        match self
+            .start_on(layout, stop, Fabric::open(1), Wiring::production())
             .await
+        {
+            Ok(running) => Ok(running),
+            Err(failure) => Err(failure.unwind().await),
+        }
     }
 
     /// The startup sequence on core 0, over the cores `layout` was planned for.
@@ -229,7 +235,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         stop: Stop,
         fabric: Fabric,
         wiring: Wiring<State>,
-    ) -> Result<RunningApp, RustStreamError> {
+    ) -> Result<RunningApp, StartFailure> {
         let Self {
             info,
             brokers,
@@ -259,7 +265,9 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         );
 
         #[cfg_attr(not(feature = "testing"), allow(unused_variables))]
-        let (state, connected, harness) = connect_wired(wiring, state_init, brokers).await?;
+        let (state, connected, harness) = connect_wired(wiring, state_init, brokers)
+            .await
+            .map_err(StartFailure::before_loops)?;
 
         let health = HealthReport::new();
         // Core 0 serves its own mailbox beside the app, as every other core does for its own.
@@ -288,17 +296,24 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         if started.is_ok() {
             started = run_after_startup(after_startup, &state).await;
         }
-        if let Err(err) = started {
-            unwind_started(
-                &stop,
-                handles,
-                shutdown_timeout,
-                connected,
-                &continuations,
-                &fabric,
-            )
-            .await;
-            return Err(err);
+        if let Err(error) = started {
+            // The unwind is not run here: the caller drives it, so a harness that gives up on a
+            // wait can still finish it.
+            return Err(StartFailure {
+                error,
+                running: Some(Box::new(RunningApp {
+                    teardown: Teardown {
+                        stop,
+                        handles: Held::new(handles),
+                        hooks: ShutdownHooks::none(),
+                        brokers: connected,
+                        shutdown_timeout,
+                        continuations,
+                        fabric,
+                    },
+                    health,
+                })),
+            });
         }
 
         info!(target: "ruststream::lifecycle", subscribers = handles.len() - 1, "service running");
@@ -480,6 +495,75 @@ impl RunningApp {
     pub async fn finish_shutdown_now(&mut self) {
         self.teardown.shutdown_timeout = Some(Duration::ZERO);
         let _ = self.shutdown_in_place().await;
+    }
+}
+
+/// A startup that failed, with what it had started and not yet unwound.
+///
+/// The unwind stops the loops, drains their continuations and shuts the connected brokers down,
+/// the same ordering the graceful teardown keeps, so continuations never run against a closed
+/// broker. It is a separate step so a caller that gives up on its wait can still finish it.
+#[doc(hidden)]
+// Public for the test harness only; without `testing` nothing outside this module names it.
+#[cfg_attr(not(feature = "testing"), allow(unreachable_pub))]
+#[derive(Debug)]
+pub struct StartFailure {
+    error: RustStreamError,
+    /// The started service, to unwind; none where nothing had started a loop.
+    running: Option<Box<RunningApp>>,
+}
+
+impl StartFailure {
+    /// A failure before any loop started, which has already unwound what it connected.
+    pub(super) const fn before_loops(error: RustStreamError) -> Self {
+        Self {
+            error,
+            running: None,
+        }
+    }
+
+    /// Unwinds what the startup had started, best effort: failures are logged, so the original
+    /// startup error stays the caller's answer.
+    pub(super) async fn unwind(mut self) -> RustStreamError {
+        self.unwind_in_place().await;
+        self.error
+    }
+
+    /// The unwind, for a caller that keeps the failure: one that is dropped mid-way leaves what
+    /// it had not reached in place, and a second call finishes it.
+    async fn unwind_in_place(&mut self) {
+        if let Some(running) = &mut self.running
+            && let Err(err) = running.shutdown_in_place().await
+        {
+            warn!(
+                target: "ruststream::lifecycle",
+                error = %err,
+                "unwinding the failed startup failed",
+            );
+        }
+    }
+
+    /// The unwind the test harness drives: it keeps the failure, so a wait it gives up on can be
+    /// followed by [`finish_unwind_now`](Self::finish_unwind_now).
+    #[cfg(feature = "testing")]
+    pub async fn unwind_kept(&mut self) {
+        self.unwind_in_place().await;
+    }
+
+    /// Finishes an unwind the caller abandoned, with no time left to wait: the loops that are
+    /// still running are cancelled and the brokers are shut down.
+    #[cfg(feature = "testing")]
+    pub async fn finish_unwind_now(&mut self) {
+        if let Some(running) = &mut self.running {
+            running.finish_shutdown_now().await;
+        }
+    }
+
+    /// Why the startup failed.
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn into_error(self) -> RustStreamError {
+        self.error
     }
 }
 
@@ -703,31 +787,6 @@ fn watch_for_failure(stop: Stop, health: HealthReport) {
         }
     })
     .detach();
-}
-
-/// Best-effort unwind of a startup that failed after loops were started: stops them, drains their
-/// post-settle continuations, then shuts the connected brokers down - the same ordering the
-/// graceful teardown keeps, so continuations never run against a closed broker. Failures are
-/// logged, not returned, so the original startup error stays the caller's answer.
-async fn unwind_started(
-    stop: &Stop,
-    mut handles: Vec<Loop>,
-    shutdown_timeout: Option<Duration>,
-    brokers: Vec<ConnectedEntry>,
-    continuations: &Tasks,
-    fabric: &Fabric,
-) {
-    stop.cancel();
-    if let Err(err) = drain_handles(&mut handles, shutdown_timeout).await {
-        warn!(
-            target: "ruststream::lifecycle",
-            error = %err,
-            "draining dispatch tasks failed during the startup unwind",
-        );
-    }
-    fabric.workers_gone().await;
-    drain_continuations(continuations, shutdown_timeout).await;
-    unwind_connected(brokers).await;
 }
 
 /// Shuts down the brokers a failed startup had already connected, in reverse connect order,

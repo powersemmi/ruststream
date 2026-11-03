@@ -67,6 +67,14 @@ pub(crate) struct ShutdownHooks {
 }
 
 impl ShutdownHooks {
+    /// No hooks: what a startup that failed unwinds with.
+    pub(crate) const fn none() -> Self {
+        Self {
+            on_shutdown: Vec::new(),
+            after_shutdown: Vec::new(),
+        }
+    }
+
     /// Binds the shared state into each hook, erasing the state type from the hook lists.
     pub(crate) fn bind<State: Send + Sync + 'static>(
         on_shutdown: Vec<LifecycleHook<State>>,
