@@ -17,5 +17,5 @@ The example runs with `cargo test --example asyncapi_generation --features macro
 ## Example
 
 {/* single-form: serializing the document is the same code with and without the macros */}
-```rust reference="examples/asyncapi_generation.rs#formats"
+```rust reference="crates/ruststream/examples/asyncapi_generation.rs#formats"
 ```

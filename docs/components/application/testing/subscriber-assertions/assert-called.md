@@ -25,13 +25,13 @@ A destination's [`assert_called(n)`](../published-assertions/assert-called.md) c
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_calls.rs#assert_called"
+```rust reference="crates/ruststream/examples/testing_subscriber_calls.rs#assert_called"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_calls.rs#assert_called"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_calls.rs#assert_called"
 ```
 
 </TabItem>

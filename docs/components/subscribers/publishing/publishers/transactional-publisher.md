@@ -32,13 +32,13 @@ Every confirmation of a batch in one transaction.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/transactional_publisher.rs#batch"
+```rust reference="crates/ruststream/examples/transactional_publisher.rs#batch"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/transactional_publisher.rs#batch"
+```rust reference="crates/ruststream/examples/manual/transactional_publisher.rs#batch"
 ```
 
 </TabItem>
@@ -49,13 +49,13 @@ A scope opened on a slot: both entries of a payment, or neither.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/transactional_publisher.rs#scope"
+```rust reference="crates/ruststream/examples/transactional_publisher.rs#scope"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/transactional_publisher.rs#scope"
+```rust reference="crates/ruststream/examples/manual/transactional_publisher.rs#scope"
 ```
 
 </TabItem>
@@ -64,13 +64,13 @@ A scope opened on a slot: both entries of a payment, or neither.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/transactional_publisher.rs#app"
+```rust reference="crates/ruststream/examples/transactional_publisher.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/transactional_publisher.rs#app"
+```rust reference="crates/ruststream/examples/manual/transactional_publisher.rs#app"
 ```
 
 </TabItem>

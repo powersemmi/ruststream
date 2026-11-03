@@ -24,13 +24,13 @@ It also panics when it cannot tell which settings the latest publish carried: an
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_published_options.rs#with-options"
+```rust reference="crates/ruststream/examples/testing_published_options.rs#with-options"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_published_options.rs#with-options"
+```rust reference="crates/ruststream/examples/manual/testing_published_options.rs#with-options"
 ```
 
 </TabItem>

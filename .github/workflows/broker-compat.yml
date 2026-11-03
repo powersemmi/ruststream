@@ -90,7 +90,11 @@ jobs:
       # will see, not an artifact of the harness.
       - name: Point the broker at the released core
         run: |
-          sed -i 's#^ruststream = { version = "[^"]*"#ruststream = { path = "../core"#' broker/Cargo.toml
+          # The facade is the crate under `crates/ruststream`; a tag from before that layout keeps
+          # it at the repository root.
+          facade=core/crates/ruststream
+          [ -f "$facade/Cargo.toml" ] || facade=core
+          sed -i "s#^ruststream = { version = \"[^\"]*\"#ruststream = { path = \"../$facade\"#" broker/Cargo.toml
           grep '^ruststream = ' broker/Cargo.toml
           # A member built on another broker crate (a benchmark or an example over a second
           # transport) takes that crate from crates.io, which asks for the core from there too.
@@ -98,7 +102,7 @@ jobs:
           # The lock drops the copy it pinned in the checked step below, so a resolution failure
           # reaches the report like any other.
           mkdir -p broker/.cargo
-          printf '[patch.crates-io]\nruststream = { path = "%s/core" }\n' "$GITHUB_WORKSPACE" \
+          printf '[patch.crates-io]\nruststream = { path = "%s/%s" }\n' "$GITHUB_WORKSPACE" "$facade" \
             >> broker/.cargo/config.toml
 
       - name: Build the broker against the core

@@ -26,19 +26,19 @@ A builder function returns [`impl App`](api:ruststream::runtime::App), so its si
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/quickstart.rs#handler"
+```rust reference="crates/ruststream/examples/quickstart.rs#handler"
 ```
 
-```rust reference="examples/quickstart.rs#app"
+```rust reference="crates/ruststream/examples/quickstart.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/quickstart.rs#handler"
+```rust reference="crates/ruststream/examples/manual/quickstart.rs#handler"
 ```
 
-```rust reference="examples/manual/quickstart.rs#app"
+```rust reference="crates/ruststream/examples/manual/quickstart.rs#app"
 ```
 
 </TabItem>

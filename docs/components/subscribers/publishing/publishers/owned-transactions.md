@@ -27,13 +27,13 @@ A transfer books its entries in one transaction and its audit record in another,
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/owned_transactions.rs#handler"
+```rust reference="crates/ruststream/examples/owned_transactions.rs#handler"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/owned_transactions.rs#handler"
+```rust reference="crates/ruststream/examples/manual/owned_transactions.rs#handler"
 ```
 
 </TabItem>
@@ -42,13 +42,13 @@ A transfer books its entries in one transaction and its audit record in another,
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/owned_transactions.rs#app"
+```rust reference="crates/ruststream/examples/owned_transactions.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/owned_transactions.rs#app"
+```rust reference="crates/ruststream/examples/manual/owned_transactions.rs#app"
 ```
 
 </TabItem>

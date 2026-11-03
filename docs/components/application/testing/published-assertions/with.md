@@ -25,13 +25,13 @@ A subscriber's [`with`](../subscriber-assertions/with.md) checks the value a han
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_published_payloads.rs#with"
+```rust reference="crates/ruststream/examples/testing_published_payloads.rs#with"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_published_payloads.rs#with"
+```rust reference="crates/ruststream/examples/manual/testing_published_payloads.rs#with"
 ```
 
 </TabItem>

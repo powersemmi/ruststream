@@ -1,0 +1,87 @@
+error[E0277]: `MemoryRequester` does not support broker-side transactions
+  --> tests/ui/manual_slot_transactional_mismatch.rs:38:51
+   |
+38 |     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+   |                                                   ^^^^^^^^^^^ the trait `ruststream::TransactionalPublisher` is not implemented for `MemoryRequester`
+   |
+   = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
+help: the following other types implement trait `ruststream::TransactionalPublisher`
+  --> $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+   |
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
+   | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
+   | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
+   |
+  ::: $WORKSPACE/crates/ruststream-memory/src/capability/transaction.rs
+   |
+   |   impl TransactionalPublisher for MemoryPublisher {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
+   |
+  ::: $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+   |
+   |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+note: required for `Record` to implement `ruststream::prelude::Handle<Order, (), ruststream::prelude::Outs<(Slot<Journal, MemoryRequester, JsonCodec>,)>>`
+  --> tests/ui/manual_slot_transactional_mismatch.rs:22:9
+   |
+22 | impl<J> Handle<Order, (), Outs<(J,)>> for Record
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^     ^^^^^^
+23 | where
+24 |     J: OutEntry<Journal, Wire: TransactionalPublisher>,
+   |                                ---------------------- unsatisfied trait bound introduced here
+   = note: required for `Sealed<HandleValue<Solo<Order>, (), ruststream::prelude::Outs<(Slot<Journal, MemoryRequester, JsonCodec>,)>, (), Record>>` to implement `ruststream_runtime::inject::InjectCall<()>`
+   = note: 1 redundant requirement hidden
+   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), ruststream::prelude::Outs<(Slot<Journal, MemoryRequester, JsonCodec>,)>, (), Record>>, Name, (Open, Open, Open, Open)>` to implement `ruststream_runtime::inject::InjectCall<()>`
+   = note: required for `ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), ruststream::prelude::Outs<(Slot<Journal, MemoryRequester, JsonCodec>,)>, (), Record>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryRequest, JsonCodec, PublishIdentity),)>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
+   = note: required for `(ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), ruststream::prelude::Outs<(Slot<Journal, MemoryRequester, JsonCodec>,)>, (), Record>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryRequest, JsonCodec, PublishIdentity),)>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), ruststream::prelude::Outs<(Slot<Journal, MemoryRequester, JsonCodec>,)>, (), Record>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryRequest, JsonCodec, PublishIdentity),)>, ruststream::runtime::ChainHead<()>)>` to implement `ruststream::runtime::MountRoutes<MemoryBroker>`
+note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+  --> $WORKSPACE/crates/ruststream-runtime-tokio/src/app/service.rs
+   |
+   |     pub fn with_broker<R, F, Chain, Routes>(
+   |            ----------- required by a bound in this associated function
+...
+   |         Routes: MountRoutes<R::Broker, Layers, State, Pipeline>,
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+
+error[E0277]: `MemoryRequester` does not support broker-side transactions
+  --> tests/ui/manual_slot_transactional_mismatch.rs:39:40
+   |
+39 |         b.include(subscriber("orders", Record).build())
+   |                   ----------           ^^^^^^ the trait `ruststream::TransactionalPublisher` is not implemented for `MemoryRequester`
+   |                   |
+   |                   required by a bound introduced by this call
+   |
+   = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
+help: the following other types implement trait `ruststream::TransactionalPublisher`
+  --> $WORKSPACE/crates/ruststream-runtime/src/handle/outs/entry.rs
+   |
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body>
+   | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
+   | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
+   |
+  ::: $WORKSPACE/crates/ruststream-memory/src/capability/transaction.rs
+   |
+   |   impl TransactionalPublisher for MemoryPublisher {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
+   |
+  ::: $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+   |
+   |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
+note: required for `Record` to implement `ruststream::prelude::Handle<Order, (), ruststream::prelude::Outs<(Slot<Journal, MemoryRequester, JsonCodec>,)>>`
+  --> tests/ui/manual_slot_transactional_mismatch.rs:22:9
+   |
+22 | impl<J> Handle<Order, (), Outs<(J,)>> for Record
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^     ^^^^^^
+23 | where
+24 |     J: OutEntry<Journal, Wire: TransactionalPublisher>,
+   |                                ---------------------- unsatisfied trait bound introduced here
+note: required by a bound in `ruststream::prelude::subscriber`
+  --> $WORKSPACE/crates/ruststream-runtime/src/handle/value.rs
+   |
+   | pub fn subscriber<Src, In, R, O, C, S, H>(
+   |        ---------- required by a bound in this function
+...
+   |     H: Handle<In, R, O, C, S>,
+   |        ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `subscriber`

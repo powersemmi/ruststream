@@ -29,13 +29,13 @@ A [hook](./hooks.md) on the context runs after the settlement too, gated by whic
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/post_settle.rs#single"
+```rust reference="crates/ruststream/examples/post_settle.rs#single"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/post_settle.rs#single"
+```rust reference="crates/ruststream/examples/manual/post_settle.rs#single"
 ```
 
 </TabItem>
@@ -46,13 +46,13 @@ A [hook](./hooks.md) on the context runs after the settlement too, gated by whic
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/post_settle.rs#batch"
+```rust reference="crates/ruststream/examples/post_settle.rs#batch"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/post_settle.rs#batch"
+```rust reference="crates/ruststream/examples/manual/post_settle.rs#batch"
 ```
 
 </TabItem>

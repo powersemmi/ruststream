@@ -21,13 +21,13 @@ A batch call has one entry, classified by its first delivery.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_calls.rs#outcomes"
+```rust reference="crates/ruststream/examples/testing_subscriber_calls.rs#outcomes"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_calls.rs#outcomes"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_calls.rs#outcomes"
 ```
 
 </TabItem>

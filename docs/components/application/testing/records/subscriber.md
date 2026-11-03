@@ -23,13 +23,13 @@ A destination has its own record, [`published::<T>(name)`](./published.md), and 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_records.rs#subscriber"
+```rust reference="crates/ruststream/examples/testing_records.rs#subscriber"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_records.rs#subscriber"
+```rust reference="crates/ruststream/examples/manual/testing_records.rs#subscriber"
 ```
 
 </TabItem>

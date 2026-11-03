@@ -58,13 +58,13 @@ The header rule, on a set of a JSON model and a Protobuf one:
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/in_messages.rs#set"
+```rust reference="crates/ruststream/examples/in_messages.rs#set"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/in_messages.rs#set"
+```rust reference="crates/ruststream/examples/manual/in_messages.rs#set"
 ```
 
 </TabItem>
@@ -75,13 +75,13 @@ The handler matches on the set.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/in_messages.rs#handler"
+```rust reference="crates/ruststream/examples/in_messages.rs#handler"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/in_messages.rs#handler"
+```rust reference="crates/ruststream/examples/manual/in_messages.rs#handler"
 ```
 
 </TabItem>
@@ -90,17 +90,17 @@ The handler matches on the set.
 A rule of your own, over the generated kind enum:
 
 {/* single-form: the rule is a plain function; the manual tab writes the same function inside its `InMessages` impl */}
-```rust reference="examples/in_messages.rs#discriminate"
+```rust reference="crates/ruststream/examples/in_messages.rs#discriminate"
 ```
 
 A rule the decode codec answers: the codec reads a schema id from the payload, and the set mounts under it through a router.
 
 {/* single-form: the codec impl is plain Rust, and the rule is the derive alone */}
-```rust reference="examples/in_messages.rs#by_codec"
+```rust reference="crates/ruststream/examples/in_messages.rs#by_codec"
 ```
 
 Left to right, the strictest model first:
 
 {/* single-form: a set with no rule is the derive alone; the manual tab's `decode` is the rule written out */}
-```rust reference="examples/in_messages.rs#left_to_right"
+```rust reference="crates/ruststream/examples/in_messages.rs#left_to_right"
 ```

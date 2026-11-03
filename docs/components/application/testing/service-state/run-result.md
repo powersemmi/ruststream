@@ -22,13 +22,13 @@ After one the result is [`RustStreamError::Dispatch`](api:ruststream::runtime::R
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_service_state.rs#run-result"
+```rust reference="crates/ruststream/examples/testing_service_state.rs#run-result"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_service_state.rs#run-result"
+```rust reference="crates/ruststream/examples/manual/testing_service_state.rs#run-result"
 ```
 
 </TabItem>

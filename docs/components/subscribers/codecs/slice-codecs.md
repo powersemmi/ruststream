@@ -24,5 +24,5 @@ A codec of your own implements `SliceCodec`.
 
 The mount of a device service that decodes and replies in postcard:
 
-```rust reference="tests/doc_device.rs#mount"
+```rust reference="crates/ruststream/tests/doc_device.rs#mount"
 ```

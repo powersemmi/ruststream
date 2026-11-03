@@ -25,13 +25,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="main.rs" reference="examples/guide/main.rs#main"
+```rust title="main.rs" reference="crates/ruststream/examples/guide/main.rs#main"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="main.rs" reference="examples/manual/guide/main.rs#main"
+```rust title="main.rs" reference="crates/ruststream/examples/manual/guide/main.rs#main"
 ```
 
 </TabItem>
@@ -44,13 +44,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="service.rs" reference="examples/guide/service.rs#info"
+```rust title="service.rs" reference="crates/ruststream/examples/guide/service.rs#info"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="service.rs" reference="examples/manual/guide/service.rs#info"
+```rust title="service.rs" reference="crates/ruststream/examples/manual/guide/service.rs#info"
 ```
 
 </TabItem>
@@ -83,4 +83,4 @@ receive_payments_requested:
 ```
 
 商店的两种形式生成相同的文档。
-两者各有一个测试，把文档与 [`examples/guide/asyncapi.json`](https://github.com/powersemmi/ruststream/blob/main/examples/guide/asyncapi.json) 比较，所以主题的改动会在评审中显现出来。
+两者各有一个测试，把文档与 [`examples/guide/asyncapi.json`](https://github.com/powersemmi/ruststream/blob/main/crates/ruststream/examples/guide/asyncapi.json) 比较，所以主题的改动会在评审中显现出来。

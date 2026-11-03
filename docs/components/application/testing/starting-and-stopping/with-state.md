@@ -23,13 +23,13 @@ The app's `on_startup` does not run; `after_startup` and everything else of star
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_starting.rs#with-state"
+```rust reference="crates/ruststream/examples/testing_starting.rs#with-state"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_starting.rs#with-state"
+```rust reference="crates/ruststream/examples/manual/testing_starting.rs#with-state"
 ```
 
 </TabItem>

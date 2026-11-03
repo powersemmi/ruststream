@@ -17,5 +17,5 @@ Dropping a `RunningApp` without `shutdown` detaches the service with no graceful
 ## Example
 
 {/* single-form: the call is the same with and without the macros; the Manual tab of the full file differs only in the handler */}
-```rust reference="examples/app_running.rs#shutdown"
+```rust reference="crates/ruststream/examples/app_running.rs#shutdown"
 ```

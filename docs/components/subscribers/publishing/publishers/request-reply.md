@@ -27,13 +27,13 @@ The handler asks the quote service for a price, then publishes the priced order 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/requester.rs#requester"
+```rust reference="crates/ruststream/examples/requester.rs#requester"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/requester.rs#requester"
+```rust reference="crates/ruststream/examples/manual/requester.rs#requester"
 ```
 
 </TabItem>
@@ -44,13 +44,13 @@ The responder answers on the inbox the request named.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/requester.rs#app"
+```rust reference="crates/ruststream/examples/requester.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/requester.rs#app"
+```rust reference="crates/ruststream/examples/manual/requester.rs#app"
 ```
 
 </TabItem>

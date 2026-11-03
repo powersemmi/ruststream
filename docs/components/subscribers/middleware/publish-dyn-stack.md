@@ -25,7 +25,7 @@ The layer has no macro form: the same impl serves both forms, and only the handl
 The layer writes one header on every message.
 
 {/* single-form: a PublishDynLayer impl has no macro form; the same code serves the macro and the manual service */}
-```rust reference="examples/publish_dyn_stack.rs#layer"
+```rust reference="crates/ruststream/examples/publish_dyn_stack.rs#layer"
 ```
 
 The app builds one per header the configuration lists.
@@ -33,13 +33,13 @@ The app builds one per header the configuration lists.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/publish_dyn_stack.rs#app"
+```rust reference="crates/ruststream/examples/publish_dyn_stack.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/publish_dyn_stack.rs#app"
+```rust reference="crates/ruststream/examples/manual/publish_dyn_stack.rs#app"
 ```
 
 </TabItem>

@@ -32,13 +32,13 @@ A pattern subscription does not [replay](./retention.md), even on a retaining br
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/memory_patterns.rs#app"
+```rust reference="crates/ruststream/examples/memory_patterns.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/memory_patterns.rs#app"
+```rust reference="crates/ruststream/examples/manual/memory_patterns.rs#app"
 ```
 
 </TabItem>

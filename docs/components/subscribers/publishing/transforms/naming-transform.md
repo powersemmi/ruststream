@@ -23,19 +23,19 @@ A naming transform is a [publish transform](./publish-transform.md) in every oth
 ## Example
 
 {/* single-form: a PublishTransform impl has no macro form; the same code serves the macro and the manual service */}
-```rust reference="examples/naming_transform.rs#transform"
+```rust reference="crates/ruststream/examples/naming_transform.rs#transform"
 ```
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/naming_transform.rs#app"
+```rust reference="crates/ruststream/examples/naming_transform.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/naming_transform.rs#app"
+```rust reference="crates/ruststream/examples/manual/naming_transform.rs#app"
 ```
 
 </TabItem>

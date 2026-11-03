@@ -38,13 +38,13 @@ tracing = "0.1"
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#order"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/tutorial/orders.rs#order"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="src/orders.rs" reference="examples/manual/tutorial/orders.rs#order"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/manual/tutorial/orders.rs#order"
 ```
 
 </TabItem>
@@ -70,13 +70,13 @@ tracing = "0.1"
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="src/main.rs" reference="examples/tutorial/first_app.rs#app"
+```rust title="src/main.rs" reference="crates/ruststream/examples/tutorial/first_app.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="src/main.rs" reference="examples/manual/tutorial/first_app.rs#app"
+```rust title="src/main.rs" reference="crates/ruststream/examples/manual/tutorial/first_app.rs#app"
 ```
 
 </TabItem>
@@ -119,13 +119,13 @@ cargo run -- run
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#confirm"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/tutorial/orders.rs#confirm"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="src/orders.rs" reference="examples/manual/tutorial/orders.rs#confirm"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/manual/tutorial/orders.rs#confirm"
 ```
 
 </TabItem>
@@ -136,13 +136,13 @@ cargo run -- run
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="src/main.rs" reference="examples/tutorial/reply_app.rs#reply"
+```rust title="src/main.rs" reference="crates/ruststream/examples/tutorial/reply_app.rs#reply"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="src/main.rs" reference="examples/manual/tutorial/reply_app.rs#reply"
+```rust title="src/main.rs" reference="crates/ruststream/examples/manual/tutorial/reply_app.rs#reply"
 ```
 
 </TabItem>
@@ -161,13 +161,13 @@ cargo run -- run
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="src/routes.rs" reference="examples/tutorial/routes.rs#routes"
+```rust title="src/routes.rs" reference="crates/ruststream/examples/tutorial/routes.rs#routes"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="src/routes.rs" reference="examples/manual/tutorial/routes.rs#routes"
+```rust title="src/routes.rs" reference="crates/ruststream/examples/manual/tutorial/routes.rs#routes"
 ```
 
 </TabItem>
@@ -187,13 +187,13 @@ cargo run -- run
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
+```rust title="src/main.rs" reference="crates/ruststream/examples/tutorial/main.rs#main"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="src/main.rs" reference="examples/manual/tutorial/main.rs#main"
+```rust title="src/main.rs" reference="crates/ruststream/examples/manual/tutorial/main.rs#main"
 ```
 
 </TabItem>
@@ -227,7 +227,7 @@ cargo run -- asyncapi gen
 :::info[Готовый сервис - это компилируемый пример]
 
 Каждый фрагмент этой страницы взят из
-[`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial),
+[`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/tutorial),
 который CI собирает при каждом изменении. `first_app.rs` и `reply_app.rs` - это сервис после
 шагов 3 и 4, а `main.rs` - готовый. Запустить его можно командой
 `cargo run --example tutorial --features macros,memory,json,asyncapi,logging -- run`.

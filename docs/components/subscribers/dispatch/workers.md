@@ -30,13 +30,13 @@ Four charges that each wait a second on a payment provider take one second toget
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/workers.rs#workers"
+```rust reference="crates/ruststream/examples/workers.rs#workers"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/workers.rs#workers"
+```rust reference="crates/ruststream/examples/manual/workers.rs#workers"
 ```
 
 </TabItem>
@@ -54,13 +54,13 @@ At the mount site the setting is [`.workers_by_key(n)`](api:ruststream::runtime:
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/workers.rs#workers_by_key"
+```rust reference="crates/ruststream/examples/workers.rs#workers_by_key"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/workers.rs#workers_by_key"
+```rust reference="crates/ruststream/examples/manual/workers.rs#workers_by_key"
 ```
 
 </TabItem>

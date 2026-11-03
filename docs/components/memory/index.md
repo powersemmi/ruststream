@@ -41,13 +41,13 @@ Two subscriptions to `orders` each receive the order, and one of them replies ov
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/memory_broker.rs#app"
+```rust reference="crates/ruststream/examples/memory_broker.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/memory_broker.rs#app"
+```rust reference="crates/ruststream/examples/manual/memory_broker.rs#app"
 ```
 
 </TabItem>

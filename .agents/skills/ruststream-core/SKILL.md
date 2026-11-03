@@ -1,6 +1,6 @@
 ---
 name: ruststream-core
-description: "Use when changing the RustStream core repository itself (powersemmi/ruststream: the crates under `crates/`, the `ruststream` facade in `src/`, `tests/`, `examples/`, the site), as a contributor: public items, errors, features, doctests, compile-fail snapshots, conformance suites, the local gates and the pull request."
+description: "Use when changing the RustStream core repository itself (powersemmi/ruststream: the crates under `crates/`, the `ruststream` facade in `crates/ruststream` with its `tests/` and `examples/`, the site), as a contributor: public items, errors, features, doctests, compile-fail snapshots, conformance suites, the local gates and the pull request."
 ---
 
 # Contributing to the RustStream core

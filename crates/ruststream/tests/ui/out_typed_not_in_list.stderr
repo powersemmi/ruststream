@@ -1,0 +1,18 @@
+error[E0308]: mismatched types
+  --> tests/ui/out_typed_not_in_list.rs:34:18
+   |
+34 |           .message(&Done {
+   |  __________-------_^
+   | |          |
+   | |          arguments to this method are incorrect
+35 | |             key: order.id.to_string(),
+36 | |         })
+   | |_________^ expected `&Progress`, found `&Done`
+   |
+   = note: expected reference `&Progress`
+              found reference `&Done`
+note: method defined here
+  --> $WORKSPACE/crates/ruststream-runtime/src/handle/outs/any_entry.rs
+   |
+   |     fn message<'a, T, Index>(
+   |        ^^^^^^^

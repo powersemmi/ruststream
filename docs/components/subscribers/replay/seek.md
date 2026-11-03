@@ -26,13 +26,13 @@ The handler meets a poison marker and moves its subscription past the entries be
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/seek.rs#seek"
+```rust reference="crates/ruststream/examples/seek.rs#seek"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/seek.rs#seek"
+```rust reference="crates/ruststream/examples/manual/seek.rs#seek"
 ```
 
 </TabItem>

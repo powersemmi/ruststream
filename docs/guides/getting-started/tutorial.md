@@ -38,13 +38,13 @@ turns it into a subscriber definition named after the function.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#order"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/tutorial/orders.rs#order"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="src/orders.rs" reference="examples/manual/tutorial/orders.rs#order"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/manual/tutorial/orders.rs#order"
 ```
 
 </TabItem>
@@ -63,13 +63,13 @@ doc comment becomes the message description there. You need no extra dependency 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="src/main.rs" reference="examples/tutorial/first_app.rs#app"
+```rust title="src/main.rs" reference="crates/ruststream/examples/tutorial/first_app.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="src/main.rs" reference="examples/manual/tutorial/first_app.rs#app"
+```rust title="src/main.rs" reference="crates/ruststream/examples/manual/tutorial/first_app.rs#app"
 ```
 
 </TabItem>
@@ -101,13 +101,13 @@ derive on the reply type says where it goes:
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#confirm"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/tutorial/orders.rs#confirm"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="src/orders.rs" reference="examples/manual/tutorial/orders.rs#confirm"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/manual/tutorial/orders.rs#confirm"
 ```
 
 </TabItem>
@@ -119,13 +119,13 @@ default publish policy and encoded with the default codec.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="src/main.rs" reference="examples/tutorial/reply_app.rs#reply"
+```rust title="src/main.rs" reference="crates/ruststream/examples/tutorial/reply_app.rs#reply"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="src/main.rs" reference="examples/manual/tutorial/reply_app.rs#reply"
+```rust title="src/main.rs" reference="crates/ruststream/examples/manual/tutorial/reply_app.rs#reply"
 ```
 
 </TabItem>
@@ -142,13 +142,13 @@ As the number of handlers grows, keep them in their own module and collect them 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="src/routes.rs" reference="examples/tutorial/routes.rs#routes"
+```rust title="src/routes.rs" reference="crates/ruststream/examples/tutorial/routes.rs#routes"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="src/routes.rs" reference="examples/manual/tutorial/routes.rs#routes"
+```rust title="src/routes.rs" reference="crates/ruststream/examples/manual/tutorial/routes.rs#routes"
 ```
 
 </TabItem>
@@ -163,13 +163,13 @@ surface.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
+```rust title="src/main.rs" reference="crates/ruststream/examples/tutorial/main.rs#main"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="src/main.rs" reference="examples/manual/tutorial/main.rs#main"
+```rust title="src/main.rs" reference="crates/ruststream/examples/manual/tutorial/main.rs#main"
 ```
 
 </TabItem>
@@ -199,7 +199,7 @@ available brokers and the swap for each of them.
 :::info[The complete service is a compiled example]
 
 Every snippet on this page comes from
-[`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
+[`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/tutorial)
 in the repository, which CI builds on every change. `first_app.rs` and `reply_app.rs` are the
 service as steps 3 and 4 leave it, and `main.rs` is the finished one. Run it yourself with
 `cargo run --example tutorial --features macros,memory,json,asyncapi,logging -- run`.

@@ -21,13 +21,13 @@ After it, [`with`](./with.md), `with_codec`, [`decoded`](./decoded.md) and `deco
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_published_payloads.rs#decoded-as"
+```rust reference="crates/ruststream/examples/testing_published_payloads.rs#decoded-as"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_published_payloads.rs#decoded-as"
+```rust reference="crates/ruststream/examples/manual/testing_published_payloads.rs#decoded-as"
 ```
 
 </TabItem>

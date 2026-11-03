@@ -26,13 +26,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="shipping.rs" reference="examples/guide/shipping.rs#pack"
+```rust title="shipping.rs" reference="crates/ruststream/examples/guide/shipping.rs#pack"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="shipping.rs" reference="examples/manual/guide/shipping.rs#pack"
+```rust title="shipping.rs" reference="crates/ruststream/examples/manual/guide/shipping.rs#pack"
 ```
 
 </TabItem>
@@ -46,13 +46,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="shipping.rs" reference="examples/guide/shipping.rs#dispatch"
+```rust title="shipping.rs" reference="crates/ruststream/examples/guide/shipping.rs#dispatch"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="shipping.rs" reference="examples/manual/guide/shipping.rs#dispatch"
+```rust title="shipping.rs" reference="crates/ruststream/examples/manual/guide/shipping.rs#dispatch"
 ```
 
 </TabItem>
@@ -70,13 +70,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="shipping.rs" reference="examples/guide/shipping.rs#routes"
+```rust title="shipping.rs" reference="crates/ruststream/examples/guide/shipping.rs#routes"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="shipping.rs" reference="examples/manual/guide/shipping.rs#routes"
+```rust title="shipping.rs" reference="crates/ruststream/examples/manual/guide/shipping.rs#routes"
 ```
 
 </TabItem>

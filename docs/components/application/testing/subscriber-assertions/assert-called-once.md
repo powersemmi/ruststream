@@ -23,13 +23,13 @@ On failure it panics with the number of calls it found.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_calls.rs#assert_called_once"
+```rust reference="crates/ruststream/examples/testing_subscriber_calls.rs#assert_called_once"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_calls.rs#assert_called_once"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_calls.rs#assert_called_once"
 ```
 
 </TabItem>

@@ -20,5 +20,5 @@ The example runs with `cargo test --example asyncapi_servers --features macros,m
 ## Example
 
 {/* single-form: a binding is a plain value, the same with and without the macros */}
-```rust reference="examples/asyncapi_servers.rs#bindings"
+```rust reference="crates/ruststream/examples/asyncapi_servers.rs#bindings"
 ```

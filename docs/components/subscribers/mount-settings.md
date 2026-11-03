@@ -37,13 +37,13 @@ In the manual form the same methods chain on `subscriber(source, body)` before `
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/subscriber_settings.rs#settings"
+```rust reference="crates/ruststream/examples/subscriber_settings.rs#settings"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/subscriber_settings.rs#settings"
+```rust reference="crates/ruststream/examples/manual/subscriber_settings.rs#settings"
 ```
 
 </TabItem>

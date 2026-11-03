@@ -40,13 +40,13 @@ A type that carries its own bytes skips the codec: [Protobuf](./protobuf.md) and
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/codecs.rs#app"
+```rust reference="crates/ruststream/examples/codecs.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/codecs.rs#app"
+```rust reference="crates/ruststream/examples/manual/codecs.rs#app"
 ```
 
 </TabItem>

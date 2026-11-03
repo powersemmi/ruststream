@@ -19,5 +19,5 @@ The example runs with `cargo test --example asyncapi_servers --features macros,m
 ## Example
 
 {/* single-form: a security scheme is a plain value, the same with and without the macros */}
-```rust reference="examples/asyncapi_servers.rs#security"
+```rust reference="crates/ruststream/examples/asyncapi_servers.rs#security"
 ```

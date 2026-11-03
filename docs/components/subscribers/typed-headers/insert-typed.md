@@ -21,13 +21,13 @@ The example's transform is a [publish transform](../publishing/transforms/publis
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/typed_headers.rs#stamp"
+```rust reference="crates/ruststream/examples/typed_headers.rs#stamp"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/typed_headers.rs#stamp"
+```rust reference="crates/ruststream/examples/manual/typed_headers.rs#stamp"
 ```
 
 </TabItem>

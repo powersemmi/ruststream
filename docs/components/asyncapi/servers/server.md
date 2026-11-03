@@ -24,19 +24,19 @@ The example runs with `cargo test --example asyncapi_servers --features macros,m
 ## Example
 
 {/* single-form: a server spec is a plain value, the same with and without the macros */}
-```rust reference="examples/asyncapi_servers.rs#server"
+```rust reference="crates/ruststream/examples/asyncapi_servers.rs#server"
 ```
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/asyncapi_servers.rs#app"
+```rust reference="crates/ruststream/examples/asyncapi_servers.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/asyncapi_servers.rs#app"
+```rust reference="crates/ruststream/examples/manual/asyncapi_servers.rs#app"
 ```
 
 </TabItem>

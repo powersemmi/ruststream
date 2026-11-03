@@ -131,7 +131,7 @@ tb.broker::<MemoryBroker>()
     .settled(HandlerOutcome::ack());
 ```
 
-Full compiling example: `examples/testing.rs`.
+Full compiling example: `crates/ruststream/examples/testing.rs`.
 
 ## Brokers
 

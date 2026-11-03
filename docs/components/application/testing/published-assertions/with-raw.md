@@ -23,13 +23,13 @@ It panics when nothing was published or the bytes differ.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_published_payloads.rs#with-raw"
+```rust reference="crates/ruststream/examples/testing_published_payloads.rs#with-raw"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_published_payloads.rs#with-raw"
+```rust reference="crates/ruststream/examples/manual/testing_published_payloads.rs#with-raw"
 ```
 
 </TabItem>

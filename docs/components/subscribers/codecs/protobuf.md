@@ -31,13 +31,13 @@ cargo test --example protobuf --no-default-features --features testing,macros,me
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/protobuf.rs#message"
+```rust reference="crates/ruststream/examples/protobuf.rs#message"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/protobuf.rs#message"
+```rust reference="crates/ruststream/examples/manual/protobuf.rs#message"
 ```
 
 </TabItem>
@@ -48,13 +48,13 @@ The handler reads the message type, and the publish names no codec.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/protobuf.rs#app"
+```rust reference="crates/ruststream/examples/protobuf.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/protobuf.rs#app"
+```rust reference="crates/ruststream/examples/manual/protobuf.rs#app"
 ```
 
 </TabItem>

@@ -25,13 +25,13 @@ The document needs the crate's `asyncapi` feature.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="main.rs" reference="examples/guide/main.rs#main"
+```rust title="main.rs" reference="crates/ruststream/examples/guide/main.rs#main"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="main.rs" reference="examples/manual/guide/main.rs#main"
+```rust title="main.rs" reference="crates/ruststream/examples/manual/guide/main.rs#main"
 ```
 
 </TabItem>
@@ -44,13 +44,13 @@ The document needs the crate's `asyncapi` feature.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="service.rs" reference="examples/guide/service.rs#info"
+```rust title="service.rs" reference="crates/ruststream/examples/guide/service.rs#info"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="service.rs" reference="examples/manual/guide/service.rs#info"
+```rust title="service.rs" reference="crates/ruststream/examples/manual/guide/service.rs#info"
 ```
 
 </TabItem>
@@ -83,4 +83,4 @@ receive_payments_requested:
 ```
 
 Both forms of the shop produce the same document.
-A test in each compares the document with [`examples/guide/asyncapi.json`](https://github.com/powersemmi/ruststream/blob/main/examples/guide/asyncapi.json), so a change to a topic shows up in review.
+A test in each compares the document with [`examples/guide/asyncapi.json`](https://github.com/powersemmi/ruststream/blob/main/crates/ruststream/examples/guide/asyncapi.json), so a change to a topic shows up in review.

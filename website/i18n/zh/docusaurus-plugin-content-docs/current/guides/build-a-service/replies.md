@@ -24,13 +24,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#request"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#request"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#request"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#request"
 ```
 
 </TabItem>
@@ -42,13 +42,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="notifications.rs" reference="examples/guide/notifications.rs#notice"
+```rust title="notifications.rs" reference="crates/ruststream/examples/guide/notifications.rs#notice"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="notifications.rs" reference="examples/manual/guide/notifications.rs#notice"
+```rust title="notifications.rs" reference="crates/ruststream/examples/manual/guide/notifications.rs#notice"
 ```
 
 </TabItem>
@@ -64,13 +64,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="orders.rs" reference="examples/guide/orders.rs#accept"
+```rust title="orders.rs" reference="crates/ruststream/examples/guide/orders.rs#accept"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="orders.rs" reference="examples/manual/guide/orders.rs#accept"
+```rust title="orders.rs" reference="crates/ruststream/examples/manual/guide/orders.rs#accept"
 ```
 
 </TabItem>
@@ -88,13 +88,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="orders.rs" reference="examples/guide/orders.rs#routes"
+```rust title="orders.rs" reference="crates/ruststream/examples/guide/orders.rs#routes"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="orders.rs" reference="examples/manual/guide/orders.rs#routes"
+```rust title="orders.rs" reference="crates/ruststream/examples/manual/guide/orders.rs#routes"
 ```
 
 </TabItem>

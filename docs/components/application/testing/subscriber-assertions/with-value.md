@@ -23,13 +23,13 @@ The row subscription here stands in for such a broker crate: it reads `id:name` 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_carried.rs#with_value"
+```rust reference="crates/ruststream/examples/testing_subscriber_carried.rs#with_value"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_carried.rs#with_value"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_carried.rs#with_value"
 ```
 
 </TabItem>

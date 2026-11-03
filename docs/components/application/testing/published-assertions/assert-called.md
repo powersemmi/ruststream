@@ -22,13 +22,13 @@ The assertion panics with both numbers when they differ, and returns the record 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_published.rs#assert-called"
+```rust reference="crates/ruststream/examples/testing_published.rs#assert-called"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_published.rs#assert-called"
+```rust reference="crates/ruststream/examples/manual/testing_published.rs#assert-called"
 ```
 
 </TabItem>

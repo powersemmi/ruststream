@@ -30,13 +30,13 @@ A test reads the settlements with [`outcomes`](../../application/testing/subscri
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/handler_outcome.rs#outcome"
+```rust reference="crates/ruststream/examples/handler_outcome.rs#outcome"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/handler_outcome.rs#outcome"
+```rust reference="crates/ruststream/examples/manual/handler_outcome.rs#outcome"
 ```
 
 </TabItem>
@@ -47,13 +47,13 @@ A test reads the settlements with [`outcomes`](../../application/testing/subscri
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/handler_outcome.rs#unit"
+```rust reference="crates/ruststream/examples/handler_outcome.rs#unit"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/handler_outcome.rs#unit"
+```rust reference="crates/ruststream/examples/manual/handler_outcome.rs#unit"
 ```
 
 </TabItem>
@@ -64,13 +64,13 @@ A test reads the settlements with [`outcomes`](../../application/testing/subscri
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/handler_outcome.rs#result"
+```rust reference="crates/ruststream/examples/handler_outcome.rs#result"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/handler_outcome.rs#result"
+```rust reference="crates/ruststream/examples/manual/handler_outcome.rs#result"
 ```
 
 </TabItem>
@@ -81,13 +81,13 @@ A test reads the settlements with [`outcomes`](../../application/testing/subscri
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/handler_outcome.rs#result_outcome"
+```rust reference="crates/ruststream/examples/handler_outcome.rs#result_outcome"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/handler_outcome.rs#result_outcome"
+```rust reference="crates/ruststream/examples/manual/handler_outcome.rs#result_outcome"
 ```
 
 </TabItem>

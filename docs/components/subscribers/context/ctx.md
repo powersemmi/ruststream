@@ -23,13 +23,13 @@ A key only reads a context that the broker provides: `Ctx<`[`Position`](api:rust
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/context.rs#ctx"
+```rust reference="crates/ruststream/examples/context.rs#ctx"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/context.rs#ctx"
+```rust reference="crates/ruststream/examples/manual/context.rs#ctx"
 ```
 
 </TabItem>

@@ -98,7 +98,7 @@ tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "ti
 # The doc examples are a service's code, so they import the facade; a path dependency without a
 # version is dropped on publish.
 # The runtime is the one this crate's `tokio` or `embassy` feature selects.
-ruststream = { path = "../..", default-features = false, features = ["macros", "memory", "json", "testing"] }
+ruststream = { path = "../ruststream", default-features = false, features = ["macros", "memory", "json", "testing"] }
 # A device service's handlers and app, as the embedded tests write them.
 embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
 embassy-futures.workspace = true

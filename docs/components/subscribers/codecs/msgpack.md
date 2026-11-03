@@ -30,13 +30,13 @@ cargo test --example codec_msgpack --no-default-features --features testing,macr
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/codec_msgpack.rs#app"
+```rust reference="crates/ruststream/examples/codec_msgpack.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/codec_msgpack.rs#app"
+```rust reference="crates/ruststream/examples/manual/codec_msgpack.rs#app"
 ```
 
 </TabItem>

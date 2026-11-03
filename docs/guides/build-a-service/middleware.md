@@ -28,13 +28,13 @@ A layer has no macro form: it is the same plain type in both tabs.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="observability.rs" reference="examples/guide/observability.rs#layer"
+```rust title="observability.rs" reference="crates/ruststream/examples/guide/observability.rs#layer"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="observability.rs" reference="examples/manual/guide/observability.rs#layer"
+```rust title="observability.rs" reference="crates/ruststream/examples/manual/guide/observability.rs#layer"
 ```
 
 </TabItem>
@@ -51,13 +51,13 @@ The function takes the broker as a parameter, so the command-line entry point an
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="service.rs" reference="examples/guide/service.rs#shop"
+```rust title="service.rs" reference="crates/ruststream/examples/guide/service.rs#shop"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="service.rs" reference="examples/manual/guide/service.rs#shop"
+```rust title="service.rs" reference="crates/ruststream/examples/manual/guide/service.rs#shop"
 ```
 
 </TabItem>

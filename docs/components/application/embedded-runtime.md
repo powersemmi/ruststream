@@ -27,13 +27,13 @@ ruststream = { version = "0.8", default-features = false, features = ["embassy",
 
 The service reads a sensor's readings from the board's bus, reports them in degrees, and updates a display once each report is acknowledged.
 
-```rust reference="tests/doc_device.rs#service"
+```rust reference="crates/ruststream/tests/doc_device.rs#service"
 ```
 
 The board declares the bus as a `static` and the app function receives a broker built over it.
 The binary supplies the `critical-section` implementation the bus needs.
 
-```rust reference="tests/doc_device.rs#bus"
+```rust reference="crates/ruststream/tests/doc_device.rs#bus"
 ```
 
 ## What the build holds
@@ -87,7 +87,7 @@ A capacity that a run exceeds is a failure the handler hears of:
 A continuation attaches to an outcome with [`and_after`](../subscribers/messages/and-after.md), or to the context with `ctx.after_ack(..)`.
 In this build the context calls return a `Result`, and the handler decides what a refusal means.
 
-```rust reference="tests/doc_device.rs#retry"
+```rust reference="crates/ruststream/tests/doc_device.rs#retry"
 ```
 
 The retry store sits in the app's type, so its capacity is part of the registration.
@@ -98,13 +98,13 @@ The `.error` closure borrows the failure, so it does not copy the message into t
 A batch handler takes a slice, and the mount names the size.
 The slice holds messages that deserialize themselves, or messages the mount's codec decodes.
 
-```rust reference="tests/doc_device.rs#batch"
+```rust reference="crates/ruststream/tests/doc_device.rs#batch"
 ```
 
 A batch handler that returns one `HandlerOutcome` settles the whole batch with it.
 To settle each message on its own, it returns `Outcomes<HandlerOutcome, N>`, one entry per message in the order of the slice, with `N` the size the mount names.
 
-```rust reference="tests/doc_device.rs#batch-each"
+```rust reference="crates/ruststream/tests/doc_device.rs#batch-each"
 ```
 
 ### Retries and dead letters
@@ -113,7 +113,7 @@ A batch mount takes the steps of a single-message one: `.retry_capacity::<CAP>()
 `retry_after` and dead letters work for each element, whether the handler returns one outcome for the batch or one per message.
 The store keeps one record for each element a batch retries at once, so `CAP` is at least `N`.
 
-```rust reference="tests/doc_device.rs#batch-retry"
+```rust reference="crates/ruststream/tests/doc_device.rs#batch-retry"
 ```
 
 ### Replies
@@ -121,7 +121,7 @@ The store keeps one record for each element a batch retries at once, so `CAP` is
 A batch handler mounted with `reply` publishes one reply for each element, in the order of the slice, and returns them as `Outcomes<Reply, N>`.
 A reply the bus refuses is lost together with the replies behind it, and the `.error` continuation receives them; there are at most `N`.
 
-```rust reference="tests/doc_device.rs#batch-reply"
+```rust reference="crates/ruststream/tests/doc_device.rs#batch-reply"
 ```
 
 ### Continuations

@@ -24,13 +24,13 @@ A publish after a fail-fast failure stopped the [`TestApp`](api:ruststream::test
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_driving.rs#publish"
+```rust reference="crates/ruststream/examples/testing_driving.rs#publish"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_driving.rs#publish"
+```rust reference="crates/ruststream/examples/manual/testing_driving.rs#publish"
 ```
 
 </TabItem>

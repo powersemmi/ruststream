@@ -29,7 +29,7 @@ The middleware has no macro form: the same impl serves both forms, and only the 
 The middleware drops the deliveries of one tenant.
 
 {/* single-form: a DynMiddleware impl has no macro form; the same code serves the macro and the manual service */}
-```rust reference="examples/dyn_stack.rs#middleware"
+```rust reference="crates/ruststream/examples/dyn_stack.rs#middleware"
 ```
 
 The app builds one per tenant the configuration blocks.
@@ -37,13 +37,13 @@ The app builds one per tenant the configuration blocks.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/dyn_stack.rs#app"
+```rust reference="crates/ruststream/examples/dyn_stack.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/dyn_stack.rs#app"
+```rust reference="crates/ruststream/examples/manual/dyn_stack.rs#app"
 ```
 
 </TabItem>

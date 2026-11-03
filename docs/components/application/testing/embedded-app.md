@@ -114,8 +114,8 @@ The state of a service in this build holds no heap type either: a `static` count
 
 The allocator the test binary installs, and a test of a retry on the mock clock against the service of the [Embedded runtime](../embedded-runtime.md) page:
 
-```rust reference="tests/doc_device.rs#allocator"
+```rust reference="crates/ruststream/tests/doc_device.rs#allocator"
 ```
 
-```rust reference="tests/doc_device.rs#test"
+```rust reference="crates/ruststream/tests/doc_device.rs#test"
 ```

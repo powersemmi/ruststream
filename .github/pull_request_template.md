@@ -26,6 +26,6 @@ Please delete options that are not relevant.
 - [ ] I have added tests that validate my fix or new feature
 - [ ] New and existing tests pass locally (`just test`)
 - [ ] Public items carry a compiling `# Examples` doctest, and user-facing changes are reflected in
-      `examples/` where applicable
+      the facade's `examples/` where applicable
 
 > `just ci` runs the full gate (`just check` + `just test`) in one go.

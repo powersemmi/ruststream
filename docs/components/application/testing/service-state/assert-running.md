@@ -22,13 +22,13 @@ On failure the assertion names the failure that stopped the service.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_service_state.rs#assert-running"
+```rust reference="crates/ruststream/examples/testing_service_state.rs#assert-running"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_service_state.rs#assert-running"
+```rust reference="crates/ruststream/examples/manual/testing_service_state.rs#assert-running"
 ```
 
 </TabItem>

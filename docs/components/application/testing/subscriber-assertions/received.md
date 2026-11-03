@@ -23,13 +23,13 @@ It fits a check that a chain of assertions cannot say: an order, a subset, a pro
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_payloads.rs#received"
+```rust reference="crates/ruststream/examples/testing_subscriber_payloads.rs#received"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_payloads.rs#received"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_payloads.rs#received"
 ```
 
 </TabItem>

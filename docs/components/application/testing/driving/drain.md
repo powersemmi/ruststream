@@ -24,13 +24,13 @@ A continuation that keeps itself runnable never finishes, and `drain` panics wit
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_driving.rs#drain"
+```rust reference="crates/ruststream/examples/testing_driving.rs#drain"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_driving.rs#drain"
+```rust reference="crates/ruststream/examples/manual/testing_driving.rs#drain"
 ```
 
 </TabItem>

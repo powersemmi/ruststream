@@ -71,7 +71,7 @@ allocation-counter = "0.8.1"
 trybuild = "1"
 # The facade as a device service imports it: the embassy runtime, so the attributes emit the local
 # forms the host tests and the snapshots write.
-ruststream = { path = "../..", default-features = false, features = ["embassy", "macros", "memory", "json"] }
+ruststream = { path = "../ruststream", default-features = false, features = ["embassy", "macros", "memory", "json"] }
 # The reply the codec encodes, as a device crate derives it.
 serde.workspace = true
 # Counts instructions and allocations of the idle-subscription scenario.

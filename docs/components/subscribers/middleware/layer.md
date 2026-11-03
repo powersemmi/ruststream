@@ -31,7 +31,7 @@ A chain chosen when the app starts goes into a [`DynStack`](./dyn-stack.md).
 The layer drops a delivery that names no tenant before the handler sees it.
 
 {/* single-form: a Layer impl has no macro form; the same code serves the macro and the manual service */}
-```rust reference="examples/layer.rs#layer"
+```rust reference="crates/ruststream/examples/layer.rs#layer"
 ```
 
 Mounted on the app, it wraps every handler.
@@ -39,13 +39,13 @@ Mounted on the app, it wraps every handler.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/layer.rs#app"
+```rust reference="crates/ruststream/examples/layer.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/layer.rs#app"
+```rust reference="crates/ruststream/examples/manual/layer.rs#app"
 ```
 
 </TabItem>
@@ -59,13 +59,13 @@ After an `include` it wraps that registration alone.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/layer.rs#scopes"
+```rust reference="crates/ruststream/examples/layer.rs#scopes"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/layer.rs#scopes"
+```rust reference="crates/ruststream/examples/manual/layer.rs#scopes"
 ```
 
 </TabItem>

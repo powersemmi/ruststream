@@ -20,7 +20,7 @@ The count changes only when a subscription starts or stops, so a delivery pays n
 ## Example
 
 {/* single-form: a health endpoint is the same with and without the macros */}
-```rust reference="examples/http_outbox.rs#healthz"
+```rust reference="crates/ruststream/examples/http_outbox.rs#healthz"
 ```
 
 ## A subscription that stops
@@ -33,5 +33,5 @@ The service then shuts down gracefully, `run` returns an error that names the su
 An end during shutdown is part of the shutdown and is never reported.
 
 {/* single-form: the setting is the same with and without the macros; the Manual tab of the full file differs only in the handler */}
-```rust reference="examples/app_running.rs#subscription_end"
+```rust reference="crates/ruststream/examples/app_running.rs#subscription_end"
 ```

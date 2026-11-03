@@ -13,7 +13,7 @@ on:
     paths:
       - "docs/**"
       - "website/**"
-      - "examples/**"
+      - "crates/ruststream/examples/**"
   # A manual run either republishes a release from its tag (a typo fix or a broken link worth
   # publishing between releases), or, with `archive_ref`, rebuilds an older line from its archive
   # branch with the site code of the branch the run starts from.

@@ -27,13 +27,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#charge"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#charge"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#charge"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#charge"
 ```
 
 </TabItem>
@@ -48,13 +48,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#routes"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#routes"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#routes"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#routes"
 ```
 
 </TabItem>

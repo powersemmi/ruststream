@@ -34,13 +34,13 @@ Under [`TestApp`](api:ruststream::testing::TestApp) the threads run as `n` worke
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/threads.rs#threads"
+```rust reference="crates/ruststream/examples/threads.rs#threads"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/threads.rs#threads"
+```rust reference="crates/ruststream/examples/manual/threads.rs#threads"
 ```
 
 </TabItem>
@@ -57,13 +57,13 @@ In the manual form, `main` passes an [`AppRuntime`](api:ruststream::runtime::cli
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/threads.rs#app"
+```rust reference="crates/ruststream/examples/threads.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/threads.rs#app"
+```rust reference="crates/ruststream/examples/manual/threads.rs#app"
 ```
 
 </TabItem>

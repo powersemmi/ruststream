@@ -32,13 +32,13 @@ A test runs the same builder function on [`TestApp`](api:ruststream::testing::Te
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/app_macro.rs#app"
+```rust reference="crates/ruststream/examples/app_macro.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/app_macro.rs#app"
+```rust reference="crates/ruststream/examples/manual/app_macro.rs#app"
 ```
 
 </TabItem>

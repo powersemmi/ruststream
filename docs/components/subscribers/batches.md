@@ -31,13 +31,13 @@ One outcome settles the whole batch.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/subscriber_batch.rs#batch"
+```rust reference="crates/ruststream/examples/subscriber_batch.rs#batch"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/subscriber_batch.rs#batch"
+```rust reference="crates/ruststream/examples/manual/subscriber_batch.rs#batch"
 ```
 
 </TabItem>
@@ -57,13 +57,13 @@ A `Vec<HandlerOutcome>` settles element `i` with outcome `i`.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/subscriber_batch.rs#per_element"
+```rust reference="crates/ruststream/examples/subscriber_batch.rs#per_element"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/subscriber_batch.rs#per_element"
+```rust reference="crates/ruststream/examples/manual/subscriber_batch.rs#per_element"
 ```
 
 </TabItem>

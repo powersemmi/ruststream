@@ -24,13 +24,13 @@ A publish made outside the handler task, such as a spawned task, is not attribut
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_records.rs#out"
+```rust reference="crates/ruststream/examples/testing_records.rs#out"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_records.rs#out"
+```rust reference="crates/ruststream/examples/manual/testing_records.rs#out"
 ```
 
 </TabItem>

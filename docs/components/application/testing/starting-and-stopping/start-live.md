@@ -25,13 +25,13 @@ The test's input reaches the broker through its connected form's default publish
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_starting.rs#start-live"
+```rust reference="crates/ruststream/examples/testing_starting.rs#start-live"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_starting.rs#start-live"
+```rust reference="crates/ruststream/examples/manual/testing_starting.rs#start-live"
 ```
 
 </TabItem>

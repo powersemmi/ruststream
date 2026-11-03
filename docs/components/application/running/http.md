@@ -22,13 +22,13 @@ The service then drains with [`shutdown`](./shutdown.md).
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/http_outbox.rs#wiring"
+```rust reference="crates/ruststream/examples/http_outbox.rs#wiring"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/http_outbox.rs#wiring"
+```rust reference="crates/ruststream/examples/manual/http_outbox.rs#wiring"
 ```
 
 </TabItem>

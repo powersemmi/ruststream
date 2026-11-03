@@ -20,13 +20,13 @@ The assertion panics when the latest publish carried settings, naming their type
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_published_options.rs#assert-options-default"
+```rust reference="crates/ruststream/examples/testing_published_options.rs#assert-options-default"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_published_options.rs#assert-options-default"
+```rust reference="crates/ruststream/examples/manual/testing_published_options.rs#assert-options-default"
 ```
 
 </TabItem>

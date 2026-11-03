@@ -32,13 +32,13 @@ The handler names the capability; the mount site and the startup hook name the p
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/publisher.rs#handler"
+```rust reference="crates/ruststream/examples/publisher.rs#handler"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/publisher.rs#handler"
+```rust reference="crates/ruststream/examples/manual/publisher.rs#handler"
 ```
 
 </TabItem>
@@ -47,13 +47,13 @@ The handler names the capability; the mount site and the startup hook name the p
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/publisher.rs#app"
+```rust reference="crates/ruststream/examples/publisher.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/publisher.rs#app"
+```rust reference="crates/ruststream/examples/manual/publisher.rs#app"
 ```
 
 </TabItem>

@@ -17,5 +17,5 @@ The example runs with `cargo test --example asyncapi_info --no-default-features 
 ## Example
 
 {/* single-form: the service info is built from plain values, the same with and without the macros */}
-```rust reference="examples/asyncapi_info.rs#tag"
+```rust reference="crates/ruststream/examples/asyncapi_info.rs#tag"
 ```
