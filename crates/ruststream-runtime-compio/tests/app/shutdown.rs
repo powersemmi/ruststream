@@ -8,13 +8,14 @@ use std::convert::Infallible;
 use std::future::{pending, ready};
 use std::io;
 use std::num::NonZeroUsize;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use event_listener::Event;
 use futures::StreamExt;
-use futures::channel::{mpsc, oneshot};
 use ruststream_memory::local::LocalMemoryBroker;
 use ruststream_runtime::{AppInfo, HandlerOutcome, Workers, subscriber};
 use ruststream_runtime_compio::{Cores, RustStream, RustStreamError, time, yield_now};
@@ -43,20 +44,54 @@ fn run_guarded(
     finished.recv_timeout(Duration::from_secs(15)).ok()
 }
 
-type Gate = Arc<Mutex<Option<oneshot::Receiver<()>>>>;
+/// A count of the times a point of the scenario was reached, and a wait for the count: how a test
+/// of the teardown learns that a handler holds its delivery, which no lifecycle signal reports.
+#[derive(Default)]
+struct Latch {
+    reached: AtomicUsize,
+    event: Event,
+}
+
+impl Latch {
+    /// Counts one more arrival and wakes every waiter.
+    fn reach(&self) {
+        self.reached.fetch_add(1, Ordering::SeqCst);
+        self.event.notify(usize::MAX);
+    }
+
+    /// Resolves once the point was reached `times` times.
+    async fn reached(&self, times: usize) {
+        loop {
+            if self.reached.load(Ordering::SeqCst) >= times {
+                return;
+            }
+            let listener = self.event.listen();
+            // Read again: an arrival between the first read and `listen` notified nobody.
+            if self.reached.load(Ordering::SeqCst) >= times {
+                return;
+            }
+            listener.await;
+        }
+    }
+}
 
 #[test]
 fn shutdown_waits_for_an_in_flight_handler_and_its_continuation() {
     let log = Log::default();
     let (source, mut line) = wire("orders", &log);
-    let (release, gate) = oneshot::channel();
-    let gate: Gate = Arc::new(Mutex::new(Some(gate)));
-    let (began, mut handling) = mpsc::unbounded();
-    let (shutting, mut shutting_down) = mpsc::unbounded();
+    // The handler holds the delivery until the test lets it go, once the shutdown has begun.
+    let release = Arc::new(Latch::default());
+    let began = Arc::new(Latch::default());
+    let shutting = Arc::new(Latch::default());
+    let (gate, handling, shutting_down) = (
+        Arc::clone(&release),
+        Arc::clone(&began),
+        Arc::clone(&shutting),
+    );
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_shutdown(async move |_state: Arc<()>| {
-            let _ = shutting.unbounded_send(());
+            shutting.reach();
             Ok::<_, Infallible>(())
         })
         .after_shutdown({
@@ -74,13 +109,11 @@ fn shutdown_waits_for_an_in_flight_handler_and_its_continuation() {
                         source,
                         On(move |_| {
                             let (log, gate, began) =
-                                (log.clone(), Arc::clone(&gate), began.clone());
+                                (log.clone(), Arc::clone(&gate), Arc::clone(&began));
                             async move {
                                 log.add("handler start");
-                                let _ = began.unbounded_send(());
-                                let waiting =
-                                    gate.lock().expect("gate").take().expect("one delivery");
-                                let _ = waiting.await;
+                                began.reach();
+                                gate.reached(1).await;
                                 log.add("handler end");
                                 Err(HandlerOutcome::ack().and_after(async move {
                                     time::sleep(Duration::from_millis(20)).await;
@@ -97,13 +130,13 @@ fn shutdown_waits_for_an_in_flight_handler_and_its_continuation() {
     on_runtime(async {
         let running = app.start().await.expect("the service starts");
         line.post(1);
-        handling.next().await.expect("the handler started");
+        handling.reached(1).await;
 
         let shutdown = running.shutdown();
         let released = async {
             // The shutdown has begun and the handler still holds the delivery.
-            shutting_down.next().await.expect("the shutdown began");
-            let _ = release.send(());
+            shutting_down.reached(1).await;
+            release.reach();
         };
         let (outcome, ()) = futures::join!(shutdown, released);
         outcome.expect("a clean shutdown");
@@ -129,7 +162,9 @@ fn shutdown_waits_for_an_in_flight_handler_and_its_continuation() {
 fn a_handler_stuck_past_the_timeout_is_cancelled_at_the_cap() {
     let log = Log::default();
     let (source, line) = wire("orders", &log);
-    let (began, mut handling) = mpsc::unbounded();
+    // The teardown is tested while a handler holds its delivery: the latch says when one does.
+    let began = Arc::new(Latch::default());
+    let handling = Arc::clone(&began);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .shutdown_timeout(Duration::from_millis(100))
         .with_broker(LocalMemoryBroker::<8>::new(), {
@@ -139,10 +174,10 @@ fn a_handler_stuck_past_the_timeout_is_cancelled_at_the_cap() {
                     subscriber(
                         source,
                         On(move |_| {
-                            let (log, began) = (log.clone(), began.clone());
+                            let (log, began) = (log.clone(), Arc::clone(&began));
                             async move {
                                 let _stuck = Dropped(log, "handler dropped");
-                                let _ = began.unbounded_send(());
+                                began.reach();
                                 pending::<()>().await;
                                 Ok(())
                             }
@@ -156,7 +191,7 @@ fn a_handler_stuck_past_the_timeout_is_cancelled_at_the_cap() {
     on_runtime(async {
         let running = app.start().await.expect("the service starts");
         line.post(1);
-        handling.next().await.expect("the handler started");
+        handling.reached(1).await;
         running
             .shutdown()
             .await
@@ -175,7 +210,9 @@ fn the_brokers_close_only_after_a_worker_on_another_core_is_gone() {
     let log = Log::default();
     let (source, line) = wire("orders", &log);
     let poster = line.poster();
-    let (began, mut handling) = mpsc::unbounded();
+    // The teardown is tested while a handler holds its delivery: the latch says when one does.
+    let began = Arc::new(Latch::default());
+    let handling = Arc::clone(&began);
     let after = log.clone();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .shutdown_timeout(Duration::from_millis(20))
@@ -195,10 +232,10 @@ fn the_brokers_close_only_after_a_worker_on_another_core_is_gone() {
                     subscriber(
                         source,
                         On(move |_| {
-                            let (log, began) = (log.clone(), began.clone());
+                            let (log, began) = (log.clone(), Arc::clone(&began));
                             async move {
                                 let _stuck = Dropped(log, "handler dropped");
-                                let _ = began.unbounded_send(());
+                                began.reach();
                                 // A handler that holds its core past the cap, as a blocking call
                                 // does: the cap of that core can only start once it lets go.
                                 if thread::current()
@@ -223,8 +260,7 @@ fn the_brokers_close_only_after_a_worker_on_another_core_is_gone() {
         .without_signals();
     run_guarded(cores, move |cores| {
         app.run_until(cores, async move {
-            handling.next().await.expect("the first handler started");
-            handling.next().await.expect("the second handler started");
+            handling.reached(2).await;
         })
     })
     .expect("the run ended in time")
@@ -248,7 +284,9 @@ fn a_worker_stuck_on_another_core_is_cancelled_at_the_cap_and_the_run_ends() {
     let log = Log::default();
     let (source, line) = wire("orders", &log);
     let poster = line.poster();
-    let (began, mut handling) = mpsc::unbounded();
+    // The teardown is tested while a handler holds its delivery: the latch says when one does.
+    let began = Arc::new(Latch::default());
+    let handling = Arc::clone(&began);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .shutdown_timeout(Duration::from_millis(100))
         .after_startup(async move |_state: Arc<()>| {
@@ -263,10 +301,10 @@ fn a_worker_stuck_on_another_core_is_cancelled_at_the_cap_and_the_run_ends() {
                     subscriber(
                         source,
                         On(move |_| {
-                            let (log, began) = (log.clone(), began.clone());
+                            let (log, began) = (log.clone(), Arc::clone(&began));
                             async move {
                                 let _stuck = Dropped(log, "handler dropped");
-                                let _ = began.unbounded_send(());
+                                began.reach();
                                 pending::<()>().await;
                                 Ok(())
                             }
@@ -284,8 +322,7 @@ fn a_worker_stuck_on_another_core_is_cancelled_at_the_cap_and_the_run_ends() {
         .without_signals();
     run_guarded(cores, move |cores| {
         app.run_until(cores, async move {
-            handling.next().await.expect("the first handler started");
-            handling.next().await.expect("the second handler started");
+            handling.reached(2).await;
         })
     })
     .expect("the run ended in time")
