@@ -3,6 +3,7 @@
 //! so a shutdown ends by its timeout, and a wait with no timeout to end it fails.
 
 use std::convert::Infallible;
+use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
@@ -304,4 +305,70 @@ async fn a_failed_shutdown_stops_the_handler_closes_the_broker_and_runs_after_sh
         !broker_open.load(Ordering::Relaxed),
         "the broker was still open in after_shutdown"
     );
+}
+
+/// The state of an app whose `after_startup` hook sets the spinning handler off and then fails.
+#[derive(FromRef)]
+struct StartupState {
+    ticks: Ticks,
+    #[from_ref(skip)]
+    spins: Bound<MemoryBroker, Publish>,
+}
+
+/// A failed start leaves nothing behind: the handler the failing hook set running is gone and the
+/// broker is closed, though the app has no shutdown timeout to end the wait.
+#[tokio::test(start_paused = true)]
+async fn a_failed_startup_stops_the_handler_it_set_running_and_closes_the_broker() {
+    let ticks = Ticks(Arc::new(AtomicU64::new(0)));
+    let broker = MemoryBroker::new().bindable();
+    let spins = broker.bind(Publish);
+    let probe = spins.clone();
+    let (state_ticks, state_spins) = (ticks.clone(), spins);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .on_startup(async move |()| {
+            Ok::<_, Infallible>(StartupState {
+                ticks: state_ticks,
+                spins: state_spins,
+            })
+        })
+        .after_startup(async |state: Arc<StartupState>| {
+            state
+                .spins
+                .clone()
+                .live()
+                .await
+                .map_err(io::Error::other)?
+                .message(&Spin { id: 1 })
+                .publish()
+                .await
+                .map_err(io::Error::other)?;
+            while state.ticks.0.load(Ordering::Relaxed) == 0 {
+                task::yield_now().await;
+            }
+            Err(io::Error::other(
+                "the hook failed after it set the handler running",
+            ))
+        })
+        .with_broker(broker, |b| b.include(on_spin));
+
+    let started = TestApp::start(app).await;
+
+    assert!(
+        matches!(started, Err(TestError::Startup(_))),
+        "the start returned an unexpected result",
+    );
+    let at_return = ticks.0.load(Ordering::Relaxed);
+    for _ in 0..200 {
+        task::yield_now().await;
+    }
+    assert_eq!(
+        ticks.0.load(Ordering::Relaxed),
+        at_return,
+        "the handler kept running after the start failed",
+    );
+    let open = match probe.live().await {
+        Ok(publisher) => publisher.message(&Spin { id: 2 }).publish().await.is_ok(),
+        Err(_) => false,
+    };
+    assert!(!open, "the broker was still open after the start failed");
 }

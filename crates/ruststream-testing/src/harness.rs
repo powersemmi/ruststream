@@ -544,11 +544,21 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         if let Some(err) = failed {
             // Unwound the way the service unwinds a failed start: what is running stops, and the
             // brokers already connected are shut down rather than dropped.
-            let _ = until_idle(&quiescence, async {
-                stop_dispatch(&shutdown, handles, shutdown_timeout).await;
+            let stopped = until_idle(&quiescence, async {
+                stop_dispatch(&shutdown, &mut handles, shutdown_timeout).await;
                 drain_continuations(&continuations, shutdown_timeout).await;
             })
             .await;
+            if stopped.is_err() {
+                // The wait was given up, not the stop: the loops it had not seen finish are still
+                // in `handles`. A second pass with no time to wait aborts them, so no handler
+                // runs on once the brokers close.
+                let _ = until_idle(&quiescence, async {
+                    stop_dispatch(&shutdown, &mut handles, Some(Duration::ZERO)).await;
+                    drain_continuations(&continuations, Some(Duration::ZERO)).await;
+                })
+                .await;
+            }
             shut_down(entries).await;
             return Err(err);
         }
@@ -634,24 +644,28 @@ impl<State: Send + Sync + 'static> TestApp<State> {
 
 /// Stops the dispatch loops: signals them, and waits for them all, bounded by one shutdown
 /// timeout; the loops still running at its end are aborted with their workers, as the service's
-/// own shutdown does.
+/// own shutdown does. A loop leaves `handles` only once it has finished, so a stop that is dropped
+/// mid-wait keeps the loops it had not seen finish, and a second stop aborts them.
 async fn stop_dispatch(
     shutdown: &Shutdown,
-    handles: Vec<JoinHandle<()>>,
+    handles: &mut Vec<JoinHandle<()>>,
     timeout: Option<Duration>,
 ) {
     shutdown.cancel();
     let until = timeout.map(|timeout| Instant::now() + timeout);
-    for mut handle in handles {
-        let Some(until) = until else {
-            let _ = handle.await;
-            continue;
+    while let Some(handle) = handles.first_mut() {
+        let finished = if let Some(until) = until {
+            time::timeout_at(until, &mut *handle).await.is_ok()
+        } else {
+            let _ = (&mut *handle).await;
+            true
         };
-        if time::timeout_at(until, &mut handle).await.is_err() {
+        if !finished {
             handle.abort();
             // Awaited, so the loop is gone, not merely told to go, when this returns.
-            let _ = handle.await;
+            let _ = (&mut *handle).await;
         }
+        handles.remove(0);
     }
 }
 
