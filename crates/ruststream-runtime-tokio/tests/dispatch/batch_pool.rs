@@ -66,11 +66,19 @@ async fn a_pool_hands_every_delivery_to_a_batch_once() {
     }
     tb.settle().await.expect("settle");
 
-    tb.broker::<MemoryBroker>()
-        .subscriber("plain")
-        .assert_called(4)
-        .assert_batch_sizes(&[2, 2, 2, 2])
-        .settled(HandlerOutcome::ack());
+    // A batch takes what is buffered when its worker asks, so the split depends on how the
+    // publishes interleave with the loop: the subject is that every job lands in one batch, once.
+    let plain = tb.broker::<MemoryBroker>();
+    let plain = plain.subscriber("plain");
+    let batches = plain.batches::<Job>();
+    assert!(
+        batches.iter().all(|batch| (1..=2).contains(&batch.len())),
+        "a batch holds between one and two jobs, got {batches:?}"
+    );
+    let mut ids: Vec<u32> = batches.iter().flatten().map(|job| job.id).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, (1..=8u32).collect::<Vec<_>>(), "batches: {batches:?}");
+    plain.settled(HandlerOutcome::ack());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
