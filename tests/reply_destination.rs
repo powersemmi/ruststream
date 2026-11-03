@@ -18,8 +18,9 @@
 
 use std::future::ready;
 
-#[cfg(feature = "asyncapi")]
 use ruststream::asyncapi;
+#[cfg(feature = "asyncapi")]
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 use ruststream::nonzero;
 use ruststream::testing::TestApp;
@@ -235,6 +236,7 @@ fn assert_names(line: &str, subscription: &str, reply_type: &str, declared: &str
 #[tokio::test]
 async fn an_attribute_name_the_type_overrides_is_reported_at_startup() {
     let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| b.include(contradicted));
 
     let log = startup_log(app).await;
@@ -253,17 +255,16 @@ async fn an_attribute_name_the_type_overrides_is_reported_at_startup() {
 /// The same on the manual chain: `.to(..)` names a subject the reply type overrides.
 #[tokio::test]
 async fn a_chain_name_the_type_overrides_is_reported_at_startup() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| {
             b.include(
                 subscriber("chain.contradicted", Confirm)
                     .reply()
                     .to("chain.unused")
                     .build(),
             )
-        },
-    );
+        });
 
     let log = startup_log(app).await;
 
@@ -290,6 +291,7 @@ async fn confirm_all(orders: &[Order]) -> Vec<Confirmation> {
 #[tokio::test]
 async fn a_batch_reply_name_the_type_overrides_is_reported_at_startup() {
     let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| {
             b.include(confirm_all.batch(nonzero!(4)))
         });
@@ -321,6 +323,7 @@ async fn frame(order: &Order) -> Frame {
 #[tokio::test]
 async fn a_serialized_reply_name_the_type_overrides_is_reported_at_startup() {
     let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| b.include(frame));
 
     let log = startup_log(app).await;
@@ -345,17 +348,16 @@ async fn agreed(order: &Order) -> Confirmation {
 /// Nothing is ignored where the mount site names the type's own destination, on either surface.
 #[tokio::test]
 async fn a_mount_site_name_equal_to_the_declared_one_is_not_reported() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| {
             b.include(agreed).include(
                 subscriber("chain.agreed", Confirm)
                     .reply()
                     .to("dest.declared")
                     .build(),
             )
-        },
-    );
+        });
 
     let log = startup_log(app).await;
 
@@ -365,13 +367,12 @@ async fn a_mount_site_name_equal_to_the_declared_one_is_not_reported() {
 /// Nothing is ignored where the mount site names nothing, on either surface.
 #[tokio::test]
 async fn a_bare_publish_is_not_reported() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| {
             b.include(bare)
                 .include(subscriber("chain.bare", Confirm).reply().build())
-        },
-    );
+        });
 
     let log = startup_log(app).await;
 
@@ -382,6 +383,7 @@ async fn a_bare_publish_is_not_reported() {
 #[tokio::test]
 async fn a_name_a_type_declaring_none_takes_is_not_reported() {
     let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| b.include(named));
 
     let log = startup_log(app).await;
@@ -404,6 +406,7 @@ async fn confirm_and_audit(order: &Order, Out(audit): Out<impl Publisher, Audit>
 #[tokio::test]
 async fn a_slot_carrying_handler_reports_an_overridden_name_at_startup() {
     let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| {
             b.include(confirm_and_audit).out(Audit, Publish)
         });
@@ -438,13 +441,12 @@ async fn confirm_and_audit_all(
 /// The batch form of a slot-carrying handler reports the same way.
 #[tokio::test]
 async fn a_slot_carrying_batch_handler_reports_an_overridden_name_at_startup() {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| {
             b.include(confirm_and_audit_all.batch(nonzero!(4)))
                 .out(Audit, Publish)
-        },
-    );
+        });
 
     let log = startup_log(app).await;
 

@@ -27,6 +27,7 @@ use std::time::Duration;
 
 use common::Order;
 use futures::{Stream, StreamExt};
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublisher,
     MemorySubscriber,
@@ -200,8 +201,9 @@ fn dropped_delays(log: &Captured) -> Vec<String> {
 async fn a_spent_delivery_is_moved_without_a_dropped_delay_warning() {
     let log = Captured::default();
     let _guard = log.install();
-    let app =
-        RustStream::new(AppInfo::new("moved", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    let app = RustStream::new(AppInfo::new("moved", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| {
             b.include(not_ready)
                 .max_attempts(nonzero!(1u32))
                 .dead_letter("orders.dead")
@@ -236,6 +238,7 @@ async fn a_delivery_with_attempts_left_warns_that_its_delay_is_dropped() {
         seen: Arc::new(AtomicU32::new(0)),
     };
     let app = RustStream::new(AppInfo::new("moved", "0.1.0"))
+        .logger(TracingLogger)
         .on_startup(async move |()| Ok::<_, Infallible>(deliveries))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(ready_on_return)

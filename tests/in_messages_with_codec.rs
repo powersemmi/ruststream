@@ -12,6 +12,7 @@ use std::error::Error;
 
 use crate::log_capture::Captured;
 use ruststream::codec::{Codec, CodecError, FrameNames, JsonCodec};
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 use serde::de::DeserializeOwned;
@@ -117,11 +118,9 @@ async fn on_event(event: &OrderEvent) -> Seen {
 }
 
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("rec", "0.1.0")).with_broker_codec(
-        MemoryBroker::new(),
-        REGISTRY,
-        |b| b.include(on_event),
-    )
+    RustStream::new(AppInfo::new("rec", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker_codec(MemoryBroker::new(), REGISTRY, |b| b.include(on_event))
 }
 
 #[tokio::test]
