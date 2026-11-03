@@ -23,6 +23,8 @@ use crate::hooks::{HookList, Hooks, NoHooks};
 use crate::host::AppHost;
 #[cfg(feature = "testing")]
 use crate::in_process::StartInProcess;
+use ruststream_core::diag::Logger;
+
 use crate::mounts::{BrokerMount, CloseAll, Registration, StartMounts};
 
 /// The router a broker's scope hands the closure of [`EmbeddedApp::with_broker`].
@@ -124,6 +126,7 @@ pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 #[must_use = "an app does nothing until it runs"]
 pub struct EmbeddedApp<M> {
     mounts: M,
+    logger: Option<fn()>,
 }
 
 /// What an [`EmbeddedApp`] holds: its state, its brokers with their routes, and its hooks.
@@ -139,6 +142,7 @@ impl EmbeddedApp<Parts<(), (), NoHooks>> {
     /// An app with no broker, no state and no hooks.
     pub const fn new() -> Self {
         Self {
+            logger: None,
             mounts: Parts {
                 state: (),
                 brokers: (),
@@ -190,6 +194,7 @@ impl<Brokers> EmbeddedApp<Parts<(), Brokers, NoHooks>> {
     /// ```
     pub fn with_state<State>(self, state: State) -> EmbeddedApp<Parts<State, Brokers, NoHooks>> {
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers: self.mounts.brokers,
@@ -250,6 +255,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
             hooks,
         } = self.mounts;
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers: (
@@ -288,6 +294,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
             hooks,
         } = self.mounts;
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers,
@@ -317,6 +324,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
             hooks,
         } = self.mounts;
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers,
@@ -365,6 +373,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
             hooks,
         } = self.mounts;
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers,
@@ -394,6 +403,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
             hooks,
         } = self.mounts;
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers,
@@ -441,6 +451,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
             hooks,
         } = self.mounts;
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers,
@@ -470,6 +481,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
             hooks,
         } = self.mounts;
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers,
@@ -480,6 +492,36 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
                 },
             },
         }
+    }
+}
+
+impl<M> EmbeddedApp<M> {
+    /// Selects the logger the framework reports through, when the app runs and before its brokers
+    /// connect.
+    ///
+    /// Nothing is reported until an app selects one. The selection is process-wide, like the
+    /// `log` crate's: two apps in one process share one logger, and the last to start decides.
+    /// Each logger hands an event to its backend, whose level filter decides what shows.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "log")]
+    /// # {
+    /// use ruststream_core::diag::LogLogger;
+    /// use ruststream_memory::local::LocalMemoryBroker;
+    /// use ruststream_runtime_embassy::{EmbeddedApp, Mounts};
+    ///
+    /// fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
+    ///     EmbeddedApp::new().logger(LogLogger).with_broker(bus, |b| b)
+    /// }
+    /// # let _ = app(LocalMemoryBroker::new());
+    /// # }
+    /// ```
+    pub fn logger<L: Logger>(mut self, logger: L) -> Self {
+        let _ = logger;
+        self.logger = Some(L::select);
+        self
     }
 }
 
@@ -500,6 +542,9 @@ impl<M: Mounts> EmbeddedApp<M> {
     ///
     /// See [`EmbeddedApp`].
     pub fn run(self, control: &Control) -> impl Future<Output = Result<(), RunError>> {
+        if let Some(select) = self.logger {
+            select();
+        }
         self.mounts.run_app(control)
     }
 
@@ -521,6 +566,9 @@ impl<M: Mounts> EmbeddedApp<M> {
     where
         Swap: FnOnce(M::State) -> M::State,
     {
+        if let Some(select) = self.logger {
+            select();
+        }
         self.mounts.run_in_process(control, run, state)
     }
 }

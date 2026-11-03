@@ -235,6 +235,26 @@ pub use ruststream_runtime_tokio::{Buffered, BufferedSubscriber};
 
 pub mod codec;
 
+/// The loggers an app selects with `.logger(..)`: the framework reports nothing until it does.
+///
+/// [`TracingLogger`] needs the `tracing` feature (the tokio runner turns it on), [`LogLogger`] the
+/// `log` feature, [`DefmtLogger`] the `defmt` feature. The selection is process-wide, and the
+/// level the user's backend filters at decides which events show: a `tracing` subscriber's
+/// filter, `log::max_level()`, defmt's level.
+///
+/// # Examples
+///
+/// See [`Logger`].
+pub mod diagnostics {
+    #[cfg(feature = "defmt")]
+    pub use ruststream_core::diag::DefmtLogger;
+    #[cfg(feature = "log")]
+    pub use ruststream_core::diag::LogLogger;
+    pub use ruststream_core::diag::Logger;
+    #[cfg(ruststream_tracing)]
+    pub use ruststream_core::diag::TracingLogger;
+}
+
 // The bus is the runtime's: the tokio one, or the local one on embassy.
 #[cfg(all(feature = "memory", any(feature = "tokio", feature = "embassy")))]
 pub mod memory;

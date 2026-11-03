@@ -16,7 +16,7 @@ use bytes::BytesMut;
 use futures::Stream;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::error;
+use ruststream_core::diag::error;
 
 use super::{
     DispatchFailure, Handler, HeadersOnDemand, Hosted, Shutdown, Slot, Turn, Workers, dispatch,

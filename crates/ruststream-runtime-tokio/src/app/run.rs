@@ -12,7 +12,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::signal::ctrl_c;
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
-use tracing::{debug, info, warn};
+use ruststream_core::diag::{debug, info, warn};
 
 use crate::HandlerMetadata;
 use crate::bindable::Bound;
@@ -182,8 +182,13 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             shutdown_timeout,
             continuations,
             subscription_end,
+            logger,
             ..
         } = self;
+
+        if let Some(select) = logger {
+            select();
+        }
 
         info!(
             target: "ruststream::lifecycle",

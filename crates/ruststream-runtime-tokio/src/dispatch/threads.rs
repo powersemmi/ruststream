@@ -42,7 +42,7 @@ use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
 use tokio::task::coop::consume_budget;
 use tokio_util::task::TaskTracker;
-use tracing::error;
+use ruststream_core::diag::error;
 
 use super::{Shutdown, Turn, key_index};
 

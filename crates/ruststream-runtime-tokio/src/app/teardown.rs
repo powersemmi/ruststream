@@ -9,7 +9,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 use tokio::time;
 use tokio_util::task::TaskTracker;
-use tracing::{debug, info, warn};
+use ruststream_core::diag::{debug, info, warn};
 
 use crate::shutdown::Shutdown;
 use crate::{BoxError, Clock, ConnectedLifecycle, LocalBoxFuture, Tokio};

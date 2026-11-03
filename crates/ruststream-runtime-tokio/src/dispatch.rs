@@ -9,7 +9,7 @@ use std::task::Poll;
 
 use bytes::BytesMut;
 use tokio::task::{JoinError, JoinHandle};
-use tracing::error;
+use ruststream_core::diag::error;
 
 use ruststream_core::{BatchSlot, BatchStream};
 use ruststream_runtime::DeliverySlot as Slot;

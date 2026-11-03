@@ -1720,6 +1720,7 @@ version = "0.8.0"
 dependencies = [
  "bytes",
  "bytes-utils",
+ "critical-section",
  "defmt",
  "futures",
  "futures-core",

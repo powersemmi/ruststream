@@ -979,6 +979,13 @@ name = "embedded_diagnostics"
 path = "tests/embedded_diagnostics.rs"
 required-features = ["embassy", "memory", "macros", "testing", "log"]
 
+# The tokio runner reports through the logger the app selects. The selection is process-wide, so
+# the test owns a binary.
+[[test]]
+name = "logger_tokio"
+path = "tests/logger_tokio.rs"
+required-features = ["tokio", "memory", "macros", "testing", "log"]
+
 [[test]]
 name = "ui_no_alloc"
 path = "tests/ui_no_alloc.rs"
@@ -1051,9 +1058,14 @@ embassy = [
     "ruststream-memory?/embassy",
     "ruststream-testing?/embassy",
 ]
-# The diagnostics of a build without `alloc` go to the `log` crate or to `defmt`; each feature turns
-# its sink on in the crates that report, and a service picks the one its board has (both may be on).
-# The heap variant reports through `tracing`.
+# The loggers an app selects with `.logger(..)`; each feature compiles its logger into the crates
+# that report, and nothing is reported until the app selects one. The tokio runner turns `tracing`
+# on; a heap-backed embassy app turns it on itself.
+tracing = [
+    "alloc",
+    "ruststream-core/tracing",
+    "ruststream-runtime/tracing",
+]
 log = [
     "ruststream-core/log",
     "ruststream-runtime/log",
