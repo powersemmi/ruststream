@@ -29,13 +29,13 @@ A broker that moves a spent delivery itself declares `BrokerMoves`, and `.out_re
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/settle_retry_destination.rs#mount"
+```rust reference="crates/ruststream/examples/settle_retry_destination.rs#mount"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/settle_retry_destination.rs#mount"
+```rust reference="crates/ruststream/examples/manual/settle_retry_destination.rs#mount"
 ```
 
 </TabItem>
@@ -46,13 +46,13 @@ A broker that moves a spent delivery itself declares `BrokerMoves`, and `.out_re
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/settle_retry_destination.rs#filter"
+```rust reference="crates/ruststream/examples/settle_retry_destination.rs#filter"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/settle_retry_destination.rs#filter"
+```rust reference="crates/ruststream/examples/manual/settle_retry_destination.rs#filter"
 ```
 
 </TabItem>
@@ -61,13 +61,13 @@ A broker that moves a spent delivery itself declares `BrokerMoves`, and `.out_re
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/settle_retry_destination.rs#named"
+```rust reference="crates/ruststream/examples/settle_retry_destination.rs#named"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/settle_retry_destination.rs#named"
+```rust reference="crates/ruststream/examples/manual/settle_retry_destination.rs#named"
 ```
 
 </TabItem>

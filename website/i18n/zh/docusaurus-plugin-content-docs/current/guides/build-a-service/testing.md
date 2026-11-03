@@ -26,13 +26,13 @@ Broker 在进程内连接，每个订阅都运行在测试的运行时上。
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="main.rs" reference="examples/guide/main.rs#journey"
+```rust title="main.rs" reference="crates/ruststream/examples/guide/main.rs#journey"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="main.rs" reference="examples/manual/guide/main.rs#journey"
+```rust title="main.rs" reference="crates/ruststream/examples/manual/guide/main.rs#journey"
 ```
 
 </TabItem>
@@ -45,13 +45,13 @@ Broker 在进程内连接，每个订阅都运行在测试的运行时上。
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="main.rs" reference="examples/guide/main.rs#empty"
+```rust title="main.rs" reference="crates/ruststream/examples/guide/main.rs#empty"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="main.rs" reference="examples/manual/guide/main.rs#empty"
+```rust title="main.rs" reference="crates/ruststream/examples/manual/guide/main.rs#empty"
 ```
 
 </TabItem>
@@ -67,13 +67,13 @@ Broker 在进程内连接，每个订阅都运行在测试的运行时上。
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#busy"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#busy"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#busy"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#busy"
 ```
 
 </TabItem>
@@ -87,13 +87,13 @@ Broker 在进程内连接，每个订阅都运行在测试的运行时上。
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#dead_letter"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#dead_letter"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#dead_letter"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#dead_letter"
 ```
 
 </TabItem>

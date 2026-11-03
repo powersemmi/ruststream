@@ -23,13 +23,13 @@ It returns nothing, so it ends a chain.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_calls.rs#assert_last_failed_to_decode"
+```rust reference="crates/ruststream/examples/testing_subscriber_calls.rs#assert_last_failed_to_decode"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_calls.rs#assert_last_failed_to_decode"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_calls.rs#assert_last_failed_to_decode"
 ```
 
 </TabItem>

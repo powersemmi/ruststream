@@ -26,13 +26,13 @@ A subscriber takes it as a `&mut Context` parameter, right after the message.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="state.rs" reference="examples/guide/state.rs#state"
+```rust title="state.rs" reference="crates/ruststream/examples/guide/state.rs#state"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="state.rs" reference="examples/manual/guide/state.rs#state"
+```rust title="state.rs" reference="crates/ruststream/examples/manual/guide/state.rs#state"
 ```
 
 </TabItem>
@@ -48,13 +48,13 @@ A mailbox that does not exist stays that way, so a refused notice is dropped, an
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="notifications.rs" reference="examples/guide/notifications.rs#send"
+```rust title="notifications.rs" reference="crates/ruststream/examples/guide/notifications.rs#send"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="notifications.rs" reference="examples/manual/guide/notifications.rs#send"
+```rust title="notifications.rs" reference="crates/ruststream/examples/manual/guide/notifications.rs#send"
 ```
 
 </TabItem>

@@ -26,13 +26,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="orders.rs" reference="examples/guide/orders.rs#order"
+```rust title="orders.rs" reference="crates/ruststream/examples/guide/orders.rs#order"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="orders.rs" reference="examples/manual/guide/orders.rs#order"
+```rust title="orders.rs" reference="crates/ruststream/examples/manual/guide/orders.rs#order"
 ```
 
 </TabItem>
@@ -49,13 +49,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="orders.rs" reference="examples/guide/orders.rs#meta"
+```rust title="orders.rs" reference="crates/ruststream/examples/guide/orders.rs#meta"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="orders.rs" reference="examples/manual/guide/orders.rs#meta"
+```rust title="orders.rs" reference="crates/ruststream/examples/manual/guide/orders.rs#meta"
 ```
 
 </TabItem>
@@ -70,13 +70,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="orders.rs" reference="examples/guide/orders.rs#audit"
+```rust title="orders.rs" reference="crates/ruststream/examples/guide/orders.rs#audit"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="orders.rs" reference="examples/manual/guide/orders.rs#audit"
+```rust title="orders.rs" reference="crates/ruststream/examples/manual/guide/orders.rs#audit"
 ```
 
 </TabItem>
@@ -91,13 +91,13 @@ JSON 是默认编解码器。`orders.placed` 和 `notices` 由其他团队读取
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#codec"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#codec"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#codec"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#codec"
 ```
 
 </TabItem>

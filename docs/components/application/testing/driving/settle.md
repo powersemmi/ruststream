@@ -24,13 +24,13 @@ A task that keeps itself runnable never lets the app go idle; on the paused cloc
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_driving.rs#settle"
+```rust reference="crates/ruststream/examples/testing_driving.rs#settle"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_driving.rs#settle"
+```rust reference="crates/ruststream/examples/manual/testing_driving.rs#settle"
 ```
 
 </TabItem>

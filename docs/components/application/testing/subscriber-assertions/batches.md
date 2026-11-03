@@ -24,13 +24,13 @@ The mount names the size, `batch(nonzero!(2))`, so three orders arrive as two an
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_payloads.rs#batches"
+```rust reference="crates/ruststream/examples/testing_subscriber_payloads.rs#batches"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_payloads.rs#batches"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_payloads.rs#batches"
 ```
 
 </TabItem>

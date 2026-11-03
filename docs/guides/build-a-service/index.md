@@ -30,7 +30,7 @@ flowchart TD
   notices --> send[send]
 ```
 
-The finished shop lives in [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/examples/guide) in the repository, and its manual twin in [`examples/manual/guide`](https://github.com/powersemmi/ruststream/tree/main/examples/manual/guide).
+The finished shop lives in [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/guide) in the repository, and its manual twin in [`examples/manual/guide`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/manual/guide).
 CI builds both and runs their tests on every change.
 Each side of the shop is a module: `orders.rs`, `payments.rs`, `shipping.rs` and `notifications.rs`.
 `state.rs` holds what the subscribers share, `observability.rs` a middleware of the shop's own, and `service.rs` assembles the app.

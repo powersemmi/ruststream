@@ -37,13 +37,13 @@ A copy the runtime fails to publish, for any cause, is the handler's to learn of
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/retry.rs#retry_after"
+```rust reference="crates/ruststream/examples/retry.rs#retry_after"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/retry.rs#retry_after"
+```rust reference="crates/ruststream/examples/manual/retry.rs#retry_after"
 ```
 
 </TabItem>
@@ -54,13 +54,13 @@ A copy the runtime fails to publish, for any cause, is the handler's to learn of
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/retry.rs#batch_retry_after"
+```rust reference="crates/ruststream/examples/retry.rs#batch_retry_after"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/retry.rs#batch_retry_after"
+```rust reference="crates/ruststream/examples/manual/retry.rs#batch_retry_after"
 ```
 
 </TabItem>

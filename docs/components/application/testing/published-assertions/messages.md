@@ -22,13 +22,13 @@ The slice borrows the record, so bind the record to a variable first.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_published.rs#messages"
+```rust reference="crates/ruststream/examples/testing_published.rs#messages"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_published.rs#messages"
+```rust reference="crates/ruststream/examples/manual/testing_published.rs#messages"
 ```
 
 </TabItem>

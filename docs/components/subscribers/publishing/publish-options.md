@@ -29,13 +29,13 @@ The body sets the priority of an express order; the mount site sets the default.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/per_message_options.rs#handler"
+```rust reference="crates/ruststream/examples/per_message_options.rs#handler"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/per_message_options.rs#handler"
+```rust reference="crates/ruststream/examples/manual/per_message_options.rs#handler"
 ```
 
 </TabItem>
@@ -46,13 +46,13 @@ A reply takes its settings from a transform.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/per_message_options.rs#transform"
+```rust reference="crates/ruststream/examples/per_message_options.rs#transform"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/per_message_options.rs#transform"
+```rust reference="crates/ruststream/examples/manual/per_message_options.rs#transform"
 ```
 
 </TabItem>
@@ -61,13 +61,13 @@ A reply takes its settings from a transform.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/per_message_options.rs#app"
+```rust reference="crates/ruststream/examples/per_message_options.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/per_message_options.rs#app"
+```rust reference="crates/ruststream/examples/manual/per_message_options.rs#app"
 ```
 
 </TabItem>

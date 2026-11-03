@@ -53,11 +53,7 @@ jobs:
         with:
           filters: |
             rust:
-              - 'src/**'
               - 'crates/**'
-              - 'tests/**'
-              - 'examples/**'
-              - 'benches/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -66,7 +62,6 @@ jobs:
               - 'external-types.toml'
               - '.github/workflows/ci.yml'
             dist:
-              - 'src/**'
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -74,23 +69,21 @@ jobs:
             docs:
               - 'docs/**'
               - 'website/**'
-              - 'examples/**'
+              - 'crates/ruststream/examples/**'
               # API links on the pages resolve against the crate's rustdoc, so a renamed item
               # rebuilds the site and fails it on a link that no longer resolves
-              - 'src/**'
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               # the testing and conformance pages embed their snippets from these test files
-              - 'tests/doc_*.rs'
-              - 'tests/conformance_self.rs'
+              - 'crates/ruststream/tests/doc_*.rs'
+              - 'crates/ruststream/tests/conformance_self.rs'
               - 'scripts/lint_doc_fences.py'
               - 'scripts/check_doc_i18n.py'
               - 'scripts/doc_glossary.toml'
               - '.github/workflows/ci.yml'
             templates:
               - 'templates/**'
-              - 'src/**'
               - 'crates/**'
               - 'Cargo.toml'
               - '.github/workflows/ci.yml'
@@ -219,9 +212,9 @@ jobs:
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         run: |
           cargo +nightly-2026-03-20 check-external-types --all-features \
-            --manifest-path Cargo.toml --config external-types.toml
+            --manifest-path crates/ruststream/Cargo.toml --config external-types.toml
           cargo +nightly-2026-03-20 check-external-types --no-default-features \
-            --features "$EMBASSY_FEATURES" --manifest-path Cargo.toml --config external-types.toml
+            --features "$EMBASSY_FEATURES" --manifest-path crates/ruststream/Cargo.toml --config external-types.toml
           for manifest in crates/ruststream-{core,runtime,runtime-tokio,runtime-compio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
             cargo +nightly-2026-03-20 check-external-types --all-features \
               --manifest-path "$manifest" --config external-types.toml
@@ -276,7 +269,7 @@ jobs:
           {
             echo ""
             echo "[patch.crates-io]"
-            echo "ruststream = { path = \"$GITHUB_WORKSPACE\" }"
+            echo "ruststream = { path = \"$GITHUB_WORKSPACE/crates/ruststream\" }"
           } >> "$RUNNER_TEMP/smoke/Cargo.toml"
           cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"
 

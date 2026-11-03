@@ -25,13 +25,13 @@ A value whose type the test does not own goes through the [shortcuts](./publish-
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_driving.rs#message"
+```rust reference="crates/ruststream/examples/testing_driving.rs#message"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_driving.rs#message"
+```rust reference="crates/ruststream/examples/manual/testing_driving.rs#message"
 ```
 
 </TabItem>

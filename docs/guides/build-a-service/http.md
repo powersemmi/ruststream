@@ -26,13 +26,13 @@ Only a real database lets the events survive a crash: these rows live in memory,
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="http.rs" reference="examples/guide/http.rs#store"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#store"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#store"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#store"
 ```
 
 </TabItem>
@@ -49,13 +49,13 @@ An order past the shop's bounds answers `400 Bad Request` and is not stored.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="http.rs" reference="examples/guide/http.rs#endpoint"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#endpoint"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#endpoint"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#endpoint"
 ```
 
 </TabItem>
@@ -71,13 +71,13 @@ The publisher is any [`Publisher`](../../components/subscribers/publishing/publi
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="http.rs" reference="examples/guide/http.rs#relay"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#relay"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#relay"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#relay"
 ```
 
 </TabItem>
@@ -95,13 +95,13 @@ A hand-written `main` installs the logger itself with `ruststream::logging::init
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="http.rs" reference="examples/guide/http.rs#main"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#main"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#main"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#main"
 ```
 
 </TabItem>

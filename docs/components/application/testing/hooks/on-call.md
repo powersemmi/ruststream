@@ -25,13 +25,13 @@ It runs the same way under [`start_live`](../starting-and-stopping/start-live.md
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_hooks.rs#on-call"
+```rust reference="crates/ruststream/examples/testing_hooks.rs#on-call"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_hooks.rs#on-call"
+```rust reference="crates/ruststream/examples/manual/testing_hooks.rs#on-call"
 ```
 
 </TabItem>

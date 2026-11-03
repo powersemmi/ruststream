@@ -23,13 +23,13 @@ The record is a snapshot taken when the method is called: call it after the publ
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_records.rs#published"
+```rust reference="crates/ruststream/examples/testing_records.rs#published"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_records.rs#published"
+```rust reference="crates/ruststream/examples/manual/testing_records.rs#published"
 ```
 
 </TabItem>

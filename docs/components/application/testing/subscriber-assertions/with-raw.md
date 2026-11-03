@@ -22,13 +22,13 @@ It is the check for a handler that reads bytes itself, where no codec has a valu
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_payloads.rs#with_raw"
+```rust reference="crates/ruststream/examples/testing_subscriber_payloads.rs#with_raw"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_payloads.rs#with_raw"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_payloads.rs#with_raw"
 ```
 
 </TabItem>

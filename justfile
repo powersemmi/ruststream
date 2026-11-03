@@ -182,9 +182,9 @@ check:
     # The types the public API of each published crate names from its dependencies, as CI checks
     # them: the facade with both runtimes and with embassy alone, and each crate behind it where its items are defined.
     cargo +nightly-2026-03-20 check-external-types --all-features \
-        --manifest-path Cargo.toml --config external-types.toml
+        --manifest-path crates/ruststream/Cargo.toml --config external-types.toml
     cargo +nightly-2026-03-20 check-external-types --no-default-features \
-        --features {{ embassy_set }} --manifest-path Cargo.toml --config external-types.toml
+        --features {{ embassy_set }} --manifest-path crates/ruststream/Cargo.toml --config external-types.toml
     for manifest in crates/ruststream-{core,runtime,runtime-tokio,runtime-compio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do \
         cargo +nightly-2026-03-20 check-external-types --all-features \
             --manifest-path "$manifest" --config external-types.toml || exit 1; \
@@ -424,7 +424,7 @@ brokers *names:
     command -v jq > /dev/null || { echo "error: just brokers needs jq" >&2; exit 1; }
     # A broker's own warnings are for its own gates to judge.
     unset CARGO_BUILD_WARNINGS
-    core="$(pwd)"
+    core="$(pwd)/crates/ruststream"
     main="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
     root="$(dirname "$main")"
     version="$(cargo metadata --format-version 1 --no-deps \

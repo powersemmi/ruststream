@@ -23,19 +23,19 @@ A batch transform has no macro form: the same impl serves both forms, and only t
 ## Example
 
 {/* single-form: a BatchPublishTransform impl has no macro form; the same code serves the macro and the manual service */}
-```rust reference="examples/batch_transform.rs#transform"
+```rust reference="crates/ruststream/examples/batch_transform.rs#transform"
 ```
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/batch_transform.rs#app"
+```rust reference="crates/ruststream/examples/batch_transform.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/batch_transform.rs#app"
+```rust reference="crates/ruststream/examples/manual/batch_transform.rs#app"
 ```
 
 </TabItem>

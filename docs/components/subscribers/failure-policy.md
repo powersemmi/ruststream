@@ -27,13 +27,13 @@ The attribute takes `on_failure(panic = .., decode = ..)`, with either key alone
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/failure_policy.rs#defaults"
+```rust reference="crates/ruststream/examples/failure_policy.rs#defaults"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/failure_policy.rs#defaults"
+```rust reference="crates/ruststream/examples/manual/failure_policy.rs#defaults"
 ```
 
 </TabItem>
@@ -44,13 +44,13 @@ The attribute takes `on_failure(panic = .., decode = ..)`, with either key alone
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/failure_policy.rs#skip"
+```rust reference="crates/ruststream/examples/failure_policy.rs#skip"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/failure_policy.rs#skip"
+```rust reference="crates/ruststream/examples/manual/failure_policy.rs#skip"
 ```
 
 </TabItem>
@@ -61,13 +61,13 @@ The attribute takes `on_failure(panic = .., decode = ..)`, with either key alone
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/failure_policy.rs#tuned"
+```rust reference="crates/ruststream/examples/failure_policy.rs#tuned"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/failure_policy.rs#tuned"
+```rust reference="crates/ruststream/examples/manual/failure_policy.rs#tuned"
 ```
 
 </TabItem>

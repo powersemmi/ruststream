@@ -40,13 +40,13 @@ cargo run --example metrics --features testing,macros,memory,json,metrics
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/metrics.rs#app"
+```rust reference="crates/ruststream/examples/metrics.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/metrics.rs#app"
+```rust reference="crates/ruststream/examples/manual/metrics.rs#app"
 ```
 
 </TabItem>
@@ -55,5 +55,5 @@ cargo run --example metrics --features testing,macros,memory,json,metrics
 The route that serves the registry is an ordinary axum handler.
 
 {/* single-form: an axum route, the same code with and without the macros */}
-```rust reference="examples/metrics.rs#scrape"
+```rust reference="crates/ruststream/examples/metrics.rs#scrape"
 ```

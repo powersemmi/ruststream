@@ -25,13 +25,13 @@ The two steps come right after `include`, before [`.out_retry(..)`](./retry-dest
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/retry.rs#declaration"
+```rust reference="crates/ruststream/examples/retry.rs#declaration"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/retry.rs#declaration"
+```rust reference="crates/ruststream/examples/manual/retry.rs#declaration"
 ```
 
 </TabItem>

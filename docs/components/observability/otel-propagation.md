@@ -28,13 +28,13 @@ Propagation works with any `tracing` subscriber, or none; [Export](./otel-export
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/otel_propagation.rs#app"
+```rust reference="crates/ruststream/examples/otel_propagation.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/otel_propagation.rs#app"
+```rust reference="crates/ruststream/examples/manual/otel_propagation.rs#app"
 ```
 
 </TabItem>

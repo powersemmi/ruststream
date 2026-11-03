@@ -29,13 +29,13 @@ The handler acks an order and drops an empty one; the layer logs both outcomes.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/tracing_layer.rs#app"
+```rust reference="crates/ruststream/examples/tracing_layer.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/tracing_layer.rs#app"
+```rust reference="crates/ruststream/examples/manual/tracing_layer.rs#app"
 ```
 
 </TabItem>

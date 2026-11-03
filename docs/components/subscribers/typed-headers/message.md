@@ -21,13 +21,13 @@ A reply typed `Message<H, T>` carries its headers the same way.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/typed_headers.rs#message"
+```rust reference="crates/ruststream/examples/typed_headers.rs#message"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/typed_headers.rs#message"
+```rust reference="crates/ruststream/examples/manual/typed_headers.rs#message"
 ```
 
 </TabItem>

@@ -30,13 +30,13 @@ The three forms of a destination.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/destinations.rs#messages"
+```rust reference="crates/ruststream/examples/destinations.rs#messages"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/destinations.rs#messages"
+```rust reference="crates/ruststream/examples/manual/destinations.rs#messages"
 ```
 
 </TabItem>
@@ -47,13 +47,13 @@ Each publish fills only what its type leaves open.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/destinations.rs#handler"
+```rust reference="crates/ruststream/examples/destinations.rs#handler"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/destinations.rs#handler"
+```rust reference="crates/ruststream/examples/manual/destinations.rs#handler"
 ```
 
 </TabItem>

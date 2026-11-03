@@ -1,0 +1,23 @@
+error[E0277]: `Rogue` does not define a message set for the `Events` slot
+  --> tests/ui/out_typed_undeclared_message.rs:30:54
+   |
+30 |     Out(out): Out<impl Publisher, Events, (Progress, Rogue)>,
+   |                                                      ^^^^^ unsatisfied trait bound
+   |
+help: the trait `OutMessages<Events>` is not implemented for `Rogue`
+  --> tests/ui/out_typed_undeclared_message.rs:17:1
+   |
+17 | struct Rogue {
+   | ^^^^^^^^^^^^
+   = note: the third Out argument is a tuple of types, `()` (unrestricted), a #[derive(Outgoing)] type (declares itself and where it goes), or a #[derive(OutMessages)] enum (declares its variants' models)
+help: the following other types implement trait `OutMessages<M>`
+  --> tests/ui/out_typed_undeclared_message.rs:10:10
+   |
+10 | #[derive(Outgoing, Serialize)]
+   |          ^^^^^^^^ `Progress` implements `OutMessages<__RsM>`
+   |
+  ::: $WORKSPACE/crates/ruststream-runtime/src/slot.rs
+   |
+   | impl<M: OutSlot> OutMessages<M> for () {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `()` implements `OutMessages<M>`
+   = note: this error originates in the derive macro `Outgoing` (in Nightly builds, run with -Z macro-backtrace for more info)

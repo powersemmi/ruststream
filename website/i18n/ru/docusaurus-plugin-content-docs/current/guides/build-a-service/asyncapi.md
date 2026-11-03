@@ -25,13 +25,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="main.rs" reference="examples/guide/main.rs#main"
+```rust title="main.rs" reference="crates/ruststream/examples/guide/main.rs#main"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="main.rs" reference="examples/manual/guide/main.rs#main"
+```rust title="main.rs" reference="crates/ruststream/examples/manual/guide/main.rs#main"
 ```
 
 </TabItem>
@@ -44,13 +44,13 @@ import TabItem from '@theme/TabItem';
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="service.rs" reference="examples/guide/service.rs#info"
+```rust title="service.rs" reference="crates/ruststream/examples/guide/service.rs#info"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="service.rs" reference="examples/manual/guide/service.rs#info"
+```rust title="service.rs" reference="crates/ruststream/examples/manual/guide/service.rs#info"
 ```
 
 </TabItem>
@@ -83,4 +83,4 @@ receive_payments_requested:
 ```
 
 Обе формы магазина выдают одинаковый документ.
-Тест в каждой из них сравнивает документ с [`examples/guide/asyncapi.json`](https://github.com/powersemmi/ruststream/blob/main/examples/guide/asyncapi.json), поэтому любое изменение темы видно на ревью.
+Тест в каждой из них сравнивает документ с [`examples/guide/asyncapi.json`](https://github.com/powersemmi/ruststream/blob/main/crates/ruststream/examples/guide/asyncapi.json), поэтому любое изменение темы видно на ревью.

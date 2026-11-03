@@ -26,13 +26,13 @@ The example runs with `cargo test --example asyncapi_reports --features macros,m
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/asyncapi_reports.rs#retry"
+```rust reference="crates/ruststream/examples/asyncapi_reports.rs#retry"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/asyncapi_reports.rs#retry"
+```rust reference="crates/ruststream/examples/manual/asyncapi_reports.rs#retry"
 ```
 
 </TabItem>

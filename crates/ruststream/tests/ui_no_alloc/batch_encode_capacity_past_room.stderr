@@ -1,0 +1,26 @@
+error[E0277]: `ruststream_runtime_embassy::workers::Encode<512>` asks for more room than the reply publisher can carry (`ruststream_core::publisher::Capped<256>`)
+  --> tests/ui_no_alloc/batch_encode_capacity_past_room.rs:67:14
+   |
+67 |             .encode_capacity::<512>()
+   |              ^^^^^^^^^^^^^^^ this `encode_capacity` is past the reply publisher's payload room
+   |
+   = help: the trait `ruststream_runtime_embassy::workers::Within<ruststream_core::publisher::Capped<256>>` is not implemented for `ruststream_runtime_embassy::workers::Encode<512>`
+   = note: a publisher that keeps its payload (`Take`) is handed a buffer of the payload room, so a worker's extra room would go unused: name a count within it, or use a publisher that reads the bytes (`Lend`)
+   = help: the following other types implement trait `ruststream_runtime_embassy::workers::Within<Room>`:
+             ruststream_runtime_embassy::workers::Encode<100>
+             ruststream_runtime_embassy::workers::Encode<101>
+             ruststream_runtime_embassy::workers::Encode<102>
+             ruststream_runtime_embassy::workers::Encode<103>
+             ruststream_runtime_embassy::workers::Encode<104>
+             ruststream_runtime_embassy::workers::Encode<105>
+             ruststream_runtime_embassy::workers::Encode<106>
+             ruststream_runtime_embassy::workers::Encode<107>
+           and $N others
+note: required by a bound in `encode_capacity`
+  --> $WORKSPACE/crates/ruststream-runtime-embassy/src/workers.rs
+   |
+   |     fn encode_capacity<const N: usize>(self) -> Self::WithEncode<N>
+   |        --------------- required by a bound in this associated function
+   |     where
+   |         Encode<N>: Within<Self::ReplyRoom>;
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `MountSteps::encode_capacity`

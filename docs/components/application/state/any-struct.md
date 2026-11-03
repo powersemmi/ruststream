@@ -27,13 +27,13 @@ A dependency-injection container fills the same role: [froodi](./froodi.md) with
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/app_state.rs#state"
+```rust reference="crates/ruststream/examples/app_state.rs#state"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/app_state.rs#state"
+```rust reference="crates/ruststream/examples/manual/app_state.rs#state"
 ```
 
 </TabItem>

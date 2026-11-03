@@ -21,13 +21,13 @@ The row subscription here is the in-memory stand-in described on the [`with_valu
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_carried.rs#received_values"
+```rust reference="crates/ruststream/examples/testing_subscriber_carried.rs#received_values"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_carried.rs#received_values"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_carried.rs#received_values"
 ```
 
 </TabItem>

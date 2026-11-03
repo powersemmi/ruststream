@@ -26,13 +26,13 @@ There `Ok(())` acks and `Err(outcome)` settles by that outcome.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/subscriber_handler.rs#handler"
+```rust reference="crates/ruststream/examples/subscriber_handler.rs#handler"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/subscriber_handler.rs#handler"
+```rust reference="crates/ruststream/examples/manual/subscriber_handler.rs#handler"
 ```
 
 </TabItem>

@@ -30,7 +30,7 @@ flowchart TD
   notices --> send[send]
 ```
 
-完成后的商店位于仓库的 [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/examples/guide)，手写版本位于 [`examples/manual/guide`](https://github.com/powersemmi/ruststream/tree/main/examples/manual/guide)。
+完成后的商店位于仓库的 [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/guide)，手写版本位于 [`examples/manual/guide`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/manual/guide)。
 CI 在每次改动时构建这两者，并运行它们的测试。
 商店的每个部分是一个模块：`orders.rs`、`payments.rs`、`shipping.rs` 和 `notifications.rs`。
 `state.rs` 存放订阅者共享的内容，`observability.rs` 是商店自己的一个中间件，`service.rs` 组装应用。

@@ -63,13 +63,13 @@ RUST_LOG=ruststream=debug,info cargo run --example logging --features testing,ma
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/logging.rs#app"
+```rust reference="crates/ruststream/examples/logging.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/logging.rs#app"
+```rust reference="crates/ruststream/examples/manual/logging.rs#app"
 ```
 
 </TabItem>

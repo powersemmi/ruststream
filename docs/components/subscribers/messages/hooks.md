@@ -26,13 +26,13 @@ A graceful shutdown waits for running hooks within the app's `shutdown_timeout`,
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/post_settle.rs#hooks"
+```rust reference="crates/ruststream/examples/post_settle.rs#hooks"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/post_settle.rs#hooks"
+```rust reference="crates/ruststream/examples/manual/post_settle.rs#hooks"
 ```
 
 </TabItem>

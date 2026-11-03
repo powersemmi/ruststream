@@ -25,13 +25,13 @@ A test ends with [`shutdown`](./shutdown.md).
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_starting.rs#start"
+```rust reference="crates/ruststream/examples/testing_starting.rs#start"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_starting.rs#start"
+```rust reference="crates/ruststream/examples/manual/testing_starting.rs#start"
 ```
 
 </TabItem>

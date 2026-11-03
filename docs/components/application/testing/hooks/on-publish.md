@@ -23,13 +23,13 @@ A hook applies from the moment it is registered, and several hooks on one destin
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_hooks.rs#on-publish"
+```rust reference="crates/ruststream/examples/testing_hooks.rs#on-publish"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_hooks.rs#on-publish"
+```rust reference="crates/ruststream/examples/manual/testing_hooks.rs#on-publish"
 ```
 
 </TabItem>

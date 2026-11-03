@@ -27,13 +27,13 @@ The provider's client comes from the app's state, which chapter 7 opens.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#charge"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#charge"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#charge"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#charge"
 ```
 
 </TabItem>
@@ -48,13 +48,13 @@ The router decodes the requests as CBOR and encodes the reply the same way.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#routes"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#routes"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#routes"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#routes"
 ```
 
 </TabItem>

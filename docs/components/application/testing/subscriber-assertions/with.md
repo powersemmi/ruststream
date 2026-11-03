@@ -25,13 +25,13 @@ A destination's [`with`](../published-assertions/with.md) checks the value a pub
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_payloads.rs#with"
+```rust reference="crates/ruststream/examples/testing_subscriber_payloads.rs#with"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_payloads.rs#with"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_payloads.rs#with"
 ```
 
 </TabItem>

@@ -31,13 +31,13 @@ The broker keeps two messages of each name; three published before the service s
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/memory_retention.rs#app"
+```rust reference="crates/ruststream/examples/memory_retention.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/memory_retention.rs#app"
+```rust reference="crates/ruststream/examples/manual/memory_retention.rs#app"
 ```
 
 </TabItem>

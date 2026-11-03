@@ -23,13 +23,13 @@ A task beside the service gets a live publisher from a token with [`RunningApp::
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/cross_broker.rs#app"
+```rust reference="crates/ruststream/examples/cross_broker.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/cross_broker.rs#app"
+```rust reference="crates/ruststream/examples/manual/cross_broker.rs#app"
 ```
 
 </TabItem>

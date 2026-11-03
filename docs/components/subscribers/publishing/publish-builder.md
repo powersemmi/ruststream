@@ -32,13 +32,13 @@ On a slot the message passes the slot's [transforms](./transforms/publish-transf
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/publish_builder.rs#handler"
+```rust reference="crates/ruststream/examples/publish_builder.rs#handler"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/publish_builder.rs#handler"
+```rust reference="crates/ruststream/examples/manual/publish_builder.rs#handler"
 ```
 
 </TabItem>

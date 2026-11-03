@@ -25,10 +25,10 @@ The bus sits behind a critical section, so the binary supplies the `critical-sec
 
 The bus of a device with no heap, and a service mounted on it:
 
-```rust reference="tests/doc_device.rs#bus"
+```rust reference="crates/ruststream/tests/doc_device.rs#bus"
 ```
 
-```rust reference="tests/doc_device.rs#service"
+```rust reference="crates/ruststream/tests/doc_device.rs#service"
 ```
 
 The service itself is taught on the [Embedded runtime](../application/embedded-runtime.md) page, and a test drives it with the [embedded `TestApp`](../application/testing/embedded-app.md), whose broker is the same `LocalMemoryBroker`.

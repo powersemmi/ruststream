@@ -26,13 +26,13 @@ Broker 故障只会推迟事件，不会丢失任何事件。如果在发布和�
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="http.rs" reference="examples/guide/http.rs#store"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#store"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#store"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#store"
 ```
 
 </TabItem>
@@ -49,13 +49,13 @@ HTTP 部分和 outbox 都是普通函数，所以两个标签页中的代码相�
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="http.rs" reference="examples/guide/http.rs#endpoint"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#endpoint"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#endpoint"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#endpoint"
 ```
 
 </TabItem>
@@ -71,13 +71,13 @@ HTTP 部分和 outbox 都是普通函数，所以两个标签页中的代码相�
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="http.rs" reference="examples/guide/http.rs#relay"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#relay"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#relay"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#relay"
 ```
 
 </TabItem>
@@ -95,13 +95,13 @@ HTTP 处理完所有请求之后，进程停止中继，中继的最后一轮在
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="http.rs" reference="examples/guide/http.rs#main"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#main"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#main"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#main"
 ```
 
 </TabItem>

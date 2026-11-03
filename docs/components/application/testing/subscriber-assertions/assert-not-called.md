@@ -24,13 +24,13 @@ It returns nothing, so it ends a chain.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_calls.rs#assert_not_called"
+```rust reference="crates/ruststream/examples/testing_subscriber_calls.rs#assert_not_called"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_calls.rs#assert_not_called"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_calls.rs#assert_not_called"
 ```
 
 </TabItem>

@@ -24,13 +24,13 @@ A copy the runtime publishes for a zero delay arrives in the same reaction, with
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_driving.rs#advance"
+```rust reference="crates/ruststream/examples/testing_driving.rs#advance"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_driving.rs#advance"
+```rust reference="crates/ruststream/examples/manual/testing_driving.rs#advance"
 ```
 
 </TabItem>

@@ -28,13 +28,13 @@ RustStream сам записывает события через логгер, �
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="observability.rs" reference="examples/guide/observability.rs#layer"
+```rust title="observability.rs" reference="crates/ruststream/examples/guide/observability.rs#layer"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="observability.rs" reference="examples/manual/guide/observability.rs#layer"
+```rust title="observability.rs" reference="crates/ruststream/examples/manual/guide/observability.rs#layer"
 ```
 
 </TabItem>
@@ -51,13 +51,13 @@ RustStream сам записывает события через логгер, �
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="service.rs" reference="examples/guide/service.rs#shop"
+```rust title="service.rs" reference="crates/ruststream/examples/guide/service.rs#shop"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="service.rs" reference="examples/manual/guide/service.rs#shop"
+```rust title="service.rs" reference="crates/ruststream/examples/manual/guide/service.rs#shop"
 ```
 
 </TabItem>

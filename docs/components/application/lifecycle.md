@@ -30,13 +30,13 @@ A broker scope's [`after_startup`](api:ruststream::runtime::BrokerScope::after_s
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/app_lifecycle.rs#hooks"
+```rust reference="crates/ruststream/examples/app_lifecycle.rs#hooks"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/app_lifecycle.rs#hooks"
+```rust reference="crates/ruststream/examples/manual/app_lifecycle.rs#hooks"
 ```
 
 </TabItem>
@@ -47,13 +47,13 @@ A broker scope's [`after_startup`](api:ruststream::runtime::BrokerScope::after_s
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/app_lifecycle.rs#announce"
+```rust reference="crates/ruststream/examples/app_lifecycle.rs#announce"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/app_lifecycle.rs#announce"
+```rust reference="crates/ruststream/examples/manual/app_lifecycle.rs#announce"
 ```
 
 </TabItem>

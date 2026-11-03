@@ -51,7 +51,7 @@ cargo run --example otel_export --features testing,macros,memory,json,otel -- ru
 `main` installs the exporters, runs the app, and flushes at the end.
 
 {/* single-form: a hand-written main, the same with and without the macros */}
-```rust reference="examples/otel_export.rs#main"
+```rust reference="crates/ruststream/examples/otel_export.rs#main"
 ```
 
 The app takes both layers and builds the service's own instrument at startup.
@@ -59,13 +59,13 @@ The app takes both layers and builds the service's own instrument at startup.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/otel_export.rs#app"
+```rust reference="crates/ruststream/examples/otel_export.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/otel_export.rs#app"
+```rust reference="crates/ruststream/examples/manual/otel_export.rs#app"
 ```
 
 </TabItem>
@@ -76,13 +76,13 @@ The handler records the instrument it reads from the state.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/otel_export.rs#business_metric"
+```rust reference="crates/ruststream/examples/otel_export.rs#business_metric"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/otel_export.rs#business_metric"
+```rust reference="crates/ruststream/examples/manual/otel_export.rs#business_metric"
 ```
 
 </TabItem>

@@ -63,8 +63,8 @@ TABS_OPEN = re.compile(r"<Tabs\b")
 TABS_CLOSE = re.compile(r"</Tabs>")
 TAB_OPEN = re.compile(r'<TabItem\b[^>]*\bvalue="([^"]+)"')
 TAB_CLOSE = re.compile(r"</TabItem>")
-EXAMPLES = "examples/"
-MANUAL = "examples/manual/"
+EXAMPLES = "crates/ruststream/examples/"
+MANUAL = "crates/ruststream/examples/manual/"
 ROOT = Path(__file__).resolve().parent.parent
 # Paths within a documentation tree: the English one under `docs/` and each translation under
 # `website/i18n/<locale>/docusaurus-plugin-content-docs/current/` hold the same pages.

@@ -22,13 +22,13 @@ In live mode the test's input reaches the broker through its connected form's de
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_driving.rs#broker"
+```rust reference="crates/ruststream/examples/testing_driving.rs#broker"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_driving.rs#broker"
+```rust reference="crates/ruststream/examples/manual/testing_driving.rs#broker"
 ```
 
 </TabItem>

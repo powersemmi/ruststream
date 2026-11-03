@@ -26,13 +26,13 @@ HTTP-запрос не должен сам публиковать сообщен
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="http.rs" reference="examples/guide/http.rs#store"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#store"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#store"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#store"
 ```
 
 </TabItem>
@@ -49,13 +49,13 @@ HTTP-часть и outbox - обычные функции, поэтому обе
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="http.rs" reference="examples/guide/http.rs#endpoint"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#endpoint"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#endpoint"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#endpoint"
 ```
 
 </TabItem>
@@ -71,13 +71,13 @@ HTTP-часть и outbox - обычные функции, поэтому обе
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="http.rs" reference="examples/guide/http.rs#relay"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#relay"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#relay"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#relay"
 ```
 
 </TabItem>
@@ -95,13 +95,13 @@ HTTP-часть и outbox - обычные функции, поэтому обе
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust title="http.rs" reference="examples/guide/http.rs#main"
+```rust title="http.rs" reference="crates/ruststream/examples/guide/http.rs#main"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust title="http.rs" reference="examples/manual/guide/http.rs#main"
+```rust title="http.rs" reference="crates/ruststream/examples/manual/guide/http.rs#main"
 ```
 
 </TabItem>

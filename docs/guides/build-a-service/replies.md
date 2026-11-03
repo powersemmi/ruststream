@@ -24,13 +24,13 @@ Payments receives a `PaymentRequest`; `Paid` is what it answers in the next chap
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#request"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#request"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#request"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#request"
 ```
 
 </TabItem>
@@ -42,13 +42,13 @@ The manual form writes what `#[derive(OutSlot)]` generates: the slot's name, the
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="notifications.rs" reference="examples/guide/notifications.rs#notice"
+```rust title="notifications.rs" reference="crates/ruststream/examples/guide/notifications.rs#notice"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="notifications.rs" reference="examples/manual/guide/notifications.rs#notice"
+```rust title="notifications.rs" reference="crates/ruststream/examples/manual/guide/notifications.rs#notice"
 ```
 
 </TabItem>
@@ -64,13 +64,13 @@ Then it returns the payment request, which the runtime publishes as the reply.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="orders.rs" reference="examples/guide/orders.rs#accept"
+```rust title="orders.rs" reference="crates/ruststream/examples/guide/orders.rs#accept"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="orders.rs" reference="examples/manual/guide/orders.rs#accept"
+```rust title="orders.rs" reference="crates/ruststream/examples/manual/guide/orders.rs#accept"
 ```
 
 </TabItem>
@@ -88,13 +88,13 @@ The router names the broker and the app's state type in [`RouterDef<MemoryBroker
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="orders.rs" reference="examples/guide/orders.rs#routes"
+```rust title="orders.rs" reference="crates/ruststream/examples/guide/orders.rs#routes"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="orders.rs" reference="examples/manual/guide/orders.rs#routes"
+```rust title="orders.rs" reference="crates/ruststream/examples/manual/guide/orders.rs#routes"
 ```
 
 </TabItem>

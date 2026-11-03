@@ -28,13 +28,13 @@ A broker that fails to shut down returns the service's error for it too.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_starting.rs#shutdown"
+```rust reference="crates/ruststream/examples/testing_starting.rs#shutdown"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_starting.rs#shutdown"
+```rust reference="crates/ruststream/examples/manual/testing_starting.rs#shutdown"
 ```
 
 </TabItem>

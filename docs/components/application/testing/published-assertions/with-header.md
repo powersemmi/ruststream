@@ -22,13 +22,13 @@ The assertion panics when nothing was published, when the header is absent, or w
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_published.rs#with-header"
+```rust reference="crates/ruststream/examples/testing_published.rs#with-header"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_published.rs#with-header"
+```rust reference="crates/ruststream/examples/manual/testing_published.rs#with-header"
 ```
 
 </TabItem>

@@ -30,13 +30,13 @@ Each module returns its router, and the service merges them and mounts the resul
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/routing.rs#router"
+```rust reference="crates/ruststream/examples/routing.rs#router"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/routing.rs#router"
+```rust reference="crates/ruststream/examples/manual/routing.rs#router"
 ```
 
 </TabItem>
@@ -49,13 +49,13 @@ Each module returns its router, and the service merges them and mounts the resul
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/routing.rs#layer"
+```rust reference="crates/ruststream/examples/routing.rs#layer"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/routing.rs#layer"
+```rust reference="crates/ruststream/examples/manual/routing.rs#layer"
 ```
 
 </TabItem>
@@ -68,13 +68,13 @@ Each module returns its router, and the service merges them and mounts the resul
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/routing.rs#codec"
+```rust reference="crates/ruststream/examples/routing.rs#codec"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/routing.rs#codec"
+```rust reference="crates/ruststream/examples/manual/routing.rs#codec"
 ```
 
 </TabItem>

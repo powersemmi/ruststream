@@ -22,13 +22,13 @@ It returns the record, so `with`, `with_raw` and `with_header` chain after it.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_published.rs#assert-called-once"
+```rust reference="crates/ruststream/examples/testing_published.rs#assert-called-once"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_published.rs#assert-called-once"
+```rust reference="crates/ruststream/examples/manual/testing_published.rs#assert-called-once"
 ```
 
 </TabItem>

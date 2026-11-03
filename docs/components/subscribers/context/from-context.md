@@ -27,13 +27,13 @@ An extractor that reads a broker field or a typed state implements the trait for
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/from_context.rs#extractor"
+```rust reference="crates/ruststream/examples/from_context.rs#extractor"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/from_context.rs#extractor"
+```rust reference="crates/ruststream/examples/manual/from_context.rs#extractor"
 ```
 
 </TabItem>

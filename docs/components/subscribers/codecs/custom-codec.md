@@ -37,7 +37,7 @@ cargo test --example custom_codec --no-default-features --features testing,macro
 ```
 
 {/* single-form: a Codec impl is plain Rust; the macros do not write one */}
-```rust reference="examples/custom_codec.rs#codec"
+```rust reference="crates/ruststream/examples/custom_codec.rs#codec"
 ```
 
 The codec mounts at the scope and at the reply position, like a built-in one.
@@ -45,13 +45,13 @@ The codec mounts at the scope and at the reply position, like a built-in one.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/custom_codec.rs#mount"
+```rust reference="crates/ruststream/examples/custom_codec.rs#mount"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/custom_codec.rs#mount"
+```rust reference="crates/ruststream/examples/manual/custom_codec.rs#mount"
 ```
 
 </TabItem>

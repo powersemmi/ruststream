@@ -25,13 +25,13 @@ What the handler publishes carries a contract of its own, declared on the [outgo
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/typed_headers.rs#contracts"
+```rust reference="crates/ruststream/examples/typed_headers.rs#contracts"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/typed_headers.rs#contracts"
+```rust reference="crates/ruststream/examples/manual/typed_headers.rs#contracts"
 ```
 
 </TabItem>
@@ -40,13 +40,13 @@ What the handler publishes carries a contract of its own, declared on the [outgo
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/typed_headers.rs#handler"
+```rust reference="crates/ruststream/examples/typed_headers.rs#handler"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/typed_headers.rs#handler"
+```rust reference="crates/ruststream/examples/manual/typed_headers.rs#handler"
 ```
 
 </TabItem>

@@ -31,25 +31,25 @@ A transform has no macro form: the same impl serves both forms, and only the mou
 A reply transform carries the request's correlation id onto the reply.
 
 {/* single-form: a PublishTransform impl has no macro form; the same code serves the macro and the manual service */}
-```rust reference="examples/publish_transform.rs#reply"
+```rust reference="crates/ruststream/examples/publish_transform.rs#reply"
 ```
 
 A slot transform stamps a constant on what leaves the slot.
 
 {/* single-form: a PublishTransform impl has no macro form; the same code serves the macro and the manual service */}
-```rust reference="examples/publish_transform.rs#slot"
+```rust reference="crates/ruststream/examples/publish_transform.rs#slot"
 ```
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/publish_transform.rs#app"
+```rust reference="crates/ruststream/examples/publish_transform.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/publish_transform.rs#app"
+```rust reference="crates/ruststream/examples/manual/publish_transform.rs#app"
 ```
 
 </TabItem>

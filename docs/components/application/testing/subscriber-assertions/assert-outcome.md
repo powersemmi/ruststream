@@ -22,13 +22,13 @@ Here the delayed copy waits for [`tb.advance(..)`](../driving/advance.md) on the
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_calls.rs#assert_outcome"
+```rust reference="crates/ruststream/examples/testing_subscriber_calls.rs#assert_outcome"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_calls.rs#assert_outcome"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_calls.rs#assert_outcome"
 ```
 
 </TabItem>

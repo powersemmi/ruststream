@@ -33,13 +33,13 @@ One unnamed slot.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/out_slots.rs#forward"
+```rust reference="crates/ruststream/examples/out_slots.rs#forward"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/out_slots.rs#forward"
+```rust reference="crates/ruststream/examples/manual/out_slots.rs#forward"
 ```
 
 </TabItem>
@@ -50,13 +50,13 @@ Two named slots, each with what it may publish.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/out_slots.rs#slots"
+```rust reference="crates/ruststream/examples/out_slots.rs#slots"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/out_slots.rs#slots"
+```rust reference="crates/ruststream/examples/manual/out_slots.rs#slots"
 ```
 
 </TabItem>
@@ -65,13 +65,13 @@ Two named slots, each with what it may publish.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/out_slots.rs#app"
+```rust reference="crates/ruststream/examples/out_slots.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/out_slots.rs#app"
+```rust reference="crates/ruststream/examples/manual/out_slots.rs#app"
 ```
 
 </TabItem>

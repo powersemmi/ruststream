@@ -26,13 +26,13 @@ RustStream 服务是一个[应用](../../components/application/index.md)：一�
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust reference="examples/guide/first.rs#order"
+```rust reference="crates/ruststream/examples/guide/first.rs#order"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust reference="examples/manual/guide/first.rs#order"
+```rust reference="crates/ruststream/examples/manual/guide/first.rs#order"
 ```
 
 </TabItem>
@@ -48,13 +48,13 @@ RustStream 服务是一个[应用](../../components/application/index.md)：一�
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust reference="examples/guide/first.rs#accept"
+```rust reference="crates/ruststream/examples/guide/first.rs#accept"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust reference="examples/manual/guide/first.rs#accept"
+```rust reference="crates/ruststream/examples/manual/guide/first.rs#accept"
 ```
 
 </TabItem>
@@ -71,13 +71,13 @@ RustStream 服务是一个[应用](../../components/application/index.md)：一�
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust reference="examples/guide/first.rs#app"
+```rust reference="crates/ruststream/examples/guide/first.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust reference="examples/manual/guide/first.rs#app"
+```rust reference="crates/ruststream/examples/manual/guide/first.rs#app"
 ```
 
 </TabItem>
@@ -99,4 +99,4 @@ INFO ruststream::dispatch subscriber started subscriber=orders.placed input="gui
 INFO ruststream::lifecycle service running subscribers=1
 ```
 
-本指南的其余部分把这个文件逐步扩展成 [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/examples/guide) 中的商店。
+本指南的其余部分把这个文件逐步扩展成 [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/guide) 中的商店。

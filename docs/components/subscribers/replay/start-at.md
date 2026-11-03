@@ -27,13 +27,13 @@ The subscription opens at the start of the log and replays what was published be
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/seek.rs#start_at"
+```rust reference="crates/ruststream/examples/seek.rs#start_at"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/seek.rs#start_at"
+```rust reference="crates/ruststream/examples/manual/seek.rs#start_at"
 ```
 
 </TabItem>

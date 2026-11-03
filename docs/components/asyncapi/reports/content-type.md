@@ -29,13 +29,13 @@ cargo test --example asyncapi_content_type --features macros,memory,asyncapi,cbo
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/asyncapi_content_type.rs#app"
+```rust reference="crates/ruststream/examples/asyncapi_content_type.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/asyncapi_content_type.rs#app"
+```rust reference="crates/ruststream/examples/manual/asyncapi_content_type.rs#app"
 ```
 
 </TabItem>

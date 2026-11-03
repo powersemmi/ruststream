@@ -1,0 +1,27 @@
+error[E0277]: `Page` cannot be a lent batch slot
+  --> tests/ui/batch_without_slot.rs:27:18
+   |
+27 |     type Batch = Page;
+   |                  ^^^^ a `BatchSubscriber::Batch` is a slot the runtime lends and reuses
+   |
+help: the trait `BatchSlot` is not implemented for `Page`
+  --> tests/ui/batch_without_slot.rs:13:1
+   |
+13 | struct Page(Vec<MemoryMessage>);
+   | ^^^^^^^^^^^
+   = note: implement `BatchSlot` for the batch type, or use `Vec<..>` of the subscriber's messages
+help: the following other types implement trait `BatchSlot`
+  --> $WORKSPACE/crates/ruststream-core/src/capability/batch.rs
+   |
+   | impl<Message: MaybeSend> BatchSlot for Vec<Message> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Vec<Message>`
+   |
+  ::: $WORKSPACE/crates/ruststream-runtime-embassy/src/frames.rs
+   |
+   | impl BatchSlot for FrameBatch {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ruststream_runtime_embassy::frames::FrameBatch`
+note: required by a bound in `ruststream::BatchSubscriber::Batch`
+  --> $WORKSPACE/crates/ruststream-core/src/capability.rs
+   |
+   |     type Batch: BatchSlot<Message = <Self as Subscriber>::Message>;
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `BatchSubscriber::Batch`

@@ -57,13 +57,13 @@ cargo run -- asyncapi gen
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
+```rust title="src/main.rs" reference="crates/ruststream/examples/tutorial/main.rs#main"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="src/main.rs" reference="examples/manual/tutorial/main.rs#main"
+```rust title="src/main.rs" reference="crates/ruststream/examples/manual/tutorial/main.rs#main"
 ```
 
 </TabItem>

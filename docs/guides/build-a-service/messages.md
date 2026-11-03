@@ -26,13 +26,13 @@ The bounds cap what one order may ask for, and the total adds up with checked ar
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="orders.rs" reference="examples/guide/orders.rs#order"
+```rust title="orders.rs" reference="crates/ruststream/examples/guide/orders.rs#order"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="orders.rs" reference="examples/manual/guide/orders.rs#order"
+```rust title="orders.rs" reference="crates/ruststream/examples/manual/guide/orders.rs#order"
 ```
 
 </TabItem>
@@ -49,13 +49,13 @@ Each field of the contract is one header.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="orders.rs" reference="examples/guide/orders.rs#meta"
+```rust title="orders.rs" reference="crates/ruststream/examples/guide/orders.rs#meta"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="orders.rs" reference="examples/manual/guide/orders.rs#meta"
+```rust title="orders.rs" reference="crates/ruststream/examples/manual/guide/orders.rs#meta"
 ```
 
 </TabItem>
@@ -70,13 +70,13 @@ The manual form takes the pair [`Message<RequestMeta, Order>`](api:ruststream::r
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="orders.rs" reference="examples/guide/orders.rs#audit"
+```rust title="orders.rs" reference="crates/ruststream/examples/guide/orders.rs#audit"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="orders.rs" reference="examples/manual/guide/orders.rs#audit"
+```rust title="orders.rs" reference="crates/ruststream/examples/manual/guide/orders.rs#audit"
 ```
 
 </TabItem>
@@ -91,13 +91,13 @@ One constant names that codec, so the routers of the next chapters cannot disagr
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#codec"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#codec"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#codec"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#codec"
 ```
 
 </TabItem>

@@ -26,13 +26,13 @@ Derive-макрос [`Outgoing`](api:ruststream::Outgoing) задаёт тему
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust reference="examples/guide/first.rs#order"
+```rust reference="crates/ruststream/examples/guide/first.rs#order"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust reference="examples/manual/guide/first.rs#order"
+```rust reference="crates/ruststream/examples/manual/guide/first.rs#order"
 ```
 
 </TabItem>
@@ -48,13 +48,13 @@ Derive-макрос [`Outgoing`](api:ruststream::Outgoing) задаёт тему
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust reference="examples/guide/first.rs#accept"
+```rust reference="crates/ruststream/examples/guide/first.rs#accept"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust reference="examples/manual/guide/first.rs#accept"
+```rust reference="crates/ruststream/examples/manual/guide/first.rs#accept"
 ```
 
 </TabItem>
@@ -71,13 +71,13 @@ Derive-макрос [`Outgoing`](api:ruststream::Outgoing) задаёт тему
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 
-```rust reference="examples/guide/first.rs#app"
+```rust reference="crates/ruststream/examples/guide/first.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Вручную">
 
-```rust reference="examples/manual/guide/first.rs#app"
+```rust reference="crates/ruststream/examples/manual/guide/first.rs#app"
 ```
 
 </TabItem>
@@ -99,4 +99,4 @@ INFO ruststream::dispatch subscriber started subscriber=orders.placed input="gui
 INFO ruststream::lifecycle service running subscribers=1
 ```
 
-Остальные главы превращают этот файл в магазин из [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/examples/guide).
+Остальные главы превращают этот файл в магазин из [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/guide).

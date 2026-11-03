@@ -34,13 +34,13 @@ The reply type fixes its destination.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/replies.rs#declared"
+```rust reference="crates/ruststream/examples/replies.rs#declared"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/replies.rs#declared"
+```rust reference="crates/ruststream/examples/manual/replies.rs#declared"
 ```
 
 </TabItem>
@@ -51,13 +51,13 @@ The clause names the destination of a type that declares none.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/replies.rs#named"
+```rust reference="crates/ruststream/examples/replies.rs#named"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/replies.rs#named"
+```rust reference="crates/ruststream/examples/manual/replies.rs#named"
 ```
 
 </TabItem>
@@ -66,13 +66,13 @@ The clause names the destination of a type that declares none.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/replies.rs#app"
+```rust reference="crates/ruststream/examples/replies.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/replies.rs#app"
+```rust reference="crates/ruststream/examples/manual/replies.rs#app"
 ```
 
 </TabItem>

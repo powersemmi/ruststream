@@ -26,13 +26,13 @@ The shop does not publish orders yet; a test does, and in chapter 10 the HTTP st
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/guide/first.rs#order"
+```rust reference="crates/ruststream/examples/guide/first.rs#order"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/guide/first.rs#order"
+```rust reference="crates/ruststream/examples/manual/guide/first.rs#order"
 ```
 
 </TabItem>
@@ -48,13 +48,13 @@ The manual form is a named type with an [`impl Handle<Order>`](api:ruststream::r
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/guide/first.rs#accept"
+```rust reference="crates/ruststream/examples/guide/first.rs#accept"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/guide/first.rs#accept"
+```rust reference="crates/ruststream/examples/manual/guide/first.rs#accept"
 ```
 
 </TabItem>
@@ -71,13 +71,13 @@ The manual form writes that `main` by hand: [`run_main`](api:ruststream::runtime
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/guide/first.rs#app"
+```rust reference="crates/ruststream/examples/guide/first.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/guide/first.rs#app"
+```rust reference="crates/ruststream/examples/manual/guide/first.rs#app"
 ```
 
 </TabItem>
@@ -99,4 +99,4 @@ INFO ruststream::dispatch subscriber started subscriber=orders.placed input="gui
 INFO ruststream::lifecycle service running subscribers=1
 ```
 
-The rest of the guide grows this file into the shop of [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/examples/guide).
+The rest of the guide grows this file into the shop of [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/guide).

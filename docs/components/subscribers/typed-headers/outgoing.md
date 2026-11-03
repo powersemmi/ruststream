@@ -22,13 +22,13 @@ The handler on the [Headers](./index.md) page publishes a `ChunkDone` through su
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/typed_headers.rs#messages"
+```rust reference="crates/ruststream/examples/typed_headers.rs#messages"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/typed_headers.rs#messages"
+```rust reference="crates/ruststream/examples/manual/typed_headers.rs#messages"
 ```
 
 </TabItem>
@@ -37,13 +37,13 @@ The handler on the [Headers](./index.md) page publishes a `ChunkDone` through su
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/typed_headers.rs#dictionary"
+```rust reference="crates/ruststream/examples/typed_headers.rs#dictionary"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/typed_headers.rs#dictionary"
+```rust reference="crates/ruststream/examples/manual/typed_headers.rs#dictionary"
 ```
 
 </TabItem>

@@ -11,10 +11,10 @@ on:
     paths:
       - docs/**
       - website/i18n/**
-      - examples/**
+      - crates/ruststream/examples/**
       # the testing and conformance guides embed their snippets from these test files
-      - tests/doc_*.rs
-      - tests/conformance_self.rs
+      - crates/ruststream/tests/doc_*.rs
+      - crates/ruststream/tests/conformance_self.rs
       - scripts/lint_doc_fences.py
       - scripts/check_doc_i18n.py
       - scripts/check_doc_parity.py

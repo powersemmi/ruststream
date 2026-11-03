@@ -29,19 +29,19 @@ A chain chosen when the app starts goes into a [`PublishDynStack`](./publish-dyn
 The layer names the service on every message it publishes.
 
 {/* single-form: a PublishLayer impl has no macro form; the same code serves the macro and the manual service */}
-```rust reference="examples/publish_layer.rs#layer"
+```rust reference="crates/ruststream/examples/publish_layer.rs#layer"
 ```
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/publish_layer.rs#app"
+```rust reference="crates/ruststream/examples/publish_layer.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/publish_layer.rs#app"
+```rust reference="crates/ruststream/examples/manual/publish_layer.rs#app"
 ```
 
 </TabItem>

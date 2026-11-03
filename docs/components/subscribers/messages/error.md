@@ -45,13 +45,13 @@ The handler below retries once at its cap, so the retry becomes a dead letter, a
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/retry_error.rs#error"
+```rust reference="crates/ruststream/examples/retry_error.rs#error"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/retry_error.rs#error"
+```rust reference="crates/ruststream/examples/manual/retry_error.rs#error"
 ```
 
 </TabItem>
@@ -78,13 +78,13 @@ On the embedded runtime a reply that is refused is lost with the replies behind 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/retry_error.rs#reply"
+```rust reference="crates/ruststream/examples/retry_error.rs#reply"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/retry_error.rs#reply"
+```rust reference="crates/ruststream/examples/manual/retry_error.rs#reply"
 ```
 
 </TabItem>

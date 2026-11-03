@@ -22,13 +22,13 @@ The assertion fails when the service is still running, which [`assert_running`](
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_service_state.rs#assert-shut-down"
+```rust reference="crates/ruststream/examples/testing_service_state.rs#assert-shut-down"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_service_state.rs#assert-shut-down"
+```rust reference="crates/ruststream/examples/manual/testing_service_state.rs#assert-shut-down"
 ```
 
 </TabItem>

@@ -28,13 +28,13 @@ RustStream 通过应用选定的日志器发出自己的事件，`.logger(Tracin
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="observability.rs" reference="examples/guide/observability.rs#layer"
+```rust title="observability.rs" reference="crates/ruststream/examples/guide/observability.rs#layer"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="observability.rs" reference="examples/manual/guide/observability.rs#layer"
+```rust title="observability.rs" reference="crates/ruststream/examples/manual/guide/observability.rs#layer"
 ```
 
 </TabItem>
@@ -51,13 +51,13 @@ RustStream 通过应用选定的日志器发出自己的事件，`.logger(Tracin
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="service.rs" reference="examples/guide/service.rs#shop"
+```rust title="service.rs" reference="crates/ruststream/examples/guide/service.rs#shop"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="service.rs" reference="examples/manual/guide/service.rs#shop"
+```rust title="service.rs" reference="crates/ruststream/examples/manual/guide/service.rs#shop"
 ```
 
 </TabItem>

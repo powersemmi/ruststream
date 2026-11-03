@@ -49,7 +49,7 @@ serde_norway = "0.9"
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
 # The doc examples are a service's code, so they import the facade; the unit tests reach the
 # in-memory broker through it. A path dependency without a version is dropped on publish.
-ruststream = { path = "../..", features = ["macros", "memory", "json", "compio"] }
+ruststream = { path = "../ruststream", features = ["macros", "memory", "json", "compio"] }
 # The compile-fail snapshot that holds an embedded app out of the CLI.
 ruststream-runtime-embassy.workspace = true
 ruststream-memory = { workspace = true, features = ["embassy", "alloc"] }

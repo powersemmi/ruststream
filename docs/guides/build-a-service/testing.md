@@ -26,13 +26,13 @@ The payment request travels as CBOR, so the assertion decodes it with [`with_cod
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="main.rs" reference="examples/guide/main.rs#journey"
+```rust title="main.rs" reference="crates/ruststream/examples/guide/main.rs#journey"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="main.rs" reference="examples/manual/guide/main.rs#journey"
+```rust title="main.rs" reference="crates/ruststream/examples/manual/guide/main.rs#journey"
 ```
 
 </TabItem>
@@ -45,13 +45,13 @@ An order with no lines stops at `accept`: nothing is charged and no customer is 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="main.rs" reference="examples/guide/main.rs#empty"
+```rust title="main.rs" reference="crates/ruststream/examples/guide/main.rs#empty"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="main.rs" reference="examples/manual/guide/main.rs#empty"
+```rust title="main.rs" reference="crates/ruststream/examples/manual/guide/main.rs#empty"
 ```
 
 </TabItem>
@@ -67,13 +67,13 @@ The clock starts paused, and `advance(BACKOFF)` brings the refused request back.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#busy"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#busy"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#busy"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#busy"
 ```
 
 </TabItem>
@@ -87,13 +87,13 @@ The fifth delivery goes to `payments.dead`, as it arrived.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust title="payments.rs" reference="examples/guide/payments.rs#dead_letter"
+```rust title="payments.rs" reference="crates/ruststream/examples/guide/payments.rs#dead_letter"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust title="payments.rs" reference="examples/manual/guide/payments.rs#dead_letter"
+```rust title="payments.rs" reference="crates/ruststream/examples/manual/guide/payments.rs#dead_letter"
 ```
 
 </TabItem>

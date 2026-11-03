@@ -9,7 +9,7 @@ A broker crate depends on `ruststream = { version = "0.7", default-features = fa
 implements the core's traits over one client library. The contract is checked by the
 `conformance` suites, which run in process and against a real server. The hub of the contract is
 the [`Broker` trait on docs.rs](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html);
-`MemoryBroker` (`src/memory/` of the core) is the reference implementation, and
+`MemoryBroker` (`crates/ruststream-memory` of the core) is the reference implementation, and
 [`ruststream-nats`](https://docs.rs/ruststream-nats/latest/ruststream_nats/) is a worked crate over
 a real client. This guidance targets the 0.7 line; a broker crate's version tracks the core's
 minor line.

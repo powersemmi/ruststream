@@ -36,13 +36,13 @@ The bare attribute leaves the name to the mount site.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/subscriber_source.rs#name_at_mount"
+```rust reference="crates/ruststream/examples/subscriber_source.rs#name_at_mount"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/subscriber_source.rs#name_at_mount"
+```rust reference="crates/ruststream/examples/manual/subscriber_source.rs#name_at_mount"
 ```
 
 </TabItem>
@@ -55,13 +55,13 @@ A descriptor is fixed in the attribute, or only its kind is, and the name comes 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/subscriber_source.rs#descriptor"
+```rust reference="crates/ruststream/examples/subscriber_source.rs#descriptor"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/subscriber_source.rs#descriptor"
+```rust reference="crates/ruststream/examples/manual/subscriber_source.rs#descriptor"
 ```
 
 </TabItem>

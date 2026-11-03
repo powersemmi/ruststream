@@ -29,13 +29,13 @@ A handler reads the core it runs on with the `Ctx<Core>` extractor (`Core::curre
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/compio_runtime.rs#app"
+```rust reference="crates/ruststream/examples/compio_runtime.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/compio_runtime.rs#app"
+```rust reference="crates/ruststream/examples/manual/compio_runtime.rs#app"
 ```
 
 </TabItem>

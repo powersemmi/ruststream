@@ -30,13 +30,13 @@ The example runs with `cargo test --example poll_diagnostics --features testing,
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/poll_diagnostics.rs#diagnostics"
+```rust reference="crates/ruststream/examples/poll_diagnostics.rs#diagnostics"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/poll_diagnostics.rs#diagnostics"
+```rust reference="crates/ruststream/examples/manual/poll_diagnostics.rs#diagnostics"
 ```
 
 </TabItem>
@@ -48,5 +48,5 @@ The example runs with `cargo test --example poll_diagnostics --features testing,
 A report holds the number of samples, the average and the p99 of the time in one poll.
 
 {/* single-form: reading the reports is the same code with and without the macros */}
-```rust reference="examples/poll_diagnostics.rs#reports"
+```rust reference="crates/ruststream/examples/poll_diagnostics.rs#reports"
 ```

@@ -35,13 +35,13 @@ cargo test --example codec_json --no-default-features --features testing,macros,
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/codec_json.rs#app"
+```rust reference="crates/ruststream/examples/codec_json.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/codec_json.rs#app"
+```rust reference="crates/ruststream/examples/manual/codec_json.rs#app"
 ```
 
 </TabItem>

@@ -37,13 +37,13 @@ tracing = "0.1"
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#order"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/tutorial/orders.rs#order"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="src/orders.rs" reference="examples/manual/tutorial/orders.rs#order"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/manual/tutorial/orders.rs#order"
 ```
 
 </TabItem>
@@ -61,13 +61,13 @@ ack，`Err` 表示丢弃。
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="src/main.rs" reference="examples/tutorial/first_app.rs#app"
+```rust title="src/main.rs" reference="crates/ruststream/examples/tutorial/first_app.rs#app"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="src/main.rs" reference="examples/manual/tutorial/first_app.rs#app"
+```rust title="src/main.rs" reference="crates/ruststream/examples/manual/tutorial/first_app.rs#app"
 ```
 
 </TabItem>
@@ -99,13 +99,13 @@ cargo run -- run
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#confirm"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/tutorial/orders.rs#confirm"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="src/orders.rs" reference="examples/manual/tutorial/orders.rs#confirm"
+```rust title="src/orders.rs" reference="crates/ruststream/examples/manual/tutorial/orders.rs#confirm"
 ```
 
 </TabItem>
@@ -117,13 +117,13 @@ cargo run -- run
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="src/main.rs" reference="examples/tutorial/reply_app.rs#reply"
+```rust title="src/main.rs" reference="crates/ruststream/examples/tutorial/reply_app.rs#reply"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="src/main.rs" reference="examples/manual/tutorial/reply_app.rs#reply"
+```rust title="src/main.rs" reference="crates/ruststream/examples/manual/tutorial/reply_app.rs#reply"
 ```
 
 </TabItem>
@@ -138,13 +138,13 @@ cargo run -- run
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="src/routes.rs" reference="examples/tutorial/routes.rs#routes"
+```rust title="src/routes.rs" reference="crates/ruststream/examples/tutorial/routes.rs#routes"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="src/routes.rs" reference="examples/manual/tutorial/routes.rs#routes"
+```rust title="src/routes.rs" reference="crates/ruststream/examples/manual/tutorial/routes.rs#routes"
 ```
 
 </TabItem>
@@ -157,13 +157,13 @@ cargo run -- run
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 
-```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
+```rust title="src/main.rs" reference="crates/ruststream/examples/tutorial/main.rs#main"
 ```
 
 </TabItem>
 <TabItem value="manual" label="手写">
 
-```rust title="src/main.rs" reference="examples/manual/tutorial/main.rs#main"
+```rust title="src/main.rs" reference="crates/ruststream/examples/manual/tutorial/main.rs#main"
 ```
 
 </TabItem>
@@ -191,7 +191,7 @@ Broker crate 加进依赖，在那里构造它，例如用 `NatsBroker::new("nat
 :::info[完整的服务是一个可编译的示例]
 
 本页的每一段代码都来自仓库里的
-[`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)，
+[`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/tutorial)，
 CI 每次改动都会构建它。`first_app.rs` 和 `reply_app.rs` 是第 3 步和第 4 步结束时的服务，
 `main.rs` 是最终版本。你也可以用
 `cargo run --example tutorial --features macros,memory,json,asyncapi,logging -- run` 自己运行一遍。

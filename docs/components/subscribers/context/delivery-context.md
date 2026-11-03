@@ -28,13 +28,13 @@ The context also schedules work for after the settlement: the [post-settle hooks
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/context.rs#handler"
+```rust reference="crates/ruststream/examples/context.rs#handler"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/context.rs#handler"
+```rust reference="crates/ruststream/examples/manual/context.rs#handler"
 ```
 
 </TabItem>

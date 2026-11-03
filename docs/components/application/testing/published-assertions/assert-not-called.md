@@ -22,13 +22,13 @@ A handler that settles with `HandlerOutcome::drop()` publishes no reply, which i
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_published.rs#assert-not-called"
+```rust reference="crates/ruststream/examples/testing_published.rs#assert-not-called"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_published.rs#assert-not-called"
+```rust reference="crates/ruststream/examples/manual/testing_published.rs#assert-not-called"
 ```
 
 </TabItem>

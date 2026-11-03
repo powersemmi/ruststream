@@ -23,13 +23,13 @@ A value that does not encode fails the call with `TestError::Encode`.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_driving.rs#publish-shortcuts"
+```rust reference="crates/ruststream/examples/testing_driving.rs#publish-shortcuts"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_driving.rs#publish-shortcuts"
+```rust reference="crates/ruststream/examples/manual/testing_driving.rs#publish-shortcuts"
 ```
 
 </TabItem>

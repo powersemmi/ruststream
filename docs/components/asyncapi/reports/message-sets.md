@@ -25,13 +25,13 @@ The example runs with `cargo test --example in_messages --features testing,macro
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/in_messages.rs#set"
+```rust reference="crates/ruststream/examples/in_messages.rs#set"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/in_messages.rs#set"
+```rust reference="crates/ruststream/examples/manual/in_messages.rs#set"
 ```
 
 </TabItem>

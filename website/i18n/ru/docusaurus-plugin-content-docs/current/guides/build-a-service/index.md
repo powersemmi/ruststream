@@ -30,7 +30,7 @@ flowchart TD
   notices --> send[send]
 ```
 
-Готовый магазин лежит в репозитории в [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/examples/guide), а его ручная версия - в [`examples/manual/guide`](https://github.com/powersemmi/ruststream/tree/main/examples/manual/guide).
+Готовый магазин лежит в репозитории в [`examples/guide`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/guide), а его ручная версия - в [`examples/manual/guide`](https://github.com/powersemmi/ruststream/tree/main/crates/ruststream/examples/manual/guide).
 CI собирает обе версии и запускает их тесты при каждом изменении.
 Каждая часть магазина - отдельный модуль: `orders.rs`, `payments.rs`, `shipping.rs` и `notifications.rs`.
 `state.rs` содержит то, что подписчики используют совместно, `observability.rs` - собственный middleware магазина, а `service.rs` собирает приложение.

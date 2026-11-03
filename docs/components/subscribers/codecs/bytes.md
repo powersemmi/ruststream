@@ -31,13 +31,13 @@ cargo test --example byte_lanes --no-default-features --features testing,macros,
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/byte_lanes.rs#lanes"
+```rust reference="crates/ruststream/examples/byte_lanes.rs#lanes"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/byte_lanes.rs#lanes"
+```rust reference="crates/ruststream/examples/manual/byte_lanes.rs#lanes"
 ```
 
 </TabItem>

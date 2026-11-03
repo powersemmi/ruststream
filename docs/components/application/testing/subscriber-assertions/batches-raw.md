@@ -22,13 +22,13 @@ A batch built from a bare publisher is driven with [`settle`](../driving/settle.
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_subscriber_payloads.rs#batches_raw"
+```rust reference="crates/ruststream/examples/testing_subscriber_payloads.rs#batches_raw"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_subscriber_payloads.rs#batches_raw"
+```rust reference="crates/ruststream/examples/manual/testing_subscriber_payloads.rs#batches_raw"
 ```
 
 </TabItem>

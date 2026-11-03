@@ -22,13 +22,13 @@ In the example [`with`](../subscriber-assertions/with.md) shows which handler re
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
-```rust reference="examples/testing_driving.rs#broker-named"
+```rust reference="crates/ruststream/examples/testing_driving.rs#broker-named"
 ```
 
 </TabItem>
 <TabItem value="manual" label="Manual">
 
-```rust reference="examples/manual/testing_driving.rs#broker-named"
+```rust reference="crates/ruststream/examples/manual/testing_driving.rs#broker-named"
 ```
 
 </TabItem>
