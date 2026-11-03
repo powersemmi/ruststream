@@ -1,8 +1,8 @@
 //! Domain types and handlers, written as `#[subscriber]` functions.
 //!
-//! `confirm` consumes `orders` with four workers, which the app places on the cores beside core
-//! 0, and replies on `confirmations`. `audit` reads the same orders on core 0, where the bus
-//! receives.
+//! `confirm` consumes `orders` with four workers, which share the available cores, core 0
+//! included, and replies on `confirmations`. `audit` reads the same orders on core 0, where the
+//! bus receives.
 
 use ruststream::memory::local::LocalMemorySource;
 use ruststream::runtime::compio::Core;
