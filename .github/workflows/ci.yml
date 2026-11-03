@@ -22,6 +22,7 @@ env:
   # with all of them. The embassy set is the facade of a device service, the one build that
   # leaves tokio out of the dependency graph. The justfile keeps the same set.
   EMBASSY_FEATURES: cbor,embassy,json,macros,memory,msgpack
+  COMPIO_FEATURES: compio,memory,macros,json
   # The embedded runner's own tests link embassy-time's mock driver and the embedded harness is a
   # time driver of its own, so one binary cannot hold both: its legs run alone.
   EMBASSY_TESTS_EXCLUDE: --exclude ruststream-runtime-embassy
@@ -182,7 +183,7 @@ jobs:
       # The embassy runtime alone, as a device service builds it: the facade with the embassy
       # set, where every target that needs tokio names it and drops out, then the embedded runner
       # and the local bus. The set keeps tokio out of the facade's dependency graph.
-      - name: Embassy runtime (lints, dependency graph)
+      - name: Embassy and compio runtimes (lints, dependency graph)
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         env:
           CARGO_BUILD_WARNINGS: deny
@@ -198,6 +199,13 @@ jobs:
             --features "$EMBASSY_FEATURES" -e normal -i tokio)"
           if [ -n "$tree" ]; then
             echo "::error::the embassy set pulls tokio into the facade"
+            echo "$tree"
+            exit 1
+          fi
+          tree="$(cargo tree --locked -p ruststream --no-default-features \
+            --features "$COMPIO_FEATURES" -e normal -i tokio)"
+          if [ -n "$tree" ]; then
+            echo "::error::the compio set pulls tokio into the facade"
             echo "$tree"
             exit 1
           fi

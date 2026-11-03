@@ -166,6 +166,12 @@ check:
     if [ -n "$tree" ]; then \
         echo "error: the embassy set pulls tokio into the facade:" >&2; echo "$tree" >&2; exit 1; \
     fi
+    # The compio set keeps tokio out of the facade's dependency graph.
+    tree="$(cargo tree -p ruststream --no-default-features --features {{ compio_bench_features }} \
+        -e normal -i tokio)"; \
+    if [ -n "$tree" ]; then \
+        echo "error: the compio set pulls tokio into the facade:" >&2; echo "$tree" >&2; exit 1; \
+    fi
     # Rustdoc sees what rustc cannot: broken intra-doc links and redundant targets. CI gates on
     # it, so a link to an item a refactor removed must fail here rather than three jobs later.
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps

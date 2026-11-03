@@ -109,7 +109,7 @@ ruststream-memory = { version = "=0.8.0", path = "crates/ruststream-memory", def
 ruststream-asyncapi = { version = "=0.8.0", path = "crates/ruststream-asyncapi" }
 ruststream-observability = { version = "=0.8.0", path = "crates/ruststream-observability" }
 ruststream-testing = { version = "=0.8.0", path = "crates/ruststream-testing" }
-ruststream-cli = { version = "=0.8.0", path = "crates/ruststream-cli" }
+ruststream-cli = { version = "=0.8.0", path = "crates/ruststream-cli", default-features = false }
 ruststream-conformance = { version = "=0.8.0", path = "crates/ruststream-conformance" }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases

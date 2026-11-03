@@ -16,6 +16,7 @@ readme = "../../README.md"
 all-features = true
 
 [features]
+default = ["tokio"]
 # The tokio entry point: `run_main`, `run_main_on`, `AppRuntime` and the run error of a tokio app.
 tokio = ["dep:tokio", "dep:ruststream-runtime-tokio"]
 # The compio entry point: `compio::run_main` and the run error of a compio app.
