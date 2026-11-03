@@ -10,12 +10,12 @@ use std::io;
 use std::thread;
 
 use futures::Stream;
+use ruststream_core::diag::error;
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
 use tokio::task::coop::consume_budget;
 use tokio_util::task::TaskTracker;
-use ruststream_core::diag::error;
 
 use ruststream_runtime::{Feed, open_rings};
 
