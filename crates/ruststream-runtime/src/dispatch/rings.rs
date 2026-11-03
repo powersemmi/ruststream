@@ -52,6 +52,9 @@ use ruststream_core::diag::error;
 /// one waiting while the loop reads on, few enough that the read-ahead stays small.
 pub const RING: usize = 8;
 
+/// Deliveries the feed hands over in a row before it gives the executor a turn.
+const TURN_LENGTH: u32 = 128;
+
 /// How long a thread that found its ring empty keeps looking before it parks. A light handler
 /// drains its ring faster than the loop fills it; parked on its runtime's driver between
 /// deliveries, the thread would cost the loop a system call to wake it for most of them. Within
@@ -418,6 +421,8 @@ impl<Item> Feed<Item> {
         // The next ring in turn: the pool's round-robin, and where keyless deliveries of the
         // threads go.
         let mut turn = 0usize;
+        // Deliveries handed over since the executor last had a turn.
+        let mut handed = 0u32;
         loop {
             if shutdown.is_cancelled() {
                 break;
@@ -458,7 +463,16 @@ impl<Item> Feed<Item> {
                     // A pool has picked a ring with room already, so its push goes through. A full
                     // ring is waited on, whatever else has room: a key stays in order.
                     match self.rings[index].push(item) {
-                        Ok(()) => self.signals.pushed(index),
+                        Ok(()) => {
+                            self.signals.pushed(index);
+                            // Rings with room and a ready stream never make this loop wait, so
+                            // a burst would hold the executor until it ended.
+                            handed += 1;
+                            if handed >= TURN_LENGTH {
+                                handed = 0;
+                                yield_once().await;
+                            }
+                        }
                         Err(PushError::Full(item)) => {
                             if let Err(stuck) = self.hand_over_when_room(index, item).await {
                                 report(name, &stuck);
@@ -559,6 +573,7 @@ mod tests {
     use std::convert::Infallible;
     use std::format;
     use std::sync::Mutex;
+    use std::task::{Wake, Waker};
     use std::thread;
 
     use futures::StreamExt;
@@ -741,6 +756,60 @@ mod tests {
         feed.let_go();
         for thread in threads {
             thread.join().expect("the thread ends cleanly");
+        }
+    }
+
+    /// A burst of ready deliveries with room in the rings hands the executor a turn after
+    /// [`TURN_LENGTH`] of them, so a signal or shutdown on the same executor is heard.
+    #[test]
+    fn a_burst_of_ready_deliveries_hands_the_executor_a_turn() {
+        // More room than one turn: the rings alone would not stop the loop first.
+        let threads_count = 20;
+        assert!(
+            threads_count * RING > 128,
+            "the rings hold more than a turn"
+        );
+        let gate = Arc::new(Semaphore::new(0));
+        let (mut feed, threads) = start(threads_count, false, || {
+            let gate = Arc::clone(&gate);
+            async move |_item: u32| {
+                gate.acquire().await.expect("the gate stays open").forget();
+            }
+        });
+        let pulled = Arc::new(AtomicUsize::new(0));
+        let counting = Arc::clone(&pulled);
+        let items = stream::repeat_with(move || {
+            counting.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, Infallible>(0u32)
+        });
+        let stop = Stop::default();
+        let counter = Arc::new(Wakes::default());
+        let waker = Waker::from(Arc::clone(&counter));
+        {
+            let mut read = pin!(feed.read(items, "burst", &stop, |_| None));
+            let first = read.as_mut().poll(&mut TaskContext::from_waker(&waker));
+            assert!(first.is_pending(), "the loop did not give the turn up");
+        }
+        assert_eq!(pulled.load(Ordering::SeqCst), 128);
+        assert_eq!(
+            counter.0.load(Ordering::SeqCst),
+            1,
+            "the loop asked for a turn"
+        );
+        feed.let_go();
+        gate.add_permits(1000);
+        for thread in threads {
+            thread.join().expect("the thread ends cleanly");
+        }
+    }
+
+    /// Counts the times a task is woken.
+    #[derive(Default)]
+    struct Wakes(AtomicUsize);
+
+    impl Wake for Wakes {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
         }
     }
 
