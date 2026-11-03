@@ -15,7 +15,7 @@ use std::time::Duration;
 use crate::spawn::spawn;
 use compio::runtime::{JoinError, JoinHandle};
 use futures::future::{self, Either};
-use tracing::{debug, info, warn};
+use ruststream_core::diag::{debug, info, warn};
 
 #[cfg(feature = "testing")]
 use crate::ConnectedLifecycle;
@@ -241,8 +241,13 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             after_shutdown,
             shutdown_timeout,
             continuations,
+            logger,
             ..
         } = self;
+
+        if let Some(select) = logger {
+            select();
+        }
 
         info!(
             target: "ruststream::lifecycle",

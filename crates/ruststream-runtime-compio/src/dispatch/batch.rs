@@ -9,11 +9,11 @@ use std::task::Poll;
 
 use bytes::BytesMut;
 use compio::runtime::JoinHandle;
+use ruststream_core::diag::error;
 use ruststream_core::{BatchSlot, BatchStream, BatchSubscriber};
 use ruststream_runtime::{
     BatchHandler, DispatchFailure, RING, RetryCopies, Turn, Workers, placed, run_batch,
 };
-use tracing::error;
 
 use super::slots::{Filled, Stock};
 use super::workers::{read_then_join, start_workers};

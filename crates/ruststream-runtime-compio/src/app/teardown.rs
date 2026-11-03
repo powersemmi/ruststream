@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use compio::runtime::{JoinError, JoinHandle};
 use futures::future::{self, Either};
+use ruststream_core::diag::{debug, info, warn};
 use ruststream_runtime::Clock;
-use tracing::{debug, info, warn};
 
 use crate::dispatch::Fabric;
 use crate::{BoxError, CompioClock, ConnectedLifecycle, LocalBoxFuture, Stop, Tasks};

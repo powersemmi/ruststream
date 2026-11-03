@@ -8,6 +8,7 @@ use std::{
 use crate::SendBroker;
 use crate::bindable::BrokerRegistration;
 use crate::{DescribeServer, ServerSpec};
+use ruststream_core::diag::Logger;
 use ruststream_runtime::Workers;
 use ruststream_runtime::codec::Codec;
 
@@ -75,6 +76,8 @@ pub struct RustStream<Layers = Identity, State = (), Pipeline = PublishIdentity,
     pub(super) after_shutdown: Vec<LifecycleHook<State>>,
     pub(super) shutdown_timeout: Option<Duration>,
     pub(super) subscription_end: SubscriptionEnd,
+    /// Selects the logger the app reports through, when it starts.
+    pub(super) logger: Option<fn()>,
     /// Tracks post-settle `and_after` continuations spawned during dispatch, so a graceful
     /// shutdown drains them after the dispatch loops stop. Shared (cloned) into every
     /// [`Delivery`].
@@ -138,6 +141,7 @@ impl RustStream<Identity, (), PublishIdentity, Setup> {
             after_shutdown: Vec::new(),
             shutdown_timeout: None,
             subscription_end: SubscriptionEnd::default(),
+            logger: None,
             continuations: Tasks::default(),
             global: Identity,
             phase: PhantomData,
@@ -166,6 +170,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
             subscription_end: self.subscription_end,
+            logger: self.logger,
             continuations: self.continuations,
             global: Stack::new(layer, self.global),
             phase: PhantomData,
@@ -230,6 +235,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             after_shutdown: Vec::new(),
             shutdown_timeout: self.shutdown_timeout,
             subscription_end: self.subscription_end,
+            logger: self.logger,
             continuations: self.continuations,
             global: self.global,
             phase: PhantomData,
@@ -275,6 +281,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
             subscription_end: self.subscription_end,
+            logger: self.logger,
             continuations: self.continuations,
             global: self.global,
             phase: PhantomData,
@@ -298,6 +305,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
             subscription_end: self.subscription_end,
+            logger: self.logger,
             continuations: self.continuations,
             global: self.global,
             phase: PhantomData,
@@ -387,6 +395,35 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     #[must_use]
     pub fn on_subscription_end(mut self, on_end: SubscriptionEnd) -> Self {
         self.subscription_end = on_end;
+        self
+    }
+
+    /// Selects the logger the framework reports through, when the app starts and before its
+    /// brokers connect.
+    ///
+    /// Nothing is reported until an app selects one. The selection is process-wide, like the
+    /// `log` crate's: two apps in one process share one logger, and the last to start decides.
+    /// Each logger hands an event to its backend, whose level filter decides what shows: a
+    /// `tracing` subscriber's filter, `log::max_level()`, defmt's level.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::diagnostics::TracingLogger;
+    /// use ruststream::memory::local::LocalMemoryBroker;
+    /// use ruststream::runtime::compio::{AppInfo, RustStream};
+    ///
+    /// /// What `main` runs: the framework reports through `tracing`.
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .logger(TracingLogger)
+    ///         .with_broker(LocalMemoryBroker::<4>::new(), |b| b)
+    /// }
+    /// # let _ = app;
+    /// ```
+    #[must_use]
+    pub fn logger<L: Logger>(mut self, _logger: L) -> Self {
+        self.logger = Some(L::select);
         self
     }
 

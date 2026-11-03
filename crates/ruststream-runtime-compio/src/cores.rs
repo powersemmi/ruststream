@@ -16,9 +16,9 @@ use compio::signal::ctrl_c;
 #[cfg(unix)]
 use compio::signal::unix::signal as unix_signal;
 use futures::future;
+use ruststream_core::diag::{error, warn};
 use ruststream_runtime::{Core, Halt};
 use thiserror::Error;
-use tracing::{error, warn};
 
 use crate::Stop;
 use crate::spawn::spawn;

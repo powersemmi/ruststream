@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use event_listener::{Event, EventListener};
+use ruststream_core::diag::{debug, error};
 use ruststream_runtime::{Halt, ShutdownWait, SubscriptionEnd};
-use tracing::{debug, error};
 
 /// What every dispatch loop stops on, in the two forms a loop asks for, plus the reason where a
 /// failure raised it.

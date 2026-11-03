@@ -2146,7 +2146,6 @@ dependencies = [
  "rusty-fork",
  "serde",
  "thiserror",
- "tracing",
  "trybuild",
 ]
 

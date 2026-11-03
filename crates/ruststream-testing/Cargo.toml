@@ -359,3 +359,17 @@ required-features = ["compio", "json"]
 name = "compio_capacity"
 path = "tests/compio_capacity.rs"
 required-features = ["compio", "json"]
+
+
+
+# The tokio `TestApp` reports a reaction that never settles, with the deliveries it counted.
+[[test]]
+name = "tokio_quiescence"
+path = "tests/tokio_quiescence.rs"
+required-features = ["tokio", "json"]
+
+# The compio runner reports through the logger the app selects, through the compio `TestApp`.
+[[test]]
+name = "compio_logger"
+path = "tests/compio_logger.rs"
+required-features = ["compio", "json"]

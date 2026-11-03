@@ -22,7 +22,9 @@ testing = ["ruststream-runtime/testing"]
 
 [dependencies]
 ruststream-core = { workspace = true, features = ["std"] }
-ruststream-runtime = { workspace = true, features = ["compio"] }
+# The compio runner reports through the loggers of `ruststream-core`, `tracing` among them, as the
+# tokio runner does.
+ruststream-runtime = { workspace = true, features = ["compio", "tracing"] }
 bytes = { workspace = true, features = ["std"] }
 # `polling` is the driver a host falls back to when it refuses an io_uring (a container profile that
 # blocks it, an old kernel, no memory for the ring).
@@ -34,7 +36,6 @@ futures = { workspace = true, features = ["std", "async-await"] }
 core_affinity = "0.8.3"
 pin-project-lite.workspace = true
 thiserror = { workspace = true, features = ["std"] }
-tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 # The compile-fail snapshots.

@@ -11,9 +11,9 @@ use event_listener::Event;
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt, pin_mut, select};
+use ruststream_core::diag::{debug, error};
 use ruststream_runtime::{Halt, Placement, ShutdownWait, Workers};
 use thiserror::Error;
-use tracing::{debug, error};
 
 use crate::Stop;
 

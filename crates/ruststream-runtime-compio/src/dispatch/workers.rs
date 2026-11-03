@@ -12,13 +12,13 @@ use bytes::BytesMut;
 use compio::runtime::JoinHandle;
 use futures::Stream;
 use futures::channel::oneshot;
+use ruststream_core::diag::error;
 use ruststream_core::{BuildContext, IncomingMessage, Subscriber};
 use ruststream_runtime::DeliverySlot as Slot;
 use ruststream_runtime::{
     DispatchFailure, Feed, Handler, HeadersOnDemand, RetryCopies, Workers, dispatch, open_rings,
     placed,
 };
-use tracing::error;
 
 use super::{Budget, DispatchUnit, Fabric, Hosted, Shared, StartUnitError, spawn_dispatch};
 use crate::spawn::spawn;

@@ -9,10 +9,10 @@ use std::any::TypeId;
 use std::fmt;
 use std::sync::Arc;
 
+use ruststream_core::diag::info;
 use ruststream_runtime::testing::{Coordinator, TestHooks, TestableRegistration};
 use ruststream_runtime::{Placement, Workers};
 use thiserror::Error;
-use tracing::info;
 
 use crate::dispatch::Fabric;
 use crate::{BoxError, ConnectedLifecycle, Stop};
