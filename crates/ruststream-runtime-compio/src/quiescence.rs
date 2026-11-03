@@ -78,6 +78,12 @@ impl Quiescence {
         self.runnable.load(Ordering::Acquire)
     }
 
+    /// Follows `work` the way a spawned task is followed, for a future the harness polls itself:
+    /// its wakes count as runnable until it is polled again.
+    pub fn follow<Work: Future>(&self, work: Work) -> impl Future<Output = Work::Output> {
+        followed(Arc::clone(&self.runnable), work)
+    }
+
     /// A reader of the count that can go where the lease cannot: into a publish sink, which is
     /// `Send`.
     #[must_use]
@@ -205,6 +211,10 @@ pub(crate) fn follow<Work: Future>(work: Work) -> Result<Followed<Work>, Work> {
     let Some(runnable) = LEASE.try_with(|slot| slot.borrow().clone()).ok().flatten() else {
         return Err(work);
     };
+    Ok(followed(runnable, work))
+}
+
+fn followed<Work: Future>(runnable: Arc<AtomicUsize>, work: Work) -> Followed<Work> {
     runnable.fetch_add(1, Ordering::AcqRel);
     let flag = Arc::new(Flag {
         state: AtomicU8::new(RUNNABLE),
@@ -212,11 +222,14 @@ pub(crate) fn follow<Work: Future>(work: Work) -> Result<Followed<Work>, Work> {
         outer: Mutex::new(None),
     });
     let waker = Waker::from(Arc::clone(&flag));
-    Ok(Followed { work, flag, waker })
+    Followed { work, flag, waker }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::pin::pin;
+    use std::task::{Context, Waker};
+
     use compio::runtime::Runtime;
     use futures::channel::oneshot;
 
@@ -293,6 +306,21 @@ mod tests {
             // compio drops a cancelled task's future on its next turn.
             yield_now().await;
             assert_eq!(lease.runnable(), 0, "cancelled before its first poll");
+        });
+    }
+
+    #[test]
+    fn a_future_the_harness_polls_is_runnable_after_it_wakes_itself() {
+        Runtime::new().expect("a runtime").block_on(async {
+            let lease = Quiescence::take();
+            let mut work = pin!(lease.follow(yield_now()));
+            let waker = Waker::noop();
+            let mut cx = Context::from_waker(waker);
+            assert_eq!(lease.runnable(), 1, "followed work starts runnable");
+            assert!(work.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(lease.runnable(), 1, "the yield woke it while it was polled");
+            assert!(work.as_mut().poll(&mut cx).is_ready());
+            assert_eq!(lease.runnable(), 0, "it ran to its end");
         });
     }
 

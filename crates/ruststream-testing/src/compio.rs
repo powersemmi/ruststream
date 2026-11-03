@@ -40,6 +40,11 @@ const MAX_STEPS: usize = 10_000;
 /// converges ends long before it, and the cost of reaching it is a few milliseconds.
 const MAX_ROUNDS: usize = 50_000;
 
+/// The most times the harness moves the clock for one wait: a guard against work that always arms
+/// another deadline, such as a hook that sleeps in a loop. The embedded harness bounds its clock
+/// moves the same way and answers with the same error.
+const MAX_ADVANCES: usize = 10_000;
+
 /// A test harness around a compio service's production app.
 ///
 /// Takes the app `main` builds, unchanged. [`start`](Self::start) connects each of its brokers
@@ -176,10 +181,14 @@ impl TestApp {
         let start = InProcessStart::new(coordinator.clone(), registration_of, state);
         // A hook of the startup that sleeps on the app's clock, or the unwind of a failed startup,
         // is released by the clock the way the shutdown's work is.
-        let runnable = quiescence.reader();
-        let running = driven(app.start_in_process(start), &coordinator, &runnable, &clock)
-            .await?
-            .map_err(startup_error)?;
+        let running = driven(
+            app.start_in_process(start),
+            &coordinator,
+            &quiescence,
+            &clock,
+        )
+        .await?
+        .map_err(startup_error)?;
         Ok(Self {
             running,
             coordinator,
@@ -231,8 +240,8 @@ impl TestApp {
             clock,
             quiescence,
         } = self;
-        let runnable = quiescence.reader();
-        let stopped = match driven(running.shutdown_kept(), &coordinator, &runnable, &clock).await {
+        let stopped = match driven(running.shutdown_kept(), &coordinator, &quiescence, &clock).await
+        {
             Ok(stopped) => stopped,
             Err(kept_running) => {
                 // The wait was given up, not the teardown: what it had not reached is still in
@@ -245,7 +254,7 @@ impl TestApp {
                 let _ = driven(
                     running.finish_shutdown_now(),
                     &coordinator,
-                    &runnable,
+                    &quiescence,
                     &clock,
                 )
                 .await;
@@ -364,16 +373,20 @@ pub(crate) async fn settled(
 /// # Errors
 ///
 /// [`TestError::Stalled`] if `work` waits and nothing is runnable or armed on the clock, and
-/// [`TestError::KeptRunning`] if a task stays runnable and no deadline is armed to end it.
+/// [`TestError::KeptRunning`] if a task stays runnable and no deadline is armed to end it, or if
+/// the clock has moved [`MAX_ADVANCES`] times and `work` still waits.
 async fn driven<Work: Future>(
     work: Work,
     coordinator: &Coordinator,
-    runnable: &Runnable,
+    quiescence: &Quiescence,
     clock: &VirtualClock,
 ) -> Result<Work::Output, TestError> {
-    let mut work = pin!(work);
-    loop {
-        let idle = pin!(idle(coordinator, runnable));
+    let runnable = quiescence.reader();
+    // `work` is polled here, not spawned, so its own wakes are followed too: a hook that yields
+    // is runnable, not stalled.
+    let mut work = pin!(quiescence.follow(work));
+    for _advance in 0..MAX_ADVANCES {
+        let idle = pin!(idle(coordinator, &runnable));
         match future::select(work.as_mut(), idle).await {
             Either::Left((done, _)) => return Ok(done),
             Either::Right((busy, _)) => {
@@ -387,6 +400,9 @@ async fn driven<Work: Future>(
             }
         }
     }
+    Err(TestError::KeptRunning {
+        turns: MAX_ADVANCES,
+    })
 }
 
 /// Starts, as tasks the harness follows, the hooks the dispatches handed over: a dispatch waits for

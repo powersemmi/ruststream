@@ -5,6 +5,10 @@
 
 use std::error::Error;
 use std::fmt;
+use std::future::poll_fn;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::Poll;
 use std::time::Duration;
 
 use compio::runtime::Runtime;
@@ -139,6 +143,103 @@ fn a_startup_that_sleeps_and_then_fails_is_a_test_error() -> Result<(), Box<dyn 
     assert!(
         matches!(started, Ok(Err(TestError::Startup(_)))),
         "the start returned {started:?}",
+    );
+    Ok(())
+}
+
+/// Yields to the runtime `turns` times, the way a hook that cooperates with other tasks does.
+async fn yield_turns(turns: usize) {
+    for _ in 0..turns {
+        let mut yielded = false;
+        poll_fn(|cx| {
+            if yielded {
+                return Poll::Ready(());
+            }
+            yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        })
+        .await;
+    }
+}
+
+#[test]
+fn a_startup_that_sleeps_forever_ends_the_start_with_an_error() -> Result<(), Box<dyn Error>> {
+    let started = Runtime::new()?.block_on(async {
+        let app = RustStream::new(AppInfo::new("commands", "0.1.0"))
+            .on_startup(async move |(): ()| {
+                loop {
+                    sleep(WARM_UP).await;
+                }
+                #[allow(unreachable_code)]
+                Ok::<_, NoConfig>(())
+            })
+            .with_broker(Bus::new(), |b| b);
+        timeout(PATIENCE, TestApp::start(app))
+            .await
+            .map(|started| started.map(|_| ()))
+    });
+    assert!(
+        matches!(started, Ok(Err(TestError::KeptRunning { .. }))),
+        "the start returned {started:?}",
+    );
+    Ok(())
+}
+
+#[test]
+fn a_startup_that_yields_a_few_times_starts() -> Result<(), Box<dyn Error>> {
+    Runtime::new()?.block_on(async {
+        let app = RustStream::new(AppInfo::new("commands", "0.1.0"))
+            .on_startup(async move |(): ()| {
+                yield_turns(3).await;
+                Ok::<_, NoConfig>(())
+            })
+            .with_broker(Bus::new(), |b| b);
+        let tb = TestApp::start(app).await?;
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn a_shutdown_hook_that_yields_a_few_times_runs_to_its_end() -> Result<(), Box<dyn Error>> {
+    let finished = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&finished);
+    Runtime::new()?.block_on(async {
+        let app = RustStream::new(AppInfo::new("commands", "0.1.0"))
+            .on_shutdown(async move |_state: Arc<()>| {
+                yield_turns(3).await;
+                seen.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, NoConfig>(())
+            })
+            .with_broker(Bus::new(), |b| b);
+        let tb = TestApp::start(app).await?;
+        tb.shutdown().await?;
+        Ok::<_, Box<dyn Error>>(())
+    })?;
+    assert_eq!(finished.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[test]
+fn a_shutdown_hook_that_sleeps_forever_ends_the_shutdown_with_an_error()
+-> Result<(), Box<dyn Error>> {
+    let stopped = Runtime::new()?.block_on(async {
+        let app = RustStream::new(AppInfo::new("commands", "0.1.0"))
+            .on_shutdown(async move |_state: Arc<()>| {
+                loop {
+                    sleep(WARM_UP).await;
+                }
+                #[allow(unreachable_code)]
+                Ok::<_, NoConfig>(())
+            })
+            .with_broker(Bus::new(), |b| b);
+        let tb = TestApp::start(app).await?;
+        Ok::<_, TestError>(timeout(PATIENCE, tb.shutdown()).await)
+    })?;
+    assert!(
+        matches!(stopped, Ok(Err(TestError::KeptRunning { .. }))),
+        "the shutdown returned {stopped:?}",
     );
     Ok(())
 }
