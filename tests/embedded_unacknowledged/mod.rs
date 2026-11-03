@@ -135,7 +135,9 @@ fn wide() -> Wide {
     }
 }
 
-/// The same app with no logger selected.
+/// The same app with no logger selected: the heap variant's binary runs it, the variant without
+/// `alloc` selects a logger in every test of its own.
+#[cfg(ruststream_alloc)]
 pub(crate) async fn run_unselected() -> Result<(), Box<dyn Error>> {
     let app = EmbeddedApp::new().with_broker(wide(), |b| b.include(on_reading));
     drive(app).await
