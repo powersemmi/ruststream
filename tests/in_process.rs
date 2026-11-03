@@ -6,6 +6,7 @@
 //! Everything that passes below would therefore fail the moment anything called `connect`.
 
 #![cfg(all(
+    feature = "conformance",
     feature = "testing",
     feature = "memory",
     feature = "json",
