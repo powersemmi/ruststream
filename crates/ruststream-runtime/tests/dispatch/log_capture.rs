@@ -82,9 +82,9 @@ pub(crate) fn shared_text() -> String {
 }
 
 fn install_subscriber() {
+    static GLOBAL: Once = Once::new();
     // The framework reports nothing until a logger is selected; this suite reads `tracing`.
     TracingLogger::select();
-    static GLOBAL: Once = Once::new();
     GLOBAL.call_once(|| {
         let subscriber = tracing_subscriber::fmt()
             .with_writer(Destinations)
