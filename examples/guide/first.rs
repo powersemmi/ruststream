@@ -6,6 +6,7 @@
 //! cargo test --example guide_first --features testing,macros,memory,json
 //! ```
 
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +33,7 @@ async fn accept(order: &Order) -> HandlerOutcome {
 #[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("shop", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| b.include(accept))
 }
 // --8<-- [end:app]

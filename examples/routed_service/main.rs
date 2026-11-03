@@ -28,6 +28,7 @@ mod orders;
 mod payments;
 mod routes;
 
+use ruststream::diagnostics::TracingLogger;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -49,6 +50,7 @@ fn app() -> impl App {
     let metrics_dump = metrics.clone();
 
     RustStream::new(AppInfo::new("orders-service", "0.1.0"))
+        .logger(TracingLogger)
         // AsyncAPI records the broker this service connects to in production.
         .server(
             "production",

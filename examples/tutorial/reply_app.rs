@@ -7,6 +7,7 @@
 
 mod orders;
 
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, RustStream};
 
@@ -16,6 +17,7 @@ use crate::orders::{confirm, handle};
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders-service", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| b.include(handle).include(confirm))
 }
 // --8<-- [end:reply]

@@ -8,6 +8,7 @@
 //!     --features testing,memory,json,logging
 //! ```
 
+use ruststream::diagnostics::TracingLogger;
 use std::future::ready;
 use std::process::ExitCode;
 
@@ -55,6 +56,7 @@ impl Handle<Order> for Confirm {
 
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .logger(TracingLogger)
         // Wraps every handler the app mounts, router handlers included.
         .layer(TracingLayer::default())
         .with_broker(MemoryBroker::new(), |b| {

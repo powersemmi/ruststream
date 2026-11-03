@@ -9,11 +9,13 @@
 mod orders;
 mod routes;
 
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 
 /// Builds the service: one in-memory broker with the orders router mounted.
 #[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("{{project-name}}", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| b.include_router(routes::orders()))
 }

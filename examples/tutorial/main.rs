@@ -9,16 +9,19 @@
 mod orders;
 mod routes;
 
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, RustStream};
 
 // --8<-- [start:app]
 #[ruststream::app]
 fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        let router = routes::orders();
-        b.include_router(router)
-    })
+    RustStream::new(AppInfo::new("orders-service", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| {
+            let router = routes::orders();
+            b.include_router(router)
+        })
 }
 // --8<-- [end:app]
 // --8<-- [end:main]

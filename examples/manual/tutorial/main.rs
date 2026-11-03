@@ -9,16 +9,19 @@
 mod orders;
 mod routes;
 
+use ruststream::diagnostics::TracingLogger;
 use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;
 use ruststream::runtime::cli::run_main;
 
 fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        let router = routes::orders();
-        b.include_router(router)
-    })
+    RustStream::new(AppInfo::new("orders-service", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| {
+            let router = routes::orders();
+            b.include_router(router)
+        })
 }
 
 // What `#[ruststream::app]` writes around the builder: the `run` and `asyncapi gen` commands.

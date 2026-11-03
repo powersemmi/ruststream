@@ -4,6 +4,7 @@
 //! cargo run --example quickstart --features macros,memory,json,logging -- run
 //! ```
 
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
@@ -24,6 +25,7 @@ async fn handle(order: &Order) -> HandlerOutcome {
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| b.include(handle))
 }
 // --8<-- [end:app]

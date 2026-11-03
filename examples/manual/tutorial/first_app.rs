@@ -10,6 +10,7 @@
 // --8<-- [start:app]
 mod orders;
 
+use ruststream::diagnostics::TracingLogger;
 use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;
@@ -18,9 +19,11 @@ use ruststream::runtime::cli::run_main;
 use crate::orders::Receive;
 
 fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Receive).build())
-    })
+    RustStream::new(AppInfo::new("orders-service", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(subscriber("orders", Receive).build())
+        })
 }
 
 fn main() -> ExitCode {

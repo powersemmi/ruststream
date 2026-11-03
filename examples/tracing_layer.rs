@@ -7,6 +7,7 @@
 //! cargo test --example tracing_layer --features testing,macros,memory,json,logging
 //! ```
 
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::layers::TracingLayer;
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,7 @@ async fn confirm(order: &Order) -> HandlerOutcome {
 #[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .logger(TracingLogger)
         // Wraps every handler the app mounts, router handlers included.
         .layer(TracingLayer::default())
         .with_broker(MemoryBroker::new(), |b| b.include(confirm))

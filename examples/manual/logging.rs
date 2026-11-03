@@ -8,6 +8,7 @@
 //! cargo test --example manual_logging --no-default-features --features testing,memory,json,logging
 //! ```
 
+use ruststream::diagnostics::TracingLogger;
 use std::future::ready;
 use std::process::ExitCode;
 
@@ -50,9 +51,11 @@ impl Handle<Order> for Accept {
 }
 
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Accept).build())
-    })
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(subscriber("orders", Accept).build())
+        })
 }
 
 fn main() -> Result<ExitCode, LoggingInitError> {
