@@ -222,21 +222,28 @@ impl TestApp {
     /// before or during the shutdown, or a broker failed to shut down, and
     /// [`TestError::KeptRunning`] if a task keeps itself runnable and the app has no shutdown
     /// timeout to end it. A shutdown timeout fires on the virtual clock even then, and aborts the
-    /// task as it does in production.
+    /// task as it does in production. A shutdown that fails this way has still cancelled the
+    /// task, shut the brokers down and run the `after_shutdown` hooks.
     pub async fn shutdown(self) -> Result<(), TestError> {
         let Self {
-            running,
+            mut running,
             coordinator,
             clock,
             quiescence,
         } = self;
-        let stopped = driven(
-            running.shutdown(),
-            &coordinator,
-            &quiescence.reader(),
-            &clock,
-        )
-        .await?;
+        let runnable = quiescence.reader();
+        let stopped = match driven(running.shutdown_kept(), &coordinator, &runnable, &clock).await {
+            Ok(stopped) => stopped,
+            Err(kept_running) => {
+                // The wait was given up, not the teardown: what it had not reached is still in
+                // `running`. A second run with no time to wait cancels the loops that are left
+                // and goes on to the brokers and the `after_shutdown` hooks, so a test that
+                // catches this error does not go on with a handler running or a broker open.
+                // It is awaited as it is, not driven: a busy task would end a driven wait again.
+                running.finish_shutdown_now().await;
+                return Err(kept_running);
+            }
+        };
         drop(clock);
         coordinator.hooks().raise_failure();
         stopped.map_err(|err| TestError::Failed(Box::new(err)))

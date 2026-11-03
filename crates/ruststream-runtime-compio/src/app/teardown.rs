@@ -6,7 +6,6 @@
 #![allow(clippy::future_not_send)]
 
 use std::any::Any;
-use std::mem;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -35,9 +34,9 @@ impl Held {
         Self(loops)
     }
 
-    /// The loops, for the teardown to join.
-    fn take(&mut self) -> Vec<Loop> {
-        mem::take(&mut self.0)
+    /// The loops, for the teardown to join; one leaves the list only once it is joined.
+    fn loops(&mut self) -> &mut Vec<Loop> {
+        &mut self.0
     }
 }
 
@@ -122,26 +121,33 @@ impl Teardown {
     /// Returns [`RustStreamError`] if a dispatch task panicked, a broker failed to shut down, or
     /// the service had already torn itself down on a fail-fast failure
     /// ([`RustStreamError::Dispatch`]).
-    pub(crate) async fn run(self) -> Result<(), RustStreamError> {
+    ///
+    /// # Cancel safety
+    ///
+    /// Each stage takes its items out of `self` one at a time, so a `run` that is dropped
+    /// mid-way leaves the items it had not reached in place, and a second `run` finishes them.
+    /// The test harness relies on this to complete a teardown it had to abandon.
+    pub(crate) async fn run(&mut self) -> Result<(), RustStreamError> {
         let Self {
             stop,
-            mut handles,
+            handles,
             hooks,
             brokers,
             shutdown_timeout,
             continuations,
             fabric,
         } = self;
+        let shutdown_timeout = *shutdown_timeout;
 
         stop.begin();
-        run_hooks(hooks.on_shutdown, "on_shutdown").await;
+        run_hooks(&mut hooks.on_shutdown, "on_shutdown").await;
 
         stop.cancel();
         debug!(target: "ruststream::lifecycle", "draining in-flight handlers");
         // Every later step still runs when one fails: a dispatch loop that panicked or a broker
         // that refuses to close must not leave the other brokers open or skip `after_shutdown`.
         // The first failure is the one returned.
-        let drained = drain_handles(handles.take(), shutdown_timeout).await;
+        let drained = drain_handles(handles.loops(), shutdown_timeout).await;
         // The loops of core 0 are over, but a worker on another core is told to go by its own
         // core's cap, so wait for it to be dropped: a handler must not outlive the brokers.
         fabric.workers_gone().await;
@@ -149,11 +155,11 @@ impl Teardown {
         // Handlers have stopped, so no new post-settle continuations can be spawned: wait for
         // the in-flight ones, on every core, bounded by the same shutdown timeout. They are
         // at-most-once, so timing one out only abandons follow-up work, never a settlement.
-        drain_continuations(&continuations, shutdown_timeout).await;
+        drain_continuations(continuations, shutdown_timeout).await;
 
         let closed = close_brokers(brokers).await;
 
-        run_hooks(hooks.after_shutdown, "after_shutdown").await;
+        run_hooks(&mut hooks.after_shutdown, "after_shutdown").await;
         info!(target: "ruststream::lifecycle", "service stopped");
 
         drained?;
@@ -168,9 +174,11 @@ impl Teardown {
 
 /// Shuts the brokers down in reverse registration order. Every broker gets its turn even after
 /// one fails; the first failure is the one returned.
-async fn close_brokers(brokers: Vec<ConnectedEntry>) -> Result<(), RustStreamError> {
+async fn close_brokers(brokers: &mut Vec<ConnectedEntry>) -> Result<(), RustStreamError> {
     let mut closed = Ok(());
-    for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
+    // Taken off the list one at a time, so a teardown dropped mid-way keeps the brokers it had
+    // not reached.
+    while let Some(ConnectedEntry { lifecycle, label }) = brokers.pop() {
         let name = lifecycle.name();
         let broker = label.as_deref().unwrap_or(name);
         match lifecycle.shutdown().await {
@@ -193,8 +201,9 @@ async fn close_brokers(brokers: Vec<ConnectedEntry>) -> Result<(), RustStreamErr
 
 /// Runs one list of shutdown hooks in order. A failing hook is logged and does not stop the
 /// shutdown: the service is going down either way, and the hooks after it still get their turn.
-async fn run_hooks(hooks: Vec<BoundHook>, phase: &'static str) {
-    for hook in hooks {
+async fn run_hooks(hooks: &mut Vec<BoundHook>, phase: &'static str) {
+    while !hooks.is_empty() {
+        let hook = hooks.remove(0);
         if let Err(err) = hook().await {
             warn!(target: "ruststream::lifecycle", error = %err, "{phase} hook failed");
         }
@@ -243,15 +252,18 @@ fn failure_of(error: &JoinError) -> String {
 /// Awaits all loops, bounded by `timeout` if set. On timeout the remaining ones are cancelled and
 /// awaited, so a loop is gone, not merely told to go, when this returns. A loop that panicked is
 /// reported as [`RustStreamError::Join`] once every other loop has ended.
+///
+/// A loop leaves the list only once it has ended, so a drain that is dropped mid-wait keeps the
+/// loops it had not seen end, and a second drain cancels them.
 pub(crate) async fn drain_handles(
-    handles: Vec<Loop>,
+    handles: &mut Vec<Loop>,
     timeout: Option<Duration>,
 ) -> Result<(), RustStreamError> {
     let until = deadline_after(timeout);
     let mut joined = Ok(());
     let mut timed_out = false;
-    for mut handle in handles {
-        let Some(ended) = within(until, &mut handle).await else {
+    while !handles.is_empty() {
+        let Some(ended) = within(until, &mut handles[0]).await else {
             if !timed_out {
                 timed_out = true;
                 warn!(
@@ -260,9 +272,10 @@ pub(crate) async fn drain_handles(
                 );
             }
             // The cancelled loop ends at its next await; its outcome says nothing more.
-            let _ = handle.cancel().await;
+            let _ = handles.remove(0).cancel().await;
             continue;
         };
+        drop(handles.remove(0));
         if let Err(error) = ended.and_then(|outcome| outcome)
             && joined.is_ok()
             && !matches!(error, JoinError::Cancelled)

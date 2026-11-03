@@ -442,10 +442,15 @@ impl RunningApp {
     /// [`RustStreamError::Dispatch`] so the operator sees a non-zero exit, not a silent stop).
     /// A failure does not cut the teardown short: every broker is still shut down and the
     /// `after_shutdown` hooks still run before the first failure is returned.
-    pub async fn shutdown(self) -> Result<(), RustStreamError> {
-        let Self { teardown, health } = self;
-        health.transition(HealthState::ShuttingDown);
-        let outcome = teardown.run().await;
+    pub async fn shutdown(mut self) -> Result<(), RustStreamError> {
+        self.shutdown_in_place().await
+    }
+
+    /// The shutdown, for a caller that keeps the handle: a shutdown future that is dropped
+    /// mid-way leaves what it had not reached in the handle, and a second call finishes it.
+    async fn shutdown_in_place(&mut self) -> Result<(), RustStreamError> {
+        self.health.transition(HealthState::ShuttingDown);
+        let outcome = self.teardown.run().await;
         let terminal = match &outcome {
             Ok(()) => HealthState::Stopped,
             // The fail-fast diagnostic is the probe's reason as it is, without the error's prefix.
@@ -456,8 +461,25 @@ impl RunningApp {
                 reason: err.to_string(),
             },
         };
-        health.transition(terminal);
+        self.health.transition(terminal);
         outcome
+    }
+
+    /// The shutdown the test harness drives: it keeps the handle, so a wait it gives up on can
+    /// be followed by [`finish_shutdown_now`](Self::finish_shutdown_now).
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub async fn shutdown_kept(&mut self) -> Result<(), RustStreamError> {
+        self.shutdown_in_place().await
+    }
+
+    /// Finishes a shutdown the harness abandoned, with no time left to wait: the loops that are
+    /// still running are cancelled, the brokers are shut down and the `after_shutdown` hooks run.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub async fn finish_shutdown_now(&mut self) {
+        self.teardown.shutdown_timeout = Some(Duration::ZERO);
+        let _ = self.shutdown_in_place().await;
     }
 }
 
@@ -689,14 +711,14 @@ fn watch_for_failure(stop: Stop, health: HealthReport) {
 /// logged, not returned, so the original startup error stays the caller's answer.
 async fn unwind_started(
     stop: &Stop,
-    handles: Vec<Loop>,
+    mut handles: Vec<Loop>,
     shutdown_timeout: Option<Duration>,
     brokers: Vec<ConnectedEntry>,
     continuations: &Tasks,
     fabric: &Fabric,
 ) {
     stop.cancel();
-    if let Err(err) = drain_handles(handles, shutdown_timeout).await {
+    if let Err(err) = drain_handles(&mut handles, shutdown_timeout).await {
         warn!(
             target: "ruststream::lifecycle",
             error = %err,
