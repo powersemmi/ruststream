@@ -120,3 +120,24 @@ fn a_hook_that_waits_on_nothing_is_dropped_before_the_shutdown_returns()
         Ok(())
     })
 }
+
+#[test]
+fn hooks_that_ended_leave_the_harness_as_the_publishes_go_on() -> Result<(), Box<dyn Error>> {
+    Runtime::new()?.block_on(async {
+        let tb = TestApp::start(app()).await?;
+        tb.broker::<Bus>()
+            .published::<()>("readings")
+            .on_publish(async move |readings| {
+                let _ = readings;
+            });
+        for _ in 0..64 {
+            tb.broker::<Bus>().message(&Sent(b"21")).publish().await?;
+        }
+        tb.settle().await?;
+        // Each publish ran its hook to its end: none of them is still held.
+        let shown = format!("{tb:?}");
+        assert!(shown.contains("running: 0"), "{shown}");
+        tb.shutdown().await?;
+        Ok(())
+    })
+}

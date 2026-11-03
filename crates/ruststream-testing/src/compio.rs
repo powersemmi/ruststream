@@ -122,6 +122,7 @@ impl fmt::Debug for TestApp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TestApp")
             .field("brokers", &self.running.connected().count())
+            .field("hooks", &self.hooks)
             .finish_non_exhaustive()
     }
 }
