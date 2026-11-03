@@ -5,8 +5,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use ruststream_core::diag::{debug, error};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
-use tracing::{debug, error};
 
 use super::app::{HealthReport, SubscriptionEnd};
 use crate::{Halt, ShutdownWait};

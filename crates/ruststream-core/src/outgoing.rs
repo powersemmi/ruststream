@@ -1,16 +1,24 @@
 //! The outgoing message the publish path carries: a destination, a payload and the headers.
 
+#[cfg(feature = "alloc")]
 use alloc::borrow::Cow;
+#[cfg(feature = "alloc")]
 use alloc::string::String;
 use core::fmt::{self, Display, Formatter};
 use core::hash::{Hash, Hasher};
 use core::mem;
 use core::ops::Deref;
 
-use bytes::{Bytes, BytesMut};
+#[cfg(feature = "alloc")]
+use bytes::Bytes;
+#[cfg(feature = "alloc")]
 use bytes_utils::Str;
 
-use crate::HeaderMap;
+#[cfg(not(feature = "alloc"))]
+use crate::BufferFull;
+#[cfg(not(feature = "alloc"))]
+use crate::publisher::Destination;
+use crate::{Headers, PayloadBuf};
 
 /// A mutable outgoing message flowing through the publish pipeline.
 ///
@@ -27,8 +35,17 @@ use crate::HeaderMap;
 pub struct Outgoing<'a> {
     name: OutgoingName<'a>,
     payload: Payload<'a>,
-    headers: HeaderMap,
+    headers: Headers,
 }
+
+/// The owned form of a destination name: a `String` with `alloc`, a string of a fixed room
+/// without.
+#[cfg(feature = "alloc")]
+pub type OwnedName = String;
+/// The owned form of a destination name: a `String` with `alloc`, a string of a fixed room
+/// without.
+#[cfg(not(feature = "alloc"))]
+pub type OwnedName = Destination;
 
 /// The destination of an [`Outgoing`]: a borrow, an owned string, or a shared buffer.
 ///
@@ -36,7 +53,7 @@ pub struct Outgoing<'a> {
 /// borrows for the length of the publish call. A name built per delivery moves in owned. A name
 /// the delivery already carries - the queue an AMQP request named in its `reply-to` header, a
 /// `ROUTER` peer identity - arrives as the buffer it was read from, through
-/// [`HeaderMap::get_shared`] and [`Str`], so a transform that answers where the request asked
+/// [`Headers::get_shared`] and [`Str`], so a transform that answers where the request asked
 /// allocates nothing.
 ///
 /// Every one of those forms converts, so [`Outgoing::set_name`] takes the name as the call site
@@ -100,8 +117,9 @@ pub enum OutgoingName<'a> {
     /// keeps alive.
     Borrowed(&'a str),
     /// A name built for this message.
-    Owned(String),
+    Owned(OwnedName),
     /// A name sharing a buffer with whatever produced it, counted by reference.
+    #[cfg(feature = "alloc")]
     Shared(Str),
 }
 
@@ -126,6 +144,7 @@ impl OutgoingName<'_> {
         match self {
             Self::Borrowed(name) => name,
             Self::Owned(name) => name,
+            #[cfg(feature = "alloc")]
             Self::Shared(name) => name,
         }
     }
@@ -173,18 +192,20 @@ impl<'a> From<&'a str> for OutgoingName<'a> {
     }
 }
 
-impl From<String> for OutgoingName<'_> {
-    fn from(name: String) -> Self {
+impl From<OwnedName> for OutgoingName<'_> {
+    fn from(name: OwnedName) -> Self {
         Self::Owned(name)
     }
 }
 
+#[cfg(feature = "alloc")]
 impl From<Str> for OutgoingName<'_> {
     fn from(name: Str) -> Self {
         Self::Shared(name)
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<'a> From<Cow<'a, str>> for OutgoingName<'a> {
     fn from(name: Cow<'a, str>) -> Self {
         match name {
@@ -200,12 +221,14 @@ impl<'a> From<Cow<'a, str>> for OutgoingName<'a> {
 /// stages only read it - which every transform that stamps a header or a setting does - travels
 /// on the buffer that is already there, and the copy happens where a stage actually asks to
 /// write.
+// A fixed buffer sits inline beside a borrow, by design: there is no heap to hold it.
+#[cfg_attr(not(feature = "alloc"), allow(clippy::large_enum_variant))]
 #[derive(Debug, Clone)]
 pub(crate) enum Payload<'a> {
     /// The caller's bytes, valid as long as the message is.
     Lent(&'a [u8]),
     /// A buffer of this message's own: codec output, or the copy a write asked for.
-    Owned(BytesMut),
+    Owned(PayloadBuf),
     /// Nothing: the transport took the buffer and did not give it back.
     Consumed,
 }
@@ -222,19 +245,35 @@ impl Payload<'_> {
     }
 
     /// The buffer, making it this message's own on the first call.
-    fn to_mut(&mut self) -> &mut BytesMut {
+    #[cfg(feature = "alloc")]
+    fn to_mut(&mut self) -> &mut PayloadBuf {
         match *self {
-            Self::Lent(bytes) => *self = Self::Owned(BytesMut::from(bytes)),
-            Self::Consumed => *self = Self::Owned(BytesMut::new()),
+            Self::Lent(bytes) => *self = Self::Owned(PayloadBuf::from(bytes)),
+            Self::Consumed => *self = Self::Owned(PayloadBuf::new()),
             Self::Owned(_) => {}
         }
+        self.owned_buf()
+    }
+
+    // The branch above leaves nothing lent or consumed, which the borrow checker cannot carry
+    // across a match; `Cow::to_mut` in the standard library is written the same way.
+    fn owned_buf(&mut self) -> &mut PayloadBuf {
         match self {
             Self::Owned(buf) => buf,
-            // The branch above leaves nothing lent or consumed, which the borrow checker cannot
-            // carry across this match; `Cow::to_mut` in the standard library is written the same
-            // way.
             Self::Lent(_) | Self::Consumed => unreachable!(),
         }
+    }
+
+    /// The owned buffer, filled with a copy of the lent bytes first. The buffer is a fixed one
+    /// without `alloc`, so a copy that does not fit is refused.
+    #[cfg(not(feature = "alloc"))]
+    fn to_mut(&mut self) -> Result<&mut PayloadBuf, BufferFull> {
+        match *self {
+            Self::Lent(bytes) => *self = Self::Owned(PayloadBuf::try_from(bytes)?),
+            Self::Consumed => *self = Self::Owned(PayloadBuf::new()),
+            Self::Owned(_) => {}
+        }
+        Ok(self.owned_buf())
     }
 }
 
@@ -243,13 +282,13 @@ impl<'a> Outgoing<'a> {
     ///
     /// Pass a `&str` (a borrowed destination, the no-allocation case), a `String` (a computed
     /// owned one) or a [`Str`] (a buffer something else already holds) for `name`; pass a
-    /// [`BytesMut`] (codec output moves in) or a `&[u8]` for the payload.
+    /// [`PayloadBuf`] (codec output moves in) or a `&[u8]` for the payload.
     #[must_use]
-    pub fn new(name: impl Into<OutgoingName<'a>>, payload: impl Into<BytesMut>) -> Self {
+    pub fn new(name: impl Into<OutgoingName<'a>>, payload: impl Into<PayloadBuf>) -> Self {
         Self {
             name: name.into(),
             payload: Payload::Owned(payload.into()),
-            headers: HeaderMap::new(),
+            headers: Headers::new(),
         }
     }
 
@@ -260,7 +299,7 @@ impl<'a> Outgoing<'a> {
     pub(crate) fn rebuilding(
         name: impl Into<OutgoingName<'a>>,
         payload: Payload<'a>,
-        headers: HeaderMap,
+        headers: Headers,
     ) -> Self {
         Self {
             name: name.into(),
@@ -354,12 +393,23 @@ impl<'a> Outgoing<'a> {
     /// The payload bytes, mutably (for envelope wrapping).
     ///
     /// A message that is still lending the bytes it was built from copies them here, once.
-    pub fn payload_mut(&mut self) -> &mut BytesMut {
+    #[cfg(feature = "alloc")]
+    pub fn payload_mut(&mut self) -> &mut PayloadBuf {
+        self.payload.to_mut()
+    }
+
+    /// Mutable access to the payload buffer, copying lent bytes into it first.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferFull`] when lent bytes do not fit the fixed buffer of a build without `alloc`.
+    #[cfg(not(feature = "alloc"))]
+    pub fn payload_mut(&mut self) -> Result<&mut PayloadBuf, BufferFull> {
         self.payload.to_mut()
     }
 
     /// Replaces the payload.
-    pub fn set_payload(&mut self, payload: impl Into<BytesMut>) {
+    pub fn set_payload(&mut self, payload: impl Into<PayloadBuf>) {
         self.payload = Payload::Owned(payload.into());
     }
 
@@ -371,11 +421,22 @@ impl<'a> Outgoing<'a> {
     /// handed. The `Outgoing` is dead at that point - the terminal holds the only borrow of it
     /// for the rest of the publish - so what it is left holding is never read again.
     #[inline]
-    pub(crate) fn take_payload(&mut self) -> BytesMut {
+    #[cfg(feature = "alloc")]
+    pub(crate) fn take_payload(&mut self) -> PayloadBuf {
         match mem::replace(&mut self.payload, Payload::Lent(&[])) {
-            Payload::Lent(bytes) => BytesMut::from(bytes),
+            Payload::Lent(bytes) => PayloadBuf::from(bytes),
             Payload::Owned(buf) => buf,
-            Payload::Consumed => BytesMut::new(),
+            Payload::Consumed => PayloadBuf::new(),
+        }
+    }
+
+    #[inline]
+    #[cfg(not(feature = "alloc"))]
+    pub(crate) fn take_payload(&mut self) -> Result<PayloadBuf, BufferFull> {
+        match mem::replace(&mut self.payload, Payload::Lent(&[])) {
+            Payload::Lent(bytes) => PayloadBuf::try_from(bytes),
+            Payload::Owned(buf) => Ok(buf),
+            Payload::Consumed => Ok(PayloadBuf::new()),
         }
     }
 
@@ -385,10 +446,20 @@ impl<'a> Outgoing<'a> {
     /// What a stage that reads a refused message back calls: the buffer moves out without a
     /// copy, and bytes that live with the lender are left for the lender to take.
     #[doc(hidden)]
+    #[cfg(feature = "alloc")]
     pub fn take_owned_payload(&mut self) -> Option<Bytes> {
         match &mut self.payload {
             Payload::Lent(_) | Payload::Consumed => None,
             Payload::Owned(buf) => Some(mem::take(buf).freeze()),
+        }
+    }
+
+    #[doc(hidden)]
+    #[cfg(not(feature = "alloc"))]
+    pub fn take_owned_payload(&mut self) -> Option<PayloadBuf> {
+        match &mut self.payload {
+            Payload::Lent(_) | Payload::Consumed => None,
+            Payload::Owned(buf) => Some(mem::take(buf)),
         }
     }
 
@@ -397,7 +468,7 @@ impl<'a> Outgoing<'a> {
     #[doc(hidden)]
     pub fn consume(&mut self) {
         self.payload = Payload::Consumed;
-        self.headers = HeaderMap::new();
+        self.headers = Headers::new();
     }
 
     /// Whether a transport consumed the message and did not give it back.
@@ -412,12 +483,12 @@ impl<'a> Outgoing<'a> {
 
     /// The outgoing headers.
     #[must_use]
-    pub fn headers(&self) -> &HeaderMap {
+    pub fn headers(&self) -> &Headers {
         &self.headers
     }
 
     /// The outgoing headers, mutably.
-    pub fn headers_mut(&mut self) -> &mut HeaderMap {
+    pub fn headers_mut(&mut self) -> &mut Headers {
         &mut self.headers
     }
 
@@ -426,7 +497,7 @@ impl<'a> Outgoing<'a> {
     /// What a stage that owns its message calls on the way out: whatever the transforms wrote
     /// moves on rather than being copied on, and the spent value is not held across the send.
     #[inline]
-    pub(crate) fn into_parts(self) -> (OutgoingName<'a>, Payload<'a>, HeaderMap) {
+    pub(crate) fn into_parts(self) -> (OutgoingName<'a>, Payload<'a>, Headers) {
         (self.name, self.payload, self.headers)
     }
 
@@ -436,12 +507,12 @@ impl<'a> Outgoing<'a> {
     /// reason: the map the transforms filled moves into the outgoing message instead of being
     /// cloned into it, and what the dead `Outgoing` is left holding is never read again.
     #[inline]
-    pub(crate) fn take_headers(&mut self) -> HeaderMap {
+    pub(crate) fn take_headers(&mut self) -> Headers {
         mem::take(&mut self.headers)
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 mod tests {
     use std::borrow::{Cow, ToOwned};
     use std::collections::HashSet;
@@ -452,7 +523,7 @@ mod tests {
     use bytes_utils::Str;
 
     use super::{Outgoing, OutgoingName, Payload};
-    use crate::{HeaderMap, Lend, PayloadForm};
+    use crate::{Headers, Lend, PayloadForm};
 
     #[test]
     fn borrowed_name_is_not_owned() {
@@ -476,7 +547,7 @@ mod tests {
     fn a_shared_name_keeps_the_buffer_it_was_read_from() {
         // What a transform naming a destination off the delivery hands over: the header's own
         // buffer, so the name costs a reference count and no copy.
-        let mut headers = HeaderMap::new();
+        let mut headers = Headers::new();
         headers.insert("reply-to", "replies.inbox");
         let shared = Str::try_from(headers.get_shared("reply-to").expect("the header is there"))
             .expect("the address is UTF-8");
@@ -524,11 +595,36 @@ mod tests {
     }
 
     #[test]
+    fn a_consumed_message_is_written_again_from_nothing() {
+        let mut out = Outgoing::new("t", b"body".as_slice());
+        out.consume();
+        assert!(out.is_consumed());
+        assert_eq!(out.payload(), b"");
+
+        out.payload_mut().extend_from_slice(b"again");
+
+        assert!(!out.is_consumed());
+        assert_eq!(out.payload(), b"again");
+    }
+
+    #[test]
+    fn the_payload_a_transport_keeps_is_copied_from_lent_bytes_and_empty_once_consumed() {
+        let body = b"body".to_vec();
+        let mut lent = <Lend as PayloadForm>::rebuilt("t".into(), &body, Headers::new());
+        assert!(matches!(lent.payload, Payload::Lent(_)));
+        assert_eq!(lent.take_payload(), b"body".as_slice());
+
+        let mut consumed = Outgoing::new("t", b"body".as_slice());
+        consumed.consume();
+        assert!(consumed.take_payload().is_empty());
+    }
+
+    #[test]
     fn a_lent_payload_is_copied_where_something_writes_and_nowhere_else() {
         // What a publish stage rebuilding a message starts from: a transform that stamps a header
         // reads the payload and never copies it, and the copy happens at the first write.
         let body = b"body".to_vec();
-        let mut out = <Lend as PayloadForm>::rebuilt("t".into(), &body, HeaderMap::new());
+        let mut out = <Lend as PayloadForm>::rebuilt("t".into(), &body, Headers::new());
         assert!(matches!(out.payload, Payload::Lent(_)));
         assert_eq!(out.payload(), b"body");
 

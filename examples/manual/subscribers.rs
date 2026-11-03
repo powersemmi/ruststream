@@ -182,7 +182,7 @@ fn fan_out_routes() -> impl RouterDef<MemoryBroker> {
 // --8<-- [end:workers]
 
 // --8<-- [start:workers_by_key]
-/// 16 lanes keyed by the message's partition key: per-key order is preserved. The same slot as the
+/// 16 workers keyed by the message's partition key: per-key order is preserved. The same slot as the
 /// pool, filled with the keyed policy instead.
 struct PerCustomer;
 

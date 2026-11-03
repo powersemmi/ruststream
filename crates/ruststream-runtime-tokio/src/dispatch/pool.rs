@@ -14,13 +14,13 @@ use std::task::Poll;
 
 use bytes::BytesMut;
 use futures::Stream;
+use ruststream_core::diag::error;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::error;
 
 use super::{
     DispatchFailure, Handler, HeadersOnDemand, Hosted, Shutdown, Slot, Turn, Workers, dispatch,
-    lane_of, log_worker_exit,
+    key_index, log_worker_exit,
 };
 use crate::{BuildContext, IncomingMessage, RetryCopies, Settle, Subscriber};
 
@@ -126,7 +126,7 @@ struct Started<Message> {
     crew: Crew,
 }
 
-/// Starts `workers.count()` workers over `shared`, reporting when free unless they are keyed lanes.
+/// Starts `workers.count()` workers over `shared`, reporting when free unless they are keyed workers.
 fn start<Message, Body, Cx, State, Retry>(
     shared: &Arc<Shared<Body, State, Cx, Retry>>,
     workers: Workers,
@@ -166,12 +166,12 @@ where
 }
 
 /// Spawns the loop of a subscription with `workers.count()` workers: a pool that hands each
-/// delivery to a free worker, or, with `by_key`, lanes that hand it to the worker its key hashes
+/// delivery to a free worker, or, with `by_key`, workers that hand it to the worker its key hashes
 /// to.
 ///
 /// The pool polls the stream only with a worker free for what it yields, so at most `count`
-/// deliveries are in flight. A lane holds one delivery in process and one queued, and the loop
-/// waits on a busy lane rather than reorder its key.
+/// deliveries are in flight. A worker holds one delivery in process and one queued, and the loop
+/// waits on a busy worker rather than reorder its key.
 // See `spawn_dispatch_workers`: each part is the registration's own.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_dispatch_pool<Sub, Body, Cx, State, Retry>(
@@ -245,13 +245,13 @@ where
             match pulled {
                 Turn::Delivery(Ok(msg)) => {
                     let worker = held.take().unwrap_or_else(|| {
-                        // No key: any lane will do; rotate to spread the load.
+                        // No key: any worker will do; rotate to spread the load.
                         msg.partition_key().map_or_else(
                             || {
                                 rotation = (rotation + 1) % count;
                                 rotation
                             },
-                            |key| lane_of(key, count),
+                            |key| key_index(key, count),
                         )
                     });
                     if inboxes[worker].send(msg).await.is_err() {

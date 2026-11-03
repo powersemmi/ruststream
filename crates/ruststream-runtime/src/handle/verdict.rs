@@ -9,8 +9,8 @@
 //!
 //! - one-by-one: `Result<(), HandlerOutcome>`, and `Result<Reply, HandlerOutcome>` for a reply
 //!   body;
-//! - batched: `Result<(), Vec<HandlerOutcome>>` (the `Err` vector settles element-wise and is
-//!   batch-length by contract), and `Result<Vec<Reply>, Vec<HandlerOutcome>>` for a batch reply
+//! - batched: `Result<(), BatchVec<HandlerOutcome>>` (the `Err` vector settles element-wise and is
+//!   batch-length by contract), and `Result<BatchVec<Reply>, BatchVec<HandlerOutcome>>` for a batch reply
 //!   body (one reply per element).
 //!
 //! An [`and_after`](crate::HandlerOutcome::and_after) continuation rides the outcome
@@ -18,8 +18,8 @@
 //! by contract; the adapters check once per batch and panic on a mismatch (see the module docs
 //! of [`handle`](super)).
 
+use crate::batch::BatchVec;
 use crate::handler::HandlerOutcome;
-use alloc::vec::Vec;
 
 use super::axis::{Axis, Input};
 
@@ -44,13 +44,13 @@ impl VerdictFamily for OneByOne {
 }
 
 impl VerdictFamily for Batched {
-    type Bad = Vec<HandlerOutcome>;
+    type Bad = BatchVec<HandlerOutcome>;
 }
 
 /// The canonical verdict of the input `In` carrying the reply `R`: exactly what a
 /// [`Handle`](super::Handle) body returns.
 ///
 /// `R` is the whole `Ok` side - `()` for a body with no reply, the reply type one-by-one, and
-/// `Vec<Reply>` on a batch - and the `Err` side follows the input family: one
+/// `BatchVec<Reply>` on a batch - and the `Err` side follows the input family: one
 /// [`HandlerOutcome`], or a batch-length `Vec` of them.
 pub type Verdict<In, R> = Result<R, <<<In as Input>::Axis as Axis>::Family as VerdictFamily>::Bad>;

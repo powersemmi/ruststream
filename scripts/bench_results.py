@@ -172,6 +172,14 @@ SCENARIOS = [
         "embedded_idle/beside_fifteen_idle",
     ),
     Scenario(
+        "the embedded runner without alloc, one subscription",
+        "embedded_idle_no_alloc/alone_on_the_app",
+    ),
+    Scenario(
+        "the embedded runner without alloc, one busy subscription beside fifteen idle ones",
+        "embedded_idle_no_alloc/beside_fifteen_idle",
+    ),
+    Scenario(
         "a delivery that asks to be redelivered, natively by the broker",
         "retry_copy/service",
         gated=False,

@@ -7,14 +7,13 @@
 //! passed in here. Both use the same [`Layer`](super::Layer) / [`HandlerExt`](super::HandlerExt)
 //! machinery, just at different inputs.
 
-use alloc::format;
 use core::{fmt, marker::PhantomData};
 use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use crate::Settle;
-use crate::codec::{Codec, CodecError};
+use crate::codec::{ActiveCodec as Codec, CodecError};
+use ruststream_core::diag::warn;
 use serde::de::DeserializeOwned;
-use tracing::warn;
 
 use super::batch::rejection;
 use super::context::{Context, MarkingContext};
@@ -178,7 +177,7 @@ where
     ctx.mark_decode_failed();
     match decode {
         FailurePolicy::FailFast => {
-            ctx.fail_fast(&format!("decode failed: {err}"));
+            ctx.fail_fast_with("decode failed", err);
             HandlerOutcome::drop()
         }
         other => other
@@ -211,7 +210,7 @@ mod tests {
     use crate::handler::{Handler, HandlerOutcome, HandlerResult};
     use crate::input::DecodedPair;
     use crate::testkit::delivery::one_delivery;
-    use crate::{AckError, HeaderMap};
+    use crate::{AckError, HeaderSet};
     use ruststream::memory::{MemoryBroker, MemoryMessage};
 
     fn counting_inner(seen: &Arc<AtomicU32>) -> impl Handler<u32> {
@@ -261,7 +260,7 @@ mod tests {
         let handler = Typed::<MemoryMessage, Provided<Frame>, (), _>::over((), inner);
         let state = ();
         let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("frames", &headers, &state, (), &delivery);
 
         let msg = one_delivery(&MemoryBroker::new(), "frames", b"not json at all").await;
@@ -278,7 +277,7 @@ mod tests {
         let handler = typed(JsonCodec, counting_inner(&seen));
         let state = ();
         let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
 
         let msg = one_delivery(&MemoryBroker::new(), "typed", b"not json").await;
@@ -296,7 +295,7 @@ mod tests {
             typed(JsonCodec, counting_inner(&seen)).on_decode_failure(FailurePolicy::Retry);
         let state = ();
         let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
 
         let msg = one_delivery(&MemoryBroker::new(), "typed", b"not json").await;
@@ -319,7 +318,7 @@ mod tests {
         let handler = typed(JsonCodec, counting_inner(&seen));
         let state = ();
         let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("orders.inbound", &headers, &state, (), &delivery);
         let msg = one_delivery(&MemoryBroker::new(), "typed", b"not json").await;
         // How it settles is `decode_failure_drops_by_default`'s subject; this one reads the log.
@@ -351,7 +350,7 @@ mod tests {
         let handler = typed(JsonCodec, counting_inner(&seen));
         let state = ();
         let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("orders.inbound", &headers, &state, (), &delivery);
         // The payload decodes as a `u32`: only the broker's report refuses it.
         let outcome = handler.handle(&Unreadable::new(b"7"), &mut ctx).await;
@@ -378,7 +377,7 @@ mod tests {
     /// accessor materializes the map, that count is what the input kind costs.
     struct CountingMsg {
         payload: Vec<u8>,
-        headers: HeaderMap,
+        headers: HeaderSet,
         reads: Arc<AtomicUsize>,
     }
 
@@ -387,7 +386,7 @@ mod tests {
             &self.payload
         }
 
-        fn headers(&self) -> &HeaderMap {
+        fn headers(&self) -> &HeaderSet {
             self.reads.fetch_add(1, Ordering::SeqCst);
             &self.headers
         }
@@ -410,12 +409,12 @@ mod tests {
         let handler = typed(JsonCodec, counting_inner(&seen));
         let state = ();
         let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
 
         let msg = CountingMsg {
             payload: b"7".to_vec(),
-            headers: HeaderMap::new(),
+            headers: HeaderSet::new(),
             reads: Arc::clone(&reads),
         };
         assert_eq!(
@@ -454,10 +453,10 @@ mod tests {
         let handler = Typed::<CountingMsg, DecodedPair<Tenant, u32>, _, _>::over(JsonCodec, inner);
         let state = ();
         let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("pair", &headers, &state, (), &delivery);
 
-        let mut delivered = HeaderMap::new();
+        let mut delivered = HeaderSet::new();
         delivered.insert("tenant", "acme");
         let msg = CountingMsg {
             payload: b"7".to_vec(),

@@ -33,7 +33,9 @@ use spec::ASYNCAPI_VERSION;
 /// Builds an [`AsyncAPI`](Spec) 3.1.0 document from a service's handlers and metadata.
 ///
 /// Each registered subscriber becomes a channel (addressed by its name), a `receive` operation,
-/// and a message component named after the handler's input type.
+/// and a message component named after the handler's input type. A gap it finds (a message
+/// without a schema, conflicting headers) is a warning through the logger the app selected, as
+/// when the app runs; with none selected it is in the document alone.
 ///
 /// # Examples
 ///
@@ -75,6 +77,8 @@ use spec::ASYNCAPI_VERSION;
 /// ```
 #[must_use]
 pub fn build_spec<A: App>(app: &A) -> Spec {
+    // The generator's warnings go where the app's would: the app's own selection, if any.
+    app.select_logger();
     let contact = app.info().contact.clone();
     let info = Info {
         title: app.info().title.clone(),

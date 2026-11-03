@@ -91,38 +91,38 @@ async fn a_named_codec_encodes_the_reply() {
 }
 
 /// The header a broker publisher carrying a delivery option for a run of messages contributes to
-/// everything that leaves through it: a lane, a partition key, a tenant.
-const LANE: &str = "x-lane";
+/// everything that leaves through it: a route, a partition key, a tenant.
+const ROUTE: &str = "x-route";
 
 /// A publish policy whose live publisher carries an argument for every message it sends: the
 /// shape a broker takes when its option rides the headers rather than the message body.
 #[derive(Debug, Clone, Copy)]
-struct LanePublish;
+struct RoutePublish;
 
-impl PublishPolicy<ConnectedMemoryBroker> for LanePublish {
-    type Live = Laned;
+impl PublishPolicy<ConnectedMemoryBroker> for RoutePublish {
+    type Live = Routed;
 
     fn pair(
         self,
         connected: &ConnectedMemoryBroker,
-    ) -> impl Future<Output = Result<Laned, PairError>> {
+    ) -> impl Future<Output = Result<Routed, PairError>> {
         let mut base = HeaderMap::new();
-        base.insert(LANE, "west");
-        ready(Ok(Laned {
+        base.insert(ROUTE, "west");
+        ready(Ok(Routed {
             inner: connected.publisher(),
             base,
         }))
     }
 }
 
-/// The live half of [`LanePublish`]: the broker's own publisher plus the base it contributes.
+/// The live half of [`RoutePublish`]: the broker's own publisher plus the base it contributes.
 #[derive(Clone)]
-struct Laned {
+struct Routed {
     inner: MemoryPublisher,
     base: HeaderMap,
 }
 
-impl Publisher for Laned {
+impl Publisher for Routed {
     type Payload = Take;
     type Error = MemoryError;
     type Options = ();
@@ -140,8 +140,8 @@ impl Publisher for Laned {
     }
 }
 
-#[subscriber("lane.in", reply("lane.out"))]
-async fn laned_reply(order: &Order) -> Receipt {
+#[subscriber("route.in", reply("route.out"))]
+async fn routed_reply(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
 
@@ -152,29 +152,29 @@ async fn a_publishers_base_headers_reach_the_reply() {
     let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(laned_reply)
-                .out(Reply, LanePublish)
+            b.include(routed_reply)
+                .out(Reply, RoutePublish)
                 .transform(Stamp)
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 5 })
-        .to("lane.in")
+        .to("route.in")
         .publish()
         .await
         .expect("publish");
 
     tb.broker::<MemoryBroker>()
-        .published::<Receipt>("lane.out")
+        .published::<Receipt>("route.out")
         .assert_called_once()
         .with(&Receipt { id: 5 })
-        .with_header(LANE, "west")
+        .with_header(ROUTE, "west")
         .with_header("x-stamped", b"1");
 }
 
-#[subscriber("lane.batch.in", reply("lane.batch.out"))]
-async fn laned_batch(orders: &[Order]) -> Vec<Receipt> {
+#[subscriber("route.batch.in", reply("route.batch.out"))]
+async fn routed_batch(orders: &[Order]) -> Vec<Receipt> {
     orders
         .iter()
         .map(|order| Receipt { id: order.id })
@@ -188,30 +188,30 @@ async fn a_publishers_base_headers_reach_a_batch_reply() {
     let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(laned_batch.batch(nonzero!(8)))
-                .out(Reply, LanePublish)
+            b.include(routed_batch.batch(nonzero!(8)))
+                .out(Reply, RoutePublish)
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 6 })
-        .to("lane.batch.in")
+        .to("route.batch.in")
         .publish()
         .await
         .expect("publish");
 
     tb.broker::<MemoryBroker>()
-        .published::<Receipt>("lane.batch.out")
+        .published::<Receipt>("route.batch.out")
         .assert_called_once()
         .with(&Receipt { id: 6 })
-        .with_header(LANE, "west");
+        .with_header(ROUTE, "west");
 }
 
-#[subscriber("lane.slot.in")]
-async fn laned_slot(order: &Order, Out(out): Out<impl Publisher>) -> HandlerOutcome {
+#[subscriber("route.slot.in")]
+async fn routed_slot(order: &Order, Out(out): Out<impl Publisher>) -> HandlerOutcome {
     if out
         .message(&Receipt { id: order.id })
-        .to("lane.slot.out")
+        .to("route.slot.out")
         .publish()
         .await
         .is_err()
@@ -227,21 +227,21 @@ async fn laned_slot(order: &Order, Out(out): Out<impl Publisher>) -> HandlerOutc
 async fn a_publishers_base_headers_reach_a_slot_publish() {
     let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(laned_slot).out(DefaultSlot, LanePublish)
+            b.include(routed_slot).out(DefaultSlot, RoutePublish)
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 8 })
-        .to("lane.slot.in")
+        .to("route.slot.in")
         .publish()
         .await
         .expect("publish");
 
     tb.broker::<MemoryBroker>()
-        .published::<Receipt>("lane.slot.out")
+        .published::<Receipt>("route.slot.out")
         .assert_called_once()
         .with(&Receipt { id: 8 })
-        .with_header(LANE, "west");
+        .with_header(ROUTE, "west");
 }
 
 #[subscriber("batch.in", reply("batch.out"))]

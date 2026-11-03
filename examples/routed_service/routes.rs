@@ -39,7 +39,7 @@ pub(crate) fn orders(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposito
         .include(orders::on_cancel)
 }
 
-/// The payments router: a charge handler spread across keyed worker lanes, plus a batch handler
+/// The payments router: a charge handler spread across keyed workers, plus a batch handler
 /// that settles cleared payments through a transactional publisher.
 ///
 /// `.transactional()` marks the wiring: the batch registration then publishes a batch's replies

@@ -8,7 +8,7 @@
 //! it empty for a few microseconds of spinning; the loop wakes it only when it is flagged parked,
 //! so under load a delivery costs no wake, and behind a handler lighter than the loop's read
 //! few do. A loop that waits on room is woken by the first ring to drain to half (or, waiting on a
-//! lane, by the lane's first free slot), not by every pop.
+//! thread, by the thread's first free slot), not by every pop.
 //!
 //! Per delivery, under load: `rtrb`'s push and pop (a store each, the other side's index read only
 //! when the cached copy runs out; the ring is preallocated when the subscription starts, so
@@ -37,14 +37,14 @@ use std::time::{Duration, Instant};
 use futures::Stream;
 use futures::task::AtomicWaker;
 use rtrb::{Consumer, Producer, RingBuffer};
+use ruststream_core::diag::error;
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
 use tokio::task::coop::consume_budget;
 use tokio_util::task::TaskTracker;
-use tracing::error;
 
-use super::{Shutdown, Turn, lane_of};
+use super::{Shutdown, Turn, key_index};
 
 /// The entries of each thread's ring: enough that a thread finishing a delivery finds the next
 /// one waiting while the loop reads on, few enough that the read-ahead stays small.
@@ -98,7 +98,7 @@ struct Signals {
 /// Which ring the loop waits on for room.
 #[derive(Clone, Copy)]
 enum Which {
-    /// This one: the lane a key hashes to.
+    /// This one: the thread a key hashes to.
     One(usize),
     /// The first with room from here on, in turn.
     Next(usize),
@@ -478,14 +478,14 @@ impl<Item: Send + 'static> Threads<Item> {
         let mut stream = pin!(stream);
         let mut cancelled = pin!(shutdown.cancelled());
         // The next ring in turn: the pool's round-robin, and where keyless deliveries of the
-        // lanes go.
+        // threads go.
         let mut turn = 0usize;
         loop {
             if shutdown.is_cancelled() {
                 break;
             }
             // A pool picks its ring before it reads, so nothing comes off the stream that no ring
-            // could take; a lane learns its ring from the delivery.
+            // could take; a thread learns its ring from the delivery.
             let picked = if self.keyed {
                 None
             } else {
@@ -508,11 +508,11 @@ impl<Item: Send + 'static> Threads<Item> {
                 Turn::Delivery(Ok(item)) => {
                     let keyed = if picked.is_some() { None } else { key(&item) };
                     let index =
-                        picked.unwrap_or_else(|| keyed.map_or(turn, |key| lane_of(key, count)));
+                        picked.unwrap_or_else(|| keyed.map_or(turn, |key| key_index(key, count)));
                     if keyed.is_none() {
                         turn = (index + 1) % count;
                     }
-                    // A lane waits for its own ring, whatever else has room: a key stays in order.
+                    // A thread waits for its own ring, whatever else has room: a key stays in order.
                     // Shutdown does not cut the wait short, so the delivery in hand is handed over
                     // rather than dropped.
                     if picked.is_none()
@@ -688,7 +688,7 @@ mod tests {
     }
 
     /// A thread whose work ends early (a panic outside the handler's own catch) stops the loop
-    /// rather than leaving it waiting on a ring nobody drains, the lane's strict wait included.
+    /// rather than leaving it waiting on a ring nobody drains, the thread's strict wait included.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_thread_that_dies_stops_the_loop() {
         for keyed in [false, true] {

@@ -46,6 +46,7 @@ impl OutSlot for Events {
     const NAME: &'static str = "Events";
     type Destination = Reads;
 
+    #[cfg(ruststream_alloc)]
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         vec![OutgoingMessageMetadata::new("events.progress", "Progress")]
     }

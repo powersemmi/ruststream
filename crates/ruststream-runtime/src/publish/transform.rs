@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use ruststream_core::MaybeSendSync;
 
 use super::Outgoing;
-use crate::HeaderMap;
+use crate::HeaderSet;
 use crate::context::DeliveryHeaders;
 
 /// A read-only view of the originating delivery, handed to a [`PublishTransform`].
@@ -42,7 +42,7 @@ impl<'a, C> PublishContext<'a, C> {
     /// in another crate of the workspace.
     #[doc(hidden)]
     #[must_use]
-    pub fn from_map(name: &'a str, headers: &'a HeaderMap, cx: &'a C) -> Self {
+    pub fn from_map(name: &'a str, headers: &'a HeaderSet, cx: &'a C) -> Self {
         Self::new(name, headers, cx)
     }
 
@@ -54,7 +54,7 @@ impl<'a, C> PublishContext<'a, C> {
 
     /// The originating message's headers (the working copy the handler saw).
     #[must_use]
-    pub fn headers(&self) -> &HeaderMap {
+    pub fn headers(&self) -> &HeaderSet {
         self.headers.get()
     }
 

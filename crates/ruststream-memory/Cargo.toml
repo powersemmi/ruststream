@@ -19,12 +19,10 @@ all-features = true
 default = ["std"]
 # `MemoryBroker`, the broker on tokio's channels and clock.
 std = [
+    "alloc",
     "ruststream-core/std",
     "dep:ruststream-runtime",
     "ruststream-runtime/std",
-    "bytes/std",
-    "dep:bytes-utils",
-    "bytes-utils/std",
     "dep:futures",
     "futures/std",
     "futures/async-await",
@@ -33,39 +31,46 @@ std = [
     "serde/std",
     "thiserror/std",
     "dep:tokio",
-    "dep:tracing",
-    "tracing/std",
     "dep:critical-section",
     "critical-section/std",
-    "tracing/attributes",
 ]
-# `LocalMemoryBroker`, the broker on embassy-sync's channels: it builds without `std`, on any
-# executor, with an allocator.
+# The heap variant of the framework: the buses keep their messages in `bytes` buffers and on
+# the heap. Without it the local bus is a fixed one, a `static` the board declares.
+alloc = ["ruststream-core/alloc", "ruststream-runtime?/alloc"]
+# `LocalMemoryBroker`, the broker on embassy-sync's primitives: it builds without `std`, on any
+# executor. With `alloc` its bus lives on the heap, without it the bus is a `static` of fixed size.
 embassy = [
-    "ruststream-core/alloc",
     "dep:ruststream-runtime",
-    "ruststream-runtime/alloc",
     "dep:embassy-sync",
     "dep:futures-core",
+    "dep:heapless",
 ]
-# The in-process transport the test harness drives the broker through.
-testing = ["std", "ruststream-runtime/testing", "ruststream-core/testing"]
+# The in-process transport the test harness drives the broker through. It does not turn the
+# framework's `alloc` on: the fixed local bus keeps its publish log in the harness's own
+# bookkeeping, which runs in a section the failing allocator of a no-heap test lets through.
+testing = [
+    "ruststream-runtime/testing",
+    "ruststream-core/testing",
+    "dep:assert_no_alloc",
+]
 
 [dependencies]
 ruststream-core.workspace = true
 ruststream-runtime = { workspace = true, optional = true }
-bytes.workspace = true
-bytes-utils = { workspace = true, optional = true }
 embassy-sync = { workspace = true, optional = true }
+heapless = { workspace = true, optional = true }
 critical-section = { version = "1.1", optional = true }
+# Marks the harness's bookkeeping inside a poll as the harness's, not the framework's.
+assert_no_alloc = { version = "1.1.2", optional = true }
 futures = { workspace = true, optional = true }
 futures-core = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, optional = true }
-tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
+# The doc examples log through it.
+tracing.workspace = true
 # Counts this thread's allocations, so a test reads what a publish costs.
 allocation-counter = "0.8.1"
 # Drives the local broker's examples and tests: a device's executor polls the same futures.

@@ -420,9 +420,9 @@ a trait bound does not. Graft one blanket impl next to your trait and helpers ge
 capability take the entry as it is:
 
 ```rust
-impl<M, W: Lanes, E, Pipe, Body> Lanes for Slot<M, W, E, Pipe, Body> {
-    fn lane(&self, shard: u64) -> (&MyPublisher, &'static str) {
-        (**self).lane(shard)
+impl<M, W: Routes, E, Pipe, Body> Routes for Slot<M, W, E, Pipe, Body> {
+    fn route(&self, shard: u64) -> (&MyPublisher, &'static str) {
+        (**self).route(shard)
     }
 }
 ```

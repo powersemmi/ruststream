@@ -1,7 +1,7 @@
 //! Integration tests pinning the composition rules documented in the Subscribers guide: the
 //! feature pairs (transactional x workers, Buffered x workers, publishing x workers) whose
 //! interaction is promised in prose. The remaining pairs are pinned elsewhere: workers x batch
-//! and retry x pools / lanes in `workers.rs` and `retry_semantics.rs`.
+//! and retry x pools / keyed workers in `workers.rs` and `retry_semantics.rs`.
 //!
 //! Each suite injects its deliveries together: a pool and a size-capped buffer only compose with
 //! anything while several deliveries are in flight, and the harness settles the whole reaction

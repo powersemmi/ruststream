@@ -73,9 +73,14 @@
 //!
 //! * `tokio` (default): the [`runtime::RustStream`] application object on tokio's runtime, its
 //!   lifecycle and the generated entry point ([`runtime::cli`]).
-//! * `embassy`: the embedded runner on embassy's executor and clock, for a device with a heap
-//!   and no operating system. Its items (the `EmbeddedApp` application object, its `Control`
-//!   and `Health`, the `EmbassyClock`) are re-exported in [`runtime`], where their reference is.
+//! * `embassy`: the embedded runner on embassy's executor and clock, for a device with no
+//!   operating system. Its items (the `EmbeddedApp` application object, its `Control` and
+//!   `Health`, the `EmbassyClock`) are re-exported in [`runtime`], where their reference is.
+//! * `alloc`: the heap form of the framework, which `tokio`, `json`, `cbor` and `msgpack` turn
+//!   on. Headers, payloads, continuations and failures live on the heap. A build without it is the
+//!   fixed form of the embassy runtime: they live in storage of a fixed size and the build
+//!   allocates nothing. One build holds one form, so a crate of the graph that turns `alloc` on
+//!   turns it on for all.
 //!
 //! Codec features are mutually compatible and enable only the deserializers you need. They work
 //! on either runtime. On a device without the standard library `json` and `cbor` build, with the
@@ -84,6 +89,24 @@
 //! * `json` (default): [`codec::JsonCodec`].
 //! * `msgpack`: [`codec::MsgpackCodec`].
 //! * `cbor`: [`codec::CborCodec`].
+//!
+//! The embassy runtime without `alloc` mounts with one of these two, which encode into a slice and
+//! decode from one:
+//!
+//! * `postcard`: `codec::PostcardCodec`.
+//! * `json-core`: `codec::JsonCoreCodec`, JSON over `serde-json-core`.
+//!
+//! The framework reports nothing until the app selects a logger with `.logger(..)`
+//! ([`diagnostics`]). Three features compile the loggers in:
+//!
+//! * `tracing`: `diagnostics::TracingLogger`, `tracing` events at the place that reports. It
+//!   needs `alloc`; the tokio runner turns it on, and a heap-backed embassy app turns it on itself.
+//! * `log`: `diagnostics::LogLogger`, records for the `log` crate, for a host or a board with a
+//!   logger.
+//! * `defmt`: `diagnostics::DefmtLogger`, lines for `defmt`, for a board with a probe.
+//!
+//! Each report names the subscription and the message type, and the level of the logger's own
+//! backend decides which show.
 //!
 //! Two more features work on either runtime:
 //!
@@ -117,9 +140,10 @@
 //!
 //! A crate that disables the defaults (`default-features = false`) names its runtime among the
 //! features it enables: `features = ["tokio"]`, `features = ["embassy"]` or both. A broker crate on
-//! tokio enables `tokio`. A device service on a bare-metal target picks from `embassy`, `json`,
-//! `cbor`, `macros` and `memory`. On a target with an operating system the crate uses the standard
-//! library with either runtime.
+//! tokio enables `tokio`. A device service on a bare-metal target picks from `embassy`, `macros`
+//! and `memory`, a codec (`json` and `cbor` with a heap, `postcard` and `json-core` without), and
+//! `log` or `defmt` for its logger. On a target with an operating system the crate uses the
+//! standard library with either runtime.
 //!
 //! # Getting the imports
 //!
@@ -128,10 +152,10 @@
 //! the codec stay explicit, since those are the choices a service makes for itself.
 
 #![forbid(unsafe_code)]
-// The embassy runtime runs on a device with a heap and no standard library; the tokio runner needs
-// it.
+// The embassy runtime runs on a device with no standard library; the tokio runner needs it.
 #![cfg_attr(not(feature = "tokio"), no_std)]
 
+#[cfg(any(ruststream_alloc, feature = "testing"))]
 extern crate alloc;
 
 pub mod prelude;
@@ -139,7 +163,7 @@ pub mod testing;
 
 /// Registers a production broker type with the test harness; see
 /// [`testing::TestableRegistration`].
-#[cfg(feature = "testing")]
+#[cfg(all(feature = "testing", ruststream_alloc))]
 #[doc(inline)]
 pub use ruststream_runtime::register_testable_broker;
 
@@ -155,36 +179,47 @@ pub use inventory;
 /// Re-exported so that implementing either trait, or taking a published payload, does not also
 /// mean depending on `bytes` directly; a service that already does keeps its own import, which
 /// shadows this one.
-pub use bytes::BytesMut;
+#[cfg(any(ruststream_alloc, feature = "testing"))]
+pub use ruststream_core::__alloc::bytes::BytesMut;
 
 /// The shared byte buffer the message path hands around: a payload, a header value taken with
 /// [`HeaderMap::get_shared`].
 ///
 /// Re-exported for the same reason as [`BytesMut`]: reading a value out of a header map, or
 /// handing one to a publisher, should not also mean depending on `bytes` directly.
-pub use bytes::Bytes;
+#[cfg(any(ruststream_alloc, feature = "testing"))]
+pub use ruststream_core::__alloc::bytes::Bytes;
 
 /// The owned string of the message path: a destination name, a header key.
 ///
 /// A `Bytes` that is valid UTF-8, so it reads as a `str`, clones by reference count and can be
 /// taken as a slice of a buffer the broker already holds. `Str::from_static("orders")` costs
 /// nothing at all; `String` moves in without a copy; `&str` copies once.
-pub use bytes_utils::Str;
+#[cfg(any(ruststream_alloc, feature = "testing"))]
+pub use ruststream_core::__alloc::bytes_utils::Str;
 
+#[cfg(ruststream_alloc)]
 pub use ruststream_core::HeaderMap;
+#[cfg(any(ruststream_alloc, feature = "testing"))]
+pub use ruststream_core::RawMessage;
 pub use ruststream_core::SendBroker;
 pub use ruststream_core::{AckError, DeclareRetryError};
 pub use ruststream_core::{
     AddressedCopies, BrokerMoves, CopyPath, FromName, Name, NamedCopies, RedeliveryAddress,
     RedeliveryAddressed, RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
 };
+#[cfg(ruststream_alloc)]
 pub use ruststream_core::{
-    ApiKeyLocation, BatchSlot, BatchStream, BatchSubscriber, Carries, CarriesBatch, DescribeServer,
-    HttpApiKeyLocation, OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme,
-    Seekable, Seeker, ServerSpec, Subscribe, Transaction, TransactionalPublisher,
+    ApiKeyLocation, DescribeServer, HttpApiKeyLocation, SecurityScheme, ServerSpec,
 };
+#[cfg(ruststream_alloc)]
 pub use ruststream_core::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
+pub use ruststream_core::{
+    BatchSlot, BatchStream, BatchSubscriber, Carries, CarriesBatch, OwnedTransactions, Partitioned,
+    Positioned, RequestReply, Seekable, Seeker, Subscribe, Transaction, TransactionalPublisher,
+};
 pub use ruststream_core::{Broker, Connected, ConnectedBroker};
+pub use ruststream_core::{BufferFull, EncodeBuf, Headers, PayloadBuf};
 pub use ruststream_core::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
 pub use ruststream_core::{
     CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,
@@ -195,7 +230,7 @@ pub use ruststream_core::{
     PublishPolicy, Publisher, Take,
 };
 pub use ruststream_core::{DeserializeHeadersError, SerializeHeadersError};
-pub use ruststream_core::{IncomingMessage, OutgoingMessage, RawMessage, Settle};
+pub use ruststream_core::{IncomingMessage, OutgoingMessage, Settle};
 pub use ruststream_core::{ReadyHint, Subscriber};
 
 pub use ruststream_core::nonzero;
@@ -203,6 +238,30 @@ pub use ruststream_core::nonzero;
 pub use ruststream_runtime_tokio::{Buffered, BufferedSubscriber};
 
 pub mod codec;
+
+/// The loggers an app selects with `.logger(..)`: the framework reports nothing until it does.
+///
+/// `TracingLogger` needs the `tracing` feature (the tokio runner turns it on), `LogLogger` the
+/// `log` feature, `DefmtLogger` the `defmt` feature. The selection is process-wide, and the
+/// level the user's backend filters at decides which events show: a `tracing` subscriber's
+/// filter, `log::max_level()`, defmt's level. Every warning the framework raises stays on, and a
+/// service silences one by raising that level. A diagnostic costs one atomic load, and a delivery
+/// that succeeds raises none.
+///
+/// Guide: <https://powersemmi.github.io/ruststream/latest/components/observability/logging/>.
+///
+/// # Examples
+///
+/// See [`Logger`](diagnostics::Logger).
+pub mod diagnostics {
+    #[cfg(feature = "defmt")]
+    pub use ruststream_core::diag::DefmtLogger;
+    #[cfg(feature = "log")]
+    pub use ruststream_core::diag::LogLogger;
+    pub use ruststream_core::diag::Logger;
+    #[cfg(ruststream_tracing)]
+    pub use ruststream_core::diag::TracingLogger;
+}
 
 // The bus is the runtime's: the tokio one, or the local one on embassy.
 #[cfg(all(feature = "memory", any(feature = "tokio", feature = "embassy")))]
@@ -328,22 +387,50 @@ pub mod otel;
 /// Not part of the public API; no stability guarantees.
 #[doc(hidden)]
 pub mod __private {
+    #[cfg(feature = "embassy")]
+    use core::fmt::Display;
     use core::marker::PhantomData;
 
     // The standard names the macros emit, reached through the facade so that a `#![no_std]`
     // crate, which has neither `::std` nor these names in its prelude, can use the derives.
+    // The text a schema probe returns: owned with a heap, where a schema can be rendered, and
+    // borrowed without one, where every probe answers `None`.
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
+    pub type SchemaText = String;
+    #[cfg(not(any(ruststream_alloc, feature = "testing")))]
+    pub type SchemaText = &'static str;
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
     pub use alloc::boxed::Box;
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
     pub use alloc::format;
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
     pub use alloc::string::{String, ToString};
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
     pub use alloc::vec;
+    #[cfg(any(ruststream_alloc, feature = "testing"))]
     pub use alloc::vec::Vec;
+    // The batch outcome a batch body returns: a `Vec` with `alloc`, a fixed buffer without.
     pub use core::error::Error;
+    pub use ruststream_runtime::BatchOutcomes;
+    // What a batch body replies with, one value per message: a `Vec` with `alloc`, a fixed
+    // buffer without.
+    #[cfg(ruststream_alloc)]
+    pub use alloc::vec::Vec as BatchVec;
+    #[cfg(not(ruststream_alloc))]
+    pub use ruststream_runtime::BatchVec;
     // What the tokio `main` that `#[ruststream::app]` generates returns.
     #[cfg(feature = "tokio")]
     pub use std::process::ExitCode;
-    // The log the embassy task `#[ruststream::app]` emits reports an app's error to.
+    /// Reports the error an embassy app stopped on, which the task `#[ruststream::app]` emits
+    /// calls.
     #[cfg(feature = "embassy")]
-    pub use tracing;
+    pub fn app_stopped(error: &impl Display) {
+        ruststream_core::diag::error!(
+            target: "ruststream::embassy",
+            error = %error,
+            "the app stopped on an error"
+        );
+    }
 
     use crate::runtime::Serialized;
     #[cfg(feature = "asyncapi")]
@@ -385,11 +472,11 @@ pub mod __private {
     /// The trait fallback: chosen for any `T` the inherent schema method does not cover.
     pub trait NoSchemaProbe {
         /// Returns `None` (no schema available for the probed type).
-        fn schema_json(&self) -> Option<String>;
+        fn schema_json(&self) -> Option<SchemaText>;
     }
 
     impl<T> NoSchemaProbe for Probe<T> {
-        fn schema_json(&self) -> Option<String> {
+        fn schema_json(&self) -> Option<SchemaText> {
             None
         }
     }
@@ -398,7 +485,7 @@ pub mod __private {
     impl<T: schemars::JsonSchema> Probe<T> {
         /// Returns the serialized JSON Schema for `T` (inherent; preferred over the trait fallback).
         #[must_use]
-        pub fn schema_json(&self) -> Option<String> {
+        pub fn schema_json(&self) -> Option<SchemaText> {
             schema_json::<T>()
         }
     }
@@ -467,11 +554,11 @@ pub mod __private {
     /// contract, or a contract type without a schema.
     pub trait NoHeadersSchemaProbe {
         /// Returns `None` (no headers schema available for the probed type).
-        fn headers_schema_json(&self) -> Option<String>;
+        fn headers_schema_json(&self) -> Option<SchemaText>;
     }
 
     impl<T> NoHeadersSchemaProbe for Probe<T> {
-        fn headers_schema_json(&self) -> Option<String> {
+        fn headers_schema_json(&self) -> Option<SchemaText> {
             None
         }
     }
@@ -507,7 +594,7 @@ pub mod __private {
         /// Returns the schema of `T`'s declared header contract (inherent; preferred over the
         /// trait fallback).
         #[must_use]
-        pub fn headers_schema_json(&self) -> Option<String> {
+        pub fn headers_schema_json(&self) -> Option<SchemaText> {
             <T::Contract as ContractSchema>::schema_json()
         }
     }

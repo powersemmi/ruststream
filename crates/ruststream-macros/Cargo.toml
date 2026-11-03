@@ -15,6 +15,11 @@ categories = ["asynchronous", "development-tools::procedural-macro-helpers"]
 [lib]
 proc-macro = true
 
+[features]
+# The framework's heap variant: the declared messages are described for the generated document,
+# which only that variant builds.
+alloc = []
+
 [dependencies]
 proc-macro2 = "1"
 quote = "1"

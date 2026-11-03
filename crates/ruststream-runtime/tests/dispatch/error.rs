@@ -685,8 +685,8 @@ async fn a_failed_copy_without_a_continuation_is_logged_and_lost() {
 
 /// A subscription whose broker retries and dead-letters natively.
 #[derive(Debug, Clone)]
-struct ManagedQueue {
-    name: &'static str,
+pub(crate) struct ManagedQueue {
+    pub(crate) name: &'static str,
 }
 
 impl<C: Subscribe> SubscriptionSource<C> for ManagedQueue

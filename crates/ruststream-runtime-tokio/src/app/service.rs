@@ -8,6 +8,7 @@ use std::{
 use crate::SendBroker;
 use crate::bindable::BrokerRegistration;
 use crate::{DescribeServer, ServerSpec};
+use ruststream_core::diag::Logger;
 use ruststream_runtime::codec::Codec;
 
 use tokio_util::task::TaskTracker;
@@ -101,6 +102,8 @@ pub struct RustStream<Layers = Identity, State = (), Pipeline = PublishIdentity,
     pub(super) after_shutdown: Vec<LifecycleHook<State>>,
     pub(super) shutdown_timeout: Option<Duration>,
     pub(super) subscription_end: SubscriptionEnd,
+    /// Selects the logger the app reports through, when it starts.
+    pub(super) logger: Option<fn()>,
     /// Tracks post-settle `and_after` continuations spawned during dispatch, so a graceful
     /// shutdown drains them after the dispatch loops stop. Shared (cloned) into every
     /// [`Delivery`].
@@ -171,6 +174,8 @@ pub struct TestParts<State> {
     pub shutdown_timeout: Option<Duration>,
     /// What a subscription that ends does to the service.
     pub subscription_end: SubscriptionEnd,
+    /// Selects the logger the app reports through.
+    pub logger: Option<fn()>,
     /// The spawned continuations shutdown joins.
     pub continuations: TaskTracker,
     /// The shared test hooks slot.
@@ -205,6 +210,7 @@ impl RustStream<Identity, (), PublishIdentity, Setup> {
             after_shutdown: Vec::new(),
             shutdown_timeout: None,
             subscription_end: SubscriptionEnd::default(),
+            logger: None,
             continuations: TaskTracker::new(),
             #[cfg(feature = "testing")]
             test_hooks: Arc::new(TestHooks::detached()),
@@ -237,6 +243,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
             subscription_end: self.subscription_end,
+            logger: self.logger,
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
@@ -356,6 +363,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             after_shutdown: Vec::new(),
             shutdown_timeout: self.shutdown_timeout,
             subscription_end: self.subscription_end,
+            logger: self.logger,
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
@@ -405,6 +413,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
             subscription_end: self.subscription_end,
+            logger: self.logger,
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
@@ -466,6 +475,37 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
 }
 
 impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> {
+    /// Selects the logger the framework reports through, when the app starts and before its
+    /// brokers connect.
+    ///
+    /// Nothing is reported until an app selects one. The selection is process-wide, like the
+    /// `log` crate's: two apps in one process share one logger, and the last to start decides.
+    /// Each logger hands an event to its backend, whose level filter decides what shows: a
+    /// `tracing` subscriber's filter, `log::max_level()`, defmt's level.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use ruststream::diagnostics::TracingLogger;
+    /// use ruststream::memory::prelude::*;
+    ///
+    /// /// What `#[ruststream::app]` runs: the framework reports through `tracing`.
+    /// pub fn app() -> impl App {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .logger(TracingLogger)
+    ///         .with_broker(MemoryBroker::new(), |b| b)
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    #[must_use]
+    pub fn logger<L: Logger>(mut self, _logger: L) -> Self {
+        self.logger = Some(L::select);
+        self
+    }
+
     /// Rebuilds the app under a different phase marker; the fields move as they are.
     fn into_phase<Q>(self) -> RustStream<Layers, State, Pipeline, Q> {
         RustStream {
@@ -481,6 +521,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
             subscription_end: self.subscription_end,
+            logger: self.logger,
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
@@ -971,6 +1012,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
             subscription_end: self.subscription_end,
+            logger: self.logger,
             continuations: self.continuations,
             test_hooks: self.test_hooks,
         }

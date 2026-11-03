@@ -1,6 +1,7 @@
 //! Where a batch is collected: the slot the runtime lends a batching subscriber, and the stream
 //! that fills it.
 
+#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 use core::pin::Pin;
@@ -77,6 +78,7 @@ pub trait BatchSlot: MaybeSend {
     fn drain(&mut self) -> impl Iterator<Item = Self::Message> + '_;
 }
 
+#[cfg(feature = "alloc")]
 impl<Message: MaybeSend> BatchSlot for Vec<Message> {
     type Message = Message;
 
@@ -115,7 +117,7 @@ pub trait BatchStream<Slot> {
     ) -> Poll<Option<Result<(), Self::Error>>>;
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 mod tests {
     use alloc::vec::Vec;
     use core::num::NonZeroUsize;

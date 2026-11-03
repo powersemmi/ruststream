@@ -2,17 +2,28 @@
 //! through the publishing machinery, with the policy the chain attached (or the broker's
 //! default) committed right at `include`.
 
+#[cfg(ruststream_alloc)]
 use alloc::borrow::ToOwned;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
+#[cfg(ruststream_alloc)]
 use alloc::vec;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
+#[cfg(ruststream_alloc)]
 use core::any::type_name;
 use ruststream_core::MaybeSendSync;
 
+#[cfg(ruststream_alloc)]
 use crate::batch::BatchResult;
-use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
+use crate::batch::BatchVec;
+#[cfg(ruststream_alloc)]
+use crate::batch_publishing::BatchPublishingCall;
+use crate::batch_publishing::BatchPublishingDef;
 use crate::context::Context;
+use crate::copied::name_text;
 use crate::handler::HandlerOutcome;
+#[cfg(ruststream_alloc)]
 use crate::metadata::{OutgoingKind, OutgoingMessageMetadata};
 use crate::publishing::{PublishingCall, PublishingDef};
 use crate::router::{IncludeDef, forms};
@@ -20,9 +31,11 @@ use crate::{CallerName, FixedName, Name, OutgoingDestination, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Batch, BatchPair, BatchSet, BatchedAxis, Deserialized, Input, Message, Solo,
-    SoloAxis, SoloCarried, SoloDeserialized, SoloPair, SoloSet,
+    Axis, AxisDocs, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis, SoloCarried,
+    SoloDeserialized, SoloPair, SoloSet,
 };
+#[cfg(ruststream_alloc)]
+use super::axis::{Batch, BatchPair, BatchSet};
 use super::docs::DocState;
 use super::eager::construct;
 use super::value::{
@@ -78,10 +91,12 @@ where
 /// contract reports nothing rather than the unit type's schema).
 #[doc(hidden)]
 pub trait ReplyHeadersSchema<Doc>: ReplyShape {
+    #[cfg(ruststream_alloc)]
     fn headers_schema() -> Option<String>;
 }
 
 impl<R: serde::Serialize + MaybeSendSync, Doc> ReplyHeadersSchema<Doc> for R {
+    #[cfg(ruststream_alloc)]
     fn headers_schema() -> Option<String> {
         None
     }
@@ -93,6 +108,7 @@ where
     P: serde::Serialize + MaybeSendSync,
     Doc: DocState<H>,
 {
+    #[cfg(ruststream_alloc)]
     fn headers_schema() -> Option<String> {
         Doc::schema()
     }
@@ -108,9 +124,11 @@ pub trait WireDocs<R: ReplyShape + ?Sized, Doc> {
     const SERIALIZED: bool;
 
     /// The serialized JSON Schema of the reply payload.
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String>;
 
     /// The serialized JSON Schema of the typed header contract riding the reply.
+    #[cfg(ruststream_alloc)]
     fn headers_schema() -> Option<String>;
 }
 
@@ -121,10 +139,12 @@ where
 {
     const SERIALIZED: bool = false;
 
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         <Doc as DocState<R::Body>>::schema()
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema() -> Option<String> {
         <R as ReplyHeadersSchema<Doc>>::headers_schema()
     }
@@ -133,10 +153,12 @@ where
 impl<R: ReplyShape + ?Sized, Doc> WireDocs<R, Doc> for SerializedReply {
     const SERIALIZED: bool = true;
 
+    #[cfg(ruststream_alloc)]
     fn payload_schema() -> Option<String> {
         None
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema() -> Option<String> {
         None
     }
@@ -299,13 +321,13 @@ impl<R> ReplyDest<R> for ResolvedDest {
 
 impl<R: ReplyDestination> ReplyDest<R> for NamedDest {
     fn name(&self) -> &str {
-        R::destination(&self.0)
+        R::destination(name_text(&self.0))
     }
 
     // A type declaring no name resolves to the mount-site name itself, so only a declared name
     // that differs from it tells the two apart.
     fn ignored(&self) -> Option<&str> {
-        let site: &str = &self.0;
+        let site = name_text(&self.0);
         (R::destination(site) != site).then_some(site)
     }
 }
@@ -351,7 +373,7 @@ impl ReplyFormFor<OneByOne> for SerializedReply {
 }
 
 /// The route of one reply type on one verdict family: its wire, and the form tokens that wire
-/// selects. One-by-one the reply type routes itself; per batch the `Vec<Reply>` verdict routes
+/// selects. One-by-one the reply type routes itself; per batch the `BatchVec<Reply>` verdict routes
 /// by its element. Machinery behind `include` and the reply chain; never named in user code.
 #[doc(hidden)]
 pub trait ReplyRoute<Fam> {
@@ -373,7 +395,7 @@ where
     type SlotForm = <R::Wire as ReplyFormFor<OneByOne>>::SlotForm;
 }
 
-impl<R> ReplyRoute<Batched> for Vec<R>
+impl<R> ReplyRoute<Batched> for BatchVec<R>
 where
     R: ReplyShape,
     R::Wire: ReplyFormFor<Batched>,
@@ -424,6 +446,7 @@ where
         self.0.value.docs.description()
     }
 
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         self.0
             .value
@@ -433,6 +456,7 @@ where
             .or_else(Doc::payload_schema)
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         self.0
             .value
@@ -450,6 +474,7 @@ where
         self.0.value.docs.message_description
     }
 
+    #[cfg(ruststream_alloc)]
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
         if let Some(declared) = &self.0.value.docs.outgoing {
             return declared.clone();
@@ -584,7 +609,7 @@ where
     }
 }
 impl<A, R, C, H, Doc, Dest> BatchPublishingDef
-    for Sealed<ReplyValue<HandleValue<A, Vec<R>, (), C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<A, BatchVec<R>, (), C, H, Doc>, Dest>>
 where
     A: BatchedAxis,
     R: ReplyShape<Wire: WireDocs<R, Doc>>,
@@ -615,6 +640,7 @@ where
         self.0.value.docs.description()
     }
 
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         self.0
             .value
@@ -624,6 +650,7 @@ where
             .or_else(Doc::payload_schema)
     }
 
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         self.0
             .value
@@ -641,6 +668,7 @@ where
         self.0.value.docs.message_description
     }
 
+    #[cfg(ruststream_alloc)]
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
         if let Some(declared) = &self.0.value.docs.outgoing {
             return declared.clone();
@@ -656,11 +684,12 @@ where
 }
 
 /// Applies the batch reply contract: one reply per element, or one outcome per element.
+#[cfg(ruststream_alloc)]
 pub(super) fn batch_reply_verdict<R>(
-    verdict: Result<Vec<R>, Vec<HandlerOutcome>>,
+    verdict: Result<BatchVec<R>, BatchVec<HandlerOutcome>>,
     batch_len: usize,
     subscription: &str,
-) -> Result<Vec<R>, BatchResult> {
+) -> Result<BatchVec<R>, BatchResult> {
     match verdict {
         Ok(replies) => {
             assert!(
@@ -682,8 +711,9 @@ pub(super) fn batch_reply_verdict<R>(
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<T, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<Batch<T>, Vec<R>, (), C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<Batch<T>, BatchVec<R>, (), C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
             Input = <Batch<T> as Axis>::Kind,
@@ -696,21 +726,23 @@ where
     R: ReplyShape,
     C: MaybeSendSync,
     S: MaybeSendSync,
-    H: Handle<[T], Vec<R>, (), C, S>,
+    H: Handle<[T], BatchVec<R>, (), C, S>,
 {
+    #[cfg(ruststream_alloc)]
     async fn call(
         &self,
         batch: &[T],
         _injections: &(),
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<Vec<R>, BatchResult> {
+    ) -> Result<BatchVec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, &(), ctx).await;
         batch_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<T, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<BatchSet<T>, Vec<R>, (), C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<BatchSet<T>, BatchVec<R>, (), C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
             Input = <BatchSet<T> as Axis>::Kind,
@@ -723,21 +755,23 @@ where
     R: ReplyShape,
     C: MaybeSendSync,
     S: MaybeSendSync,
-    H: Handle<[T], Vec<R>, (), C, S>,
+    H: Handle<[T], BatchVec<R>, (), C, S>,
 {
+    #[cfg(ruststream_alloc)]
     async fn call(
         &self,
         batch: &[T],
         _injections: &(),
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<Vec<R>, BatchResult> {
+    ) -> Result<BatchVec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, &(), ctx).await;
         batch_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<Hd, P, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
-    for Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, Vec<R>, (), C, H, Doc>, Dest>>
+    for Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, BatchVec<R>, (), C, H, Doc>, Dest>>
 where
     Self: BatchPublishingDef<
             Input = <BatchPair<Hd, P> as Axis>::Kind,
@@ -751,14 +785,15 @@ where
     R: ReplyShape,
     C: MaybeSendSync,
     S: MaybeSendSync,
-    H: Handle<[Message<Hd, P>], Vec<R>, (), C, S>,
+    H: Handle<[Message<Hd, P>], BatchVec<R>, (), C, S>,
 {
+    #[cfg(ruststream_alloc)]
     async fn call(
         &self,
         batch: &[Message<Hd, P>],
         _injections: &(),
         ctx: &mut Context<'_, C, S>,
-    ) -> Result<Vec<R>, BatchResult> {
+    ) -> Result<BatchVec<R>, BatchResult> {
         let verdict = self.0.value.body.handle(batch, &(), ctx).await;
         batch_reply_verdict(verdict, batch.len(), ctx.name())
     }

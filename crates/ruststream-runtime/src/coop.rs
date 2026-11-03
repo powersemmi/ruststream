@@ -55,8 +55,8 @@ pin_project! {
     /// when its probe says more may be waiting.
     ///
     /// A yield returns `Pending` without polling the stream, so the stream registers no waker. An
-    /// app skips a lane whose probe says nothing is ready, so a yield past the last delivery would
-    /// leave the lane parked with no waker for the next one. The bound yields only while the probe
+    /// app skips a worker whose probe says nothing is ready, so a yield past the last delivery would
+    /// leave the worker parked with no waker for the next one. The bound yields only while the probe
     /// says more may be waiting; otherwise it polls the stream, which parks with its waker.
     pub(crate) struct Bounded<Inner, Probe> {
         #[pin]
@@ -136,6 +136,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
     use alloc::sync::Arc;
     use alloc::task::Wake;
@@ -155,6 +156,7 @@ mod tests {
     use ruststream_core::{ReadyHint, Settle, Subscriber};
 
     use super::{Bounded, Cooperative, YIELD_AFTER};
+    use crate::BatchStream;
     use crate::ShutdownWait;
     use crate::dispatch::idle;
 
@@ -186,6 +188,43 @@ mod tests {
         });
         let seen = readiness(Bounded::new(inner, 3, ()), 8);
         assert_eq!(seen, [true, true, false, true, true, true, false, true]);
+    }
+
+    /// A batch stream that fills every slot it is polled with.
+    struct Filling;
+
+    impl BatchStream<()> for Filling {
+        type Error = Infallible;
+
+        fn poll_fill(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _slot: &mut (),
+        ) -> Poll<Option<Result<(), Infallible>>> {
+            Poll::Ready(Some(Ok(())))
+        }
+    }
+
+    #[test]
+    fn a_batch_stream_that_keeps_filling_yields_once_after_exactly_the_limit() {
+        let mut bounded = pin!(Bounded::new(Filling, 2, ()));
+        let mut cx = Context::from_waker(Waker::noop());
+        let seen: Vec<bool> =
+            iter::repeat_with(|| bounded.as_mut().poll_fill(&mut cx, &mut ()).is_ready())
+                .take(7)
+                .collect();
+        assert_eq!(seen, [true, true, false, true, true, false, true]);
+    }
+
+    #[test]
+    fn a_batch_stream_with_nothing_more_waiting_is_not_made_to_yield() {
+        let mut bounded = pin!(Bounded::new(Filling, 2, NothingWaits));
+        let mut cx = Context::from_waker(Waker::noop());
+        let seen: Vec<bool> =
+            iter::repeat_with(|| bounded.as_mut().poll_fill(&mut cx, &mut ()).is_ready())
+                .take(5)
+                .collect();
+        assert_eq!(seen, [true; 5]);
     }
 
     /// A probe that says nothing waits.
@@ -221,7 +260,7 @@ mod tests {
             &[]
         }
 
-        fn headers(&self) -> &ruststream_core::HeaderMap {
+        fn headers(&self) -> &ruststream_core::Headers {
             unreachable!("no delivery is ever yielded")
         }
     }

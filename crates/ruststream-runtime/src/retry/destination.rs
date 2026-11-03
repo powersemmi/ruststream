@@ -11,7 +11,7 @@
 //! declared it, which is the same rule a reply follows: a declared destination and a naming
 //! transform are mutually exclusive.
 
-use alloc::borrow::Cow;
+use ruststream_core::NameText;
 
 use crate::Publisher;
 use crate::publish::{
@@ -152,5 +152,5 @@ pub trait DestinationLast<Index> {
     type Out;
 
     /// Names it.
-    fn destination_last(self, destination: Cow<'static, str>) -> Self::Out;
+    fn destination_last(self, destination: NameText) -> Self::Out;
 }

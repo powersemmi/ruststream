@@ -16,6 +16,7 @@ use std::future::ready;
 use crate::common::Wire;
 use crate::log_capture::Captured;
 use prost::Message as _;
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{MemoryPosition, Retaining, Retention};
 use ruststream::testing::TestApp;
@@ -103,6 +104,7 @@ mod left_to_right {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("ltr", "0.1.0"))
+            .logger(TracingLogger)
             .with_broker(MemoryBroker::new(), |b| b.include(on_event))
     }
 
@@ -228,6 +230,7 @@ mod discriminated {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("disc", "0.1.0"))
+            .logger(TracingLogger)
             .with_broker(MemoryBroker::new(), |b| b.include(on_event))
     }
 
@@ -310,6 +313,7 @@ mod by_header {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("hdr", "0.1.0"))
+            .logger(TracingLogger)
             .with_broker(MemoryBroker::new(), |b| b.include(on_event))
     }
 
@@ -679,8 +683,9 @@ mod document {
     fn a_copy_of_a_header_selected_model_keeps_its_contract() {
         let captured = Captured::default();
         let _installed = captured.install();
-        let app =
-            RustStream::new(AppInfo::new("doc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        let app = RustStream::new(AppInfo::new("doc", "0.1.0"))
+            .logger(TracingLogger)
+            .with_broker(MemoryBroker::new(), |b| {
                 b.include(record_returns)
                     .max_attempts(nonzero!(2))
                     .dead_letter("doc.returns.dlq")

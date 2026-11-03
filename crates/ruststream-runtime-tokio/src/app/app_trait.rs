@@ -110,6 +110,11 @@ pub trait App: sealed::Sealed + Sized {
     /// Metadata for every registered handler, in registration order: input to the `AsyncAPI`
     /// generator.
     fn handlers(&self) -> &[HandlerMetadata];
+
+    /// Applies the logger the app selected, so a tool that reads the app without running it (the
+    /// spec generator) reports through it too.
+    #[doc(hidden)]
+    fn select_logger(&self);
 }
 
 // `Pipeline: Send` is what makes the run futures `Send`: `run` consumes `self`, which holds the
@@ -148,5 +153,11 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline: Send, Phase> App
 
     fn handlers(&self) -> &[HandlerMetadata] {
         RustStream::handlers(self)
+    }
+
+    fn select_logger(&self) {
+        if let Some(select) = self.logger {
+            select();
+        }
     }
 }

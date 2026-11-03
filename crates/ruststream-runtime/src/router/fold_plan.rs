@@ -11,12 +11,12 @@
 // Written over the contract traits for a runner that polls on one thread.
 #![allow(clippy::future_not_send)]
 
-use alloc::sync::Arc;
+use core::cell::Cell;
 use core::marker::PhantomData;
 use ruststream_core::MaybeSendSync;
 
 use crate::coop::Cooperative;
-use crate::dispatch::{Delivery, HeadersAtOnce, run_sequential};
+use crate::dispatch::{Delivery, EncodeRoom, Gated, HeadersAtOnce, Parks, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::Handler;
 use crate::host::{Detach, Halt, HostDetach, PrepareKept, ShutdownWait};
@@ -27,10 +27,12 @@ use crate::redelivery::{
     AppliesDeclaration, DeclaredOn, NoCopies, PairCopies, PrepareCopy, RetryCopies, Undeclared,
 };
 use crate::redelivery::{ScopeDelivery, open_local_subscription};
+use crate::shared::{StateRef, SubscriptionName, handle_of};
 use crate::typed::Typed;
 use crate::{
     Broker, BuildContext, Connected, RetryDeclaration, Settle, Subscriber, SubscriptionSource,
 };
+use ruststream_core::PayloadBuf;
 
 use super::builder::Router;
 use super::fold::{OpenLayered, OpenedRoute, RunRoutes};
@@ -55,13 +57,18 @@ pub trait OneTaskDispatch {
 
     /// Runs the route until `signal` stops it; `path` is the copy path its registration paired
     /// for the plan's kept copies.
+    ///
+    /// `parked` is the flag the route's loop sets while it is idle, for the join above the plan
+    /// to read; a plan whose loop is not the whole of the route (it keeps copies of its own, say)
+    /// leaves it alone.
     fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
         path: Option<Path>,
         signal: Signal,
-        state: &Arc<State>,
+        state: StateRef<'_, State>,
         host: &Host,
+        parked: &Cell<bool>,
     ) -> impl Future<Output = ()>
     where
         Sub: Subscriber,
@@ -83,7 +90,7 @@ pub struct OneTaskRoute<Sub, Body, Cx> {
     /// The handler, wrapped in the router's layers.
     pub handler: Body,
     /// The subscription's name, for diagnostics.
-    pub name: Arc<str>,
+    pub name: SubscriptionName,
     /// What each delivery runs under.
     pub delivery: Delivery<Cx>,
     /// The registration's failure policies.
@@ -96,12 +103,16 @@ pub struct OneTaskRoute<Sub, Body, Cx> {
 impl<Sub, Body, Cx> OneTaskRoute<Sub, Body, Cx> {
     /// Runs the route one delivery at a time, on the host the plan lends it: the plan of a route
     /// that declared no workers.
-    pub async fn run_sequential<State, Signal, Lent>(
+    pub async fn run_sequential<State, Signal, Lent, Park, Room>(
         self,
         signal: Signal,
-        state: &Arc<State>,
+        state: StateRef<'_, State>,
         host: &Lent,
+        parked: Park,
+        room: Room,
     ) where
+        Room: EncodeRoom,
+        Park: Parks,
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
@@ -114,11 +125,13 @@ impl<Sub, Body, Cx> OneTaskRoute<Sub, Body, Cx> {
             self.handler,
             signal,
             self.name,
-            Arc::clone(state),
+            handle_of(state),
             (&self.delivery, host),
             failure,
             (),
             HeadersAtOnce,
+            parked,
+            room,
         )
         .await;
     }
@@ -137,8 +150,9 @@ impl OneTaskDispatch for SequentialPlan {
         route: OneTaskRoute<Sub, Body, Cx>,
         _path: Option<Path>,
         signal: Signal,
-        state: &Arc<State>,
+        state: StateRef<'_, State>,
         host: &Host,
+        parked: &Cell<bool>,
     ) where
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
@@ -147,7 +161,9 @@ impl OneTaskDispatch for SequentialPlan {
         Host: Detach,
         Path: PrepareCopy<Cx>,
     {
-        route.run_sequential(signal, state, host).await;
+        route
+            .run_sequential(signal, state, host, parked, PayloadBuf::new())
+            .await;
     }
 }
 
@@ -516,7 +532,15 @@ where
     Plan: OneTaskDispatch,
     Path: PrepareCopy<Cx>,
 {
-    async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
+    type Parks = Cell<bool>;
+
+    fn run_parked<Signal, Host>(
+        self,
+        parks: &Cell<bool>,
+        signal: Signal,
+        state: StateRef<'_, State>,
+        host: &Host,
+    ) -> impl Future<Output = ()>
     where
         Signal: ShutdownWait + Halt + Clone,
         Host: Detach,
@@ -527,17 +551,22 @@ where
             plan,
             path,
         } = self;
-        // Applied where the loop starts, as on a plain route: the wrapped handler's type is the
-        // layer's own.
-        let handler = BlanketLayer::apply::<Sub::Message, Cx, State, _>(&layers, route.handler);
-        let route = OneTaskRoute {
-            subscriber: route.subscriber,
-            handler,
-            name: route.name,
-            delivery: route.delivery,
-            policies: route.policies,
-            input: route.input,
-        };
-        plan.run(route, path, signal, state, host).await;
+        // The join's gate asks a probe of its own, taken before the plan's loop takes its.
+        let probe = route.subscriber.ready_hint();
+        let gate = signal.clone();
+        Gated::new(parks, probe, gate, async move {
+            // Applied where the loop starts, as on a plain route: the wrapped handler's type is
+            // the layer's own.
+            let handler = BlanketLayer::apply::<Sub::Message, Cx, State, _>(&layers, route.handler);
+            let route = OneTaskRoute {
+                subscriber: route.subscriber,
+                handler,
+                name: route.name,
+                delivery: route.delivery,
+                policies: route.policies,
+                input: route.input,
+            };
+            plan.run(route, path, signal, state, host, parks).await;
+        })
     }
 }

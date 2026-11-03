@@ -1,7 +1,7 @@
 //! What a subscription declares about its retries: who publishes the copies, and the cap and
 //! dead-letter destination of one registration.
 
-use alloc::borrow::Cow;
+use super::NameText;
 use core::num::NonZeroU32;
 
 #[cfg(doc)]
@@ -223,7 +223,7 @@ impl CopyPath for NamedCopies {}
 ///
 ///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
 ///         connected
-///             .declare_queue(&self.name, self.delivery_limit, self.dead_letter.as_deref())
+///             .declare_queue(&self.name, self.delivery_limit, self.dead_letter.as_ref().map(|name| name.as_ref()))
 ///             .await?;
 ///         connected.subscribe(&self.name).await
 ///     }
@@ -304,7 +304,7 @@ impl CopyPath for BrokerMoves {}
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct RetryDeclaration {
     max_attempts: Option<NonZeroU32>,
-    dead_letter: Option<Cow<'static, str>>,
+    dead_letter: Option<NameText>,
 }
 
 impl RetryDeclaration {
@@ -365,7 +365,7 @@ impl RetryDeclaration {
     /// }
     /// ```
     #[must_use]
-    pub fn with_dead_letter(mut self, destination: impl Into<Cow<'static, str>>) -> Self {
+    pub fn with_dead_letter(mut self, destination: impl Into<NameText>) -> Self {
         self.dead_letter = Some(destination.into());
         self
     }
@@ -454,7 +454,14 @@ impl RetryDeclaration {
     /// ```
     #[must_use]
     pub fn dead_letter(&self) -> Option<&str> {
-        self.dead_letter.as_deref()
+        #[cfg(feature = "alloc")]
+        {
+            self.dead_letter.as_deref()
+        }
+        #[cfg(not(feature = "alloc"))]
+        {
+            self.dead_letter
+        }
     }
 
     /// Whether the registration declared neither a cap nor a destination, which is what lets a

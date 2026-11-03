@@ -13,7 +13,7 @@ The app wraps every subscriber in two layers: one logs each delivery and its out
 A [`Layer`](../../components/subscribers/middleware/layer.md) wraps a handler in another handler.
 It runs code before the body, after it, or instead of it, and passes the outcome on.
 A layer on the app wraps every subscriber the app mounts; a layer on a router wraps that router's subscribers only.
-RustStream emits its own events through `tracing`: the service starting, each subscription opening, the service stopping.
+RustStream emits its own events through the logger the app selects, `.logger(TracingLogger)` for `tracing`: the service starting, each subscription opening, the service stopping.
 [`TracingLayer`](api:ruststream::runtime::layers::TracingLayer) adds an event for every delivery: `delivery received` at `DEBUG`, then its outcome, an ack at `INFO`, a retry or a drop at `WARN`.
 The `logging` feature prints them, as chapter 1 showed; any other `tracing` subscriber works in its place.
 [Observability](../../components/observability/index.md) covers Prometheus metrics and OpenTelemetry export, which mount as layers the same way.

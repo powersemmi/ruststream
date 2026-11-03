@@ -1,8 +1,11 @@
 //! The embedded runner of RustStream: a device service's app on embassy's executor and clock,
-//! on `no_std` with a heap.
+//! on `no_std`.
 //!
 //! The app is one future that one embassy task awaits. Its type carries every broker, mount,
-//! state and hook, so nothing is boxed or erased, and a delivery allocates nothing. A subscription
+//! state and hook, so nothing is boxed or erased, and a delivery allocates nothing. With the
+//! framework's `alloc` feature the delivery's headers, payloads and continuations live on the
+//! heap; without it they live in storage of a fixed size, and the build allocates nothing at
+//! startup either. A subscription
 //! whose stream is always ready, a handler that retries at once, yields to the executor after
 //! every 128 deliveries, so the other tasks of the executor keep running.
 //!
@@ -19,13 +22,17 @@
 //! - [`EmbassyClock`]: the runner's clock over embassy-time.
 //! - [`frames`]: a broker stand-in over an embassy-sync channel, for the runner's host tests.
 //!
-//! How a device service is built is taught on the site's embedded runtime page.
+//! How a device service is built is taught on the site's
+//! [embedded runtime page](https://powersemmi.github.io/ruststream/latest/components/application/embedded-runtime/).
 //!
 
 // The embedded runner runs on one thread; its futures are never sent.
 #![allow(clippy::future_not_send)]
 #![no_std]
 
+// The unit tests may allocate in a build without the framework's `alloc` feature: the claim of
+// that variant is about the framework's own code, which names `alloc` only behind the feature.
+#[cfg(any(ruststream_alloc, feature = "testing", test))]
 extern crate alloc;
 
 mod app;
@@ -39,13 +46,15 @@ mod hooks;
 mod host;
 #[cfg(feature = "testing")]
 mod in_process;
-mod lanes;
 mod mailbox;
 mod mounts;
+mod workers;
 
 #[doc(hidden)]
 pub use app::AppBrokers;
 pub use app::{EmbeddedApp, Mounts, Parts, RunError, Scope};
+#[cfg(not(ruststream_alloc))]
+pub use bindable::BindCell;
 pub use bindable::{Bindable, Bound};
 pub use clock::EmbassyClock;
 pub use control::{Control, Health, Stopping};
@@ -55,10 +64,19 @@ pub use hooks::{HookList, Hooks, NoHooks};
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 pub use in_process::StartInProcess;
-pub use lanes::MountSteps;
 #[doc(hidden)]
-pub use lanes::{EmbeddedPlan, Keyed, Lanes, NoRoom, OneLane, Pool, Room, SoFar};
+#[cfg(ruststream_alloc)]
+pub use mounts::Held;
+#[cfg(not(ruststream_alloc))]
+#[doc(hidden)]
+pub use mounts::Own;
 pub use mounts::Registration;
 #[doc(hidden)]
 pub use mounts::{BrokerMount, CloseAll, ConnectSlot, NoSlot, SharedConnection, StartMounts};
 pub use ruststream_runtime::MountChain;
+pub use workers::MountSteps;
+#[doc(hidden)]
+pub use workers::{
+    DEFAULT_ENCODE_CAPACITY, EmbeddedPlan, Encode, EncodeSize, Keyed, NoRoom, OneWorker, Pool,
+    Room, SoFar, WorkerSet,
+};

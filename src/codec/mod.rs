@@ -11,6 +11,9 @@
 //! - [MessagePack][msgpack]: `MsgpackCodec` over `rmp-serde`, the `msgpack` feature.
 //! - [Codec][custom]: a codec of your own, an implementation of [`Codec`] that returns
 //!   [`CodecError`] and names its [`Codec::CONTENT_TYPE`].
+//! - [Slice codecs][slice]: `PostcardCodec` and `JsonCoreCodec`, the `postcard` and `json-core`
+//!   features, and the `SliceCodec` trait of the embedded runtime built without `alloc`, which
+//!   encodes into a slice and decodes from one.
 //! - [Protobuf][protobuf]: a `prost` message on the byte lanes with `#[wire(prost)]`, with no
 //!   codec feature.
 //! - [Bytes][bytes]: payloads that are their own encoding,
@@ -22,6 +25,7 @@
 //! [cbor]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/cbor/
 //! [msgpack]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/msgpack/
 //! [custom]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/custom-codec/
+//! [slice]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/slice-codecs/
 //! [protobuf]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/protobuf/
 //! [bytes]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/bytes/
 

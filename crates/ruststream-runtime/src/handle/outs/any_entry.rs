@@ -9,7 +9,7 @@
 use core::marker::PhantomData;
 use core::ops::Deref;
 
-use crate::codec::Codec;
+use crate::codec::ActiveCodec as Codec;
 use crate::publish::{Admits, TransactionScope, TypedTransaction};
 use crate::publish::{HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishSink};
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};

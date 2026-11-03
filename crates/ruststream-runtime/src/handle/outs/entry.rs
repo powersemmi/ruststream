@@ -4,7 +4,9 @@
 // The shared body serves the local contract, whose futures carry no Send.
 #![allow(clippy::future_not_send)]
 
+#[cfg(ruststream_alloc)]
 use alloc::boxed::Box;
+#[cfg(ruststream_alloc)]
 use alloc::format;
 use core::fmt;
 use core::marker::PhantomData;
@@ -12,7 +14,7 @@ use core::ops::Deref;
 use core::time::Duration;
 use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
-use crate::codec::Codec;
+use crate::codec::ActiveCodec as Codec;
 use crate::inject::FromStartup;
 use crate::publish::{
     Admits, HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishIdentity, SinkOutcome,
@@ -22,7 +24,7 @@ use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Anchor, Origin, paired, publishing_to};
 use crate::{
-    Connected, HeaderMap, OutgoingDestination, OutgoingFor, OwnedTransactions, PairError,
+    Connected, HeaderSet, OutgoingDestination, OutgoingFor, OwnedTransactions, PairError,
     PublishMessageError, PublishOutcome, PublishPolicy, Publisher, RequestReply,
     TransactionalPublisher,
 };
@@ -49,10 +51,10 @@ use crate::{
 /// `.transform(..)` steps composed on top. It is [`PublishIdentity`] - nothing in the way, the
 /// bare leaf call - until a mount site names either.
 ///
-/// Autoderef carries a method call, not a trait bound: a helper written as `fn f<L: Lanes>(l:
+/// Autoderef carries a method call, not a trait bound: a helper written as `fn f<L: Routes>(l:
 /// &L)` rejects the entry a body holds. A broker crate that wants such helpers - or bodies
 /// generic over its capability - adds one blanket impl next to its trait,
-/// `impl<M, W: Lanes, E, Pipe, Body> Lanes for Slot<M, W, E, Pipe, Body>`, delegating through
+/// `impl<M, W: Routes, E, Pipe, Body> Routes for Slot<M, W, E, Pipe, Body>`, delegating through
 /// this `Deref`.
 ///
 /// `Body` is the entry's declared message set, `()` (any dictionary type) unless the
@@ -403,7 +405,7 @@ impl<M: OutSlot, W: Publisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, B
         publish.await
     }
 
-    fn base_headers(&self) -> Option<&HeaderMap> {
+    fn base_headers(&self) -> Option<&HeaderSet> {
         self.wired.base_headers()
     }
 }
@@ -502,12 +504,15 @@ where
         let (live, origin) = paired(connected, pairing).await;
         #[cfg(not(feature = "testing"))]
         let live = pairing.await;
+        #[cfg(ruststream_alloc)]
         let live = live.map_err(|err| {
             PairError::from_boxed(Box::from(format!(
                 "pairing the publisher for the `{}` slot failed: {err}",
                 M::NAME,
             )))
         })?;
+        #[cfg(not(ruststream_alloc))]
+        let live = live?;
         Ok(Self {
             wired: SlotPublisher::new(live),
             codec,

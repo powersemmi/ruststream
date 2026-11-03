@@ -4,8 +4,8 @@
 
 use std::collections::BTreeMap;
 
+use ruststream_core::diag::warn;
 use serde_json::{Map, Value, json};
-use tracing::warn;
 
 use super::spec::MessageObject;
 use ruststream_core::bindings::Bindings;

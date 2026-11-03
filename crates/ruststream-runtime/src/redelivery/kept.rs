@@ -5,18 +5,17 @@
 // Written over the contract traits for a runner that polls on one thread.
 #![allow(clippy::future_not_send)]
 
-use alloc::borrow::{Cow, ToOwned};
-use alloc::boxed::Box;
-use alloc::string::String;
 use core::any::type_name;
 use core::future::ready;
 use core::marker::PhantomData;
 use core::mem;
 use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
+use ruststream_core::{NameText, RedeliveryAddress};
 
-use bytes::BytesMut;
+use ruststream_core::PayloadBuf;
 
-use super::RetryDestinationError;
+use super::{RetryDestinationError, startup_failure};
+use crate::copied::{KeptName, NoRoom, diagnostic_name, form_of, lay_over};
 use crate::host::KeptDelivery;
 use crate::lifecycle::BoxError;
 use crate::publish::{
@@ -24,9 +23,9 @@ use crate::publish::{
 };
 use crate::publish_failure::Refusal;
 use crate::{
-    AddressedCopies, Broker, BrokerMoves, Connected, DefaultPublish, HeaderMap, NamedCopies,
-    Outgoing, OutgoingMessage, PayloadForm, PublishPolicy, Publisher, Reads, RedeliveryAddressed,
-    Settle, SubscriptionSource,
+    AddressedCopies, Broker, BrokerMoves, Connected, DefaultPublish, HeaderSet, NamedCopies,
+    Outgoing, OutgoingMessage, PublishPolicy, Publisher, Reads, RedeliveryAddressed, Settle,
+    SubscriptionSource,
 };
 
 /// Where a kept copy leaves: the publisher and the address that reaches the subscription
@@ -49,7 +48,7 @@ pub trait CopyPublisher: MaybeSync {
         &self,
         destination: &str,
         payload: &[u8],
-        headers: HeaderMap,
+        headers: HeaderSet,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend;
 }
@@ -63,8 +62,8 @@ pub trait PrepareCopy<Cx>: CopyPublisher {
     /// multi-thread runner's retry slot does.
     fn prepare<M: Settle>(
         &self,
-        payload: &mut BytesMut,
-        headers: &mut HeaderMap,
+        payload: &mut PayloadBuf,
+        headers: &mut HeaderSet,
         options: &mut Option<Self::Options>,
         destination: &str,
         delivery: &KeptDelivery<'_, M, Cx>,
@@ -78,7 +77,7 @@ pub trait PrepareCopy<Cx>: CopyPublisher {
 #[derive(Debug)]
 pub struct AddressedCopy<Live, Stack = PublishTransformIdentity> {
     live: Live,
-    address: String,
+    address: KeptName,
     stack: Stack,
 }
 
@@ -86,19 +85,21 @@ impl<Live: Publisher, Stack: MaybeSync> CopyPublisher for AddressedCopy<Live, St
     type Options = Live::Options;
 
     fn address(&self) -> &str {
-        &self.address
+        kept_str(&self.address)
     }
 
     async fn publish_copy(
         &self,
         destination: &str,
         payload: &[u8],
-        headers: HeaderMap,
+        headers: HeaderSet,
         options: Option<&Live::Options>,
     ) -> Result<(), Refusal> {
         // A transport that reads the bytes is lent the record's buffer; one that keeps them is
         // handed a copy of its own.
-        let form = <Live::Payload as PayloadForm>::Form::from(payload);
+        let Some(form) = form_of::<Live::Payload>(payload) else {
+            return Err(Refusal::new(NoRoom));
+        };
         let msg = OutgoingMessage::assembled(destination, form, headers);
         self.live
             .publish(msg, options)
@@ -114,19 +115,22 @@ where
 {
     fn prepare<M: Settle>(
         &self,
-        payload: &mut BytesMut,
-        headers: &mut HeaderMap,
+        payload: &mut PayloadBuf,
+        headers: &mut HeaderSet,
         options: &mut Option<Live::Options>,
         destination: &str,
         delivery: &KeptDelivery<'_, M, Cx>,
     ) {
         // The publisher's own constants sit under the delivery's headers, as on every publish
         // through it, so the transforms see the copy as it will be sent.
-        if let Some(base) = self.live.base_headers() {
-            let delivered = mem::replace(headers, base.clone());
-            for (key, value) in delivered.iter() {
-                headers.insert(key.to_owned(), value.to_owned());
-            }
+        // Where the fixed map has no room for the constants as well, the copy leaves with the
+        // delivery's own headers: a retry that arrives without a constant beats one that is lost.
+        if let Some(laid) = self
+            .live
+            .base_headers()
+            .and_then(|base| lay_over(base, headers))
+        {
+            *headers = laid;
         }
         self.stack
             .apply_kept(payload, headers, options, destination, delivery);
@@ -151,8 +155,8 @@ pub trait KeptTransforms<Cx, Options> {
     /// Runs the stack over the copy bound for `destination`.
     fn apply_kept<M: Settle>(
         &self,
-        payload: &mut BytesMut,
-        headers: &mut HeaderMap,
+        payload: &mut PayloadBuf,
+        headers: &mut HeaderSet,
         options: &mut Option<Options>,
         destination: &str,
         delivery: &KeptDelivery<'_, M, Cx>,
@@ -164,8 +168,8 @@ impl<Cx, Options> KeptTransforms<Cx, Options> for PublishTransformIdentity {
     #[inline]
     fn apply_kept<M: Settle>(
         &self,
-        _payload: &mut BytesMut,
-        _headers: &mut HeaderMap,
+        _payload: &mut PayloadBuf,
+        _headers: &mut HeaderSet,
         _options: &mut Option<Options>,
         _destination: &str,
         _delivery: &KeptDelivery<'_, M, Cx>,
@@ -179,8 +183,8 @@ where
 {
     fn apply_kept<M: Settle>(
         &self,
-        payload: &mut BytesMut,
-        headers: &mut HeaderMap,
+        payload: &mut PayloadBuf,
+        headers: &mut HeaderSet,
         options: &mut Option<Options>,
         destination: &str,
         delivery: &KeptDelivery<'_, M, Cx>,
@@ -192,7 +196,16 @@ where
         let context = (delivery.build_cx)(delivery.message);
         let view = PublishContext::new(delivery.subscription, delivery.message.headers(), &context);
         self.apply(&mut out, options, &view);
-        *payload = mem::take(out.payload_mut());
+        #[cfg(ruststream_alloc)]
+        {
+            *payload = mem::take(out.payload_mut());
+        }
+        // The message was built over an owned buffer, so reaching it cannot fail: the fixed form
+        // returns a `Result` because it may have to copy lent bytes, which this message never lends.
+        #[cfg(not(ruststream_alloc))]
+        if let Ok(buffer) = out.payload_mut() {
+            *payload = mem::take(buffer);
+        }
         *headers = mem::take(out.headers_mut());
     }
 }
@@ -217,7 +230,7 @@ impl CopyPublisher for NoCopyPath {
         &self,
         _destination: &str,
         _payload: &[u8],
-        _headers: HeaderMap,
+        _headers: HeaderSet,
         _options: Option<&()>,
     ) -> Result<(), Refusal> {
         match *self {}
@@ -228,8 +241,8 @@ impl CopyPublisher for NoCopyPath {
 impl<Cx> PrepareCopy<Cx> for NoCopyPath {
     fn prepare<M: Settle>(
         &self,
-        _payload: &mut BytesMut,
-        _headers: &mut HeaderMap,
+        _payload: &mut PayloadBuf,
+        _headers: &mut HeaderSet,
         _options: &mut Option<()>,
         _destination: &str,
         _delivery: &KeptDelivery<'_, M, Cx>,
@@ -365,6 +378,42 @@ pub trait KeptAddress<B: Broker, Source> {
     ) -> impl Future<Output = Result<Self::Path, BoxError>>;
 }
 
+/// A kept address, borrowed as text.
+#[cfg(ruststream_alloc)]
+fn kept_str(address: &KeptName) -> &str {
+    address.as_str()
+}
+
+/// A kept address, borrowed as text.
+#[cfg(not(ruststream_alloc))]
+const fn kept_str(address: &KeptName) -> &str {
+    address
+}
+
+/// The loop's own copy of an address a descriptor reported: whole in either build.
+#[cfg(ruststream_alloc)]
+fn kept_address(address: RedeliveryAddress) -> KeptName {
+    address.into_text().into_owned()
+}
+
+/// The address a descriptor reported, kept as the literal it was made from.
+#[cfg(not(ruststream_alloc))]
+fn kept_address(address: RedeliveryAddress) -> KeptName {
+    address.into_text()
+}
+
+/// The loop's own copy of a destination the mount site named: whole in either build.
+#[cfg(ruststream_alloc)]
+fn kept_named(name: NameText) -> KeptName {
+    name.into_owned()
+}
+
+/// A destination the mount site named, kept as the literal it is.
+#[cfg(not(ruststream_alloc))]
+const fn kept_named(name: NameText) -> KeptName {
+    name
+}
+
 type DefaultLive<B> =
     <<Connected<B> as DefaultPublish>::Policy as PublishPolicy<Connected<B>>>::Live;
 
@@ -381,14 +430,14 @@ where
         let address = source
             .redelivery_address(connected)
             .await
-            .map_err(|err| -> BoxError { Box::new(err) })?;
+            .map_err(|err| startup_failure("redelivery address", source.name(), err))?;
         let live = <Connected<B> as DefaultPublish>::Policy::default()
             .pair(connected)
             .await
-            .map_err(BoxError::from)?;
+            .map_err(|err| startup_failure("copy publisher", source.name(), err))?;
         Ok(AddressedCopy {
             live,
-            address: address.as_str().to_owned(),
+            address: kept_address(address),
             stack: PublishTransformIdentity,
         })
     }
@@ -401,7 +450,7 @@ where
 #[derive(Debug)]
 pub struct LocalRetrySlot<Policy, Stack = PublishTransformIdentity> {
     pub(crate) policy: Policy,
-    pub(crate) destination: Option<Cow<'static, str>>,
+    pub(crate) destination: Option<NameText>,
     pub(crate) stack: Stack,
 }
 
@@ -455,10 +504,14 @@ where
         // A destination the mount site named is where the copies go; the descriptor is asked
         // only otherwise, as on the multi-thread runner.
         let address = match slot.destination {
-            Some(named) => named.into_owned(),
+            Some(named) => kept_named(named),
             None => <Source::Copies as SlotAddress<B, Source>>::address(source, connected).await?,
         };
-        let live = slot.policy.pair(connected).await.map_err(BoxError::from)?;
+        let live = slot
+            .policy
+            .pair(connected)
+            .await
+            .map_err(|err| startup_failure("copy publisher", source.name(), err))?;
         Ok(Some(AddressedCopy {
             live,
             address,
@@ -479,7 +532,7 @@ pub trait SlotAddress<B: Broker, Source> {
     fn address(
         source: &Source,
         connected: &Connected<B>,
-    ) -> impl Future<Output = Result<String, BoxError>>;
+    ) -> impl Future<Output = Result<KeptName, BoxError>>;
 }
 
 impl<B, Source> SlotAddress<B, Source> for AddressedCopies
@@ -487,12 +540,12 @@ where
     B: Broker,
     Source: RedeliveryAddressed<Connected<B>>,
 {
-    async fn address(source: &Source, connected: &Connected<B>) -> Result<String, BoxError> {
+    async fn address(source: &Source, connected: &Connected<B>) -> Result<KeptName, BoxError> {
         let address = source
             .redelivery_address(connected)
             .await
-            .map_err(|err| -> BoxError { Box::new(err) })?;
-        Ok(address.as_str().to_owned())
+            .map_err(|err| startup_failure("redelivery address", source.name(), err))?;
+        Ok(kept_address(address))
     }
 }
 
@@ -506,15 +559,20 @@ where
     fn address(
         source: &Source,
         _connected: &Connected<B>,
-    ) -> impl Future<Output = Result<String, BoxError>> {
-        ready(Err(BoxError::from(RetryDestinationError {
-            subscription: source.name().to_owned(),
-            source_type: type_name::<Source>(),
-        })))
+    ) -> impl Future<Output = Result<KeptName, BoxError>> {
+        ready(Err(startup_failure(
+            "retry destination",
+            source.name(),
+            RetryDestinationError {
+                subscription: diagnostic_name(source.name()),
+                source_type: type_name::<Source>(),
+            },
+        )))
     }
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
     use crate::Settle;
     use alloc::borrow::ToOwned;
@@ -526,7 +584,7 @@ mod tests {
     use std::io;
     use std::sync::Mutex;
 
-    use bytes::BytesMut;
+    use ruststream_core::PayloadBuf;
 
     use super::{AddressedCopy, CopyPublisher, PrepareCopy};
     use crate::dispatch::RETRY_COUNT_HEADER;
@@ -534,7 +592,7 @@ mod tests {
     use crate::publish::{
         ForReply, PublishContext, PublishTransform, PublishTransformIdentity, PublishTransformStack,
     };
-    use crate::{AckError, HeaderMap, IncomingMessage, Lend, Outgoing, OutgoingMessage, Publisher};
+    use crate::{AckError, HeaderSet, IncomingMessage, Lend, Outgoing, OutgoingMessage, Publisher};
     use crate::{Reads, Str};
 
     /// The broker's per-message setting the transform writes.
@@ -542,12 +600,12 @@ mod tests {
     struct Priority(u8);
 
     /// What one publish handed the broker.
-    type Sent = (String, Vec<u8>, HeaderMap, Option<Priority>);
+    type Sent = (String, Vec<u8>, HeaderSet, Option<Priority>);
 
     /// A publisher with a constant header of its own, recording what it is handed.
     #[derive(Clone)]
     struct Recording {
-        base: HeaderMap,
+        base: HeaderSet,
         sent: Arc<Mutex<Vec<Sent>>>,
     }
 
@@ -571,7 +629,7 @@ mod tests {
             ready(Ok(()))
         }
 
-        fn base_headers(&self) -> Option<&HeaderMap> {
+        fn base_headers(&self) -> Option<&HeaderSet> {
             Some(&self.base)
         }
     }
@@ -579,7 +637,7 @@ mod tests {
     /// The delivery being retried.
     struct Job {
         payload: Vec<u8>,
-        headers: HeaderMap,
+        headers: HeaderSet,
     }
 
     impl IncomingMessage for Job {
@@ -587,7 +645,7 @@ mod tests {
             &self.payload
         }
 
-        fn headers(&self) -> &HeaderMap {
+        fn headers(&self) -> &HeaderSet {
             &self.headers
         }
     }
@@ -627,7 +685,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_kept_copy_leaves_as_its_transforms_left_it() {
-        let mut base = HeaderMap::new();
+        let mut base = HeaderSet::new();
         base.insert("origin", "board");
         base.insert("tier", "base");
         let copy = AddressedCopy {
@@ -641,7 +699,7 @@ mod tests {
                 outer: Escalate,
             },
         };
-        let mut delivered = HeaderMap::new();
+        let mut delivered = HeaderSet::new();
         delivered.insert(Str::from_static(RETRY_COUNT_HEADER), "1");
         delivered.insert("tier", "delivery");
         let job = Job {
@@ -650,7 +708,7 @@ mod tests {
         };
         let mut headers = delivered;
         headers.insert(Str::from_static(RETRY_COUNT_HEADER), "2");
-        let mut payload = BytesMut::from(&b"job"[..]);
+        let mut payload = PayloadBuf::from(&b"job"[..]);
         let mut options = None;
 
         copy.prepare(
@@ -701,5 +759,21 @@ mod tests {
             Some(Priority(9)),
             "the setting the transform wrote"
         );
+    }
+}
+
+#[cfg(test)]
+mod address_tests {
+    use ruststream_core::RedeliveryAddress;
+
+    use super::{kept_address, kept_str};
+
+    /// A subject written as one literal, past the room a built name has.
+    const LITERAL: &str = "plant/line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-line-sensors/temperature";
+
+    #[test]
+    fn an_address_past_the_room_is_kept_whole() {
+        let kept = kept_address(RedeliveryAddress::new(LITERAL));
+        assert_eq!(kept_str(&kept), LITERAL);
     }
 }

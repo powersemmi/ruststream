@@ -16,7 +16,7 @@ help: the following other types implement trait `InProcess`
    | impl<Log: LogMode> InProcess for MemoryBroker<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryBroker<Log>`
    |
-  ::: crates/ruststream-memory/src/local/broker.rs
+  ::: crates/ruststream-memory/src/local/heap/broker.rs
    |
    | impl<const CAP: usize> InProcess for LocalMemoryBroker<CAP> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `LocalMemoryBroker<CAP>`
@@ -47,7 +47,7 @@ help: the following other types implement trait `TestableBroker`
    | impl<Log: LogMode> TestableBroker for ConnectedMemoryBroker<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ConnectedMemoryBroker<Log>`
    |
-  ::: crates/ruststream-memory/src/local/broker.rs
+  ::: crates/ruststream-memory/src/local/heap/broker.rs
    |
    | impl<const CAP: usize> TestableBroker for ConnectedLocalMemoryBroker<CAP> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ConnectedLocalMemoryBroker<CAP>`
@@ -77,7 +77,7 @@ help: the following other types implement trait `DefaultPublish`
    | impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ConnectedMemoryBroker<Log>`
    |
-  ::: crates/ruststream-memory/src/local/broker.rs
+  ::: crates/ruststream-memory/src/local/heap/broker.rs
    |
    | impl<const CAP: usize> DefaultPublish for ConnectedLocalMemoryBroker<CAP> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ConnectedLocalMemoryBroker<CAP>`

@@ -5,9 +5,9 @@ use core::marker::PhantomData;
 use ruststream_core::MaybeSync;
 
 use ruststream_core::KeptPayload;
+use ruststream_core::diag::warn;
 use serde::Serialize;
 use thiserror::Error;
-use tracing::warn;
 
 use super::scratch::Scratch;
 use super::{HeadersUnset, MessageBody, PublishBuilder, PublishCodec, SinkRefusal, message_of};

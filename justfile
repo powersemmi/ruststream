@@ -55,6 +55,10 @@ check:
     # dependency's features across members, so the reduced legs leave it out and check it on its
     # own.
     cargo check --workspace --exclude ruststream-no-std-probe --no-default-features
+    # The embedded runner on its own, in both variants (a workspace build above has the variant
+    # its neighbours chose).
+    cargo check -p ruststream-runtime-embassy --no-default-features
+    cargo check -p ruststream-runtime-embassy --features alloc
     # The codec-free build. A codec is optional, so the self-carrying lanes
     # (`Serialized` / `Deserialized`) and the typed publish entry point over them must stand with
     # no codec feature at all; only encoding and decoding may demand one.
@@ -64,6 +68,15 @@ check:
     # crate may) takes the `Send` bounds in every boxed future of the runtime as well.
     cargo check -p ruststream-runtime --features ruststream-core/send
     cargo check -p ruststream-runtime --no-default-features --features alloc,ruststream-core/send
+    # The contract's `alloc` is a variant any crate of the graph may turn on (a broker, a helper),
+    # so every crate of the family must build with it on and its own `alloc` off.
+    cargo check -p ruststream-runtime --no-default-features --features ruststream-core/alloc
+    cargo check -p ruststream-memory --no-default-features --features embassy,ruststream-core/alloc
+    cargo check -p ruststream-testing --no-default-features --features embassy,ruststream-core/alloc
+    cargo check -p ruststream-runtime-embassy --no-default-features --features ruststream-core/alloc
+    cargo check -p ruststream-conformance --no-default-features --features ruststream-core/alloc
+    cargo check -p ruststream --no-default-features \
+        --features embassy,macros,memory,ruststream-core/alloc
     # The firmware facade with no serde codec: an embedded handler's `Out` slot mounts, and only
     # an encoding publish asks for a codec.
     cargo check -p ruststream --no-default-features --features embassy,macros,memory --tests
@@ -84,15 +97,54 @@ check:
         --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --features alloc,json \
         --target thumbv7em-none-eabihf
+    # The same on a Cortex-M4F: a firmware whose dependency needs a heap has an allocator, so the
+    # embassy set builds with the contract's `alloc` on and the framework's own off.
+    RUSTFLAGS="" cargo build -p ruststream-runtime-embassy --no-default-features \
+        --features ruststream-core/alloc --target thumbv7em-none-eabihf
+    RUSTFLAGS="" cargo build -p ruststream --no-default-features \
+        --features embassy,macros,memory,ruststream-core/alloc --target thumbv7em-none-eabihf
+    # The delivery body without `alloc`, and the crate that runs its own unit tests, are held to the
+    # same lints.
+    cargo clippy -p ruststream-runtime --no-default-features --lib -- -D warnings
+    cargo clippy -p ruststream-runtime --no-default-features --features postcard,json-core --lib \
+        -- -D warnings
+    cargo clippy --manifest-path crates/ruststream-runtime-noalloc/Cargo.toml --lib --tests \
+        -- -D warnings
+    # The embedded runner without `alloc`, and the crate that runs its unit tests.
+    cargo clippy -p ruststream-runtime-embassy --no-default-features --lib -- -D warnings
+    cargo clippy --manifest-path crates/ruststream-runtime-embassy-noalloc/Cargo.toml --lib --tests \
+        -- -D warnings
     RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --target thumbv6m-none-eabi
     RUSTFLAGS="" cargo build -p ruststream-runtime-embassy --target thumbv7em-none-eabihf
+    # The diagnostics of a build without `alloc`: through `defmt` on a Cortex-M, through both
+    # sinks, and through `defmt` on the target that has no atomics `tracing` could use.
+    RUSTFLAGS="" cargo build -p ruststream --no-default-features \
+        --features embassy,macros,memory,defmt --target thumbv7em-none-eabihf
+    RUSTFLAGS="" cargo build -p ruststream --no-default-features \
+        --features embassy,macros,memory,defmt,log --target thumbv7em-none-eabihf
+    RUSTFLAGS="" cargo build -p ruststream-runtime --no-default-features --features defmt \
+        --target thumbv6m-none-eabi
     RUSTFLAGS="" cargo build -p ruststream-memory --no-default-features --features embassy \
         --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream --no-default-features \
         --features cbor,embassy,macros,memory --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream --no-default-features \
         --features json,embassy,macros,memory --target thumbv7em-none-eabihf
+    # A firmware binary on the no-alloc build, linked for both Cortex-M targets with no global
+    # allocator: it fails to link while any crate of the build needs a heap. Once with no codec
+    # and once for each slice codec.
+    for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do \
+        for features in "" postcard json-core; do \
+            RUSTFLAGS="" cargo build --locked --manifest-path crates/ruststream-firmware-noalloc/Cargo.toml \
+                --target $target ${features:+--features $features} || exit 1; \
+        done; \
+    done
+    # The same binary with defmt: it links with `DefmtLogger` selected and with defmt compiled and
+    # no logger selected, and the optimised ELF carries the framework's defmt code only in the first.
+    for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do \
+        crates/ruststream-firmware-noalloc/check-defmt.sh $target || exit 1; \
+    done
     # The embassy runtime alone, as a device service builds it: the facade with the embassy set,
     # where every target that needs tokio names it and drops out, then the embedded runner and
     # the local bus with their tests.
@@ -136,14 +188,48 @@ check:
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-runtime-embassy --test ui
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-cli --test ui
 
+# The embassy runtime without a heap: the facade of a device service with no `alloc`, and the
+# crates under it, each as its own invocation so a workspace neighbour cannot unify `alloc` on.
+# The tree check comes first and fails the leg if the framework's `alloc` is in any graph; the
+# tests run under an allocator that fails the framework's own allocations.
+test-no-alloc:
+    for graph in "-p ruststream --features embassy,memory,macros,testing" \
+        "-p ruststream-runtime-embassy"; do \
+        tree="$(cargo tree $graph --no-default-features -e features,normal,build -i ruststream-core -i ruststream-runtime)"; \
+        if printf '%s\n' "$tree" | grep -E 'ruststream-(core|runtime) feature "alloc"'; then \
+            echo "error: the framework's alloc feature is on in: $graph" >&2; exit 1; \
+        fi; \
+    done
+    tree="$(cargo tree --manifest-path crates/ruststream-memory-noalloc/Cargo.toml --features testing --all-targets -e features -i ruststream-core -i ruststream-runtime)"; \
+    if printf '%s\n' "$tree" | grep -E 'ruststream-(core|runtime) feature "alloc"'; then \
+        echo "error: the framework's alloc feature is on in the local bus crate" >&2; exit 1; \
+    fi
+    cargo test --no-default-features --features embassy,memory,macros,testing --test embedded_no_alloc
+    cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_out
+    cargo test --no-default-features --features embassy,memory,macros,testing,log --test embedded_diagnostics
+    cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_name
+    # The device service the embedded runtime page teaches, under the failing allocator.
+    cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test doc_device
+    # The device build's own futures, without the harness that wraps them in the test above.
+    cargo test --no-default-features --features embassy,memory,macros --test embedded_future_size
+    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features embassy,memory,macros,testing --test ui_no_alloc
+    cargo test --manifest-path crates/ruststream-memory-noalloc/Cargo.toml --features testing
+    # The runtime's own unit tests of the variant: its dev-dependencies turn `alloc` on, so the
+    # sources build as a crate of their own that has none.
+    cargo test --manifest-path crates/ruststream-runtime-noalloc/Cargo.toml --lib
+    cargo test --manifest-path crates/ruststream-runtime-noalloc/Cargo.toml --lib --features postcard,json-core
+    # The same for the embedded runner.
+    cargo test --manifest-path crates/ruststream-runtime-embassy-noalloc/Cargo.toml --lib
+
 test:
     # The examples' tests are modules of one test binary, so `--tests` builds none per example;
     # `check` compiles every example on its own. `--tests` leaves the doc examples out, so they
-    # run on their own line.
+    # run on their own line. The all-features build has `defmt` compiled and no `DefmtLogger`
+    # selected; `link_defmt_unselected` is the test that links and runs it.
     cargo test --workspace {{ embassy_tests_exclude }} --all-features --tests
     cargo test --workspace {{ embassy_tests_exclude }} --all-features --doc
     # The embassy runtime's host tests: the embedded runner and the local bus.
-    cargo test -p ruststream-runtime-embassy
+    cargo test -p ruststream-runtime-embassy --features alloc
     cargo test -p ruststream-memory --no-default-features --features embassy
     cargo test -p ruststream-testing --features embassy,json
     # The same crate on the tokio runner alone: every embedded target gates itself on embassy.
@@ -172,6 +258,8 @@ test:
     # feature-gated item without gating itself.
     cargo test -p ruststream --doc
     cargo test -p ruststream --doc --no-default-features
+    # The embassy runtime without a heap, under an allocator that fails the framework's own.
+    just test-no-alloc
 
 # What a change costs per message: instructions and allocations through valgrind, then wall-clock
 # times printed for reference, then the document the benchmarks page publishes.
@@ -233,6 +321,8 @@ bench *ARGS:
     cargo bench {{ gated_benches }} {{ ungated_benches }} --bench wall_clock --no-run \
         --no-default-features --features {{ bench_features }}
     cargo bench -p ruststream-runtime-embassy --bench embedded_idle --no-run
+    cargo bench --no-default-features --features embassy,memory,macros --bench embedded_idle_no_alloc \
+        --no-run
     status=0
     cargo bench {{ gated_benches }} --no-fail-fast \
         --no-default-features --features {{ bench_features }} \
@@ -245,6 +335,10 @@ bench *ARGS:
     # The embedded app builds without tokio, so its scenario is a bench of the embedded runner's own
     # crate, and its allocation floor is absolute like the others; its summaries join the rest.
     cargo bench -p ruststream-runtime-embassy --bench embedded_idle --no-fail-fast \
+        -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
+    # The same app without `alloc`: its floor is zero allocations, the start included.
+    cargo bench --no-default-features --features embassy,memory,macros \
+        --bench embedded_idle_no_alloc --no-fail-fast \
         -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
     python3 scripts/bench_results.py --messages "$messages" target/bench-summary.json \
         docs/benchmarks/results.json
@@ -330,7 +424,7 @@ brokers *names:
                 "($(cat "$owner" 2>/dev/null || echo "holder unknown"))" >&2
             exit 1
         fi
-        printf 'core %s, pid %s, since %s\n' "$core" "$BASHPID" "$(date -Is)" > "$owner"
+        printf 'core %s, pid %s, since %s\n' "$core" "${BASHPID:-$$}" "$(date -Is)" > "$owner"
         trap 'rm -f "$owner"' EXIT
         # A backup left by a killed run may be the only good copy of the lock file.
         if [ -e "$backup" ]; then

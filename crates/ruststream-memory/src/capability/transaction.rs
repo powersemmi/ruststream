@@ -4,7 +4,7 @@
 use std::mem;
 use std::{fmt, future::ready, sync::Arc};
 
-use tracing::warn;
+use ruststream_core::diag::warn;
 
 use crate::{MemoryError, MemoryOutbound, MemoryPublisher, MemoryState};
 use ruststream_core::{

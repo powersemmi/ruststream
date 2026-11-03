@@ -4,11 +4,13 @@
 // The shared body serves the local contract, whose futures carry no Send.
 #![allow(clippy::future_not_send)]
 
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::fmt;
 use ruststream_core::{MaybeSend, MaybeSync};
 
 use crate::inject::FromStartup;
+#[cfg(ruststream_alloc)]
 use crate::metadata::OutgoingMessageMetadata;
 use crate::slot::OutSlot;
 use crate::{Broker, Connected, PairError};
@@ -126,6 +128,7 @@ pub trait EntryMarkers {
     type Markers;
 
     /// The markers' `AsyncAPI` dictionaries, one entry set per slot.
+    #[cfg(ruststream_alloc)]
     fn outgoing() -> Vec<OutgoingMessageMetadata>;
 }
 
@@ -134,6 +137,7 @@ pub trait EntryMarkers {
 #[doc(hidden)]
 pub trait SlotDictionary {
     /// The markers' dictionaries, in declaration order.
+    #[cfg(ruststream_alloc)]
     fn outgoing() -> Vec<OutgoingMessageMetadata>;
 }
 
@@ -144,6 +148,7 @@ macro_rules! impl_entry_markers {
         {
             type Markers = ($($m,)+);
 
+            #[cfg(ruststream_alloc)]
             fn outgoing() -> Vec<OutgoingMessageMetadata> {
                 let mut declared = Vec::new();
                 $(declared.extend($m::outgoing());)+
@@ -154,6 +159,7 @@ macro_rules! impl_entry_markers {
         impl<$($m: OutSlot, $w, $e, $p, $b),+> SlotDictionary
             for ($(Slot<$m, $w, $e, $p, $b>,)+)
         {
+            #[cfg(ruststream_alloc)]
             fn outgoing() -> Vec<OutgoingMessageMetadata> {
                 <Self as EntryMarkers>::outgoing()
             }

@@ -11,7 +11,11 @@
 // The shared body serves the local contract, whose futures carry no Send.
 #![allow(clippy::future_not_send)]
 
+#[cfg(ruststream_alloc)]
+use alloc::borrow::ToOwned;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::fmt;
 use core::future::ready;
@@ -25,6 +29,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerOutcome};
 use super::input::{InputKind, Materialize};
+#[cfg(ruststream_alloc)]
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::slot::DefaultSlot;
 use super::typed::{refused, unmaterialized};
@@ -255,12 +260,14 @@ pub trait InjectDef: MaybeSendSync {
     }
 
     /// The input type's serialized JSON Schema, when available.
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         None
     }
 
     /// The serialized JSON Schema of the handler's typed header contract (its
     /// [`Headers<T>`](super::Headers) parameter), when available.
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         None
     }
@@ -268,6 +275,7 @@ pub trait InjectDef: MaybeSendSync {
     /// The messages this handler publishes, for the `AsyncAPI` `send` operations: every `Out`
     /// slot dictionary entry. The macro fills this in; the default declares nothing. Called
     /// once at registration.
+    #[cfg(ruststream_alloc)]
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
         Vec::new()
     }
@@ -297,8 +305,9 @@ pub(crate) trait InjectCall<S>: InjectDef {
 }
 
 /// Builds the registration metadata for an injected definition mounted under `name`.
-pub(crate) fn inject_metadata<D: InjectDef>(name: String, def: &D) -> HandlerMetadata {
-    let mut meta = HandlerMetadata::raw(name).with_def_details(
+#[cfg(ruststream_alloc)]
+pub(crate) fn inject_metadata<D: InjectDef>(name: &str, def: &D) -> HandlerMetadata {
+    let mut meta = HandlerMetadata::raw(name.to_owned()).with_def_details(
         def.description(),
         def.input_schema(),
         def.headers_schema(),
@@ -372,6 +381,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
     use alloc::format;
     use core::future::ready;
@@ -445,7 +455,7 @@ mod tests {
     #[cfg(feature = "json")]
     mod diagnostics {
         use super::ManualInject;
-        use crate::HeaderMap;
+        use crate::HeaderSet;
         use crate::codec::JsonCodec;
         use crate::context::Context;
         use crate::dispatch::Delivery;
@@ -473,7 +483,7 @@ mod tests {
 
             let state = ();
             let delivery = Delivery::empty();
-            let headers = HeaderMap::new();
+            let headers = HeaderSet::new();
             let mut ctx = Context::new("in", &headers, &state, (), &delivery);
 
             let (events, guard) = start();

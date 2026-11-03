@@ -12,9 +12,9 @@ use std::{
 };
 
 #[cfg(any(feature = "testing", test))]
-use bytes::Bytes;
+use ruststream_core::__alloc::bytes::Bytes;
 #[cfg(any(feature = "testing", test))]
-use bytes_utils::Str;
+use ruststream_core::__alloc::bytes_utils::Str;
 
 use super::DeliveryInner;
 #[cfg(any(feature = "testing", test))]

@@ -255,9 +255,7 @@ pub(crate) fn derive_deserialized(input: &DeriveInput) -> syn::Result<TokenStrea
             type Output<#out> = #output;
             // Erased: the derive cannot name the format's own error, and the construction
             // failure is reported, never matched on.
-            type Error = ::ruststream::__private::Box<
-                dyn ::ruststream::__private::Error + ::core::marker::Send + ::core::marker::Sync,
-            >;
+            type Error = ::ruststream::runtime::ConstructError;
 
             fn from_payload(
                 payload: &[u8],
@@ -305,7 +303,7 @@ pub(crate) fn derive_serialized(input: &DeriveInput) -> syn::Result<TokenStream2
 
                 fn wire_bytes(
                     &self,
-                    _buf: &mut ::ruststream::BytesMut,
+                    _buf: &mut ::ruststream::EncodeBuf,
                 ) -> ::core::result::Result<
                     ::ruststream::runtime::WireBytes<'_>,
                     Self::Error,
@@ -333,7 +331,7 @@ pub(crate) fn derive_serialized(input: &DeriveInput) -> syn::Result<TokenStream2
 
             fn wire_bytes(
                 &self,
-                buf: &mut ::ruststream::BytesMut,
+                buf: &mut ::ruststream::EncodeBuf,
             ) -> ::core::result::Result<::ruststream::runtime::WireBytes<'_>, Self::Error> {
                 // Straight into the publish path's buffer: the value is encoded once, nothing
                 // intermediate is allocated, and a transport that keeps the payload is handed

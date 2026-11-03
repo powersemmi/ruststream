@@ -1,9 +1,9 @@
 //! The definition chain behind [`subscriber`]: the value the constructor returns, the steps it
 //! grows by, and the `.build()` seal the mount machinery accepts.
 
-use alloc::borrow::Cow;
 use core::fmt;
 use core::marker::PhantomData;
+use ruststream_core::NameText;
 
 use crate::settings::{CapsBatches, CloneSource, SubscriberBuilder};
 
@@ -232,7 +232,7 @@ pub struct DeclaredDest;
 /// The default reply destination the chain named with [`to`](SubscriberBuilder::to): it applies
 /// to a reply type that declares no name of its own.
 #[derive(Debug, Clone)]
-pub struct NamedDest(pub(super) Cow<'static, str>);
+pub struct NamedDest(pub(super) NameText);
 
 /// The encoded reply wire: the framework's reply codec serializes the value
 /// (`serde::Serialize` replies, and [`Message`](super::Message) pairs of them).
@@ -325,7 +325,7 @@ impl<A, R, O, C, H, Doc, Src, State, DC>
     /// Sets the handler's human description for the generated document, the value-path
     /// counterpart of the attribute reading the handler's doc comment.
     #[must_use]
-    pub fn describe(self, text: impl Into<Cow<'static, str>>) -> Self {
+    pub fn describe(self, text: impl Into<NameText>) -> Self {
         self.map_def(|mut def| {
             def.docs.description = Some(text.into());
             def
@@ -388,7 +388,7 @@ impl<V, Src, State, DC> SubscriberBuilder<ReplyValue<V, DeclaredDest>, Src, Stat
     #[must_use]
     pub fn to(
         self,
-        name: impl Into<Cow<'static, str>>,
+        name: impl Into<NameText>,
     ) -> SubscriberBuilder<ReplyValue<V, NamedDest>, Src, State, DC> {
         self.map_def(|def| ReplyValue {
             value: def.value,
@@ -404,7 +404,7 @@ impl<A, R, O, C, H, Doc, Dest, Src, State, DC>
 {
     /// See [`describe`](SubscriberBuilder::describe) on the plain chain.
     #[must_use]
-    pub fn describe(self, text: impl Into<Cow<'static, str>>) -> Self {
+    pub fn describe(self, text: impl Into<NameText>) -> Self {
         self.map_def(|def| {
             def.map_value(|mut value| {
                 value.docs.description = Some(text.into());

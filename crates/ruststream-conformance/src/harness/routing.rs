@@ -2,13 +2,12 @@
 //! subscribe and inject surface. They are written over the local family, which every Send broker
 //! implements through the blanket impls, so both suites run the same scenarios.
 
-use bytes::Bytes;
 use ruststream_core::{
-    AckError, HeaderMap, IncomingMessage, OutgoingMessage, Settle, Subscribe, Subscriber,
+    AckError, Headers, IncomingMessage, OutgoingMessage, Settle, Subscribe, Subscriber,
 };
 use ruststream_runtime::testing::{Backlog, TestableBroker};
 
-use super::{expect_next, expect_no_more};
+use super::{expect_next, expect_no_more, set_header};
 
 pub(super) async fn ordering<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.ordering")
@@ -180,9 +179,9 @@ pub(super) async fn headers_propagate<C: TestableBroker + Subscribe>(broker: C) 
         .await
         .expect("subscribe failed");
 
-    let mut headers = HeaderMap::new();
-    headers.insert("Content-Type", "application/json");
-    headers.insert("X-Tenant", Bytes::from_static(b"acme"));
+    let mut headers = Headers::new();
+    set_header(&mut headers, "Content-Type", "application/json");
+    set_header(&mut headers, "X-Tenant", "acme");
 
     broker.inject(
         OutgoingMessage::new("conformance.headers", b"{}".as_slice()).with_headers(headers),

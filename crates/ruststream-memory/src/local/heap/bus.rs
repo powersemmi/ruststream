@@ -5,11 +5,11 @@ use core::mem;
 use core::num::NonZeroU64;
 use core::task::{Context, Poll};
 
-use bytes::Bytes;
 use embassy_sync::channel::Channel;
 #[cfg(feature = "testing")]
 use embassy_sync::once_lock::OnceLock;
 use embassy_sync::waitqueue::WakerRegistration;
+use ruststream_core::__alloc::bytes::Bytes;
 #[cfg(feature = "testing")]
 use ruststream_core::RawMessage;
 use ruststream_core::{BytesMut, HeaderMap, OutgoingMessage, PublishMessageError};

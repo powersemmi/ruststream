@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use bytes::Bytes;
+use ruststream_core::__alloc::bytes::Bytes;
 use thiserror::Error;
 use tokio::{sync::mpsc, time::timeout};
 

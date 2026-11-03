@@ -412,6 +412,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             subscription_end,
             continuations,
             test_hooks,
+            ..
         } = parts;
         // As in process: the state first, the brokers after it.
         let state = state_init().await.map_err(TestError::Startup)?;
@@ -491,6 +492,9 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         A: App<State = State>,
     {
         let parts = app.into_test_parts();
+        if let Some(select) = parts.logger {
+            select();
+        }
         let coordinator = Coordinator::new(DEFAULT_MAX_STEPS);
         parts.test_hooks.install(coordinator.clone());
         (coordinator, parts)

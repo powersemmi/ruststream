@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use common::Order;
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::MemoryBroker;
 use ruststream::nonzero;
 use ruststream::prelude::*;
@@ -132,6 +133,7 @@ impl<'a> MakeWriter<'a> for Captured {
 async fn a_slow_handler_is_sampled_over_the_threshold() {
     let diagnostics = every_poll().threshold(LOW_THRESHOLD);
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .logger(TracingLogger)
         .poll_diagnostics(diagnostics.clone())
         .with_broker(MemoryBroker::new(), |b| b.include(slow));
     let tb = TestApp::start(app).await.expect("startup");
@@ -161,6 +163,7 @@ async fn the_average_warns_once_per_crossing_naming_the_fix() {
     let logs = Captured::default();
     let _guard = logs.install();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .logger(TracingLogger)
         .poll_diagnostics(every_poll().threshold(LOW_THRESHOLD))
         .with_broker(MemoryBroker::new(), |b| b.include(slow));
     let tb = TestApp::start(app).await.expect("startup");
@@ -186,6 +189,7 @@ async fn a_fast_handler_is_not_warned_about() {
     let logs = Captured::default();
     let _guard = logs.install();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .logger(TracingLogger)
         .poll_diagnostics(every_poll().threshold(HIGH_THRESHOLD))
         .with_broker(MemoryBroker::new(), |b| b.include(fast));
     let tb = TestApp::start(app).await.expect("startup");
@@ -209,6 +213,7 @@ async fn a_slow_handler_on_threads_is_measured_without_a_warning() {
     let _guard = logs.install();
     let diagnostics = every_poll().threshold(LOW_THRESHOLD);
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .logger(TracingLogger)
         .poll_diagnostics(diagnostics.clone())
         .with_broker(MemoryBroker::new(), |b| b.include(slow_on_threads));
     let tb = TestApp::start(app).await.expect("startup");
@@ -243,6 +248,7 @@ async fn a_name_shared_with_threads_still_warns_for_the_app_runtime() {
     let _guard = logs.install();
     let diagnostics = every_poll().threshold(LOW_THRESHOLD);
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .logger(TracingLogger)
         .poll_diagnostics(diagnostics.clone())
         .with_broker(MemoryBroker::new(), |b| {
             b.include(slow_shared_on_threads)
@@ -258,6 +264,7 @@ async fn a_name_shared_with_threads_still_warns_for_the_app_runtime() {
 async fn every_nth_poll_is_sampled() {
     let diagnostics = PollDiagnostics::new().sample_every(nonzero!(4u32));
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .logger(TracingLogger)
         .poll_diagnostics(diagnostics.clone())
         .with_broker(MemoryBroker::new(), |b| b.include(fast));
     let tb = TestApp::start(app).await.expect("startup");
@@ -279,6 +286,7 @@ async fn each_poll_is_a_sample() {
     time::pause();
     let diagnostics = every_poll();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .logger(TracingLogger)
         .poll_diagnostics(diagnostics.clone())
         .with_broker(MemoryBroker::new(), |b| b.include(waits));
     let tb = TestApp::start(app).await.expect("startup");
@@ -312,6 +320,7 @@ async fn batches(orders: &[Order]) -> HandlerOutcome {
 async fn a_batch_handler_is_sampled() {
     let diagnostics = every_poll();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .logger(TracingLogger)
         .poll_diagnostics(diagnostics.clone())
         .with_broker(MemoryBroker::new(), |b| {
             b.include(batches.batch(nonzero!(8)))
@@ -329,6 +338,7 @@ async fn a_batch_handler_is_sampled() {
 async fn every_subscription_is_reported_on_its_own() {
     let diagnostics = every_poll();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .logger(TracingLogger)
         .poll_diagnostics(diagnostics.clone())
         .with_broker(MemoryBroker::new(), |b| b.include(fast).include(waits));
     let tb = TestApp::start(app).await.expect("startup");

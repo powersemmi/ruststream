@@ -10,15 +10,15 @@ use core::num::NonZeroUsize;
 ///   `n` deliveries of the subscriber concurrently; a free worker takes the next one.
 ///   Back-pressure holds: the stream is not polled while `n` deliveries are in flight. Global
 ///   processing order is lost by design.
-/// - `workers(n, by_key)`: the same `n` workers as sequential lanes; a delivery goes to the lane
+/// - `workers(n, by_key)`: the same `n` workers, each handling one delivery at a time; a delivery goes to the worker
 ///   picked by hashing its [`partition_key`](crate::IncomingMessage::partition_key), so per-key
-///   ordering is preserved. Messages without a key rotate over the lanes.
+///   ordering is preserved. Messages without a key rotate over the workers.
 /// - `threads(n)`: `n` dedicated threads of the subscription's own, each with a current-thread
 ///   runtime, for a handler that computes. The subscription's loop stays on the app's runtime and
 ///   spreads deliveries over the threads round-robin; decoding, the handler and settling run on
 ///   the thread a delivery was handed to, and only there. The app's runtime stays free for I/O,
 ///   timers and the other subscriptions.
-/// - `threads(n, by_key)`: the same threads as sequential lanes by partition key.
+/// - `threads(n, by_key)`: the same threads, each handling one delivery at a time, picked by partition key.
 ///
 /// The workers or threads and the queues that feed them are made when the subscription starts:
 /// handing a delivery to one allocates nothing.
@@ -129,9 +129,9 @@ impl Workers {
         }
     }
 
-    /// `count` sequential lanes keyed by the message
+    /// `count` sequential workers keyed by the message
     /// [`partition_key`](crate::IncomingMessage::partition_key): per-key ordering is preserved.
-    /// One lane behaves like sequential dispatch.
+    /// One worker behaves like sequential dispatch.
     #[must_use]
     pub const fn keyed(count: NonZeroUsize) -> Self {
         Self {
@@ -189,8 +189,8 @@ impl Workers {
         }
     }
 
-    /// `count` dedicated threads as sequential lanes keyed by the message
-    /// [`partition_key`](crate::IncomingMessage::partition_key): a key always lands on the same
+    /// `count` dedicated threads; a delivery goes to the thread its
+    /// [`partition_key`](crate::IncomingMessage::partition_key) hashes to: a key always lands on the same
     /// thread, so per-key ordering is preserved. The router-chain spelling of
     /// `threads(n, by_key)`.
     ///
@@ -237,7 +237,7 @@ impl Workers {
         }
     }
 
-    /// How many deliveries (or batches) are handled at once: the workers, the keyed lanes or the
+    /// How many deliveries (or batches) are handled at once: the workers, the keyed workers or the
     /// dedicated threads. One for sequential dispatch.
     ///
     /// # Examples
@@ -294,7 +294,7 @@ impl Workers {
         self.count
     }
 
-    /// Whether deliveries go to sequential lanes by their
+    /// Whether deliveries go to sequential workers by their
     /// [`partition_key`](crate::IncomingMessage::partition_key) rather than to whichever worker
     /// is free.
     ///
@@ -306,7 +306,7 @@ impl Workers {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::runtime::{AsDeclared, Declared, IntoDeclared, SubscriberBuilder};
     ///
-    /// /// A broker crate's mount step: keyed lanes keep a key's order, so the broker can ask the
+    /// /// A broker crate's mount step: keyed workers keep a key's order, so the broker can ask the
     /// /// server for unordered delivery only when nothing reads the key.
     /// pub trait Ordering<Mk = AsDeclared>: IntoDeclared<Mk> {
     ///     fn log_ordering(self) -> <Self::Decl as Declared>::Settings

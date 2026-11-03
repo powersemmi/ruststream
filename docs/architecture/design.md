@@ -47,8 +47,8 @@ a mounting that needs one does not compile.
 
 The traits, the runtime and each optional layer are crates of their own, and `ruststream`
 re-exports them under one set of paths. The compiler holds the layering: the contract crate,
-`ruststream-core`, depends on no other crate of the framework. It builds with `#![no_std]` and
-needs only an allocator, so a device can depend on it; `ruststream` turns on its `std` feature on
+`ruststream-core`, depends on no other crate of the framework. It builds with `#![no_std]`,
+with an allocator behind its `alloc` feature and without one, so a device with a heap or with none can depend on it; `ruststream` turns on its `std` feature on
 every target with an operating system.
 The delivery body (decoding, middleware, the handler, the reply, the settlement) lives in
 `ruststream-runtime`, which names no executor. It is generic over a runtime's clock and over the

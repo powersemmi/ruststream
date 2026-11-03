@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use futures::{FutureExt, Stream};
 use ruststream_core::{
-    AckError, Broker, ConnectedBroker, DefaultPublish, HeaderMap, IncomingMessage, OutgoingMessage,
+    AckError, Broker, ConnectedBroker, DefaultPublish, Headers, IncomingMessage, OutgoingMessage,
     PublishPolicy, Publisher, RawMessage, Settle, Subscribe, Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::testing::{Coordinator, InProcess, TestableBroker};
@@ -25,7 +25,7 @@ use super::routing::{
     nack_without_requeue_drops, ordering, publish_before_subscribe,
     published_log_observes_publishes,
 };
-use super::{expect_next, expect_no_more};
+use super::{expect_next, expect_no_more, outgoing, set_header};
 use crate::helpers::unique_subject;
 use crate::lifecycle::Unsent;
 
@@ -113,7 +113,7 @@ where
     let (name, payload, headers) = msg.into_parts();
     publisher
         .publish(
-            OutgoingMessage::new(name, payload).with_headers(headers),
+            outgoing::<<LocalLive<C> as Publisher>::Payload>(name, payload).with_headers(headers),
             None,
         )
         .await
@@ -131,8 +131,8 @@ where
     let subscriber = Subscribe::subscribe(&connected, &name)
         .await
         .expect("subscribe failed");
-    let mut headers = HeaderMap::new();
-    headers.insert("x-conformance", "own");
+    let mut headers = Headers::new();
+    set_header(&mut headers, "x-conformance", "own");
     publish_own(
         &connected,
         OutgoingMessage::new(name.as_str(), b"first".as_slice()).with_headers(headers),
@@ -405,7 +405,7 @@ where
     {
         let late = within(
             "publish after shutdown",
-            handle.publish(OutgoingMessage::new(subject, b"late".as_slice()), None),
+            handle.publish(outgoing::<Pub::Payload>(subject, b"late".as_slice()), None),
         )
         .await;
         assert!(
@@ -483,9 +483,9 @@ pub async fn local_refused_publish_returns_message<B, MkBroker, Pub, MkPub>(
         .await
         .unwrap_or_else(|err| panic!("{SCENARIO}: shutdown failed: {err}"));
 
-    let mut headers = HeaderMap::new();
-    headers.insert("conformance", "unsent");
-    let outgoing = OutgoingMessage::new(&subject, UNSENT).with_headers(headers.clone());
+    let mut headers = Headers::new();
+    set_header(&mut headers, "conformance", "unsent");
+    let outgoing = outgoing::<Pub::Payload>(&subject, UNSENT).with_headers(headers.clone());
     let answer = within(
         "the publish after the shutdown",
         publisher.publish(outgoing, None),
@@ -525,7 +525,7 @@ pub async fn local_refused_publish_returns_message<B, MkBroker, Pub, MkPub>(
 async fn publish<Pub: Publisher>(publisher: &Pub, subject: &str, payload: &[u8]) {
     within(
         "publish",
-        publisher.publish(OutgoingMessage::new(subject, payload), None),
+        publisher.publish(outgoing::<Pub::Payload>(subject, payload), None),
     )
     .await
     .unwrap_or_else(|err| panic!("local_lifecycle: a publish to {subject:?} failed: {err}"));

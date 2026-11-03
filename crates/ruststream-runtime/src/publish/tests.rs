@@ -23,16 +23,16 @@ use core::convert::Infallible;
 use std::sync::Mutex;
 
 #[cfg(feature = "json")]
-use tracing::field::Field;
+use ruststream_core::diag::{Logger as _, TracingLogger};
 #[cfg(feature = "json")]
-use tracing::field::Visit;
+use tracing::field::{Field, Visit};
 #[cfg(feature = "json")]
-use tracing::subscriber;
+use tracing::subscriber::{self, DefaultGuard};
 #[cfg(feature = "json")]
-use tracing::subscriber::DefaultGuard;
+use tracing::{Event, Subscriber};
 
 use super::*;
-use crate::HeaderMap;
+use crate::HeaderSet;
 use crate::Settle;
 #[cfg(feature = "json")]
 use crate::Take;
@@ -156,8 +156,8 @@ fn capture_events() -> (Arc<Mutex<Vec<String>>>, DefaultGuard) {
 
     struct Capture(Arc<Mutex<Vec<String>>>);
 
-    impl<S: tracing::Subscriber> Layer<S> for Capture {
-        fn on_event(&self, event: &tracing::Event<'_>, _ctx: LayerContext<'_, S>) {
+    impl<S: Subscriber> Layer<S> for Capture {
+        fn on_event(&self, event: &Event<'_>, _ctx: LayerContext<'_, S>) {
             struct Grab(Vec<String>);
             impl Visit for Grab {
                 fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
@@ -170,6 +170,7 @@ fn capture_events() -> (Arc<Mutex<Vec<String>>>, DefaultGuard) {
         }
     }
 
+    TracingLogger::select();
     let events = Arc::new(Mutex::new(Vec::new()));
     let guard =
         subscriber::set_default(tracing_subscriber::registry().with(Capture(Arc::clone(&events))));
@@ -279,7 +280,7 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("dyn");
     let publisher = TypedPublisher::with_codec(broker.publisher(), JsonCodec);
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let cx = PublishContext::new("dyn", &headers, &());
     publisher
         .publish(
@@ -351,7 +352,7 @@ async fn the_pipeline_cursors_render_their_position() {
 
     let broker = MemoryBroker::new();
     let publisher = TypedPublisher::with_codec(broker.publisher(), JsonCodec);
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let cx = PublishContext::new("cursors", &headers, &());
     publisher
         .publish(
@@ -389,7 +390,7 @@ async fn the_pipeline_cursors_render_their_position() {
 /// naming the channel (what a user sees when they log the context).
 #[test]
 fn publish_context_reads_the_originating_delivery() {
-    let mut headers = HeaderMap::new();
+    let mut headers = HeaderSet::new();
     headers.insert("correlation-id", "abc");
     let cx = PublishContext::new("orders.created", &headers, &());
 
@@ -416,7 +417,7 @@ async fn an_unencodable_reply_stops_both_reply_paths() {
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("out");
     let publisher = TypedPublisher::with_codec(broker.publisher(), JsonCodec);
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let cx = PublishContext::new("in", &headers, &());
 
     let single = publisher
@@ -470,7 +471,7 @@ async fn a_plain_wiring_publishes_each_reply_and_names_its_codec() {
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("out");
     let publisher = TypedPublisher::with_codec(broker.publisher(), JsonCodec);
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let cx = PublishContext::new("in", &headers, &());
 
     publisher
@@ -596,7 +597,7 @@ async fn a_refused_begin_fails_the_batch_before_the_first_reply() {
         },
         JsonCodec,
     ));
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let cx = PublishContext::new("in", &headers, &());
 
     let err = wiring
@@ -629,7 +630,7 @@ async fn a_failed_reply_aborts_the_whole_batch() {
     use crate::codec::JsonCodec;
 
     let wiring = Transactional::live(TypedPublisher::with_codec(Rigged::default(), JsonCodec));
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let cx = PublishContext::new("in", &headers, &());
 
     let err = wiring
@@ -674,7 +675,7 @@ async fn a_failed_abort_is_logged_rather_than_propagated() {
         },
         JsonCodec,
     ));
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let cx = PublishContext::new("in", &headers, &());
 
     let err = wiring
@@ -725,7 +726,7 @@ async fn a_refused_commit_fails_the_batch() {
         },
         JsonCodec,
     ));
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let cx = PublishContext::new("in", &headers, &());
 
     let err = wiring
@@ -1057,7 +1058,7 @@ async fn concurrent_batches_take_the_transaction_in_turn() {
     }
 
     let wiring = Transactional::live(TypedPublisher::with_codec(OneAtATime::default(), JsonCodec));
-    let headers = HeaderMap::new();
+    let headers = HeaderSet::new();
     let cx = PublishContext::new("in", &headers, &());
     let (mut first, mut second) = (BytesMut::new(), BytesMut::new());
 

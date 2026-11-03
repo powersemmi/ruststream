@@ -1,6 +1,7 @@
 //! What one subscription dispatches under, and the slot one delivery waits in on its way to
 //! the settle.
 
+#[cfg(any(ruststream_alloc, feature = "testing"))]
 use alloc::sync::Arc;
 use core::fmt;
 use core::marker::PhantomData;
@@ -117,6 +118,7 @@ impl<C> Delivery<C> {
     /// The same context with a declaration on it, as a mount site's `max_attempts(..)` and
     /// `dead_letter(..)` leave it. For tests.
     #[cfg(test)]
+    #[cfg(ruststream_alloc)]
     pub(crate) fn declaring(mut self, declaration: RetryDeclaration) -> Self {
         self.declaration = declaration;
         self
@@ -243,6 +245,7 @@ pub trait Lent<C> {
     fn host(&self) -> &Self::Host;
 }
 
+#[cfg(ruststream_alloc)]
 impl<C, Shared: Lent<C>> Lent<C> for Arc<Shared> {
     type Host = Shared::Host;
 
@@ -274,16 +277,17 @@ impl<C, Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>> Lent<C>
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
     use alloc::format;
     use core::future::ready;
 
-    use bytes::BytesMut;
+    use ruststream_core::__alloc::bytes::BytesMut;
 
     use super::super::fixtures::{PlainMessage, Settlement};
     use super::super::{HeadersOnDemand, dispatch};
     use super::*;
-    use crate::HeaderMap;
+    use crate::HeaderSet;
     use crate::context::Context;
     use crate::failure::{DispatchFailure, FailurePolicies};
     use crate::handler::HandlerOutcome;
@@ -302,7 +306,7 @@ mod tests {
     fn sized<const BULK: usize>() -> PlainMessage<[u8; BULK]> {
         PlainMessage {
             payload: [0; BULK],
-            headers: HeaderMap::new(),
+            headers: HeaderSet::new(),
             settled: Arc::default(),
             settlement: Settlement::Accepted,
         }

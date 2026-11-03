@@ -25,7 +25,7 @@ use ruststream_core::MaybeSend;
 
 use crate::batch_inject::BatchInjectDef;
 use crate::batch_publishing::BatchPublishingDef;
-use crate::codec::Codec;
+use crate::codec::ActiveCodec as Codec;
 use crate::inject::InjectDef;
 use crate::input::{DecodeWith, Materialize};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
@@ -194,6 +194,7 @@ macro_rules! impl_inject_out_commit {
                 let codec = router.codec.mount_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
+                #[cfg(ruststream_alloc)]
                 let slots = [$($attach
                     .source()
                     .describe::<Connected<B>, RouteCodec::Codec>(),)+];
@@ -201,9 +202,11 @@ macro_rules! impl_inject_out_commit {
                     $attach.into_source().wire(codec.clone(), pipeline.clone()),
                 )+));
                 let source = def.source();
-                router
-                    .mount_inject(source, def, decode, extra)
-                    .describing_slots(&slots)
+                let mounted = router
+                    .mount_inject(source, def, decode, extra);
+                #[cfg(ruststream_alloc)]
+                let mounted = mounted.describing_slots(&slots);
+                mounted
             }
         }
 
@@ -263,6 +266,7 @@ macro_rules! impl_inject_out_commit {
                 let codec = router.codec.mount_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
+                #[cfg(ruststream_alloc)]
                 let slots = [$($attach
                     .source()
                     .describe::<Connected<B>, RouteCodec::Codec>(),)+];
@@ -270,9 +274,11 @@ macro_rules! impl_inject_out_commit {
                     $attach.into_source().wire(codec.clone(), pipeline.clone()),
                 )+));
                 let source = def.source();
-                router
-                    .mount_batch_inject(source, def, decode, extra)
-                    .describing_slots(&slots)
+                let mounted = router
+                    .mount_batch_inject(source, def, decode, extra);
+                #[cfg(ruststream_alloc)]
+                let mounted = mounted.describing_slots(&slots);
+                mounted
             }
         }
     )+};
@@ -349,6 +355,7 @@ macro_rules! impl_publishing_out_commit {
                 let codec = router.codec.mount_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
+                #[cfg(ruststream_alloc)]
                 let slots = [$($attach
                     .source()
                     .describe::<Connected<B>, RouteCodec::Codec>(),)+];
@@ -356,9 +363,11 @@ macro_rules! impl_publishing_out_commit {
                     $attach.into_source().wire(codec.clone(), pipeline.clone()),
                 )+));
                 let source = def.source();
-                router
-                    .mount_publishing_source(source, def, decode, reply.into_source(), extra)
-                    .describing_slots(&slots)
+                let mounted = router
+                    .mount_publishing_source(source, def, decode, reply.into_source(), extra);
+                #[cfg(ruststream_alloc)]
+                let mounted = mounted.describing_slots(&slots);
+                mounted
             }
         }
 
@@ -425,6 +434,7 @@ macro_rules! impl_publishing_out_commit {
                 let codec = router.codec.mount_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
+                #[cfg(ruststream_alloc)]
                 let slots = [$($attach
                     .source()
                     .describe::<Connected<B>, RouteCodec::Codec>(),)+];
@@ -432,9 +442,11 @@ macro_rules! impl_publishing_out_commit {
                     $attach.into_source().wire(codec.clone(), pipeline.clone()),
                 )+));
                 let source = def.source();
-                router
-                    .mount_raw_reply_source(source, def, decode, reply.into_source(), extra)
-                    .describing_slots(&slots)
+                let mounted = router
+                    .mount_raw_reply_source(source, def, decode, reply.into_source(), extra);
+                #[cfg(ruststream_alloc)]
+                let mounted = mounted.describing_slots(&slots);
+                mounted
             }
         }
 
@@ -499,6 +511,7 @@ macro_rules! impl_publishing_out_commit {
                 let codec = router.codec.mount_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
+                #[cfg(ruststream_alloc)]
                 let slots = [$($attach
                     .source()
                     .describe::<Connected<B>, RouteCodec::Codec>(),)+];
@@ -506,15 +519,17 @@ macro_rules! impl_publishing_out_commit {
                     $attach.into_source().wire(codec.clone(), pipeline.clone()),
                 )+));
                 let source = def.source();
-                router
+                let mounted = router
                     .mount_batch_publishing_source(
                         source,
                         def,
                         decode,
                         reply.into_source(),
                         extra,
-                    )
-                    .describing_slots(&slots)
+                    );
+                #[cfg(ruststream_alloc)]
+                let mounted = mounted.describing_slots(&slots);
+                mounted
             }
         }
     )+};

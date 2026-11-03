@@ -15,6 +15,7 @@ use serde_json::{Map, Value};
 /// document that says another. Every schema in the document goes through here.
 #[doc(hidden)]
 #[must_use]
+#[cfg(ruststream_alloc)]
 pub fn schema_json<T: JsonSchema + ?Sized>() -> Option<String> {
     let schema = SchemaSettings::draft07()
         .into_generator()
@@ -28,6 +29,7 @@ pub fn schema_json<T: JsonSchema + ?Sized>() -> Option<String> {
 /// each requires. A contract that is not an object schema is left out.
 #[doc(hidden)]
 #[must_use]
+#[cfg(ruststream_alloc)]
 pub fn join_headers(shared: &str, own: Option<&str>) -> Option<String> {
     let parse = |json: &str| match serde_json::from_str::<Value>(json) {
         Ok(Value::Object(schema)) => Some(schema),

@@ -9,7 +9,7 @@
 use crate::inject::{FromStartup, InjectCall, InjectHandler};
 use crate::input::{InputKind, Materialize};
 use crate::lifecycle::BoxError;
-use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription};
+use crate::redelivery::{ScopeDelivery, Undeclared, open_local_subscription, startup_failure};
 use crate::{
     Broker, BuildContext, Connected, RetryDeclaration, Settle, Subscriber, SubscriptionSource,
 };
@@ -61,7 +61,7 @@ where
         // Resolved before the loop starts, so every slot the body reaches is live.
         let injections = Def::Injections::resolve(extra, connected, &subscriber)
             .await
-            .map_err(BoxError::from)?;
+            .map_err(|err| startup_failure("injections", &name, err))?;
         let handler = InjectHandler {
             def,
             codec,

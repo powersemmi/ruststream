@@ -62,9 +62,10 @@ Each outcome that carries `.error` there logs a warning naming the subscription.
 A batch handler has two forms.
 A `Vec<HandlerOutcome>` attaches a one-shot `.error` to the outcome of the element it concerns; its `Failures` holds that element's failure.
 A single `HandlerOutcome` returned for the whole batch runs its `.error` once, with the failure of every element whose copy failed, in the batch's order.
-The list is allocated only when a copy fails.
+The list is allocated only when a copy fails; on the embedded runtime without `alloc` it sits in a fixed buffer of the subscription instead.
 The [`and_after`](./and-after.md) beside a uniform outcome runs once, after the batch, when at least one copy was published; when every copy fails it does not run.
 Both continuations run beside each other, so neither waits for the other.
+A batch route of the embedded runner publishes no copy, so there the `.error` of a batch outcome never runs; an outcome that asks for a retry or a dead-letter copy logs a warning naming the subscription.
 
 ### From the context
 
@@ -99,4 +100,5 @@ Where the runtime makes no publish for the delivery, the `.then` runs once the d
 With the tokio runtime on, the closure and its future are `Send`.
 On the embedded runtime alone they carry no `Send`, so they may hold the local bus's publisher or an `Rc`.
 A closure registered on an outcome that never fails costs one allocation, its box; an outcome without `.error` stores and runs nothing for it.
+On the embedded runtime without `alloc` the closure sits in a room of 128 bytes and allocates nothing, and it borrows the failures from the subscription's fixed buffer: `async move |failures: &Failures| ..` in place of `async move |failures: Failures| ..`.
 The runtime copies the failed message for the continuation only when one is registered.

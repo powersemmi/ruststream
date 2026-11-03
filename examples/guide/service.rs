@@ -1,5 +1,6 @@
 //! The shop assembled: its description, its state, its middleware and every side's subscribers.
 
+use ruststream::diagnostics::TracingLogger;
 use std::time::Duration;
 
 use ruststream::memory::prelude::*;
@@ -17,6 +18,7 @@ pub(crate) fn shop(
     broker: impl BrokerRegistration<Broker = MemoryBroker>,
 ) -> impl App<State = Shop> {
     RustStream::new(info())
+        .logger(TracingLogger)
         .on_startup(async move |()| Shop::open().await)
         .layer(TracingLayer::default())
         .layer(SlowHandlers::over(Duration::from_millis(250)))

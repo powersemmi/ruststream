@@ -1,28 +1,34 @@
 //! The [`Router`] builder: chaining registrations, codecs and layers, and mounting the result.
 
+use crate::Meta;
+#[cfg(ruststream_alloc)]
 use alloc::borrow::ToOwned;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
+use ruststream_core::NameText;
 use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
-use alloc::borrow::Cow;
 use core::num::NonZeroU32;
 
-use crate::{
-    Broker, BrokerMoves, Connected, PublishPolicy, Publisher, RetryDeclaration, Subscriber,
-};
+use crate::{Broker, Connected, PublishPolicy, Publisher, RetryDeclaration, Subscriber};
 
+#[cfg(ruststream_alloc)]
+use crate::BrokerMoves;
 use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
 use crate::handler::Handler;
+#[cfg(ruststream_alloc)]
 use crate::metadata::{HandlerMetadata, OutgoingKind, PublishDescription};
 use crate::middleware::{BlanketLayer, Identity, Layer, Stack};
 use crate::publish::{
     FitsOffer, ForReply, NamesDestination, NarrowToUse, OutPipeline, PublishIdentity,
     PublishPipeline, PublishTransform, Reads,
 };
-use crate::redelivery::{PublishesCopiesHere, RetryParts, RetrySetup};
+#[cfg(ruststream_alloc)]
+use crate::redelivery::RetrySetup;
+use crate::redelivery::{PublishesCopiesHere, RetryParts};
 use crate::retry::{
     Absent, DeclareCap, DeclareDeadLetter, DeclareMount, Present, Retry, RetryOffer, RetryOpen,
     RetryStackUse, RouteDeclaring, RoutePosition, SettlesDestination,
@@ -32,11 +38,16 @@ use crate::slot::{NoReply, OutAttachment, SlotCodec};
 use super::MergedRouter;
 use super::builders::RouterWith;
 use super::local::{LayerFits, TakesWorkers};
+#[cfg(ruststream_alloc)]
 use super::mount_sink::MountSink;
 use super::routes::{
-    BatchRoute, DeclaredRoute, HandleRoute, MountRoute, RetriedRoute, RetryDestinationsDeclared,
-    RouteMeta, RouteMetadata, RouteSubscription, RouterDef, RouterHandlers, SubscribeRoute,
+    BatchRoute, DeclaredRoute, HandleRoute, RetriedRoute, RetryDestinationsDeclared, RouteMetadata,
+    RouteSubscription, SubscribeRoute,
 };
+#[cfg(ruststream_alloc)]
+use super::routes::{MountRoute, RouterDef};
+#[cfg(ruststream_alloc)]
+use super::routes::{RouteMeta, RouterHandlers};
 
 mod mount;
 
@@ -266,7 +277,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         self,
         subscriber: S,
         handler: H,
-        meta: HandlerMetadata,
+        meta: Meta,
     ) -> Router<B, (HandleRoute<S, H>, Routes), RouteCodec, RouteLayers, RoutePipe>
     where
         S: Subscriber + MaybeSend + 'static,
@@ -304,7 +315,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// The functional-path counterpart of the macro's `workers(..)` clause: [`Workers::pool`]
     /// processes up to `n` deliveries of this subscriber concurrently, [`Workers::keyed`]
-    /// dispatches over per-key sequential lanes. On an `include`d definition this overrides the
+    /// dispatches over per-key sequential workers. On an `include`d definition this overrides the
     /// attribute's `workers(..)` clause and the chained
     /// [`workers`](crate::SubscriberSettings::workers) setting alike.
     ///
@@ -328,7 +339,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// }
     ///
     /// fn jobs() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
-    ///     // Four lanes; the jobs of one key stay in order on one lane.
+    ///     // Four workers; the jobs of one key stay in order on one worker.
     ///     Router::new()
     ///         .include(work)
     ///         .workers(Workers::keyed(nonzero!(4)))
@@ -446,7 +457,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// Sets the concurrency policy of the batch registration just added (the preceding batch
     /// `include` call), replacing its default.
     ///
-    /// [`Workers::pool`] keeps up to `n` batches in flight at once. Keyed lanes order single
+    /// [`Workers::pool`] keeps up to `n` batches in flight at once. Keyed workers order single
     /// messages per key and do not apply to batches: a [`Workers::keyed`] policy here behaves
     /// like a plain pool of the same size.
     #[must_use]
@@ -560,7 +571,7 @@ impl<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn dead_letter(
         self,
-        destination: impl Into<Cow<'static, str>>,
+        destination: impl Into<NameText>,
     ) -> RouterWith<DeclareMount, Self, (), RouteDeclaring<Absent, Present>>
     where
         Head: RetryOpen,
@@ -573,6 +584,7 @@ impl<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<B: Broker + 'static, Routes: RouterHandlers, C, Layers, Pipe>
     Router<B, Routes, C, Layers, Pipe>
 {
@@ -648,7 +660,7 @@ pub trait AttachRetry<Attachment, Dest>: Sized {
     type Out;
 
     /// Wires it.
-    fn attach_retry(self, slot: Attachment, destination: Option<Cow<'static, str>>) -> Self::Out;
+    fn attach_retry(self, slot: Attachment, destination: Option<NameText>) -> Self::Out;
 }
 
 impl<B, Head, Tail, C, Layers, Pipe, Policy, Transforms, Enc, Dest>
@@ -708,17 +720,19 @@ where
     fn attach_retry(
         self,
         slot: OutAttachment<Retry, Policy, Transforms, Enc>,
-        destination: Option<Cow<'static, str>>,
+        destination: Option<NameText>,
     ) -> Self::Out {
         // The copy carries the delivery's own bytes, so the codec the chain resolved here encodes
         // nothing and is dropped; what is kept is the policy and the transforms.
         let (policy, transforms, _codec) = slot.into_parts();
         let policy = <RetryUse<Transforms, Policy, B, Head> as NarrowToUse<Policy>>::narrow(policy);
+        #[cfg_attr(not(ruststream_alloc), allow(unused_mut))]
         let (mut head, tail) = self.routes;
         // A destination named here is traffic to a channel of the service, so the document
         // reports it the way it reports a dead-letter one. A descriptor that takes its copies
         // back at its own address names nothing and adds no channel: that address is the
         // subscription's, which the document already carries.
+        #[cfg(ruststream_alloc)]
         if let Some(destination) = destination.clone() {
             head.metadata_mut()
                 .declare_copy(destination, OutgoingKind::RetryCopy);
@@ -745,8 +759,10 @@ where
 /// destination its marker declares. Produced by
 /// [`OutAttachment::describe`](crate::OutAttachment) at the commit, before wiring
 /// consumes the attachment.
-pub(super) type SlotDescription = Vec<(Cow<'static, str>, PublishDescription)>;
+#[cfg(ruststream_alloc)]
+pub(super) type SlotDescription = Vec<(NameText, PublishDescription)>;
 
+#[cfg(ruststream_alloc)]
 impl<B, Head, Tail, C, Layers, Pipe> Router<B, (Head, Tail), C, Layers, Pipe>
 where
     Head: RouteMetadata,
@@ -787,9 +803,11 @@ where
     type Out = Router<B, (DeclaredRoute<Head, Dead>, Tail), C, Layers, Pipe>;
 
     fn attach_declaration(self, declaration: RetryDeclaration) -> Self::Out {
+        #[cfg_attr(not(ruststream_alloc), allow(unused_mut))]
         let (mut head, tail) = self.routes;
         // A dead-lettered delivery is the registration's input leaving the service, so the
         // document reports it under the input's own schema on the declared channel.
+        #[cfg(ruststream_alloc)]
         if let Some(destination) = declaration.dead_letter() {
             head.metadata_mut()
                 .declare_copy(destination.to_owned().into(), OutgoingKind::DeadLetter);
@@ -797,7 +815,10 @@ where
         // The declaration itself rides the metadata too: the cap is what the document reports
         // next to the dead-letter channel, and a cap without a destination is still a fact
         // about the registration.
-        head.metadata_mut().retry = declaration.clone();
+        #[cfg(ruststream_alloc)]
+        {
+            head.metadata_mut().retry = declaration.clone();
+        }
         Router {
             routes: (DeclaredRoute::new(head, declaration), tail),
             codec: self.codec,
@@ -817,11 +838,13 @@ impl<B: Broker, Routes: RetryDestinationsDeclared, C, Layers, Pipe> RetryDestina
 /// Composes the mount-time global stack (outer) with a router's own layer stack (inner), owned
 /// so publishing mounts can carry the composition into their startup pairing closures.
 #[derive(Clone)]
+#[cfg(ruststream_alloc)]
 struct ComposedBlanket<Outer, Inner> {
     outer: Outer,
     inner: Inner,
 }
 
+#[cfg(ruststream_alloc)]
 impl<Outer: BlanketLayer, Inner: BlanketLayer> BlanketLayer for ComposedBlanket<Outer, Inner> {
     fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
     where
@@ -837,6 +860,7 @@ impl<Outer: BlanketLayer, Inner: BlanketLayer> BlanketLayer for ComposedBlanket<
 
 // A router carries its own publish path, so the one it is mounted with plays no part: whatever
 // `RetryPipeline` the caller names, the registrations below take this router's.
+#[cfg(ruststream_alloc)]
 impl<B, Routes, C, Layers, Pipe, State, RetryPipeline> RouterDef<B, State, RetryPipeline>
     for Router<B, Routes, C, Layers, Pipe>
 where
@@ -865,6 +889,7 @@ where
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<B, Routes, C, Layers, Pipe> RouterHandlers for Router<B, Routes, C, Layers, Pipe>
 where
     Routes: RouterHandlers,
@@ -875,6 +900,7 @@ where
 }
 
 // Lets a whole router be a single registration inside another router's list (`Router::merge`).
+#[cfg(ruststream_alloc)]
 impl<B, Routes, C, Layers, Pipe, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
     for Router<B, Routes, C, Layers, Pipe>
 where
@@ -907,6 +933,7 @@ where
 }
 
 // Lets a merged router contribute its registrations' metadata to the outer router's `handlers()`.
+#[cfg(ruststream_alloc)]
 impl<B, Routes, C, Layers, Pipe> RouteMeta for Router<B, Routes, C, Layers, Pipe>
 where
     Routes: RouterHandlers,

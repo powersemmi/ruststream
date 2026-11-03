@@ -1,18 +1,19 @@
-//! Typed views over [`HeaderMap`]: serialize a flat struct into the header map and parse it back.
+//! Typed views over [`Headers`]: serialize a flat struct into the header map and parse it back.
 //!
 //! Header values travel as bytes and are string-encoded by convention, while the Rust side keeps
 //! a typed contract: a plain struct whose fields are scalars (numbers, booleans, strings, raw
-//! bytes, unit-only enums) or `Option`s of those. [`HeaderMap::insert_typed`] flattens such a
+//! bytes, unit-only enums) or `Option`s of those. [`Headers::insert_typed`] flattens such a
 //! struct into `field name -> string value` entries, and the crate-internal `to_typed` parses
 //! them back, converting each value by what the target field expects. The parse direction
 //! reaches user code through the [`Message<H, P>`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Message.html) input and the
 //! [`Headers`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Headers.html) extractor, which ride the same machinery.
 
 mod de;
+#[cfg(not(feature = "alloc"))]
+mod inline;
+mod repr;
 mod ser;
 
-use alloc::string::String;
-use alloc::string::ToString;
 use core::fmt;
 
 use serde::Serialize;
@@ -20,7 +21,8 @@ use serde::de::{DeserializeOwned, Error as DeError};
 use serde::ser::Error as SerError;
 use thiserror::Error;
 
-use crate::headers::HeaderMap;
+use self::repr::Text;
+use crate::headers::Headers;
 
 /// Error of the crate-internal `to_typed` parse: the header map does not satisfy the typed
 /// contract.
@@ -34,24 +36,24 @@ pub enum DeserializeHeadersError {
     #[error("header `{header}` is not valid UTF-8")]
     NotUtf8 {
         /// The offending header name.
-        header: String,
+        header: Text,
     },
     /// A header value does not parse into the target field's type.
     #[error("header `{header}` does not parse as {expected}: `{value}`")]
     Parse {
         /// The offending header name.
-        header: String,
+        header: Text,
         /// The type the target field expects.
         expected: &'static str,
         /// The value as received (lossy UTF-8).
-        value: String,
+        value: Text,
     },
     /// The target type asks for a shape header values cannot carry (a nested struct, a sequence,
     /// a non-unit enum variant).
     #[error("header `{header}` cannot be deserialized as {kind}: header values are scalars")]
     UnsupportedShape {
         /// The offending header name.
-        header: String,
+        header: Text,
         /// The requested shape.
         kind: &'static str,
     },
@@ -64,16 +66,16 @@ pub enum DeserializeHeadersError {
     /// Any other serde-reported error (a missing field, an unknown enum variant, a custom
     /// `Deserialize` failure).
     #[error("{0}")]
-    Message(String),
+    Message(Text),
 }
 
 impl DeError for DeserializeHeadersError {
     fn custom<T: fmt::Display>(msg: T) -> Self {
-        Self::Message(msg.to_string())
+        Self::Message(repr::text_of(&msg))
     }
 }
 
-/// Error of [`HeaderMap::insert_typed`]: the value does not fit the flat header-map shape.
+/// Error of [`Headers::insert_typed`]: the value does not fit the flat header-map shape.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum SerializeHeadersError {
@@ -82,7 +84,7 @@ pub enum SerializeHeadersError {
     #[error("field `{field}` cannot be serialized into a header value: {kind} is not a scalar")]
     UnsupportedValue {
         /// The offending field name.
-        field: String,
+        field: Text,
         /// The value's shape.
         kind: &'static str,
     },
@@ -94,16 +96,20 @@ pub enum SerializeHeadersError {
     },
     /// Any other serde-reported error (a custom `Serialize` failure).
     #[error("{0}")]
-    Message(String),
+    Message(Text),
+    /// The header map has no room for the entry, or the value is longer than a field value may be.
+    #[cfg(not(feature = "alloc"))]
+    #[error("the header map is full or a value is too long to carry")]
+    Full,
 }
 
 impl SerError for SerializeHeadersError {
     fn custom<T: fmt::Display>(msg: T) -> Self {
-        Self::Message(msg.to_string())
+        Self::Message(repr::text_of(&msg))
     }
 }
 
-impl HeaderMap {
+impl Headers {
     /// Parses the header map into a typed contract `T`.
     ///
     /// `T` is a flat struct (or string-keyed map): each field reads the header of the same name,
@@ -111,7 +117,7 @@ impl HeaderMap {
     /// their string form, booleans from `true` / `false`, unit-only enums from the variant name,
     /// byte fields (`serde_bytes`-style) from the raw value. An `Option` field is `None` when the
     /// header is absent; a missing non-`Option` field is an error. Lookups are case-insensitive
-    /// like every [`HeaderMap`] read; use `#[serde(rename = "...")]` for wire names that are not
+    /// like every [`Headers`] read; use `#[serde(rename = "...")]` for wire names that are not
     /// Rust identifiers. `#[serde(flatten)]` is not supported (the flattened shape cannot be
     /// parsed back); a map's keys come back in the header map's normalized lowercase form.
     ///
@@ -254,8 +260,12 @@ impl HeaderMap {
 }
 
 #[cfg(test)]
+#[cfg(feature = "alloc")]
 mod tests {
     use std::borrow::ToOwned;
+    use std::string::{String, ToString};
+
+    use crate::headers::HeaderMap;
 
     use bytes::Bytes;
     use serde::ser::Error;
@@ -366,5 +376,137 @@ mod tests {
         assert_eq!(headers.get_str("event-class"), Some("upload"));
         let back: Renamed = headers.to_typed().expect("read back");
         assert_eq!(back.event_class, "upload");
+    }
+}
+
+// The build without `alloc`: the same contract over fixed headers, whose insert can be refused.
+#[cfg(test)]
+#[cfg(not(feature = "alloc"))]
+mod fixed_tests {
+    use std::collections::BTreeMap;
+    use std::string::ToString;
+
+    use serde::{Deserialize, Serialize};
+
+    use super::*;
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Meta {
+        task_id: u64,
+        ratio: f32,
+        flag: bool,
+        label: Option<u8>,
+    }
+
+    #[test]
+    fn a_contract_round_trips_through_fixed_headers() -> Result<(), SerializeHeadersError> {
+        let sent = Meta {
+            task_id: 7,
+            ratio: 0.5,
+            flag: true,
+            label: Some(3),
+        };
+        let mut headers = Headers::new();
+        headers.insert_typed(&sent)?;
+        assert_eq!(headers.get_str("task_id"), Some("7"));
+        assert_eq!(
+            headers.to_typed::<Meta>().map_err(|e| e.to_string()),
+            Ok(sent)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_map_key_longer_than_the_room_is_refused_as_full() {
+        let mut map = BTreeMap::new();
+        map.insert("k".repeat(100), 1_u8);
+        let mut headers = Headers::new();
+        assert!(matches!(
+            headers.insert_typed(&map),
+            Err(SerializeHeadersError::Full)
+        ));
+    }
+
+    #[test]
+    fn a_full_header_map_refuses_the_next_field() {
+        #[derive(Serialize)]
+        struct Many {
+            a: u8,
+            b: u8,
+            c: u8,
+            d: u8,
+            e: u8,
+            f: u8,
+            g: u8,
+            h: u8,
+            i: u8,
+        }
+        let mut headers = Headers::new();
+        let err = headers
+            .insert_typed(&Many {
+                a: 1,
+                b: 2,
+                c: 3,
+                d: 4,
+                e: 5,
+                f: 6,
+                g: 7,
+                h: 8,
+                i: 9,
+            })
+            .expect_err("nine fields do not fit eight entries");
+        assert!(matches!(err, SerializeHeadersError::Full), "got: {err}");
+        assert_eq!(headers.len(), 8);
+    }
+
+    #[test]
+    fn a_value_longer_than_a_field_room_is_refused_as_full() {
+        #[derive(Serialize)]
+        struct Long<'a> {
+            note: &'a str,
+        }
+        let long = "x".repeat(65);
+        let mut headers = Headers::new();
+        let err = headers
+            .insert_typed(&Long { note: &long })
+            .expect_err("65 bytes do not fit a field value");
+        assert!(matches!(err, SerializeHeadersError::Full), "got: {err}");
+        assert!(headers.is_empty());
+    }
+
+    #[test]
+    fn a_parse_error_names_the_header_and_cuts_the_value_to_the_room() {
+        #[derive(Debug, Deserialize)]
+        struct Count {
+            #[allow(dead_code)]
+            count: u32,
+        }
+        let mut headers = Headers::new();
+        let _ = headers.insert("count", "n".repeat(60));
+        let err = headers.to_typed::<Count>().expect_err("not a number");
+        let DeserializeHeadersError::Parse { header, value, .. } = err else {
+            panic!("expected a parse error");
+        };
+        assert_eq!(&*header, "count");
+        assert_eq!(value.len(), 32);
+    }
+
+    #[test]
+    fn a_missing_field_is_an_error_naming_it() {
+        let headers = Headers::new();
+        let err = headers.to_typed::<Meta>().expect_err("fields missing");
+        assert!(err.to_string().contains("task_id"), "got: {err}");
+    }
+
+    #[test]
+    fn a_string_value_is_a_scalar_in_the_variant_too() -> Result<(), SerializeHeadersError> {
+        #[derive(Serialize)]
+        struct Tag<'a> {
+            tag: &'a str,
+        }
+        let mut headers = Headers::new();
+        headers.insert_typed(&Tag { tag: "blue" })?;
+        assert_eq!(headers.get_str("tag"), Some("blue"));
+        Ok(())
     }
 }

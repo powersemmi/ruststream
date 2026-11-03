@@ -7,6 +7,7 @@
 //! cargo test --example manual_guide_first --no-default-features --features testing,memory,json
 //! ```
 
+use ruststream::diagnostics::TracingLogger;
 use std::future::ready;
 use std::process::ExitCode;
 
@@ -53,9 +54,11 @@ impl Handle<Order> for Accept {
 
 // --8<-- [start:app]
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("shop", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders.placed", Accept).build())
-    })
+    RustStream::new(AppInfo::new("shop", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(subscriber("orders.placed", Accept).build())
+        })
 }
 
 /// What `#[ruststream::app]` writes: the `run` and `asyncapi gen` commands over `app`.

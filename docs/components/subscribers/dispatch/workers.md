@@ -44,10 +44,10 @@ Four charges that each wait a second on a payment provider take one second toget
 
 ## By key
 
-`workers(n, by_key)` makes the same `n` workers into `n` sequential lanes.
-A delivery goes to the lane picked by hashing its partition key, which the broker's message reports through [`Partitioned`](api:ruststream::Partitioned).
+`workers(n, by_key)` makes the same `n` workers handle one delivery at a time each.
+A delivery goes to the worker picked by hashing its partition key, which the broker's message reports through [`Partitioned`](api:ruststream::Partitioned).
 Deliveries with one key never reorder, and deliveries with different keys run at once.
-A delivery without a key rotates over the lanes.
+A delivery without a key rotates over the workers.
 The in-memory broker reads the key from the [`partition-key`](api:ruststream::memory::PARTITION_KEY_HEADER) header.
 At the mount site the setting is [`.workers_by_key(n)`](api:ruststream::runtime::SubscriberSettings::workers_by_key).
 

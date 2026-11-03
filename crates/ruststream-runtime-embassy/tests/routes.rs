@@ -22,7 +22,6 @@ mod scenarios {
     use std::fmt;
     use std::sync::Mutex;
 
-    use bytes::BytesMut;
     use embassy_executor::{Executor, Spawner};
     use embassy_futures::yield_now;
     use ruststream::memory::local::{
@@ -33,6 +32,7 @@ mod scenarios {
         Broker, BrokerMoves, ConnectedBroker, Deserialized, OutgoingMessage, Publisher,
         SubscriptionSource, subscriber,
     };
+    use ruststream_core::__alloc::bytes::BytesMut;
     use static_cell::StaticCell;
 
     /// Executor rounds a step yields: a round polls every task woken before it began.

@@ -1,0 +1,41 @@
+[package]
+name = "ruststream-runtime-embassy-noalloc"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+repository = "https://github.com/powersemmi/ruststream"
+description = "The embedded runner without `alloc`, built from the runner's own sources so its in-crate tests run: the runner's dev-dependencies turn `alloc` on."
+publish = false
+build = "../ruststream-runtime-embassy/build.rs"
+
+# A workspace of its own: a member of the main workspace would unify `alloc` on through its
+# neighbours, which is the one thing this crate exists to avoid.
+[workspace]
+
+[lib]
+name = "ruststream_runtime_embassy_noalloc"
+path = "../ruststream-runtime-embassy/src/lib.rs"
+
+[dependencies]
+ruststream-core = { path = "../ruststream-core", default-features = false }
+ruststream-runtime = { path = "../ruststream-runtime", default-features = false }
+futures-core = { version = "0.3", default-features = false }
+embassy-time = "0.5.1"
+embassy-sync = "0.8"
+embassy-futures = "0.1.2"
+heapless = { version = "0.9", default-features = false }
+futures = { version = "0.3", default-features = false }
+thiserror = { version = "2", default-features = false }
+tracing = { version = "0.1.29", default-features = false }
+pin-project-lite = "0.2"
+hash32 = { version = "1.0", default-features = false }
+
+[dev-dependencies]
+embassy-executor = { version = "0.10", features = ["platform-std", "executor-thread"] }
+embassy-time = { version = "0.5.1", features = ["mock-driver"] }
+critical-section = { version = "1.1", features = ["std"] }
+
+# The sources are the runner's, and name features this build never has.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("alloc", "testing"))'] }

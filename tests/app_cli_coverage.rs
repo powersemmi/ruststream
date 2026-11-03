@@ -29,6 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ruststream::codec::CborCodec;
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
 use ruststream::runtime::{
@@ -81,6 +82,7 @@ async fn logged(_order: &Order) -> HandlerOutcome {
 async fn the_lifecycle_logs_name_the_service_brokers_and_subscribers() {
     log_capture::record_shared();
     let app = RustStream::new(AppInfo::new("cov-logged-service", "0.3.0"))
+        .logger(TracingLogger)
         .register_broker(MemoryBroker::new())
         .with_broker_labeled("cov-logged-ingress", MemoryBroker::new(), |b| {
             b.include(logged)
@@ -281,11 +283,11 @@ async fn a_refused_subscription_aborts_startup_and_unwinds_the_broker() {
     log_capture::record_shared();
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("cov-refused", "0.1.0")).with_broker_labeled(
-        "cov-refused-ingress",
-        broker,
-        |b| b.include(subscriber_def(RefusedSubscription, NeverDelivered).build()),
-    );
+    let app = RustStream::new(AppInfo::new("cov-refused", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker_labeled("cov-refused-ingress", broker, |b| {
+            b.include(subscriber_def(RefusedSubscription, NeverDelivered).build())
+        });
 
     let err = app
         .start()
@@ -451,6 +453,7 @@ async fn a_refused_broker_shutdown_still_closes_the_others_and_runs_after_shutdo
 async fn a_refused_shutdown_during_the_startup_unwind_is_logged_not_returned() {
     log_capture::record_shared();
     let app = RustStream::new(AppInfo::new("cov-unwind", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker_labeled("cov-unwind-egress", StubbornBroker, |b| b)
         .register_broker(UnreachableBroker);
 

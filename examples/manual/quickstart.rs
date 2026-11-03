@@ -6,6 +6,7 @@
 //! cargo run --example manual_quickstart --no-default-features --features memory,json,logging -- run
 //! ```
 
+use ruststream::diagnostics::TracingLogger;
 use std::future::ready;
 use std::process::ExitCode;
 
@@ -39,9 +40,11 @@ impl Handle<Order> for Receive {
 
 // --8<-- [start:app]
 fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Receive).build())
-    })
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(subscriber("orders", Receive).build())
+        })
 }
 
 fn main() -> ExitCode {

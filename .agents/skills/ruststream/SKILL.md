@@ -16,6 +16,7 @@ another line. Deeper material:
 - [references/handlers.md](references/handlers.md): outcomes, retries and dead letters, `and_after`, mount-site settings (`workers`, `threads`, `batch`, `start_at`, `on_failure`), extractors, raw payloads
 - [references/publishing.md](references/publishing.md): replies, `Out` slots, destinations, per-message broker settings, publish transforms, the first publish at startup, transactions
 - [references/app.md](references/app.md): the app builder, state, codecs, routers, middleware, broker descriptors, AsyncAPI
+- [references/embedded.md](references/embedded.md): a device service on the embassy runtime, with a heap and without `alloc`
 
 For tests, use the `ruststream-testing` skill.
 
@@ -133,6 +134,13 @@ A mount site imports the broker's prelude (`use ruststream_nats::prelude::*;`,
 `use ruststream::prelude::*;`. Name codecs (`ruststream::codec`) and the optional feature modules
 (`testing`, `asyncapi`, `metrics`, `logging`, `otel`) explicitly. Everything else, `Router`,
 `DefaultSlot`, `FailurePolicies`, `nonzero!` and the derives included, rides the glob.
+
+### The app selects the logger
+
+The framework reports nothing until the app selects a logger: `.logger(TracingLogger)` on the
+builder (`ruststream::diagnostics`; the `tracing` feature is on with tokio), or `LogLogger` /
+`DefmtLogger` with their features. The selection is process-wide. Every warning stays on, and the
+level of the backend (a `tracing` filter, `log::max_level()`, defmt's level) silences one.
 
 ### The first parameter's type picks the form
 

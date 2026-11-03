@@ -14,7 +14,8 @@ use std::task::Poll;
 
 use futures::{Stream, StreamExt, stream};
 use ruststream::PublishOutcome;
-use ruststream::memory::MemoryBroker;
+#[cfg(ruststream_alloc)]
+use ruststream::memory::local::LocalMemoryBroker;
 use ruststream::{
     AckError, Broker, BrokerMoves, BytesMut, ConnectedBroker, DefaultPublish, HeaderMap,
     IncomingMessage, OutgoingFor, OutgoingMessage, PairError, PublishPolicy, Publisher, Settle,
@@ -80,10 +81,10 @@ async fn a_broker_that_is_not_send_runs_the_local_body_on_a_local_set() -> Resul
     Ok(())
 }
 
+#[cfg(ruststream_alloc)]
 #[tokio::test(flavor = "current_thread")]
-async fn memory_broker_runs_the_body_written_for_a_broker_that_is_not_send() -> Result<(), BoxError>
-{
-    let received = round_trip(MemoryBroker::new(), ORDERS).await?;
+async fn local_bus_runs_the_body_written_for_a_broker_that_is_not_send() -> Result<(), BoxError> {
+    let received = round_trip(LocalMemoryBroker::<4>::new(), ORDERS).await?;
 
     assert_eq!(received, expected());
     Ok(())

@@ -230,3 +230,11 @@ The embedded app is one task that joins every subscription, so it polls each idl
 every wake. A subscriber whose broker keeps its deliveries in a channel or a socket returns a
 [`ReadyHint`](crate::ReadyHint) from `Subscriber::ready_hint`, and the app polls its subscription
 only while the hint says a delivery may be ready; the local memory bus does.
+
+The embedded runner builds in two forms, chosen by the `alloc` feature. With it, headers,
+payloads, continuations and failures live on the heap. Without it, they live in storage of a
+fixed size, the build allocates nothing, and the parts whose size the heap would decide take
+their fixed form: `FixedHeaders` for the headers, slice codecs for the payloads, a continuation
+room of 128 bytes, a `Result` from `ctx.after(..)`, and a batch size named with `.batch::<N>()`.
+The [Embedded runtime](https://powersemmi.github.io/ruststream/latest/components/application/embedded-runtime/)
+page shows a device service in the fixed form and every capacity a mount names.

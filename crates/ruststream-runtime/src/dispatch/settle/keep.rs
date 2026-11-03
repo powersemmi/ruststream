@@ -1,15 +1,18 @@
 //! The copy path of a host that keeps its retry copies in place: a record of the host's store
 //! takes the copy before the delivery settles, and the store publishes it.
 
+#[cfg(ruststream_alloc)]
 use alloc::string::ToString;
-use bytes::Bytes;
 use core::time::Duration;
 
 use super::super::{RETRY_COUNT_HEADER, Slot};
 use super::{Target, current_retry_count};
-use crate::host::{HostDetach, KeptDelivery, PrepareKept};
+#[cfg(ruststream_alloc)]
+use crate::Str;
+use crate::copied::copy_payload;
+use crate::host::{HostDetach, KeptDelivery, PrepareKept, detach_continuation};
 use crate::publish_failure::Reaction;
-use crate::{AckError, HeaderMap, Settle, Str};
+use crate::{AckError, HeaderSet, Settle};
 
 /// Drops the original delivery and sends a copy of it to `target` through a record of the
 /// host's store: published at once without a delay (or with a zero one), by the store's driver
@@ -54,6 +57,9 @@ where
         Target::Subscription => None,
         Target::DeadLetter(destination) => Some(destination),
     };
+    let Some(headers) = counted(slot.get()) else {
+        return slot.take().nack(true).await;
+    };
     let Some(record) = kept.take_record() else {
         return spill_copy(
             slot,
@@ -64,11 +70,12 @@ where
             kept,
             host,
             build_cx,
+            headers,
         )
         .await;
     };
     let msg = slot.get();
-    kept.fill(record, msg.payload(), counted(msg));
+    kept.fill(record, msg.payload(), headers);
     kept.prepare(
         record,
         destination,
@@ -87,7 +94,7 @@ where
         Some(delay) => kept.arm(record, delay, reaction.take()),
         None => {
             if let Some(follow) = kept.send_now(record, destination, reaction.take()).await {
-                host.detach_boxed(follow);
+                detach_continuation!(host, follow);
             }
         }
     }
@@ -109,6 +116,7 @@ async fn spill_copy<M, C, Kept, Host>(
     kept: &Kept,
     host: &Host,
     build_cx: fn(&M) -> C,
+    headers: HeaderSet,
 ) -> Result<(), AckError>
 where
     M: Settle,
@@ -120,17 +128,17 @@ where
         // Copied for the continuation only: a failure nobody asked about copies nothing.
         let payload = reaction
             .is_some()
-            .then(|| Bytes::copy_from_slice(msg.payload()));
-        let headers = counted(msg);
+            .then(|| copy_payload(msg.payload()))
+            .flatten();
         drop_original(slot).await?;
-        if let Some(follow) = kept.full(payload, headers, reaction.take()) {
-            host.detach_boxed(follow);
+        if let Some(follow) = kept.full(payload, headers, reaction.take()).await {
+            detach_continuation!(host, follow);
         }
         return Ok(());
     }
     let spilled = kept.spill(
         msg.payload(),
-        counted(msg),
+        headers,
         destination,
         &KeptDelivery {
             subscription: name,
@@ -145,17 +153,36 @@ where
         .send_spilled(spilled, destination, reaction.take())
         .await
     {
-        host.detach_boxed(follow);
+        detach_continuation!(host, follow);
     }
     Ok(())
 }
 
-/// The delivery's headers with the retry count advanced: what the copy carries.
-fn counted<M: Settle>(msg: &M) -> HeaderMap {
+/// The delivery's headers with the retry count advanced: what the copy carries. Without `alloc`
+/// the count has to fit the fixed header room: `None` when it does not, and the delivery then goes
+/// back to the broker with a requeue, like one with no copy path.
+#[cfg(ruststream_alloc)]
+#[expect(clippy::unnecessary_wraps, reason = "one signature for both variants")]
+fn counted<M: Settle>(msg: &M) -> Option<HeaderSet> {
     let mut headers = msg.headers().clone();
     let next_count = current_retry_count(&headers) + 1;
     headers.insert(Str::from_static(RETRY_COUNT_HEADER), next_count.to_string());
-    headers
+    Some(headers)
+}
+
+/// The delivery's headers with the retry count advanced: what the copy carries. Without `alloc`
+/// the count has to fit the fixed header room: `None` when it does not, and the delivery then goes
+/// back to the broker with a requeue, like one with no copy path.
+#[cfg(not(ruststream_alloc))]
+fn counted<M: Settle>(msg: &M) -> Option<HeaderSet> {
+    use core::fmt::Write;
+
+    let mut headers = msg.headers().clone();
+    let next_count = current_retry_count(&headers) + 1;
+    let mut digits = heapless::String::<20>::new();
+    write!(digits, "{next_count}").ok()?;
+    headers.insert(RETRY_COUNT_HEADER, digits.as_str()).ok()?;
+    Some(headers)
 }
 
 /// Drops the original, as on the erased path: a transport with no settlement has nothing to drop,
@@ -168,6 +195,7 @@ async fn drop_original<M: Settle>(slot: &mut Slot<M>) -> Result<(), AckError> {
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 // The store double is a plain cell, as a one-thread runner's store is.
 #[allow(clippy::future_not_send)]
 mod tests {
@@ -181,7 +209,7 @@ mod tests {
     use core::time::Duration;
     use std::io;
 
-    use bytes::Bytes;
+    use crate::copied::CopiedPayload;
 
     use super::super::super::fixtures::{PlainMessage, Settlement};
     use super::super::{settle_outcome, settle_reacting};
@@ -193,7 +221,7 @@ mod tests {
         ErrorHook, FailedMessage, Failures, NoFreeRecordError, Reaction, publish_lost,
     };
     use crate::testkit::log_capture;
-    use crate::{HeaderMap, RetryDeclaration, Settle};
+    use crate::{HeaderSet, RetryDeclaration, Settle};
 
     /// What the store was asked to do, in order.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -254,7 +282,13 @@ mod tests {
                 target,
                 "Order",
                 io::Error::other("connection closed").into(),
-                || FailedMessage::new(target, Some(Bytes::from_static(b"body")), HeaderMap::new()),
+                || {
+                    FailedMessage::new(
+                        target,
+                        Some(CopiedPayload::from_static(b"body")),
+                        HeaderSet::new(),
+                    )
+                },
             )
         }
     }
@@ -281,24 +315,24 @@ mod tests {
 
         fn full(
             &self,
-            payload: Option<Bytes>,
-            _headers: HeaderMap,
+            payload: Option<CopiedPayload>,
+            _headers: HeaderSet,
             reaction: Option<Reaction>,
-        ) -> Option<Continuation> {
+        ) -> impl Future<Output = Option<Continuation>> {
             self.asked.borrow_mut().push(Asked::Full {
                 payload: payload.as_ref().map(|bytes| bytes.to_vec()),
             });
-            publish_lost(
+            ready(publish_lost(
                 reaction,
                 "orders",
                 "orders",
                 "Order",
                 NoFreeRecordError::new(self.room).into(),
-                || FailedMessage::new("orders", payload, HeaderMap::new()),
-            )
+                || FailedMessage::new("orders", payload, HeaderSet::new()),
+            ))
         }
 
-        fn fill(&self, _record: usize, payload: &[u8], headers: HeaderMap) {
+        fn fill(&self, _record: usize, payload: &[u8], headers: HeaderSet) {
             self.asked.borrow_mut().push(Asked::Fill {
                 payload: payload.to_vec(),
                 count: headers.get_str(RETRY_COUNT_HEADER).map(ToOwned::to_owned),
@@ -342,7 +376,7 @@ mod tests {
         fn spill<M: Settle>(
             &self,
             payload: &[u8],
-            headers: HeaderMap,
+            headers: HeaderSet,
             destination: Option<&str>,
             _delivery: &KeptDelivery<'_, M, Cx>,
         ) {
@@ -403,8 +437,8 @@ mod tests {
     ) -> (u8, usize) {
         let settled = Arc::new(AtomicU8::new(0));
         let msg = PlainMessage {
-            payload: Bytes::from_static(b"body"),
-            headers: HeaderMap::new(),
+            payload: CopiedPayload::from_static(b"body"),
+            headers: HeaderSet::new(),
             settled: Arc::clone(&settled),
             settlement,
         };
@@ -706,8 +740,8 @@ mod tests {
         let (events, _guard) = log_capture::start();
         let settled = Arc::new(AtomicU8::new(0));
         let msg = PlainMessage {
-            payload: Bytes::from_static(b"body"),
-            headers: HeaderMap::new(),
+            payload: CopiedPayload::from_static(b"body"),
+            headers: HeaderSet::new(),
             settled: Arc::clone(&settled),
             settlement: Settlement::Accepted,
         };

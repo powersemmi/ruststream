@@ -16,8 +16,20 @@ readme = "../../README.md"
 all-features = true
 
 [features]
+default = ["alloc"]
+# The suites of the `Send` family (the routing contract, the lifecycle ladder and the capability
+# suites), which keep headers and payloads on the heap. Without it the crate holds the suites of
+# the local family, which run against a bus of fixed size.
+# They spawn a broker's work on a multi-thread runtime, so they ask `Send` of the contract types
+# and take the runtime's `std` form, whose shared state sits behind a mutex.
+alloc = [
+    "ruststream-core/alloc",
+    "ruststream-core/send",
+    "ruststream-runtime/std",
+]
 # The checks on the document a broker's descriptors and bindings produce.
 asyncapi = [
+    "alloc",
     "dep:ruststream-asyncapi",
     "dep:ruststream-runtime-tokio",
     "dep:serde_json",
@@ -25,9 +37,7 @@ asyncapi = [
 ]
 
 [dependencies]
-# The suites drive a broker on a multi-thread runtime and spawn its work there, so the contract
-# traits ask `Send` of what they hand out.
-ruststream-core = { workspace = true, features = ["testing", "send"] }
+ruststream-core = { workspace = true, features = ["testing"] }
 ruststream-runtime = { workspace = true, features = ["testing"] }
 ruststream-runtime-tokio = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }

@@ -59,7 +59,7 @@ use super::{ConnectedLocalMemoryBroker, LocalMemoryError};
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalMemorySource {
-    name: String,
+    name: Cow<'static, str>,
 }
 
 impl LocalMemorySource {
@@ -87,7 +87,9 @@ impl LocalMemorySource {
     /// ```
     #[must_use]
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into() }
+        Self {
+            name: Cow::Owned(name.into()),
+        }
     }
 }
 
@@ -95,7 +97,7 @@ impl LocalMemorySource {
 // `#[subscriber(LocalMemorySource)]` form builds through.
 impl FromName for LocalMemorySource {
     fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(name.into().into_owned())
+        Self { name: name.into() }
     }
 }
 
@@ -116,6 +118,13 @@ impl<const CAP: usize> SubscriptionSource<ConnectedLocalMemoryBroker<CAP>> for L
 
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn static_name(&self) -> Option<&'static str> {
+        match self.name {
+            Cow::Borrowed(literal) => Some(literal),
+            Cow::Owned(_) => None,
+        }
     }
 
     fn subscribe(
@@ -460,6 +469,23 @@ mod tests {
     use super::*;
     use crate::local::LocalMemoryBroker;
     use crate::local::drive::waiting;
+
+    /// A name the program wrote down is reported as static, so a loop can borrow it whole; one
+    /// built at run time is not.
+    #[test]
+    fn only_a_literal_name_is_reported_as_static() {
+        let literal = LocalMemorySource::from_name("sensors/temp");
+        let built = LocalMemorySource::new("sensors/temp");
+
+        assert_eq!(
+            SubscriptionSource::<ConnectedLocalMemoryBroker<4>>::static_name(&literal),
+            Some("sensors/temp")
+        );
+        assert_eq!(
+            SubscriptionSource::<ConnectedLocalMemoryBroker<4>>::static_name(&built),
+            None
+        );
+    }
 
     async fn open(name: &str) -> (ConnectedLocalMemoryBroker<4>, LocalMemorySubscriber<4>) {
         let connected = LocalMemoryBroker::<4>::new().connect().await.unwrap();

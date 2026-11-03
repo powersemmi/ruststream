@@ -5,11 +5,11 @@
 //! [drops](FailurePolicy::Drop) the one bad message rather than letting any producer take the
 //! consumer down.
 
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "testing"))]
 use alloc::borrow::ToOwned;
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "testing"))]
 use alloc::string::String;
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "testing"))]
 use core::any::Any;
 use core::time::Duration;
 
@@ -188,7 +188,7 @@ impl<Signal> DispatchFailure<Signal> {
     }
 }
 
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", feature = "testing"))]
 /// Renders the payload of a caught panic as a human-readable reason, recovering the message a
 /// `panic!` / `unwrap` / `expect` carries (`&str` or `String`) and falling back to a placeholder
 /// for anything else.
@@ -205,6 +205,7 @@ pub(crate) fn panic_reason(payload: &(dyn Any + Send)) -> String {
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
     use super::*;
 

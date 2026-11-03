@@ -239,8 +239,8 @@ async fn a_stream_error_does_not_stop_the_worker_pool() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_stream_error_does_not_stop_the_keyed_lanes() {
-    // Keyless deliveries rotate over the lanes, so both lanes get exercised.
+async fn a_stream_error_does_not_stop_the_keyed_workers() {
+    // Keyless deliveries rotate over the workers, so both workers get exercised.
     let handled =
         dispatched_under(Workers::keyed(NonZeroUsize::new(2).unwrap()), &["a", "b"]).await;
     let mut handled = handled;
@@ -288,7 +288,7 @@ impl BatchHandler<Vec<PlainMessage>, (), ()> for ReportingBatchHandler {
 }
 
 /// The worker policies a subscription runs under, each with a dispatch loop of its own:
-/// sequential, a pool, and keyed lanes.
+/// sequential, a pool, and keyed workers.
 const WORKER_FORMS: [Workers; 3] = [
     Workers::sequential(),
     Workers::pool(crate::nonzero!(2usize)),
@@ -296,7 +296,7 @@ const WORKER_FORMS: [Workers; 3] = [
 ];
 
 /// The batch loop drives both of its own forms from one place, so both are worth the same
-/// shutdown check; keyed lanes do not apply at batch granularity.
+/// shutdown check; keyed workers do not apply at batch granularity.
 const BATCH_FORMS: [Workers; 2] = [
     Workers::sequential(),
     Workers::pool(crate::nonzero!(2usize)),
@@ -729,7 +729,7 @@ async fn a_pool_whose_worker_died_stops_rather_than_shrinks() {
         WORKER_FORMS[1],
     )
     .expect("the dispatch starts");
-    // The keyed lanes and the sequential loop stop on a worker that is gone; a pool that kept
+    // The keyed workers and the sequential loop stop on a worker that is gone; a pool that kept
     // going on the workers left would run at a capacity nobody configured, and say nothing.
     timeout(Duration::from_secs(1), joined)
         .await

@@ -9,16 +9,21 @@
 //! reply codec). The destination name comes from the macro; the publisher and codec come from
 //! the chain.
 
+#[cfg(ruststream_alloc)]
+use alloc::borrow::ToOwned;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::{any, fmt};
 use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
-use bytes::{Bytes, BytesMut};
+use crate::copied::{CopiedPayload, copy_or_empty, empty_payload, freeze, take_frozen};
+use ruststream_core::diag::warn;
+use ruststream_core::{EncodeBuf, PayloadBuf};
 use serde::Serialize;
-use tracing::warn;
 
-use crate::codec::Codec;
+use crate::codec::ActiveCodec as Codec;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Origin, PipelinePublish, publishing_to};
 use crate::{OutgoingMessage, PayloadForm, Publisher, Settle};
@@ -28,6 +33,7 @@ use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerOutcome, HandlerResult};
 use super::input::{InputKind, Materialize};
+#[cfg(ruststream_alloc)]
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{
     ForReply, PublishContext, PublishIdentity, PublishTransform, SendThrough, TypedPublisher,
@@ -61,7 +67,7 @@ pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: MaybeSendSync {
     /// The bytes of `reply` that a lending publisher was shown and that do not sit in the
     /// encode buffer: the value's own, which the reply holds. A failure path, taken only where
     /// a continuation waits for the message.
-    fn own_bytes(&self, reply: &Reply) -> Bytes;
+    fn own_bytes(&self, reply: &Reply) -> CopiedPayload;
 }
 
 /// What an encoded reply value knows about leaving through a typed stack.
@@ -96,7 +102,8 @@ pub(crate) trait EncodeReply: MaybeSendSync {
     /// The bytes this reply encodes to with `codec`, for a continuation after a failed batch.
     /// Empty when the codec rejects it.
     #[doc(hidden)]
-    fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> Bytes;
+    #[cfg(ruststream_alloc)]
+    fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> CopiedPayload;
 }
 
 impl<Reply: Serialize + MaybeSendSync> EncodeReply for Reply {
@@ -120,10 +127,9 @@ impl<Reply: Serialize + MaybeSendSync> EncodeReply for Reply {
         stack.publish(name, self, pipeline, cx, encode)
     }
 
-    fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> Bytes {
-        codec
-            .encode(self)
-            .map_or_else(|_| Bytes::new(), BytesMut::freeze)
+    #[cfg(ruststream_alloc)]
+    fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> CopiedPayload {
+        codec.encode(self).map_or_else(|_| empty_payload(), freeze)
     }
 }
 
@@ -150,10 +156,11 @@ where
         stack.publish_pair(name, &self.headers, &self.body, pipeline, cx, encode)
     }
 
-    fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> Bytes {
+    #[cfg(ruststream_alloc)]
+    fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> CopiedPayload {
         codec
             .encode(&self.body)
-            .map_or_else(|_| Bytes::new(), BytesMut::freeze)
+            .map_or_else(|_| empty_payload(), freeze)
     }
 }
 
@@ -179,7 +186,7 @@ where
         deliver_bare(self, name, reply, encode)
     }
 
-    fn own_bytes(&self, reply: &Reply) -> Bytes {
+    fn own_bytes(&self, reply: &Reply) -> CopiedPayload {
         serialized_bytes(reply)
     }
 }
@@ -187,28 +194,28 @@ where
 /// The bytes a lending publisher was shown, as a refused publish names them by address: the
 /// encode buffer's, moved out without a copy, or else the reply's own.
 pub(crate) fn lent_bytes(
-    buf: &mut BytesMut,
+    buf: &mut EncodeBuf,
     addr: usize,
     len: usize,
-    own: impl FnOnce() -> Bytes,
-) -> Bytes {
+    own: impl FnOnce() -> CopiedPayload,
+) -> CopiedPayload {
     if len == 0 {
-        return Bytes::new();
+        return empty_payload();
     }
     if addr == buf.as_ptr() as usize && len == buf.len() {
-        return buf.split().freeze();
+        return take_frozen(buf);
     }
     own()
 }
 
 /// The bytes of a [`Serialized`](super::Serialized) reply, for a continuation: the ones it holds,
 /// or the ones it writes into a buffer of its own. Empty when its encoder rejects it.
-fn serialized_bytes<Reply: super::Serialized>(reply: &Reply) -> Bytes {
-    let mut buf = BytesMut::new();
+fn serialized_bytes<Reply: super::Serialized>(reply: &Reply) -> CopiedPayload {
+    let mut buf = PayloadBuf::new();
     match reply.wire_bytes(&mut buf) {
-        Ok(super::WireBytes::Own(bytes)) => Bytes::copy_from_slice(bytes),
-        Ok(super::WireBytes::InBuffer) => buf.freeze(),
-        Ok(_) | Err(_) => Bytes::new(),
+        Ok(super::WireBytes::Own(bytes)) => copy_or_empty(bytes),
+        Ok(super::WireBytes::InBuffer) => freeze(buf),
+        Ok(_) | Err(_) => empty_payload(),
     }
 }
 
@@ -310,6 +317,7 @@ pub trait PublishingDef: MaybeSendSync {
 
     /// The input type's serialized JSON Schema, when it implements [`schemars::JsonSchema`] and the
     /// `asyncapi` feature is on. The macro fills this in; the default omits it.
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         None
     }
@@ -318,6 +326,7 @@ pub trait PublishingDef: MaybeSendSync {
     /// [`Headers<T>`](super::Headers) parameter), when `T` implements
     /// [`schemars::JsonSchema`] and the `asyncapi` feature is on. The macro fills this in; the
     /// default omits it.
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         None
     }
@@ -325,6 +334,7 @@ pub trait PublishingDef: MaybeSendSync {
     /// The messages this handler publishes, for the `AsyncAPI` `send` operations: the reply
     /// message, plus every `Out` slot dictionary entry. The macro fills this in; the default
     /// declares nothing. Called once at registration.
+    #[cfg(ruststream_alloc)]
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
         Vec::new()
     }
@@ -386,8 +396,9 @@ pub(crate) fn warn_ignored_reply_name(
 }
 
 /// Builds the registration metadata for a publishing definition mounted under `name`.
-pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> HandlerMetadata {
-    let mut meta = HandlerMetadata::raw(name)
+#[cfg(ruststream_alloc)]
+pub(crate) fn publishing_metadata<D: PublishingDef>(name: &str, def: &D) -> HandlerMetadata {
+    let mut meta = HandlerMetadata::raw(name.to_owned())
         .with_output_type(any::type_name::<D::Reply>())
         .with_def_details(
             def.description(),
@@ -432,8 +443,8 @@ where
 
     // The encoded reply is written into the encode buffer or a buffer a transform wrote, and a
     // refusal hands either back, so there are no bytes of the value's own.
-    fn own_bytes(&self, _reply: &Reply) -> Bytes {
-        Bytes::new()
+    fn own_bytes(&self, _reply: &Reply) -> CopiedPayload {
+        empty_payload()
     }
 }
 
@@ -517,7 +528,7 @@ where
         let name = self.def.reply_name();
         // The loop's buffer where the dispatch lent one, and one of this publish's own where it
         // did not; `BytesMut::new` allocates nothing, so the second costs the first nothing.
-        let mut own = BytesMut::new();
+        let mut own = PayloadBuf::new();
         let encode = ctx.take_encode_buffer().unwrap_or(&mut own);
         let slot = <<Wiring as ReplySink<Def::Reply, Def::Context, Pipeline>>::Payload as PayloadForm>::encode_slot(
             &mut *encode,
@@ -544,17 +555,36 @@ where
             let (err, failed) = refusal.into_message(name, |addr, len| {
                 lent_bytes(encode, addr, len, || self.publisher.own_bytes(&reply))
             });
-            let follow = publish_lost(
-                reaction,
-                ctx.name(),
-                name,
-                any::type_name::<Def::Reply>(),
-                err,
-                || failed,
-            );
-            return follow.map_or_else(HandlerOutcome::ack, |follow| {
-                HandlerOutcome::ack().and_after_boxed(follow)
-            });
+            #[cfg(ruststream_alloc)]
+            {
+                let follow = publish_lost(
+                    reaction,
+                    ctx.name(),
+                    name,
+                    any::type_name::<Def::Reply>(),
+                    err,
+                    || failed,
+                );
+                return follow.map_or_else(HandlerOutcome::ack, |follow| {
+                    HandlerOutcome::ack().and_after_boxed(follow)
+                });
+            }
+            // Without a heap the failure waits in the delivery's own buffer, and the worker runs
+            // the `.error` closure on it once the delivery is settled.
+            #[cfg(not(ruststream_alloc))]
+            {
+                let subscription = ctx.subscription();
+                publish_lost(
+                    reaction,
+                    subscription,
+                    name,
+                    any::type_name::<Def::Reply>(),
+                    err,
+                    ctx.failure_slot(),
+                    || failed,
+                );
+                return HandlerOutcome::ack();
+            }
         }
         // The reply is out: what the handler registered to follow it runs after the ack.
         publish_done(reaction).map_or_else(HandlerOutcome::ack, |follow| {
@@ -564,13 +594,13 @@ where
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests {
-    use alloc::borrow::ToOwned;
     use alloc::format;
     use core::future::ready;
 
     use super::{PublishingCall, PublishingDef, publishing_metadata};
-    use crate::HeaderMap;
+    use crate::HeaderSet;
     use crate::Name;
     use crate::context::Context;
     use crate::dispatch::{Delivery, Workers};
@@ -627,12 +657,12 @@ mod tests {
         assert_eq!(def.reply_name(), "out");
         let _source = def.source();
 
-        let meta = publishing_metadata("in".to_owned(), &def);
+        let meta = publishing_metadata("in", &def);
         assert_eq!(meta.name, "in");
 
         let state = ();
         let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("in", &headers, &state, (), &delivery);
         assert_eq!(def.call(&5, &(), &mut ctx).await.unwrap(), 5);
     }
@@ -657,7 +687,7 @@ mod tests {
         use crate::testing::coordinator::Origin;
         use crate::testkit::delivery::one_delivery;
         use crate::testkit::log_capture::{find, start};
-        use crate::{HeaderMap, Lend, OutgoingMessage, Publisher};
+        use crate::{HeaderSet, Lend, OutgoingMessage, Publisher};
         use ruststream::memory::{MemoryBroker, MemoryError};
         use ruststream_core::{PublishMessageError, PublishOutcome};
 
@@ -702,7 +732,7 @@ mod tests {
 
             let state = ();
             let delivery = Delivery::empty();
-            let headers = HeaderMap::new();
+            let headers = HeaderSet::new();
             let mut ctx = Context::new("in", &headers, &state, (), &delivery);
 
             let (events, guard) = start();
@@ -738,7 +768,7 @@ mod tests {
 
             let state = ();
             let delivery = Delivery::empty();
-            let headers = HeaderMap::new();
+            let headers = HeaderSet::new();
             let mut ctx = Context::new("in", &headers, &state, (), &delivery);
 
             let (events, guard) = start();

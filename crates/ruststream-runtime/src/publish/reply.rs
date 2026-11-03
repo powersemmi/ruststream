@@ -1,20 +1,29 @@
 //! Reply wirings: how a handler's return value reaches a publisher.
 
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
-use bytes::Bytes;
 use core::fmt;
+use ruststream_core::diag::warn;
 use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 use serde::Serialize;
-use tracing::warn;
 
 use super::{
     BatchPublishTransform, PublishContext, PublishPipeline, Transactional, TypedPublisher,
 };
-use crate::codec::Codec;
+#[cfg(ruststream_alloc)]
+use crate::HeaderSet;
+use crate::codec::ActiveCodec as Codec;
+#[cfg(ruststream_alloc)]
+use crate::copied::CopiedPayload;
 use crate::lifecycle::BoxError;
 use crate::publish::sealed::Sealed;
-use crate::publish_failure::{FailedMessage, Refusal};
-use crate::{HeaderMap, PayloadForm, Publisher, TransactionalPublisher};
+#[cfg(not(ruststream_alloc))]
+#[cfg(ruststream_alloc)]
+use crate::publish_failure::Failed;
+#[cfg(ruststream_alloc)]
+use crate::publish_failure::FailedMessage;
+use crate::publish_failure::Refusal;
+use crate::{PayloadForm, Publisher, TransactionalPublisher};
 
 /// A batch whose replies did not all go out: the cause, and which replies were lost.
 ///
@@ -25,6 +34,7 @@ use crate::{HeaderMap, PayloadForm, Publisher, TransactionalPublisher};
 #[derive(Debug)]
 pub struct BatchRefusal {
     /// The first reply that did not go out.
+    #[cfg(ruststream_alloc)]
     lost_from: usize,
     /// The refused reply and what came back for it, when a publish was refused.
     refused: Option<(usize, Refusal)>,
@@ -32,10 +42,17 @@ pub struct BatchRefusal {
     error: Option<BoxError>,
 }
 
+/// The cause of a batch reply refused with no error of its own.
+#[cfg(ruststream_alloc)]
+fn refused_reply() -> BoxError {
+    BoxError::from("a batch reply was refused")
+}
+
 impl BatchRefusal {
     /// The refusal of the reply at `index`, with every reply from `lost_from` on lost.
-    fn at(index: usize, lost_from: usize, refusal: Refusal) -> Self {
+    fn at(index: usize, #[cfg(ruststream_alloc)] lost_from: usize, refusal: Refusal) -> Self {
         Self {
+            #[cfg(ruststream_alloc)]
             lost_from,
             refused: Some((index, refusal)),
             error: None,
@@ -45,6 +62,7 @@ impl BatchRefusal {
     /// A failure of the batch as a whole, which loses every reply.
     fn whole(error: BoxError) -> Self {
         Self {
+            #[cfg(ruststream_alloc)]
             lost_from: 0,
             refused: None,
             error: Some(error),
@@ -52,25 +70,30 @@ impl BatchRefusal {
     }
 
     /// The cause alone.
+    #[cfg(ruststream_alloc)]
     pub(crate) fn into_error(self) -> BoxError {
         match (self.refused, self.error) {
             (Some((_, refusal)), _) => refusal.into_error(),
             (None, Some(error)) => error,
-            (None, None) => BoxError::from("a batch reply was refused"),
+            (None, None) => refused_reply(),
         }
     }
 
     /// The cause and the replies that did not go out, as messages for `name`.
     ///
+    /// The list of lost messages is as long as the batch, so a build without `alloc` reports a
+    /// batch's lost replies through the batch's own fixed buffer instead.
+    ///
     /// The refused reply is the message that was sent, with `lent` taking the bytes a lending
     /// publisher was shown; the others are encoded again with `encode`, because nothing of them
     /// was handed to a publisher that kept it.
+    #[cfg(ruststream_alloc)]
     pub(crate) fn into_lost<T>(
         self,
         name: &str,
         replies: &[T],
-        encode: impl Fn(&T) -> Bytes,
-        lent: impl FnOnce(usize, usize) -> Bytes,
+        encode: impl Fn(&T) -> CopiedPayload,
+        lent: impl FnOnce(usize, usize) -> CopiedPayload,
     ) -> (BoxError, Vec<FailedMessage>) {
         let Self {
             lost_from,
@@ -94,13 +117,10 @@ impl BatchRefusal {
                     cause = Some(error);
                     return message;
                 }
-                FailedMessage::new(name, Some(encode(reply)), HeaderMap::new())
+                FailedMessage::new(name, Some(encode(reply)), HeaderSet::new())
             })
             .collect();
-        (
-            cause.unwrap_or_else(|| BoxError::from("a batch reply was refused")),
-            lost,
-        )
+        (cause.unwrap_or_else(|| refused_reply()), lost)
     }
 }
 
@@ -182,7 +202,14 @@ where
             let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
             self.publish_batched(name, reply, pipeline, cx, slot)
                 .await
-                .map_err(|refusal| BatchRefusal::at(index, index, refusal))?;
+                .map_err(|refusal| {
+                    BatchRefusal::at(
+                        index,
+                        #[cfg(ruststream_alloc)]
+                        index,
+                        refusal,
+                    )
+                })?;
         }
         Ok(())
     }
@@ -233,7 +260,12 @@ where
             {
                 abort_quietly(publisher).await;
                 // The transaction is aborted, so every reply of the batch is lost.
-                return Err(BatchRefusal::at(index, 0, refusal));
+                return Err(BatchRefusal::at(
+                    index,
+                    #[cfg(ruststream_alloc)]
+                    0,
+                    refusal,
+                ));
             }
         }
         // Per the TransactionalPublisher contract a failed commit closes the transaction, so

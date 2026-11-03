@@ -10,6 +10,7 @@
 
 use std::any::type_name;
 use std::cell::RefCell;
+use std::error::Error;
 use std::fmt;
 use std::future::poll_fn;
 use std::pin::Pin;
@@ -19,10 +20,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
 
-use ruststream_runtime::OutSlot;
 use ruststream_runtime::testing::{
-    Coordinator, InProcess, InProcessRun, PublishedAssertions, TestError, Within,
+    Coordinator, InProcess, InProcessRun, PublishedAssertions, TestError, Within, harness_section,
 };
+use ruststream_runtime::{BoxError, OutSlot};
 use ruststream_runtime_embassy::{Control, EmbeddedApp, Health, Mounts, RunError};
 
 mod brokers;
@@ -76,6 +77,12 @@ type HookRun = Pin<Box<dyn Future<Output = ()>>>;
 /// With the `testing` feature on, every broker an embedded app registers implements the
 /// in-process mode ([`InProcess`]): an app registering a broker without it does not build in a
 /// test build.
+///
+/// The harness follows the form of the build. Without the framework's `alloc` feature it drives
+/// the fixed form of the app (`FixedHeaders`, slice codecs, the board's `static` bus), and a test
+/// binary that installs `assert_no_alloc::AllocDisabler` as its global allocator fails on an
+/// allocation the framework makes while the app is polled; the harness's own bookkeeping runs
+/// where the allocator lets it through.
 ///
 /// # Examples
 ///
@@ -297,7 +304,8 @@ impl TestApp {
             let record = Rc::clone(&record);
             let control = Rc::clone(&control);
             Box::pin(async move {
-                let swap = |own| state(own, &TestBrokers::of(&record.brokers()));
+                let swap =
+                    |own| harness_section(|| state(own, &TestBrokers::of(&record.brokers())));
                 app.run_in_process(&control, &record, swap).await
             })
         };
@@ -588,7 +596,7 @@ impl TestApp {
     fn poll_app(&self, cx: &mut Context<'_>) {
         let mut slot = self.run.borrow_mut();
         if let Some(run) = slot.as_mut()
-            && let Poll::Ready(ended) = run.as_mut().poll(cx)
+            && let Poll::Ready(ended) = poll_without_heap(run.as_mut(), cx)
         {
             *slot = None;
             *self.ended.borrow_mut() = Some(ended);
@@ -632,15 +640,46 @@ impl TestApp {
     }
 }
 
+/// Polls the app's run; in a build without the framework's `alloc` an allocation made inside the
+/// poll is the framework's, and a test binary that installs the failing allocator fails on it.
+#[cfg(not(ruststream_alloc))]
+fn poll_without_heap<F: Future + ?Sized>(
+    run: Pin<&mut F>,
+    cx: &mut Context<'_>,
+) -> Poll<F::Output> {
+    assert_no_alloc::assert_no_alloc(|| run.poll(cx))
+}
+
+/// Polls the app's run; the build has a heap, so nothing guards the poll.
+#[cfg(ruststream_alloc)]
+fn poll_without_heap<F: Future + ?Sized>(
+    run: Pin<&mut F>,
+    cx: &mut Context<'_>,
+) -> Poll<F::Output> {
+    run.poll(cx)
+}
+
 /// The harness's error for an app that stopped while it started.
 fn startup_error(err: RunError) -> TestError {
     match err {
         RunError::Connect { broker, source } => TestError::Connect {
             broker: broker.to_owned(),
-            source,
+            source: test_source(source),
         },
-        RunError::Subscribe { source, .. } => TestError::Subscribe(source),
-        RunError::Startup { source } => TestError::Startup(source),
+        RunError::Subscribe { source, .. } => TestError::Subscribe(test_source(source)),
+        RunError::Startup { source } => TestError::Startup(test_source(source)),
         other => TestError::Startup(Box::new(other)),
     }
+}
+
+/// A runner's error as the harness's own error type holds it.
+#[cfg(ruststream_alloc)]
+fn test_source(source: BoxError) -> Box<dyn Error + Send + Sync> {
+    source
+}
+
+/// A runner's error as the harness's own error type holds it: the cause the runner kept.
+#[cfg(not(ruststream_alloc))]
+fn test_source(source: BoxError) -> Box<dyn Error + Send + Sync> {
+    Box::new(*source)
 }

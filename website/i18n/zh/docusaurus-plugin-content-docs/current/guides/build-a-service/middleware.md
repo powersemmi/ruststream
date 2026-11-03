@@ -13,7 +13,7 @@ import TabItem from '@theme/TabItem';
 [`Layer`](../../components/subscribers/middleware/layer.md) 把一个处理器包裹在另一个处理器里。
 它在主体之前、之后或者代替主体运行代码，并把结果传递下去。
 应用上的层包裹应用挂载的每个订阅者，路由器上的层只包裹该路由器的订阅者。
-RustStream 通过 `tracing` 发出自己的事件：服务启动、每个订阅打开、服务停止。
+RustStream 通过应用选定的日志器发出自己的事件，`.logger(TracingLogger)` 即选择 `tracing`：服务启动、每个订阅打开、服务停止。
 [`TracingLayer`](api:ruststream::runtime::layers::TracingLayer) 为每次投递添加事件：先在 `DEBUG` 级别记录 `delivery received`，然后记录它的结果。ack 在 `INFO` 级别，重试或丢弃在 `WARN` 级别。
 `logging` feature 会打印这些事件，第 1 章已经展示过。任何其他 `tracing` 订阅者都可以代替它。
 [可观测性](../../components/observability/index.md)讲解 Prometheus 指标和 OpenTelemetry 导出，它们同样以层的形式挂载。

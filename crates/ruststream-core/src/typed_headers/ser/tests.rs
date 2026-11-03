@@ -5,6 +5,10 @@ use serde::Serialize;
 use serde::ser::Serializer;
 
 use super::*;
+use std::borrow::ToOwned;
+use std::string::String;
+
+use crate::headers::HeaderMap;
 
 #[derive(Serialize)]
 struct One<T> {

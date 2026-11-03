@@ -102,14 +102,19 @@
 //! # fn main() {}
 //! ```
 
+#[cfg(ruststream_alloc)]
+pub use crate::HeaderMap;
 pub use crate::runtime::{
     Context, ContextKind, Ctx, DefaultSlot, Deserialized, FailurePolicies, FailurePolicy, Failures,
-    ForReply, ForSlot, FromContext, FromRef, Handle, HandlerOutcome, HeaderDiscriminator, Headers,
-    InMessages, InVariant, IncomingMessageMetadata, Input, MapPublisher, Message, MessageWire,
-    Names, Out, OutEntry, OutMessages, OutgoingMessageMetadata, Outs, PublishExt, PublishTransform,
-    PublishedThrough, Reads, Reply, ReplyShape, Retry, Router, RouterDef, Serialized,
-    SerializedReply, SerializedWire, Slot, SoloDeserialized, SoloSet, State, SubscriberSettings,
-    WireBytes, Workers, subscriber,
+    ForReply, ForSlot, FromContext, FromRef, Handle, HandlerOutcome, Headers, InMessages,
+    InVariant, Input, MapPublisher, Message, MessageWire, Names, Out, OutEntry, OutMessages, Outs,
+    PublishExt, PublishTransform, PublishedThrough, Reads, Reply, ReplyShape, Retry, Router,
+    Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized, SoloSet, State,
+    SubscriberSettings, WireBytes, Workers, subscriber,
+};
+#[cfg(ruststream_alloc)]
+pub use crate::runtime::{
+    HeaderDiscriminator, IncomingMessageMetadata, OutgoingMessageMetadata, RouterDef,
 };
 // The application object of the tokio runner.
 #[cfg(feature = "tokio")]
@@ -125,15 +130,18 @@ pub use crate::runtime::{EmbeddedApp, Mounts};
 // injected slot (`Out<impl TransactionalPublisher>`) without knowing which broker runs it; the
 // consumer-side capabilities (`Partitioned`, `Seekable`, `Positioned`, `Seeker`) are not, since
 // a service reaches those through a broker whose prelude names the ones it implements.
-// `BytesMut` is here for one reason: a hand-written `Serialized` impl names it in the signature
+// `EncodeBuf` is here for one reason: a hand-written `Serialized` impl names it in the signature
 // the trait demands, and the manual path is meant to need nothing but this glob. `Str` is here
 // for the same kind of reason: it is what a header key and a destination name are made of, and
 // `Str::from_static` is how a constant one is written without paying for a copy.
 pub use crate::{
-    Broker, BytesMut, CallerName, FixedName, HeaderMap, IncomingMessage, MessageHeaders,
-    MessageInfo, Name, NameTemplate, NoHeaders, OutSlot, OutgoingDestination, OwnedTransactions,
-    PublishPolicy, Publisher, RequestReply, Str, TransactionalPublisher, Unnamed, WithHeaders,
+    Broker, CallerName, EncodeBuf, FixedName, IncomingMessage, MessageHeaders, MessageInfo, Name,
+    NameTemplate, NoHeaders, OutSlot, OutgoingDestination, OwnedTransactions, PayloadBuf,
+    PublishPolicy, Publisher, RequestReply, TransactionalPublisher, Unnamed, WithHeaders,
 };
+// The byte buffer and the string only the heap variant has.
+#[cfg(any(ruststream_alloc, feature = "testing"))]
+pub use crate::{BytesMut, Str};
 // The counting macro every `workers(..)` chain writes.
 pub use crate::nonzero;
 

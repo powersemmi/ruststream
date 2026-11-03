@@ -10,24 +10,40 @@
 //! a delivery leaves behind (a continuation, a deferred copy) goes to the runner's [`Detach`],
 //! which the loop carries as a type parameter.
 
-#[cfg(feature = "alloc")]
-use bytes::Bytes;
 use core::time::Duration;
 use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
-#[cfg(feature = "alloc")]
+#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
-#[cfg(feature = "alloc")]
 use core::convert::Infallible;
 
-#[cfg(feature = "alloc")]
+use crate::copied::CopiedPayload;
+#[cfg(ruststream_alloc)]
 use crate::handler::Continuation;
-#[cfg(feature = "alloc")]
+#[cfg(not(ruststream_alloc))]
+use crate::inline::Continuation;
 use crate::publish_failure::Reaction;
-#[cfg(feature = "alloc")]
-use crate::redelivery::{NoRetry, RetryCopies, RetryRoute};
-#[cfg(feature = "alloc")]
-use crate::{HeaderMap, Settle};
+#[cfg(ruststream_alloc)]
+use crate::redelivery::RetryRoute;
+use crate::redelivery::{NoRetry, RetryCopies};
+use crate::{HeaderSet, Settle};
+
+/// Hands a continuation the delivery holds to the host's worker. With `alloc` the host takes the box
+/// at once. Without it the call waits until the worker has room for the continuation, so the macro
+/// is used only where the caller can wait. Machinery.
+macro_rules! detach_continuation {
+    ($host:expr, $work:expr) => {{
+        #[cfg(ruststream_alloc)]
+        {
+            $host.detach_boxed($work)
+        }
+        #[cfg(not(ruststream_alloc))]
+        {
+            $host.detach_continuation($work).await
+        }
+    }};
+}
+pub(crate) use detach_continuation;
 
 /// A runtime's clock: the time it reads and the timers it arms.
 ///
@@ -210,9 +226,19 @@ pub trait Detach: MaybeSendSync {
     const STORES_COPIES: bool = false;
 
     /// Runs `work` beside the delivery that left it.
+    #[cfg(ruststream_alloc)]
     fn detach<Work>(&self, work: Work)
     where
         Work: Future<Output = ()> + MaybeSend + 'static;
+
+    /// Runs a continuation beside the delivery that left it, once the runner has room for it.
+    ///
+    /// Without `alloc` a runner keeps one continuation per worker, in the room the continuation
+    /// already lives in ([`Continuation`]). While that slot is busy the call stays pending, so the
+    /// delivery waits and its worker takes no next one; the call is ready once the runner holds the
+    /// continuation, and the worker runs it beside its deliveries.
+    #[cfg(not(ruststream_alloc))]
+    fn detach(&self, work: Continuation) -> impl Future<Output = ()> + MaybeSend;
 
     /// Runs a continuation the delivery already boxed: an `and_after` continuation or a
     /// post-settle hook.
@@ -220,7 +246,7 @@ pub trait Detach: MaybeSendSync {
     /// The box is [`Continuation`], `Send` where the runtime crate's `tokio` feature is on. A
     /// runner built on this trait is a multi-thread one, so it is built with that feature, and
     /// it spawns the box as the future it is.
-    #[cfg(feature = "alloc")]
+    #[cfg(ruststream_alloc)]
     fn detach_boxed(&self, work: Continuation) {
         self.detach(work);
     }
@@ -273,8 +299,13 @@ pub trait HostDetach {
     ///
     /// A runner that keeps its work boxed takes this box as it is, so a continuation costs one
     /// allocation and not a box around a box.
-    #[cfg(feature = "alloc")]
+    #[cfg(ruststream_alloc)]
     fn detach_boxed(&self, work: Continuation);
+
+    /// Hands a continuation to the runner's worker and waits until the worker holds it: see
+    /// [`Detach::detach`].
+    #[cfg(not(ruststream_alloc))]
+    fn detach_continuation(&self, work: Continuation) -> impl Future<Output = ()> + MaybeSend;
 
     /// Runs the work `make` builds once `delay` has passed on the runner's clock: see
     /// [`Detach::detach_after_with`].
@@ -291,30 +322,33 @@ pub trait HostDetach {
 
     /// The store of retry copies this host keeps in place: [`NoKept`] where the copies leave
     /// through the subscription's retry publisher instead.
-    #[cfg(feature = "alloc")]
     type Kept: KeptCopies;
 
     /// The store of retry copies this host keeps in place, if it keeps any.
-    #[cfg(feature = "alloc")]
     fn kept(&self) -> Option<&Self::Kept>;
 
     /// The retry publisher of the registration this host serves, as its concrete type:
     /// [`NoRetry`] where the host has none.
-    #[cfg(feature = "alloc")]
     type Retry: 'static;
 
     /// The registration's retry route, if the host carries one.
-    #[cfg(feature = "alloc")]
+    #[cfg(ruststream_alloc)]
     fn retry(&self) -> Option<&Arc<RetryRoute<Self::Retry>>>;
 }
 
 impl<Host: Detach> HostDetach for Host {
     const STORES_COPIES: bool = Host::STORES_COPIES;
 
-    #[cfg(feature = "alloc")]
+    #[cfg(ruststream_alloc)]
     #[inline]
     fn detach_boxed(&self, work: Continuation) {
         Detach::detach_boxed(self, work);
+    }
+
+    #[cfg(not(ruststream_alloc))]
+    #[inline]
+    fn detach_continuation(&self, work: Continuation) -> impl Future<Output = ()> + MaybeSend {
+        Detach::detach(self, work)
     }
 
     #[inline]
@@ -336,19 +370,16 @@ impl<Host: Detach> HostDetach for Host {
         Detach::release(self);
     }
 
-    #[cfg(feature = "alloc")]
     type Kept = NoKept;
 
-    #[cfg(feature = "alloc")]
     #[inline]
     fn kept(&self) -> Option<&NoKept> {
         None
     }
 
-    #[cfg(feature = "alloc")]
     type Retry = NoRetry;
 
-    #[cfg(feature = "alloc")]
+    #[cfg(ruststream_alloc)]
     #[inline]
     fn retry(&self) -> Option<&Arc<RetryRoute<NoRetry>>> {
         None
@@ -359,14 +390,12 @@ impl<Host: Detach> HostDetach for Host {
 /// carries are shared between threads, so a future holding it can be sent, and it keeps no copy
 /// in place. Every [`Detach`]
 /// qualifies, and so does one with a retry route ([`Copying`]). Machinery; never named directly.
-#[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub trait SendHost<Cx>:
     HostDetach<Kept: PrepareKept<Cx> + MaybeSendSync, Retry: RetryCopies<Cx>> + MaybeSendSync
 {
 }
 
-#[cfg(feature = "alloc")]
 impl<Cx, Host> SendHost<Cx> for Host where
     Host: HostDetach<Kept: PrepareKept<Cx> + MaybeSendSync, Retry: RetryCopies<Cx>> + MaybeSendSync
 {
@@ -375,7 +404,7 @@ impl<Cx, Host> SendHost<Cx> for Host where
 /// A [`Detach`] lent to the delivery body together with the retry route of the registration it
 /// serves: the host of a multi-thread runner, whose retry copies leave through the registration's
 /// concrete retry publisher once their timer has run. Machinery; never named directly.
-#[cfg(feature = "alloc")]
+#[cfg(ruststream_alloc)]
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct Copying<Host, Retry> {
@@ -385,7 +414,7 @@ pub struct Copying<Host, Retry> {
     pub route: Option<Arc<RetryRoute<Retry>>>,
 }
 
-#[cfg(feature = "alloc")]
+#[cfg(ruststream_alloc)]
 impl<Host, Retry> Copying<Host, Retry> {
     /// The runner's handle `host` with the registration's retry `route`.
     #[must_use]
@@ -394,7 +423,7 @@ impl<Host, Retry> Copying<Host, Retry> {
     }
 }
 
-#[cfg(feature = "alloc")]
+#[cfg(ruststream_alloc)]
 impl<Host: Detach, Retry: 'static> HostDetach for Copying<Host, Retry> {
     #[inline]
     fn detach_boxed(&self, work: Continuation) {
@@ -429,6 +458,7 @@ impl<Host: Detach, Retry: 'static> HostDetach for Copying<Host, Retry> {
 
     type Retry = Retry;
 
+    #[cfg(ruststream_alloc)]
     #[inline]
     fn retry(&self) -> Option<&Arc<RetryRoute<Retry>>> {
         self.route.as_ref()
@@ -438,19 +468,23 @@ impl<Host: Detach, Retry: 'static> HostDetach for Copying<Host, Retry> {
 /// A [`Detach`] lent to the delivery body together with a store of retry copies kept in
 /// place: the host of a registration that declared room for its delayed copies. Its copies
 /// wait in `Kept`'s records rather than as detached work. Machinery; never named directly.
-#[cfg(feature = "alloc")]
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct Keeping<'host, Host, Kept>(pub &'host Host, pub &'host Kept);
 
-#[cfg(feature = "alloc")]
 impl<Host: Detach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept> {
     const STORES_COPIES: bool = Host::STORES_COPIES;
 
-    #[cfg(feature = "alloc")]
+    #[cfg(ruststream_alloc)]
     #[inline]
     fn detach_boxed(&self, work: Continuation) {
         Detach::detach_boxed(self.0, work);
+    }
+
+    #[cfg(not(ruststream_alloc))]
+    #[inline]
+    fn detach_continuation(&self, work: Continuation) -> impl Future<Output = ()> + MaybeSend {
+        Detach::detach(self.0, work)
     }
 
     #[inline]
@@ -481,6 +515,7 @@ impl<Host: Detach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept> {
 
     type Retry = NoRetry;
 
+    #[cfg(ruststream_alloc)]
     #[inline]
     fn retry(&self) -> Option<&Arc<RetryRoute<NoRetry>>> {
         None
@@ -496,7 +531,6 @@ impl<Host: Detach, Kept: KeptCopies> HostDetach for Keeping<'_, Host, Kept> {
 /// ([`NoFreeRecordError`](crate::NoFreeRecordError)): the handler's `.error` continuation gets
 /// it, and without one the copy is lost with a warning. A record reuses its buffer from one copy
 /// to the next. Machinery; never named directly.
-#[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub trait KeptCopies {
     /// A copy that leaves without a record: the mount's answer to a full store. It holds what
@@ -523,16 +557,17 @@ pub trait KeptCopies {
     /// that never started. The error is [`NoFreeRecordError`](crate::NoFreeRecordError); `reaction`
     /// gets it with the copy (`payload` is `Some` exactly when there is a continuation to give it
     /// to), and without one a warning names it. What it makes of the failure
-    /// comes back for the caller to run beside the delivery.
+    /// comes back for the caller to run beside the delivery. Without `alloc` the reaction runs
+    /// where the failure stands, so every copy that finds the store full reaches its own.
     fn full(
         &self,
-        payload: Option<Bytes>,
-        headers: HeaderMap,
+        payload: Option<CopiedPayload>,
+        headers: HeaderSet,
         reaction: Option<Reaction>,
-    ) -> Option<Continuation>;
+    ) -> impl Future<Output = Option<Continuation>> + MaybeSend;
 
     /// Writes the copy into `record`, taken by [`take_record`](Self::take_record).
-    fn fill(&self, record: usize, payload: &[u8], headers: HeaderMap);
+    fn fill(&self, record: usize, payload: &[u8], headers: HeaderSet);
 
     /// Publishes the copy in `record` to the subscription once `delay` has passed, and frees
     /// the record then. A publish that fails then hands its error to `reaction`, which the record
@@ -556,7 +591,6 @@ pub trait KeptCopies {
 /// The delivery a kept copy is made of, while it is still at hand: the subscription it came
 /// through, the message, and how the broker's context for it is built. What the transforms on a
 /// kept copy read. Machinery; never named directly.
-#[cfg(feature = "alloc")]
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct KeptDelivery<'a, M, Cx> {
@@ -571,7 +605,6 @@ pub struct KeptDelivery<'a, M, Cx> {
 /// A store of kept copies that prepares the copy of a delivery whose broker context is `Cx`:
 /// runs the mount site's transforms over a filled record, while the delivery is still at hand.
 /// Machinery; never named directly.
-#[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub trait PrepareKept<Cx>: KeptCopies {
     /// Prepares the copy in `record`, filled by [`fill`](KeptCopies::fill), bound for
@@ -588,21 +621,19 @@ pub trait PrepareKept<Cx>: KeptCopies {
     fn spill<M: Settle>(
         &self,
         payload: &[u8],
-        headers: HeaderMap,
+        headers: HeaderSet,
         destination: Option<&str>,
         delivery: &KeptDelivery<'_, M, Cx>,
     ) -> Self::Spilled;
 }
 
 /// The store of a host that keeps no retry copy in place: there is none.
-#[cfg(feature = "alloc")]
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy)]
 pub enum NoKept {}
 
 // No value of the type exists, so no method is ever called: each body is the empty match that
 // proves it, the idiom `core::convert::Infallible`'s own impls use.
-#[cfg(feature = "alloc")]
 #[allow(clippy::uninhabited_references, clippy::unused_async_trait_impl)]
 impl KeptCopies for NoKept {
     type Spilled = Infallible;
@@ -620,16 +651,16 @@ impl KeptCopies for NoKept {
         match *self {}
     }
 
-    fn full(
+    async fn full(
         &self,
-        _payload: Option<Bytes>,
-        _headers: HeaderMap,
+        _payload: Option<CopiedPayload>,
+        _headers: HeaderSet,
         _reaction: Option<Reaction>,
     ) -> Option<Continuation> {
         match *self {}
     }
 
-    fn fill(&self, _record: usize, _payload: &[u8], _headers: HeaderMap) {
+    fn fill(&self, _record: usize, _payload: &[u8], _headers: HeaderSet) {
         match *self {}
     }
 
@@ -651,7 +682,6 @@ impl KeptCopies for NoKept {
     }
 }
 
-#[cfg(feature = "alloc")]
 #[allow(clippy::uninhabited_references)]
 impl<Cx> PrepareKept<Cx> for NoKept {
     fn prepare<M: Settle>(
@@ -666,7 +696,7 @@ impl<Cx> PrepareKept<Cx> for NoKept {
     fn spill<M: Settle>(
         &self,
         _payload: &[u8],
-        _headers: HeaderMap,
+        _headers: HeaderSet,
         _destination: Option<&str>,
         _delivery: &KeptDelivery<'_, M, Cx>,
     ) -> Self::Spilled {

@@ -11,12 +11,12 @@ use core::cell::Cell;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::alloc::System;
 
-use bytes::BytesMut;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Mounts};
 use ruststream::{Broker, Deserialized, OutgoingMessage, Publisher, subscriber};
+use ruststream_core::__alloc::bytes::BytesMut;
 use static_cell::StaticCell;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 

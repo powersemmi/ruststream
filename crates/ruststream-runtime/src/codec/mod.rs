@@ -1,5 +1,9 @@
-//! The codecs: the [`Codec`] trait, the built-in JSON, CBOR and `MessagePack` codecs and the
+//! The codecs: the `Codec` trait, the built-in JSON, CBOR and `MessagePack` codecs and the
 //! `DefaultCodec` a mounting that names none uses.
+//!
+//! A build without `alloc` has `SliceCodec` in place of `Codec` (encode into a slice, decode from
+//! one), with the `PostcardCodec` and `JsonCoreCodec` behind the `postcard` and `json-core`
+//! features; `ActiveCodec` names whichever the build has.
 //!
 //! Re-exported as [`ruststream::codec`](https://docs.rs/ruststream/latest/ruststream/codec/).
 
@@ -10,11 +14,27 @@
 /// `serde_json`'s own `to_vec` reserves, and it puts a single block between a value and the wire
 /// at every size: a small document fits the first write, and a larger one grows from here exactly
 /// as a `Vec` would.
+#[cfg(ruststream_alloc)]
+use alloc::boxed::Box;
+#[cfg(ruststream_alloc)]
+use alloc::string::ToString;
+use core::fmt::Display;
+#[cfg(not(ruststream_alloc))]
+use ruststream_core::codec::CodecFailure;
 #[cfg(any(feature = "json", feature = "msgpack", feature = "cbor"))]
 pub(crate) const ENCODE_CAPACITY: usize = 128;
 
 #[cfg(feature = "json")]
 mod json;
+
+#[cfg(not(ruststream_alloc))]
+mod slice;
+
+#[cfg(all(not(ruststream_alloc), feature = "postcard"))]
+mod postcard;
+
+#[cfg(all(not(ruststream_alloc), feature = "json-core"))]
+mod json_core;
 
 // The bare-metal JSON encoder is built on the host under test too, so its tests run there.
 #[cfg(all(feature = "json", any(target_os = "none", test)))]
@@ -28,6 +48,12 @@ mod cbor;
 
 #[cfg(feature = "cbor")]
 pub use self::cbor::CborCodec;
+#[cfg(all(not(ruststream_alloc), feature = "json-core"))]
+pub use self::json_core::JsonCoreCodec;
+#[cfg(all(not(ruststream_alloc), feature = "postcard"))]
+pub use self::postcard::PostcardCodec;
+#[cfg(not(ruststream_alloc))]
+pub use self::slice::SliceCodec;
 #[cfg(feature = "json")]
 pub use json::JsonCodec;
 #[cfg(feature = "msgpack")]
@@ -49,6 +75,17 @@ pub type DefaultCodec = CborCodec;
 /// variant for details.
 #[cfg(all(not(feature = "json"), not(feature = "cbor"), feature = "msgpack"))]
 pub type DefaultCodec = MsgpackCodec;
+
+/// The codec trait of this build: [`Codec`] where `alloc` is on, `SliceCodec` (encode into a
+/// slice, decode from one) where it is not. The delivery body names the codec of a mounting
+/// through this one name.
+#[cfg(ruststream_alloc)]
+pub use self::Codec as ActiveCodec;
+/// The codec trait of this build: [`Codec`] where `alloc` is on, [`SliceCodec`] (encode into a
+/// slice, decode from one) where it is not. The delivery body names the codec of a mounting
+/// through this one name.
+#[cfg(not(ruststream_alloc))]
+pub use self::slice::SliceCodec as ActiveCodec;
 
 // A bare-metal target has no standard library and `rmp-serde` does not build there, so the
 // `msgpack` codec is a build error that names the way out.
@@ -74,11 +111,16 @@ use std::io;
 #[cfg(all(feature = "cbor", target_os = "none"))]
 use core::convert::Infallible;
 
-use bytes::BytesMut;
-use serde::{Serialize, de::DeserializeOwned};
+#[cfg(ruststream_alloc)]
+use ruststream_core::__alloc::bytes::BytesMut;
+use serde::Serialize;
+#[cfg(ruststream_alloc)]
+use serde::de::DeserializeOwned;
 
 use ruststream_core::PayloadEncode;
 pub use ruststream_core::codec::CodecError;
+#[cfg(not(ruststream_alloc))]
+use ruststream_core::{EncodeBuf, PayloadBuf};
 
 /// The [`io::Write`] a serializer writes an encode buffer through: every write is an append.
 ///
@@ -293,6 +335,7 @@ impl ciborium_io::Write for BufWriter<'_> {
 /// # Ok(())
 /// # }
 /// ```
+#[cfg(ruststream_alloc)]
 pub trait Codec: Send + Sync + Clone {
     /// The media type of the bytes this codec produces, reported as the `contentType` of every
     /// message it encodes or decodes in the generated `AsyncAPI` document.
@@ -557,7 +600,7 @@ pub trait Codec: Send + Sync + Clone {
 /// # }
 /// # fn main() {}
 /// ```
-pub trait FrameNames<Model>: Codec {
+pub trait FrameNames<Model>: ActiveCodec {
     /// Whether the frame names `Model`.
     fn names(frame: &Self::Frame<'_>) -> bool;
 }
@@ -575,6 +618,7 @@ impl<'a, C, T> Encoding<'a, C, T> {
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<C: Codec, T: Serialize> PayloadEncode for Encoding<'_, C, T> {
     #[inline]
     fn encode_into(&self, buf: &mut BytesMut) -> Result<(), CodecError> {
@@ -584,5 +628,98 @@ impl<C: Codec, T: Serialize> PayloadEncode for Encoding<'_, C, T> {
     #[inline]
     fn encode(&self) -> Result<BytesMut, CodecError> {
         self.codec.encode(self.value)
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<C: SliceCodec, T: Serialize> PayloadEncode for Encoding<'_, C, T> {
+    #[inline]
+    fn encode_into(&self, buf: &mut EncodeBuf) -> Result<(), CodecError> {
+        buf.write_with(|room| self.codec.encode_slice(self.value, room))
+            .map(|_| ())
+    }
+
+    #[inline]
+    fn encode(&self) -> Result<PayloadBuf, CodecError> {
+        self.codec.encode(self.value)
+    }
+}
+
+/// The decode error of a delivery that cannot be read as the type asked for, for the causes the
+/// codecs do not produce themselves (a missing carried value, a header contract that fails).
+///
+/// With `alloc` the error carries `detail` as its text. Without it the cause is a `Copy` kind,
+/// so the error is a type mismatch and the text is dropped.
+#[cfg(ruststream_alloc)]
+pub(crate) fn decode_error(detail: impl Display) -> CodecError {
+    CodecError::Decode(Box::from(detail.to_string()))
+}
+
+/// The decode error of a delivery that cannot be read as the type asked for. Without `alloc` the
+/// cause is a `Copy` kind: a type mismatch, with no text.
+#[cfg(not(ruststream_alloc))]
+pub(crate) fn decode_error(detail: impl Display) -> CodecError {
+    let _ = detail;
+    CodecError::Decode(CodecFailure::Type)
+}
+
+/// The encode error of a payload that does not fit the buffer it is written to. With `alloc` a
+/// buffer grows, so this is the error of a form that still refuses; without it the cause is
+/// `BufferFull`.
+#[cfg(ruststream_alloc)]
+pub(crate) fn overflow_error() -> CodecError {
+    CodecError::Encode(Box::from("the payload does not fit the buffer"))
+}
+
+/// The encode error of a payload that does not fit the buffer it is written to: `BufferFull`.
+#[cfg(not(ruststream_alloc))]
+pub(crate) fn overflow_error() -> CodecError {
+    CodecError::Encode(CodecFailure::BufferFull)
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(ruststream_alloc)]
+    use alloc::string::ToString;
+
+    use super::{CodecError, decode_error, overflow_error};
+
+    #[test]
+    fn an_overflow_is_an_encode_error() {
+        let err = overflow_error();
+        assert!(matches!(err, CodecError::Encode(_)), "{err}");
+        #[cfg(ruststream_alloc)]
+        assert_eq!(
+            err.to_string(),
+            "encode failed: the payload does not fit the buffer"
+        );
+        #[cfg(not(ruststream_alloc))]
+        assert!(matches!(
+            err,
+            CodecError::Encode(ruststream_core::codec::CodecFailure::BufferFull)
+        ));
+    }
+
+    #[cfg(ruststream_alloc)]
+    #[test]
+    fn a_decode_error_keeps_the_text_of_its_cause() {
+        use alloc::string::ToString;
+
+        let err = decode_error(format_args!("the `{}` header is missing", "event"));
+        assert!(matches!(err, CodecError::Decode(_)));
+        assert!(
+            err.to_string().contains("the `event` header is missing"),
+            "{err}"
+        );
+    }
+
+    #[cfg(not(ruststream_alloc))]
+    #[test]
+    fn a_decode_error_without_a_heap_is_a_type_mismatch() {
+        let err = decode_error(format_args!("the `{}` header is missing", "event"));
+        assert!(matches!(
+            err,
+            CodecError::Decode(ruststream_core::codec::CodecFailure::Type)
+        ));
     }
 }

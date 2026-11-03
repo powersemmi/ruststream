@@ -20,9 +20,9 @@
 mod declare;
 mod destination;
 
-use alloc::borrow::Cow;
 use core::fmt;
 use core::marker::PhantomData;
+use ruststream_core::NameText;
 
 pub use declare::{
     Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount, Declaring,
@@ -140,7 +140,7 @@ pub struct RetryMount;
 pub struct Retried<Under, Attachment, Dest = OpenDestination> {
     under: Under,
     slot: Attachment,
-    destination: Option<Cow<'static, str>>,
+    destination: Option<NameText>,
     _dest: PhantomData<fn() -> Dest>,
 }
 
@@ -192,7 +192,7 @@ impl<Under, Attachment, Dest> Retried<Under, Attachment, Dest> {
     /// Fixes where the copies go: the `.to(name)` step.
     fn name_destination(
         self,
-        destination: Cow<'static, str>,
+        destination: NameText,
     ) -> Retried<Under, Attachment, FixedDestination> {
         Retried {
             under: self.under,
@@ -556,7 +556,7 @@ impl<Under, Attachment> DestinationLast<RetryPos> for Retried<Under, Attachment,
     type Step = StepOpen;
     type Out = Retried<Under, Attachment, FixedDestination>;
 
-    fn destination_last(self, destination: Cow<'static, str>) -> Self::Out {
+    fn destination_last(self, destination: NameText) -> Self::Out {
         self.name_destination(destination)
     }
 }
@@ -565,7 +565,7 @@ impl<Under, Attachment> DestinationLast<RetryPos> for Retried<Under, Attachment,
     type Step = StepTaken;
     type Out = Self;
 
-    fn destination_last(self, _destination: Cow<'static, str>) -> Self {
+    fn destination_last(self, _destination: NameText) -> Self {
         self
     }
 }
@@ -579,7 +579,7 @@ macro_rules! no_destination_step {
             type Step = StepTaken;
             type Out = Self;
 
-            fn destination_last(self, _destination: Cow<'static, str>) -> Self {
+            fn destination_last(self, _destination: NameText) -> Self {
                 self
             }
         }

@@ -9,30 +9,58 @@
 //! each reply independently, while a `.transactional()` one makes the whole batch's replies
 //! visible atomically - the consume-transform-produce pattern.
 
+#[cfg(ruststream_alloc)]
+use alloc::borrow::ToOwned;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
+#[cfg(ruststream_alloc)]
 use core::num::NonZeroUsize;
+#[cfg(ruststream_alloc)]
 use core::{any, fmt};
-use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync};
+use ruststream_core::MaybeSendSync;
+#[cfg(ruststream_alloc)]
+use ruststream_core::{BatchSlot, MaybeSend};
 
-use bytes::{Bytes, BytesMut};
+#[cfg(ruststream_alloc)]
+use crate::batch::{BatchVec, Gather};
+#[cfg(ruststream_alloc)]
+use crate::copied::empty_payload;
+#[cfg(ruststream_alloc)]
+use ruststream_core::PayloadBuf;
+#[cfg(ruststream_alloc)]
+use ruststream_core::diag::warn;
+#[cfg(ruststream_alloc)]
 use serde::Serialize;
-use tracing::warn;
 
-#[cfg(feature = "testing")]
+#[cfg(all(feature = "testing", ruststream_alloc))]
 use crate::testing::coordinator::{Origin, publishing_to};
+#[cfg(ruststream_alloc)]
 use crate::{BuildBatchContext, PayloadForm, Settle};
 
+#[cfg(ruststream_alloc)]
 use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
+#[cfg(ruststream_alloc)]
 use super::context::Context;
 use super::dispatch::Workers;
-use super::failure::{FailurePolicies, FailurePolicy};
+use super::failure::FailurePolicies;
+#[cfg(ruststream_alloc)]
+use super::failure::FailurePolicy;
+#[cfg(ruststream_alloc)]
 use super::handler::{HandlerOutcome, HandlerResult};
+#[cfg(ruststream_alloc)]
 use super::host::SendHost;
-use super::input::{DecodeWith, InputKind};
+#[cfg(ruststream_alloc)]
+use super::input::DecodeWith;
+use super::input::InputKind;
+#[cfg(ruststream_alloc)]
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
+#[cfg(ruststream_alloc)]
 use super::publish::{PublishContext, PublishIdentity, PublishPipeline, ReplyPublisher};
+#[cfg(ruststream_alloc)]
 use super::publish_failure::publish_done;
+#[cfg(ruststream_alloc)]
 use super::publishing::{EncodeReply, lent_bytes};
 
 /// A batch subscriber definition that produces replies to publish.
@@ -99,12 +127,14 @@ pub trait BatchPublishingDef: MaybeSendSync {
 
     /// The element type's serialized JSON Schema, when it implements [`schemars::JsonSchema`]
     /// and the `asyncapi` feature is on. The macro fills this in; the default omits it.
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         None
     }
 
     /// The serialized JSON Schema of the element type's header contract, when one is declared
     /// and the `asyncapi` feature is on. The default omits it.
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         None
     }
@@ -112,6 +142,7 @@ pub trait BatchPublishingDef: MaybeSendSync {
     /// The messages this handler publishes, for the `AsyncAPI` `send` operations: the reply
     /// message, plus every `Out` slot dictionary entry. The macro fills this in; the default
     /// declares nothing. Called once at registration.
+    #[cfg(ruststream_alloc)]
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
         Vec::new()
     }
@@ -135,6 +166,7 @@ pub trait BatchPublishingDef: MaybeSendSync {
 /// (mounts on any app), while one that reads it via [`Context::state`](super::Context::state)
 /// implements this only for its declared `S` - the state match is checked at compile time without
 /// pinning a single `State` on the def.
+#[cfg(ruststream_alloc)]
 pub(crate) trait BatchPublishingCall<S>: BatchPublishingDef {
     /// Runs the handler body on one decoded batch.
     ///
@@ -146,15 +178,16 @@ pub(crate) trait BatchPublishingCall<S>: BatchPublishingDef {
         batch: &[<Self::Input as InputKind>::Owned],
         injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
-    ) -> impl Future<Output = Result<Vec<Self::Reply>, BatchResult>> + MaybeSend;
+    ) -> impl Future<Output = Result<BatchVec<Self::Reply>, BatchResult>> + MaybeSend;
 }
 
 /// Builds the registration metadata for a batch publishing definition mounted under `name`.
+#[cfg(ruststream_alloc)]
 pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
-    name: String,
+    name: &str,
     def: &D,
 ) -> HandlerMetadata {
-    let mut meta = HandlerMetadata::raw(name)
+    let mut meta = HandlerMetadata::raw(name.to_owned())
         .with_output_type(any::type_name::<D::Reply>())
         .with_def_details(
             def.description(),
@@ -176,6 +209,7 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
 /// reply publish (or a failed transaction) retries the whole batch instead of losing replies;
 /// with a plain publisher a mid-batch failure can therefore re-publish the earlier replies on
 /// redelivery (at-least-once), while a `.transactional()` wiring never leaves them half-visible.
+#[cfg(ruststream_alloc)]
 pub(crate) struct BatchPublishingHandler<D: BatchPublishingDef, C, R, PP = PublishIdentity> {
     pub(crate) def: D,
     pub(crate) codec: C,
@@ -188,6 +222,7 @@ pub(crate) struct BatchPublishingHandler<D: BatchPublishingDef, C, R, PP = Publi
     pub(crate) origin: Origin,
 }
 
+#[cfg(ruststream_alloc)]
 impl<D: BatchPublishingDef, C, R, PP> fmt::Debug for BatchPublishingHandler<D, C, R, PP> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BatchPublishingHandler")
@@ -195,6 +230,7 @@ impl<D: BatchPublishingDef, C, R, PP> fmt::Debug for BatchPublishingHandler<D, C
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<Batch, M, D, C, R, PP, S> BatchHandler<Batch, D::Context, S>
     for BatchPublishingHandler<D, C, R, PP>
 where
@@ -210,20 +246,20 @@ where
     PP: PublishPipeline,
     S: MaybeSendSync,
 {
-    type Scratch = Vec<<D::Input as InputKind>::Owned>;
-    type Taken = Vec<M>;
+    type Scratch = BatchVec<<D::Input as InputKind>::Owned>;
+    type Taken = BatchVec<M>;
 
-    fn taken(size: NonZeroUsize) -> Vec<M> {
-        Vec::with_capacity(size.get())
+    fn taken(size: NonZeroUsize) -> BatchVec<M> {
+        BatchVec::with_room(size.get())
     }
 
-    fn load(taken: &mut Vec<M>, slot: &mut Batch) {
+    fn load(taken: &mut BatchVec<M>, slot: &mut Batch) {
         taken.extend(slot.drain());
     }
 
     async fn handle_batch<Host: SendHost<D::Context>>(
         &self,
-        batch: &mut Vec<M>,
+        batch: &mut BatchVec<M>,
         values: &mut Self::Scratch,
         ctx: &mut Context<'_, D::Context, S>,
         host: &Host,
@@ -243,12 +279,12 @@ where
         }
         // The batch the broker delivered is the batch the handler answers for, whole: the size it
         // was built at is the registration's own, so there is nothing left to split here.
-        let result = match self.def.call(values, &self.injections, ctx).await {
+        let mut result = match self.def.call(values, &self.injections, ctx).await {
             Ok(replies) => {
                 let name = self.def.reply_name();
                 // As on the single-message path: the loop's buffer where the dispatch lent one,
                 // and one of this batch's own where it did not.
-                let mut own = BytesMut::new();
+                let mut own = PayloadBuf::new();
                 let encode = ctx.take_encode_buffer().unwrap_or(&mut own);
                 let slot = <R::Payload as PayloadForm>::encode_slot(encode);
                 let pubcx = PublishContext::new(ctx.name(), ctx.delivery_headers(), ctx.cx_ref());
@@ -274,7 +310,7 @@ where
                                 name,
                                 &replies,
                                 |reply| reply.encoded_with(codec),
-                                |addr, len| lent_bytes(encode, addr, len, Bytes::new),
+                                |addr, len| lent_bytes(encode, addr, len, empty_payload),
                             );
                             Some(reaction.failed_all(err, lost))
                         }
@@ -299,7 +335,7 @@ where
             Err(result) => result,
         };
         values.clear();
-        settle_batch(batch, result, subscription, ctx.delivery(), host).await;
+        settle_batch(batch, &mut result, subscription, ctx.delivery(), host).await;
     }
 }
 

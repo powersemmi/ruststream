@@ -13,7 +13,6 @@ use core::cell::Cell;
 use core::pin::pin;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bytes::BytesMut;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use futures::{FutureExt, StreamExt};
@@ -24,6 +23,7 @@ use ruststream::{
     Broker, HeaderMap, InMessages, IncomingMessage, MessageInfo, Outgoing, OutgoingMessage,
     Publisher, Subscriber, SubscriptionSource, subscriber,
 };
+use ruststream_core::__alloc::bytes::BytesMut;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use static_cell::StaticCell;

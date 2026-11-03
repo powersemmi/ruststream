@@ -19,7 +19,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use pin_project_lite::pin_project;
 
-/// What a feeder hands one worker: the next delivery, or `None` once the lane has ended.
+/// What a feeder hands one worker: the next delivery, or `None` once the worker has ended.
 pub(crate) struct Mailbox<Message> {
     slot: Channel<NoopRawMutex, Option<Message>, 1>,
     /// Set while the worker waits on an empty slot; cleared when the feeder fills it.
@@ -35,17 +35,26 @@ impl<Message> Mailbox<Message> {
         }
     }
 
+    /// Whether the worker waits on an empty slot: it holds no delivery and awaits nothing else.
+    pub(crate) fn is_parked(&self) -> bool {
+        self.parked.get()
+    }
+
     /// Hands the worker `item`, waiting while the slot still holds the previous one.
     pub(crate) async fn send(&self, item: Option<Message>) {
         self.slot.send(item).await;
         self.parked.set(false);
     }
 
-    /// The next item the feeder hands over; the worker parks while the slot is empty.
-    pub(crate) fn receive(&self) -> impl Future<Output = Option<Message>> + '_ {
-        poll_fn(|cx| {
+    /// The next item the feeder hands over; the worker parks while the slot is empty, unless
+    /// `holding` says it still has work that a timer will wake the task for.
+    pub(crate) fn receive<'a>(
+        &'a self,
+        holding: impl Fn() -> bool + 'a,
+    ) -> impl Future<Output = Option<Message>> + 'a {
+        poll_fn(move |cx| {
             let next = self.slot.poll_receive(cx);
-            self.parked.set(next.is_pending());
+            self.parked.set(next.is_pending() && !holding());
             next
         })
     }
@@ -99,9 +108,9 @@ mod tests {
 
     use super::{Mailbox, join_workers};
 
-    /// A worker that counts how often it is polled and reads its mailbox until the lane ends.
+    /// A worker that counts how often it is polled and reads its mailbox until the worker ends.
     async fn counted(mailbox: &Mailbox<u32>, polls: &Cell<u32>) {
-        let mut next = pin!(async { while mailbox.receive().await.is_some() {} });
+        let mut next = pin!(async { while mailbox.receive(|| false).await.is_some() {} });
         poll_fn(|cx| {
             polls.set(polls.get() + 1);
             next.as_mut().poll(cx)

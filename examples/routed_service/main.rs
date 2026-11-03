@@ -4,12 +4,12 @@
 //!   service error type, and a shared repository.
 //! - [`orders`] - a publishing handler that replies and handles transient failures, and a
 //!   cancellation handler that retries.
-//! - [`payments`] - a charge handler across keyed worker lanes, and a transactional batch settler.
+//! - [`payments`] - a charge handler across keyed workers, and a transactional batch settler.
 //! - [`observability`] - an application-wide log/timing middleware.
 //! - [`routes`] - wires the handlers into two routers, each carrying the metrics consume layer.
 //!
 //! It exercises the runtime end to end: shared state opened in a startup hook and closed on
-//! shutdown, retries (`HandlerOutcome::retry` / `retry_after`), keyed worker lanes, a transactional
+//! shutdown, retries (`HandlerOutcome::retry` / `retry_after`), keyed workers, a transactional
 //! batch publisher, app-scope middleware, and Prometheus metrics on both the consume and publish
 //! sides. `#[ruststream::app]` generates `main`, giving the service a CLI:
 //!
@@ -28,6 +28,7 @@ mod orders;
 mod payments;
 mod routes;
 
+use ruststream::diagnostics::TracingLogger;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -49,6 +50,7 @@ fn app() -> impl App {
     let metrics_dump = metrics.clone();
 
     RustStream::new(AppInfo::new("orders-service", "0.1.0"))
+        .logger(TracingLogger)
         // AsyncAPI records the broker this service connects to in production.
         .server(
             "production",

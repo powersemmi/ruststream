@@ -7,7 +7,9 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(feature = "embassy")]
+// The harness keeps its publish log in a `Vec`, which a build without the framework's `alloc`
+// takes from the standard library the test binary links.
+#[cfg(all(any(ruststream_alloc, feature = "testing"), feature = "embassy"))]
 extern crate alloc;
 
 #[cfg(feature = "embassy")]

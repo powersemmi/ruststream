@@ -3,7 +3,10 @@
 
 use core::error::Error as StdError;
 
-use bytes::BytesMut;
+#[cfg(not(feature = "alloc"))]
+use core::fmt::{self, Display, Formatter};
+
+use crate::EncodeBuf;
 
 /// A value that owns its byte layout: `Serialize` means the framework's codec does the work,
 /// `Serialized` means the type produces the bytes itself.
@@ -37,7 +40,7 @@ use bytes::BytesMut;
 /// impl Serialized for Export {
 ///     type Error = Infallible;
 ///
-///     fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
+///     fn wire_bytes(&self, _buf: &mut EncodeBuf) -> Result<WireBytes<'_>, Infallible> {
 ///         Ok(WireBytes::Own(&self.0))
 ///     }
 /// }
@@ -54,7 +57,7 @@ use bytes::BytesMut;
 ///
 /// # fn check() -> Result<(), Box<dyn std::error::Error>> {
 /// let export = Export(vec![7, 9]);
-/// let mut buf = BytesMut::new();
+/// let mut buf = PayloadBuf::new();
 /// assert!(matches!(export.wire_bytes(&mut buf)?, WireBytes::Own(bytes) if bytes == [7, 9]));
 /// # Ok(())
 /// # }
@@ -73,7 +76,7 @@ use bytes::BytesMut;
 /// impl Serialized for Tick {
 ///     type Error = Infallible;
 ///
-///     fn wire_bytes(&self, buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
+///     fn wire_bytes(&self, buf: &mut EncodeBuf) -> Result<WireBytes<'_>, Infallible> {
 ///         buf.extend_from_slice(&self.0.to_be_bytes());
 ///         Ok(WireBytes::InBuffer)
 ///     }
@@ -84,7 +87,7 @@ use bytes::BytesMut;
 /// }
 ///
 /// # fn check() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut buf = BytesMut::new();
+/// let mut buf = PayloadBuf::new();
 /// assert!(matches!(Tick(1).wire_bytes(&mut buf)?, WireBytes::InBuffer));
 /// assert_eq!(&buf[..], &[0, 0, 0, 1]);
 /// # Ok(())
@@ -112,7 +115,7 @@ pub trait Serialized {
     ///
     /// Returns [`Self::Error`] when the value's own encoder rejects it. A value that already
     /// holds its bytes cannot fail, and says so with `Infallible`.
-    fn wire_bytes(&self, buf: &mut BytesMut) -> Result<WireBytes<'_>, Self::Error>;
+    fn wire_bytes(&self, buf: &mut EncodeBuf) -> Result<WireBytes<'_>, Self::Error>;
 }
 
 /// Where a [`Serialized`] value's bytes are: in the buffer it was handed, or in the value
@@ -137,7 +140,7 @@ pub trait Serialized {
 /// impl Serialized for Frame {
 ///     type Error = Infallible;
 ///
-///     fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
+///     fn wire_bytes(&self, _buf: &mut EncodeBuf) -> Result<WireBytes<'_>, Infallible> {
 ///         Ok(WireBytes::Own(&self.0))
 ///     }
 /// }
@@ -160,21 +163,64 @@ impl<'a> WireBytes<'a> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::BytesMut;
+    /// use ruststream::PayloadBuf;
     /// use ruststream::runtime::Serialized;
     ///
     /// /// The size a value has on the wire, for a check against the broker's payload limit before
     /// /// the publish is attempted.
     /// fn wire_len<T: Serialized>(value: &T) -> Result<usize, T::Error> {
-    ///     let mut buf = BytesMut::new();
+    ///     let mut buf = PayloadBuf::new();
     ///     Ok(value.wire_bytes(&mut buf)?.of(&buf).len())
     /// }
     /// ```
     #[must_use]
-    pub fn of(self, buf: &'a BytesMut) -> &'a [u8] {
+    pub fn of(self, buf: &'a EncodeBuf) -> &'a [u8] {
         match self {
             Self::InBuffer => buf,
             Self::Own(bytes) => bytes,
         }
     }
+}
+
+/// What serializing a value into the payload form of a publish reports: the value's own error
+/// with `alloc`, where the buffer grows; with a fixed buffer, also that the bytes did not fit.
+#[cfg(feature = "alloc")]
+pub type WireFailure<Error> = Error;
+
+/// What serializing a value into the payload form of a publish reports: the value's own error
+/// with `alloc`, where the buffer grows; with a fixed buffer, also that the bytes did not fit.
+#[cfg(not(feature = "alloc"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireFailure<Error> {
+    /// The value failed to produce its bytes.
+    Value(Error),
+    /// The bytes do not fit the fixed payload buffer.
+    Full(crate::BufferFull),
+}
+
+#[cfg(not(feature = "alloc"))]
+impl<Error: Display> Display for WireFailure<Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(error) => error.fmt(f),
+            Self::Full(full) => full.fmt(f),
+        }
+    }
+}
+
+#[cfg(not(feature = "alloc"))]
+impl<Error: StdError + 'static> StdError for WireFailure<Error> {}
+
+/// The value's error as the failure of a serialization.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) const fn value_failed<Error>(error: Error) -> WireFailure<Error> {
+    error
+}
+
+/// The value's error as the failure of a serialization.
+#[cfg(not(feature = "alloc"))]
+#[inline]
+pub(crate) const fn value_failed<Error>(error: Error) -> WireFailure<Error> {
+    WireFailure::Value(error)
 }

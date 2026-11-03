@@ -17,16 +17,18 @@
 //!   a registration commits only when no `MissingSlot` remains, so a forgotten binding is a
 //!   compile error naming the slot.
 
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 use core::time::Duration;
 
+#[cfg(ruststream_alloc)]
 use crate::metadata::OutgoingMessageMetadata;
 use crate::publish::{DestinationUse, Names, Reads};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{PipelinePublish, record_slot_publish};
 use crate::{
-    CallerName, ConnectedBroker, FixedName, HeaderMap, NameTemplate, OutgoingDestination,
+    CallerName, ConnectedBroker, FixedName, HeaderSet, NameTemplate, OutgoingDestination,
     OutgoingFor, OwnedTransactions, PublishOutcome, Publisher, RequestReply,
     TransactionalPublisher,
 };
@@ -99,7 +101,7 @@ pub use position::{
 ///
 /// The body holds the arena entry, [`Slot`](super::Slot), a transparent window onto the value.
 /// Autoderef carries a method call through it but not a trait bound, so a helper written as
-/// `fn issue<L: Lanes>(lanes: &L)` rejects the entry. One blanket impl over `Slot` that delegates
+/// `fn issue<L: Routes>(routes: &L)` rejects the entry. One blanket impl over `Slot` that delegates
 /// through its `Deref` makes helpers and bodies generic over the capability take the entry as it
 /// is, and the concrete type still never appears in application code.
 ///
@@ -123,54 +125,54 @@ pub use position::{
 ///     id: u64,
 /// }
 ///
-/// /// The broker's live value: a lane router, not a publisher.
-/// pub struct LaneRouter {
+/// /// The broker's live value: a route router, not a publisher.
+/// pub struct ShardRouter {
 ///     publisher: MemoryPublisher,
 /// }
 ///
-/// /// The broker-defined capability: pick a destination lane for a shard.
-/// pub trait ShardLanes {
-///     fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str);
+/// /// The broker-defined capability: pick a destination route for a shard.
+/// pub trait ShardRoutes {
+///     fn route(&self, shard: u64) -> (&MemoryPublisher, &'static str);
 /// }
 ///
-/// impl ShardLanes for LaneRouter {
-///     fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
-///         let dest = if shard % 2 == 0 { "lanes.even" } else { "lanes.odd" };
+/// impl ShardRoutes for ShardRouter {
+///     fn route(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
+///         let dest = if shard % 2 == 0 { "routes.even" } else { "routes.odd" };
 ///         (&self.publisher, dest)
 ///     }
 /// }
 ///
 /// // The one blanket impl: the entry a body holds now satisfies the bound.
-/// impl<M, W: ShardLanes, E, Pipe, Body> ShardLanes for Slot<M, W, E, Pipe, Body> {
-///     fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
-///         (**self).lane(shard)
+/// impl<M, W: ShardRoutes, E, Pipe, Body> ShardRoutes for Slot<M, W, E, Pipe, Body> {
+///     fn route(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
+///         (**self).route(shard)
 ///     }
 /// }
 ///
 /// /// The policy that pairs into the router.
-/// pub struct LanePolicy;
+/// pub struct ShardPolicy;
 ///
-/// impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
-///     type Live = LaneRouter;
+/// impl PublishPolicy<ConnectedMemoryBroker> for ShardPolicy {
+///     type Live = ShardRouter;
 ///
-///     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<LaneRouter, PairError> {
-///         Ok(LaneRouter { publisher: Publish.pair(connected).await? })
+///     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<ShardRouter, PairError> {
+///         Ok(ShardRouter { publisher: Publish.pair(connected).await? })
 ///     }
 /// }
 ///
-/// async fn sent<L: ShardLanes + Sync>(lanes: &L, event: &Event) -> bool {
-///     let (publisher, dest) = lanes.lane(event.id);
+/// async fn sent<L: ShardRoutes + Sync>(routes: &L, event: &Event) -> bool {
+///     let (publisher, dest) = routes.route(event.id);
 ///     publisher.message(event).to(dest).publish().await.is_ok()
 /// }
 ///
 /// #[subscriber("events")]
-/// async fn route(event: &Event, Out(lanes): Out<impl ShardLanes + Sync>) -> HandlerOutcome {
-///     if sent(lanes, event).await { HandlerOutcome::ack() } else { HandlerOutcome::retry() }
+/// async fn route_shard(event: &Event, Out(routes): Out<impl ShardRoutes + Sync>) -> HandlerOutcome {
+///     if sent(routes, event).await { HandlerOutcome::ack() } else { HandlerOutcome::retry() }
 /// }
 ///
 /// fn app() -> RustStream {
-///     RustStream::new(AppInfo::new("lanes", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(route).out(DefaultSlot, LanePolicy)
+///     RustStream::new(AppInfo::new("routes", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(route_shard).out(DefaultSlot, ShardPolicy)
 ///     })
 /// }
 /// # }
@@ -196,6 +198,7 @@ pub trait OutSlot: 'static {
     /// dictionary) publishes nothing declared. Called once at registration; never on the
     /// publish path.
     #[must_use]
+    #[cfg(ruststream_alloc)]
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         Vec::new()
     }
@@ -558,15 +561,15 @@ impl<P, M> SlotPublisher<P, M> {
     /// use ruststream::runtime::{OutSlot, SlotPublisher};
     ///
     /// /// A broker-defined capability the core knows nothing about.
-    /// trait PartitionLanes {
-    ///     fn lane_id(&self, partition: i32) -> String;
+    /// trait PartitionRoutes {
+    ///     fn route_id(&self, partition: i32) -> String;
     /// }
     ///
     /// // The wrapper's own delegation: a slot entry reaches the live value through it. The
     /// // impl a handler body needs is the one on `Slot`, not this one.
-    /// impl<P: PartitionLanes, M: OutSlot> PartitionLanes for SlotPublisher<P, M> {
-    ///     fn lane_id(&self, partition: i32) -> String {
-    ///         self.inner().lane_id(partition)
+    /// impl<P: PartitionRoutes, M: OutSlot> PartitionRoutes for SlotPublisher<P, M> {
+    ///     fn route_id(&self, partition: i32) -> String {
+    ///         self.inner().route_id(partition)
     ///     }
     /// }
     /// ```
@@ -603,7 +606,7 @@ impl<P: Publisher, M: OutSlot> Publisher for SlotPublisher<P, M> {
 
     // The slot is attribution, not policy: whatever the broker's publisher contributes to every
     // message it sends has to reach the builder through the wrapper unchanged.
-    fn base_headers(&self) -> Option<&HeaderMap> {
+    fn base_headers(&self) -> Option<&HeaderSet> {
         self.inner.base_headers()
     }
 }
@@ -787,11 +790,13 @@ pub trait OutMessages<M: OutSlot> {
     /// The set's declared outgoing messages, for the generated document. Called once at
     /// registration; never on the publish path.
     #[must_use]
+    #[cfg(ruststream_alloc)]
     fn outgoing() -> Vec<OutgoingMessageMetadata>;
 }
 
 // The unrestricted declaration documents the whole dictionary.
 impl<M: OutSlot> OutMessages<M> for () {
+    #[cfg(ruststream_alloc)]
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         M::outgoing()
     }
@@ -825,6 +830,7 @@ impl<Source> WithSource<Source> {
     }
 
     /// Borrows the wrapped source, so a mount can read what it declares before consuming it.
+    #[cfg(ruststream_alloc)]
     pub(crate) const fn source(&self) -> &Source {
         &self.0
     }
@@ -979,4 +985,5 @@ impl_bind_slot! {
 }
 
 #[cfg(test)]
+#[cfg(ruststream_alloc)]
 mod tests;

@@ -110,7 +110,7 @@ mod by_key {
     use super::{Bill, Order};
 
     // --8<-- [start:workers_by_key]
-    /// Four lanes by the message's partition key: one customer's orders are charged in order,
+    /// Four workers by the message's partition key: one customer's orders are charged in order,
     /// different customers' at once.
     fn app() -> impl App {
         RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {

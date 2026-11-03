@@ -1,13 +1,19 @@
 //! The include-site attachment of one `Out` slot and the steps that ride a chain's last-named
 //! position: `.transform(..)`, `.codec(..)`, policy edits and the transactional reply.
 
+#[cfg(ruststream_alloc)]
 use alloc::borrow::Cow;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use super::{BindSlot, DestinationOffer, OutSlot, Reply, SlotPos, WithSource};
-use crate::codec::Codec;
+#[cfg(ruststream_alloc)]
+use crate::ConnectedBroker;
+#[cfg(ruststream_alloc)]
+use crate::codec::ActiveCodec as Codec;
 use crate::handle::{DeclaresReply, ReplyShape};
+#[cfg(ruststream_alloc)]
 use crate::metadata::PublishDescription;
 use crate::publish::{
     AddBatchReplyTransform, AddReplyTransform, CallCodec, CodecSlotOpen, FitsOffer, ForReply,
@@ -19,7 +25,7 @@ use crate::router::{
     BatchPublishInjectMount, BatchPublishMount, DefaultReply, PublishInjectMount, PublishMount,
     RawReplyInjectMount, RawReplyMount, ReplyAttachment,
 };
-use crate::{Broker, Connected, ConnectedBroker, OutgoingDestination, PublishPolicy, Publisher};
+use crate::{Broker, Connected, OutgoingDestination, PublishPolicy, Publisher};
 
 /// What one `.out(marker, policy)` call attaches: the slot's publish policy and the
 /// [`PublishTransform`](crate::PublishTransform) stack the `.transform(..)` steps after it
@@ -100,6 +106,7 @@ impl<M, Policy, Layers, Enc> OutAttachment<M, Policy, Layers, Enc> {
     ///
     /// Read before [`wire`](Self::wire) consumes the attachment, because the slot's policy is
     /// what answers and wiring moves it. Nothing here runs per message.
+    #[cfg(ruststream_alloc)]
     pub(crate) fn describe<C, Surface>(&self) -> Vec<(Cow<'static, str>, PublishDescription)>
     where
         M: OutSlot,

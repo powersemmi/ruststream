@@ -22,9 +22,9 @@ mod scenarios {
     use std::fmt;
     use std::sync::Arc;
 
-    use bytes::BytesMut;
     use embassy_executor::{Executor, Spawner};
     use embassy_futures::yield_now;
+    use ruststream_core::__alloc::bytes::BytesMut;
     use ruststream_core::{Broker, ConnectedBroker, OutgoingMessage, Publisher};
     use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
     use ruststream_runtime::{
@@ -239,7 +239,7 @@ mod scenarios {
         *stand.outcome.borrow_mut() = Some(outcome);
     }
 
-    // As `run_two`: the pool's lanes make the app's future larger than the lint's limit.
+    // As `run_two`: the pool's workers make the app's future larger than the lint's limit.
     #[allow(clippy::large_futures)]
     #[embassy_executor::task]
     async fn run_ending(stand: &'static Stand) {

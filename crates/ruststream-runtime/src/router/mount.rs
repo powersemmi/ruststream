@@ -6,7 +6,7 @@
 //! machinery that form needs, at compile time. The subscription source is never named at a
 //! mount site: it belongs to the definition, which takes the broker's own source expression.
 
-use crate::codec::Codec;
+use crate::codec::ActiveCodec as Codec;
 use crate::input::{Carried, Decoded, DecodedPair, Provided};
 use crate::publish::{RawReplyWiring, ReplyWiring};
 use ruststream_core::MaybeSendSync;

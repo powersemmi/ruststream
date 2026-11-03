@@ -2,11 +2,13 @@
 //! embassy-sync channels whose types are not `Send`, and the reference implementation of the
 //! `Local*` broker contract.
 //!
-//! It runs on any executor and builds without `std`, with an allocator. A device service uses it
-//! for queues between the parts of one firmware; the host harness drives it in tests.
+//! It runs on any executor and builds without `std`. With the framework's `alloc` the bus lives on
+//! the heap and a broker is built with `new()`. Without it the bus is a `LocalMemoryBus` of fixed
+//! size that the board declares as a `static`, and a broker is built over it. A device service uses
+//! it for queues between the parts of one firmware; the host harness drives it in tests.
 //!
 //! - [`LocalMemoryBroker`], [`ConnectedLocalMemoryBroker`], [`ClosedLocalMemoryBroker`]: the
-//!   lifecycle ladder of the bus. Its `CAP` is the capacity of each subscription.
+//!   lifecycle ladder of the bus. Its first const parameter is the capacity of each subscription.
 //! - [`LocalMemorySource`], [`LocalMemorySubscriber`], [`LocalMemoryMessage`]: a subscription to
 //!   one name, its stream and batches, and one delivery with its settlement.
 //! - [`LocalMemoryPublish`], [`LocalMemoryPublisher`]: the publish policy and the live publisher.
@@ -19,6 +21,8 @@
 //! # Examples
 //!
 //! ```
+//! # #[cfg(ruststream_alloc)]
+//! # {
 //! use futures::StreamExt;
 //! use ruststream_memory::local::prelude::*;
 //!
@@ -48,16 +52,70 @@
 //! }
 //!
 //! assert_eq!(embassy_futures::block_on(firmware()), Ok(vec![21, 22]));
+//! # }
+//! ```
+//!
+//! Without `alloc` the same two tasks share a `static` bus:
+//!
+//! ```
+//! # #[cfg(not(ruststream_alloc))]
+//! # {
+//! use futures::StreamExt;
+//! use ruststream_memory::local::prelude::*;
+//!
+//! static BUS: LocalMemoryBus<8> = LocalMemoryBus::new();
+//!
+//! /// Two tasks of one firmware: the sensor publishes, the logger reads.
+//! async fn firmware() -> Result<[u8; 2], LocalMemoryError> {
+//!     let connected = LocalMemoryBroker::new(&BUS).connect().await?;
+//!     let mut readings = LocalMemorySource::new("sensors/temp")
+//!         .subscribe(&connected)
+//!         .await?;
+//!     let sensor = connected.publisher();
+//!     for celsius in [21u8, 22] {
+//!         let celsius = [celsius];
+//!         let reading = OutgoingMessage::with_payload("sensors/temp", &celsius[..]);
+//!         sensor.publish(reading, None).await.map_err(PublishMessageError::into_error)?;
+//!     }
+//!
+//!     let mut logged = [0; 2];
+//!     let mut deliveries = core::pin::pin!(readings.stream());
+//!     for slot in &mut logged {
+//!         let Some(Ok(reading)) = deliveries.next().await else {
+//!             unreachable!("the bus is open and its stream yields no error");
+//!         };
+//!         *slot = reading.payload()[0];
+//!         reading.ack().await.expect("the bus settles");
+//!     }
+//!     connected.shutdown().await?;
+//!     Ok(logged)
+//! }
+//!
+//! assert_eq!(embassy_futures::block_on(firmware()), Ok([21, 22]));
+//! # }
 //! ```
 
 // Without `std` the bus is `Rc` and `RefCell` by design, so no future of the local family is `Send`, and the
 // nursery lint that asks for it does not apply here.
 #![allow(clippy::future_not_send)]
 
-mod broker;
-mod bus;
-mod share;
-mod subscriber;
+#[cfg(not(ruststream_alloc))]
+mod fixed;
+#[cfg(ruststream_alloc)]
+mod heap;
+
+#[cfg(not(ruststream_alloc))]
+pub use fixed::{
+    ClosedLocalMemoryBroker, ConnectedLocalMemoryBroker, LocalMemoryBatch, LocalMemoryBroker,
+    LocalMemoryBus, LocalMemoryError, LocalMemoryMessage, LocalMemoryPublish, LocalMemoryPublisher,
+    LocalMemorySource, LocalMemorySubscriber,
+};
+#[cfg(ruststream_alloc)]
+pub use heap::{
+    ClosedLocalMemoryBroker, ConnectedLocalMemoryBroker, LocalMemoryBroker, LocalMemoryError,
+    LocalMemoryMessage, LocalMemoryPublish, LocalMemoryPublisher, LocalMemorySource,
+    LocalMemorySubscriber,
+};
 
 /// Reads the local bus's streams in tests without awaiting them.
 ///
@@ -82,20 +140,6 @@ mod drive {
     }
 }
 
-/// The heap's types, which the standard prelude names when `std` is on and this module reaches
-/// through `alloc` without it.
-mod alloc_prelude {
-    pub(super) use alloc::boxed::Box;
-    pub(super) use alloc::string::String;
-    pub(super) use alloc::vec::Vec;
-}
-
-pub use broker::{
-    ClosedLocalMemoryBroker, ConnectedLocalMemoryBroker, LocalMemoryBroker, LocalMemoryError,
-    LocalMemoryPublish, LocalMemoryPublisher,
-};
-pub use subscriber::{LocalMemoryMessage, LocalMemorySource, LocalMemorySubscriber};
-
 /// The local bus and the `Local*` traits a device service calls it through.
 ///
 /// It carries the local family of the contract, so a module that imports it does not import the
@@ -104,6 +148,8 @@ pub use subscriber::{LocalMemoryMessage, LocalMemorySource, LocalMemorySubscribe
 /// # Examples
 ///
 /// ```
+/// # #[cfg(ruststream_alloc)]
+/// # {
 /// use ruststream_memory::local::prelude::*;
 ///
 /// /// One glob brings the bus, its descriptor and the traits its methods come from.
@@ -113,6 +159,21 @@ pub use subscriber::{LocalMemoryMessage, LocalMemorySource, LocalMemorySubscribe
 /// }
 ///
 /// assert!(embassy_futures::block_on(open(LocalMemoryBroker::new())).is_ok());
+/// # }
+/// # #[cfg(not(ruststream_alloc))]
+/// # {
+/// use ruststream_memory::local::prelude::*;
+///
+/// static BUS: LocalMemoryBus<4> = LocalMemoryBus::new();
+///
+/// /// One glob brings the bus, its descriptor and the traits its methods come from.
+/// async fn open(broker: LocalMemoryBroker<4>) -> Result<LocalMemorySubscriber<4>, LocalMemoryError> {
+///     let connected = broker.connect().await?;
+///     LocalMemorySource::new("sensors/temp").subscribe(&connected).await
+/// }
+///
+/// assert!(embassy_futures::block_on(open(LocalMemoryBroker::new(&BUS))).is_ok());
+/// # }
 /// ```
 pub mod prelude {
     pub use super::{
@@ -120,9 +181,15 @@ pub mod prelude {
         LocalMemoryMessage, LocalMemoryPublish, LocalMemoryPublisher, LocalMemorySource,
         LocalMemorySubscriber,
     };
+    #[cfg(not(ruststream_alloc))]
+    pub use super::{LocalMemoryBatch, LocalMemoryBus};
     pub use ruststream_core::{
-        AckError, BatchSubscriber, Broker, BytesMut, ConnectedBroker, HeaderMap, IncomingMessage,
-        OutgoingMessage, PublishMessageError, PublishPolicy, Publisher, Settle, Subscribe,
-        Subscriber, SubscriptionSource,
+        AckError, BatchSubscriber, Broker, ConnectedBroker, IncomingMessage, OutgoingMessage,
+        PublishMessageError, PublishPolicy, Publisher, Settle, Subscribe, Subscriber,
+        SubscriptionSource,
     };
+    #[cfg(ruststream_alloc)]
+    pub use ruststream_core::{BytesMut, HeaderMap};
+    #[cfg(not(ruststream_alloc))]
+    pub use ruststream_core::{FixedBuf, FixedHeaders, Headers, PayloadBuf};
 }

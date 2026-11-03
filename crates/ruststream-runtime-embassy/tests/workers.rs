@@ -1,4 +1,4 @@
-//! The embedded runner's constant worker pool and keyed lanes, inside a whole app on embassy's
+//! The embedded runner's constant worker pool and keyed workers, inside a whole app on embassy's
 //! executor, the handlers waiting on embassy-time's mock clock.
 //!
 //! The broker is a stand-in whose frames carry a partition key. Each scenario spawns an app,
@@ -441,7 +441,7 @@ mod scenarios {
         stand.record.reset();
         spawner.spawn(run_keyed(stand).expect("the app task is free"));
         settle().await;
-        // Two keys that hash to different lanes of two, each sent twice in a row.
+        // Two keys that hash to different workers of two, each sent twice in a row.
         let (first, second): (&'static [u8], &'static [u8]) = (b"a", b"b");
         for (key, seq) in [(first, 1), (first, 2), (second, 3), (second, 4)] {
             stand.keyed_wire.send(Keyed::delivery(Some(key), seq)).await;
@@ -460,7 +460,7 @@ mod scenarios {
             [1, 3],
             "the first delivery of each key runs at once"
         );
-        passed("deliveries of different keys run on their own lanes at once");
+        passed("deliveries of different keys run on their own workers at once");
         assert_eq!(started, [1, 3, 2, 4], "the order the deliveries started in");
         assert_eq!(acked, 4, "deliveries acked");
         passed("the deliveries of one key run in order, one at a time");

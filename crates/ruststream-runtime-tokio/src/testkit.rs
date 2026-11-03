@@ -14,6 +14,7 @@ pub(crate) mod log_capture {
     use std::fmt::Debug;
     use std::sync::{Arc, Mutex, Once};
 
+    use ruststream_core::diag::{Logger as _, TracingLogger};
     use tracing::field::{Field, Visit};
     use tracing::subscriber::DefaultGuard;
     use tracing::{Subscriber, subscriber};
@@ -53,6 +54,8 @@ pub(crate) mod log_capture {
     /// installed a moment later then misses that event.
     pub(crate) fn start() -> (Events, DefaultGuard) {
         static INTERESTED: Once = Once::new();
+        // The framework reports nothing until a logger is selected; these tests read `tracing`.
+        TracingLogger::select();
         INTERESTED.call_once(|| {
             // Another test binary's global subscriber is not this process's concern: a failure
             // here means one is already installed, which keeps the interest open just as well.

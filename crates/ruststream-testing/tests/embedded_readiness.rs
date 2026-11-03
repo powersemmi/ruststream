@@ -4,13 +4,15 @@
 // The app and its handlers are not `Send`: the harness polls them inside the test's future.
 #![allow(clippy::future_not_send)]
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::error::Error;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use embassy_futures::block_on;
+use embassy_time::Timer;
 use futures_core::Stream;
 use ruststream::memory::local::prelude::{
     ConnectedLocalMemoryBroker, LocalMemoryBroker, LocalMemoryError, LocalMemoryMessage,
@@ -34,6 +36,31 @@ thread_local! {
 
 fn polls() -> u32 {
     POLLS.with(Cell::get)
+}
+
+thread_local! {
+    /// How often each probe a hinted subscription handed out was asked, in the order they were
+    /// taken: the join's gate takes the first, the subscription's own loop the second.
+    static ASKED: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
+}
+
+fn asked() -> Vec<u32> {
+    ASKED.with(|asked| asked.borrow().clone())
+}
+
+/// The bus's probe with every question counted under the probe's own number.
+struct Asked<Inner> {
+    number: usize,
+    inner: Inner,
+}
+
+impl<Inner: ReadyHint> ReadyHint for Asked<Inner> {
+    const GATED: bool = Inner::GATED;
+
+    fn may_be_ready(&self) -> bool {
+        ASKED.with(|asked| asked.borrow_mut()[self.number] += 1);
+        self.inner.may_be_ready()
+    }
 }
 
 /// A frame, as its bytes.
@@ -68,7 +95,15 @@ impl Subscriber for HintedSubscriber {
     }
 
     fn ready_hint(&self) -> impl ReadyHint + 'static + use<> {
-        self.0.ready_hint()
+        let number = ASKED.with(|asked| {
+            let mut asked = asked.borrow_mut();
+            asked.push(0);
+            asked.len() - 1
+        });
+        Asked {
+            number,
+            inner: self.0.ready_hint(),
+        }
     }
 }
 
@@ -168,6 +203,31 @@ async fn on_hinted(probe: &Frame<'_>) -> HandlerOutcome {
 async fn on_polled(probe: &Frame<'_>) -> HandlerOutcome {
     let _ = probe.0;
     HandlerOutcome::ack()
+}
+
+thread_local! {
+    /// Deliveries the slow handler finished, on this thread.
+    static FINISHED: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Waits three seconds on the board's clock, so its subscription is idle in the stream while the
+/// handler is not.
+#[subscriber(HintedSource::new("slow"))]
+async fn on_slow(slow: &Frame<'_>) -> HandlerOutcome {
+    let _ = slow.0;
+    Timer::after_secs(3).await;
+    FINISHED.with(|finished| finished.set(finished.get() + 1));
+    HandlerOutcome::ack()
+}
+
+#[ruststream::app(runtime = embassy)]
+fn slow_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.include(on_busy).include(on_slow))
+}
+
+#[ruststream::app(runtime = embassy)]
+fn slow_pooled_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.include(on_busy).include(on_slow).pool::<2>())
 }
 
 #[ruststream::app(runtime = embassy)]
@@ -319,4 +379,105 @@ fn an_idle_keyed_hinted_subscription_is_not_polled_while_its_neighbour_works()
         tb.shutdown().await?;
         Ok(())
     })
+}
+
+/// An idle subscription's frame is resumed on a wake only when its probe says something may be
+/// ready: the join's gate asks its own probe on each wake, and the subscription's loop, which
+/// holds the others (its own, and the cooperative bound's where the worker has one), is not resumed
+/// to ask them.
+fn assert_idle_frame_is_not_resumed(asked: &[u32], probes: usize) {
+    assert_eq!(asked.len(), probes, "the probes taken: {asked:?}");
+    assert!(
+        asked[0] >= 5,
+        "the gate asked on each of the neighbour's wakes: {asked:?}"
+    );
+    assert!(
+        asked[1..].iter().all(|questions| *questions == 0),
+        "the idle subscription's frame was resumed: {asked:?}"
+    );
+}
+
+#[test]
+fn an_idle_hinted_subscription_is_not_resumed_while_its_neighbour_works()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        ASKED.with(|asked| asked.borrow_mut().clear());
+        let tb = TestApp::start(hinted_app(Bus::new())).await?;
+        busy_work(&tb, 5).await?;
+
+        tb.broker::<Bus>().subscriber("busy").assert_called(5);
+        assert_idle_frame_is_not_resumed(&asked(), 3);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn an_idle_pooled_hinted_subscription_is_not_resumed_while_its_neighbour_works()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        ASKED.with(|asked| asked.borrow_mut().clear());
+        let tb = TestApp::start(pooled_app(Bus::new())).await?;
+        busy_work(&tb, 5).await?;
+
+        tb.broker::<Bus>().subscriber("busy").assert_called(5);
+        assert_idle_frame_is_not_resumed(&asked(), 2);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn an_idle_keyed_hinted_subscription_is_not_resumed_while_its_neighbour_works()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        ASKED.with(|asked| asked.borrow_mut().clear());
+        let tb = TestApp::start(keyed_app(Bus::new())).await?;
+        busy_work(&tb, 5).await?;
+
+        tb.broker::<Bus>().subscriber("busy").assert_called(5);
+        assert_idle_frame_is_not_resumed(&asked(), 2);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+/// A handler that waits on the clock holds its subscription awake: the stream is empty, the
+/// probe says nothing is ready, and the join still resumes the subscription when the clock fires.
+async fn a_waiting_handler_finishes_when_the_clock_reaches_it(
+    app: EmbeddedApp<impl Mounts + 'static>,
+) -> Result<(), Box<dyn Error>> {
+    FINISHED.with(|finished| finished.set(0));
+    let tb = TestApp::start(app).await?;
+    tb.broker::<Bus>()
+        .message(&Sent(b"21"))
+        .to("slow")
+        .publish()
+        .await?;
+    busy_work(&tb, 2).await?;
+    assert_eq!(FINISHED.with(Cell::get), 0, "the clock has not reached it");
+
+    tb.advance(Duration::from_secs(3)).await?;
+    assert_eq!(
+        FINISHED.with(Cell::get),
+        1,
+        "the handler finished once the clock fired"
+    );
+    tb.shutdown().await?;
+    Ok(())
+}
+
+#[test]
+fn a_handler_waiting_on_the_clock_in_a_hinted_subscription_finishes() -> Result<(), Box<dyn Error>>
+{
+    block_on(a_waiting_handler_finishes_when_the_clock_reaches_it(
+        slow_app(Bus::new()),
+    ))
+}
+
+#[test]
+fn a_handler_waiting_on_the_clock_in_a_hinted_pool_finishes() -> Result<(), Box<dyn Error>> {
+    block_on(a_waiting_handler_finishes_when_the_clock_reaches_it(
+        slow_pooled_app(Bus::new()),
+    ))
 }

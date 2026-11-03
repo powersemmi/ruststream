@@ -6,4 +6,5 @@ mod failed_message;
 mod log_capture;
 mod out_continuation;
 mod publish_unsent;
+mod redelivery;
 mod settle;

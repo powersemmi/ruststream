@@ -1,20 +1,33 @@
 //! Mounting one handler definition on its source: the `include` forms' shared tails, each
 //! building the route its form dispatches through.
 
-use alloc::borrow::ToOwned;
 use core::marker::PhantomData;
 use ruststream_core::{MaybeSend, MaybeSendSync};
 
 use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
-use crate::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch, batch_metadata};
-use crate::batch_inject::{BatchInjectDef, batch_inject_metadata};
-use crate::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
-use crate::inject::{InjectDef, inject_metadata};
+#[cfg(not(ruststream_alloc))]
+use crate::Meta;
+#[cfg(ruststream_alloc)]
+use crate::batch::batch_metadata;
+use crate::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch};
+use crate::batch_inject::BatchInjectDef;
+#[cfg(ruststream_alloc)]
+use crate::batch_inject::batch_inject_metadata;
+use crate::batch_publishing::BatchPublishingDef;
+#[cfg(ruststream_alloc)]
+use crate::batch_publishing::batch_publishing_metadata;
+use crate::inject::InjectDef;
+#[cfg(ruststream_alloc)]
+use crate::inject::inject_metadata;
 use crate::input::{Carried, DecodeWith, Materialize, Provided};
-use crate::publishing::{PublishingDef, publishing_metadata};
+use crate::publishing::PublishingDef;
+#[cfg(ruststream_alloc)]
+use crate::publishing::publishing_metadata;
 use crate::settings::BatchSized;
-use crate::subscriber_def::{SubscriberDef, subscriber_metadata};
+use crate::subscriber_def::SubscriberDef;
+#[cfg(ruststream_alloc)]
+use crate::subscriber_def::subscriber_metadata;
 use crate::typed::Typed;
 
 use crate::router::routes::{BatchRoute, SubscribeRoute};
@@ -46,9 +59,12 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Def::Handler: 'static,
         DecodeCodec: MaybeSendSync + 'static,
     {
-        let meta = subscriber_metadata(source.name().to_owned(), &def)
+        #[cfg(ruststream_alloc)]
+        let meta = subscriber_metadata(source.name(), &def)
             .materialized_with::<Def::Input, DecodeCodec, LocalSourceMessage<B, Source>>()
             .describing::<Connected<B>, _>(&source);
+        #[cfg(not(ruststream_alloc))]
+        let meta = Meta::of::<Def::Input>();
         let policies = def.failure_policies();
         let workers = def.workers();
         let handler = Typed::over(codec, def.into_handler()).on_decode_failure(policies.decode);
@@ -79,9 +95,12 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Def::Handler: 'static,
         DecodeCodec: MaybeSendSync + 'static,
     {
-        let meta = batch_metadata(source.name().to_owned(), &def)
+        #[cfg(ruststream_alloc)]
+        let meta = batch_metadata(source.name(), &def)
             .decoded_with::<Def::Input, DecodeCodec>()
             .describing::<Connected<B>, _>(&source);
+        #[cfg(not(ruststream_alloc))]
+        let meta = Meta::of::<Def::Input>();
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -112,11 +131,15 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Source::Subscriber: BatchSubscriber,
         Def: BatchDef<Input = Provided<F>> + BatchSized,
         Def::Handler: 'static,
+        // The input kind names its type, which the mount keeps as the registration's label.
+        F: 'static,
     {
         // The self-deserializing batch mounts with no codec, so the media type it would report
         // is the one nothing produced.
-        let meta =
-            batch_metadata(source.name().to_owned(), &def).describing::<Connected<B>, _>(&source);
+        #[cfg(ruststream_alloc)]
+        let meta = batch_metadata(source.name(), &def).describing::<Connected<B>, _>(&source);
+        #[cfg(not(ruststream_alloc))]
+        let meta = Meta::of::<Def::Input>();
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -150,8 +173,10 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     {
         // No codec reads the values, so the media type it would report is the one nothing
         // produced.
-        let meta =
-            batch_metadata(source.name().to_owned(), &def).describing::<Connected<B>, _>(&source);
+        #[cfg(ruststream_alloc)]
+        let meta = batch_metadata(source.name(), &def).describing::<Connected<B>, _>(&source);
+        #[cfg(not(ruststream_alloc))]
+        let meta = Meta::of::<Def::Input>();
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -194,9 +219,12 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Def::Input: Materialize<DecodeCodec, LocalSourceMessage<B, Source>>,
         DecodeCodec: 'static,
     {
-        let meta = inject_metadata(source.name().to_owned(), &def)
+        #[cfg(ruststream_alloc)]
+        let meta = inject_metadata(source.name(), &def)
             .materialized_with::<Def::Input, DecodeCodec, LocalSourceMessage<B, Source>>()
             .describing::<Connected<B>, _>(&source);
+        #[cfg(not(ruststream_alloc))]
+        let meta = Meta::of::<Def::Input>();
         let policies = def.failure_policies();
         let workers = def.workers();
         self.with_route(InjectRoute {
@@ -237,9 +265,12 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Def::Input: DecodeWith<DecodeCodec>,
         DecodeCodec: MaybeSendSync + 'static,
     {
-        let meta = batch_inject_metadata(source.name().to_owned(), &def)
+        #[cfg(ruststream_alloc)]
+        let meta = batch_inject_metadata(source.name(), &def)
             .decoded_with::<Def::Input, DecodeCodec>()
             .describing::<Connected<B>, _>(&source);
+        #[cfg(not(ruststream_alloc))]
+        let meta = Meta::of::<Def::Input>();
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -292,9 +323,12 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: MaybeSendSync + 'static,
         ReplySource: 'static,
     {
-        let meta = batch_publishing_metadata(source.name().to_owned(), &def)
+        #[cfg(ruststream_alloc)]
+        let meta = batch_publishing_metadata(source.name(), &def)
             .decoded_with::<Def::Input, DecodeCodec>()
             .describing::<Connected<B>, _>(&source);
+        #[cfg(not(ruststream_alloc))]
+        let meta = Meta::of::<Def::Input>();
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -348,9 +382,12 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: 'static,
         ReplySource: 'static,
     {
-        let meta = publishing_metadata(source.name().to_owned(), &def)
+        #[cfg(ruststream_alloc)]
+        let meta = publishing_metadata(source.name(), &def)
             .materialized_with::<Def::Input, DecodeCodec, LocalSourceMessage<B, Source>>()
             .describing::<Connected<B>, _>(&source);
+        #[cfg(not(ruststream_alloc))]
+        let meta = Meta::of::<Def::Input>();
         let policies = def.failure_policies();
         let workers = def.workers();
         self.with_route(PublishingRoute {
@@ -396,9 +433,12 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: 'static,
         ReplySource: 'static,
     {
-        let meta = publishing_metadata(source.name().to_owned(), &def)
+        #[cfg(ruststream_alloc)]
+        let meta = publishing_metadata(source.name(), &def)
             .materialized_with::<Def::Input, DecodeCodec, LocalSourceMessage<B, Source>>()
             .describing::<Connected<B>, _>(&source);
+        #[cfg(not(ruststream_alloc))]
+        let meta = Meta::of::<Def::Input>();
         let policies = def.failure_policies();
         let workers = def.workers();
         self.with_route(RawReplyRoute {

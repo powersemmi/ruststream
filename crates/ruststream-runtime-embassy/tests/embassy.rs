@@ -448,6 +448,8 @@ async fn subscription(subscriber: FrameSubscriber, probe: &'static Probe) {
         failure,
         (),
         HeadersAtOnce,
+        (),
+        BytesMut::new(),
     )
     .await;
     probe.ended.set(true);

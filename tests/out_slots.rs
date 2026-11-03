@@ -337,25 +337,25 @@ async fn the_raw_owned_transaction_settles_outside_the_slot() {
 // every slot is bound, and the error names the missing slot (`MissingSlot<Audit>`). Covered by
 // the trybuild case `tests/ui/subscriber_out_unbound_slot.rs`.
 
-// A paired value that is NOT a publisher: a lane router in the shape of a broker's
+// A paired value that is NOT a publisher: a route router in the shape of a broker's
 // per-partition producer cache. The capability is broker-defined; the core knows nothing
 // about it.
 #[derive(Clone)]
-struct LaneRouter {
+struct ShardRouter {
     publisher: MemoryPublisher,
 }
 
-/// The broker-defined capability: pick a destination lane for a shard.
-trait ShardLanes {
-    fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str);
+/// The broker-defined capability: pick a destination route for a shard.
+trait ShardRoutes {
+    fn route(&self, shard: u64) -> (&MemoryPublisher, &'static str);
 }
 
-impl ShardLanes for LaneRouter {
-    fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
+impl ShardRoutes for ShardRouter {
+    fn route(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
         let dest = if shard.is_multiple_of(2) {
-            "slots.lane.even"
+            "slots.route.even"
         } else {
-            "slots.lane.odd"
+            "slots.route.odd"
         };
         (&self.publisher, dest)
     }
@@ -365,9 +365,9 @@ impl ShardLanes for LaneRouter {
 // transparent `Deref`: this is how a broker crate extends the slot vocabulary with its own
 // traits. A handler body holds the entry, so without this impl the capability is reachable by
 // autoderef for a method call but never satisfies a trait bound.
-impl<M, W: ShardLanes, E, Pipe, Body> ShardLanes for Slot<M, W, E, Pipe, Body> {
-    fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
-        (**self).lane(shard)
+impl<M, W: ShardRoutes, E, Pipe, Body> ShardRoutes for Slot<M, W, E, Pipe, Body> {
+    fn route(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
+        (**self).route(shard)
     }
 }
 
@@ -375,20 +375,20 @@ impl<M, W: ShardLanes, E, Pipe, Body> ShardLanes for Slot<M, W, E, Pipe, Body> {
 /// type, takes the entry a handler body holds.
 // `Send` exactly where the entry is: the multi-thread runner checks it where it mounts the body.
 #[allow(clippy::future_not_send)]
-async fn sent<L: ShardLanes>(lanes: &L, event: &Event) -> bool {
-    let (publisher, dest) = lanes.lane(event.id);
+async fn sent<L: ShardRoutes>(routes: &L, event: &Event) -> bool {
+    let (publisher, dest) = routes.route(event.id);
     publisher.message(event).to(dest).publish().await.is_ok()
 }
 
 /// The policy half: pure declaration pairing into the router, like a broker's
 /// `per_partition()` policy pairs into its producer cache. No `Clone`: resolution consumes it.
-struct LanePolicy;
+struct ShardPolicy;
 
-impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
-    type Live = LaneRouter;
+impl PublishPolicy<ConnectedMemoryBroker> for ShardPolicy {
+    type Live = ShardRouter;
 
     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
-        Ok(LaneRouter {
+        Ok(ShardRouter {
             publisher: Publish.pair(connected).await?,
         })
     }
@@ -396,8 +396,8 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
 
 /// The handler bounds its slot with the broker-defined capability, not a core one.
 #[subscriber("slots.sharded")]
-async fn route_shard(event: &Event, Out(lanes): Out<impl ShardLanes>) -> HandlerOutcome {
-    if sent(lanes, event).await {
+async fn route_shard(event: &Event, Out(routes): Out<impl ShardRoutes>) -> HandlerOutcome {
+    if sent(routes, event).await {
         HandlerOutcome::ack()
     } else {
         HandlerOutcome::retry()
@@ -409,9 +409,9 @@ async fn route_shard(event: &Event, Out(lanes): Out<impl ShardLanes>) -> Handler
 /// publish log, the documented boundary.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
-    let app = RustStream::new(AppInfo::new("slots-lanes", "0.1.0"))
+    let app = RustStream::new(AppInfo::new("slots-routes", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(route_shard).out(DefaultSlot, LanePolicy)
+            b.include(route_shard).out(DefaultSlot, ShardPolicy)
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -424,11 +424,11 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
     }
 
     tb.broker::<MemoryBroker>()
-        .published::<Event>("slots.lane.even")
+        .published::<Event>("slots.route.even")
         .assert_called_once()
         .with(&Event { id: 2 });
     tb.broker::<MemoryBroker>()
-        .published::<Event>("slots.lane.odd")
+        .published::<Event>("slots.route.odd")
         .assert_called_once()
         .with(&Event { id: 3 });
     // The inner value's publishes are not attributed to the slot: the capture boundary.

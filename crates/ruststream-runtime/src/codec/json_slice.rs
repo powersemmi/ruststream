@@ -1,6 +1,6 @@
 //! The JSON encoder of a bare-metal target: `serde-json-slice` writing into the codec's buffer.
 
-use bytes::BytesMut;
+use ruststream_core::__alloc::bytes::BytesMut;
 use serde::Serialize;
 use serde_json_slice::EncodeError;
 

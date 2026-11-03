@@ -6,16 +6,18 @@
 //! body returned. The value at index `i` belongs to the `i`-th delivery; a delivery past the end
 //! of the slice carries no value and settles by the decode-failure policy.
 
-use alloc::vec::Vec;
 use core::any::type_name;
 use core::fmt;
 use core::marker::PhantomData;
 use core::mem;
 use core::num::NonZeroUsize;
+#[cfg(feature = "testing")]
+use ruststream_core::__alloc::bytes::Bytes;
 use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync};
 
-use tracing::{error, warn};
+use ruststream_core::diag::{error, warn};
 
+use crate::batch::{BatchVec, Gather};
 use crate::{
     BatchSubscriber, BuildBatchContext, CarriesBatch, ConnectedBroker, Settle, SubscriptionSource,
 };
@@ -87,7 +89,7 @@ type Lane<Src, Conn, T> = PhantomData<fn() -> (Src, Conn, T)>;
 pub struct Lent<Src, Conn, Batch, M, T> {
     batch: Batch,
     /// The deliveries drained out of the batch while they settle.
-    deliveries: Vec<M>,
+    deliveries: BatchVec<M>,
     /// The copies of the lent values the harness records, made once while a harness watches.
     recorded: LentValues,
     _lane: Lane<Src, Conn, T>,
@@ -114,7 +116,7 @@ where
     // The deliveries are unread until the body returns, so a panic leaves the lent values to
     // stand for them. The settlement records the same copies, so a value is cloned once.
     #[cfg(feature = "testing")]
-    fn unsettled(&mut self) -> Vec<Delivered> {
+    fn unsettled(&mut self) -> BatchVec<Delivered> {
         self.recorded = Src::lend(&self.batch)
             .iter()
             .map(|value| -> RecordedValue { RecordedValue::of(value) })
@@ -122,7 +124,7 @@ where
         self.recorded
             .iter()
             .map(|value| Delivered {
-                raw: bytes::Bytes::new(),
+                raw: Bytes::new(),
                 value: Some(value.clone()),
                 settle: None,
             })
@@ -190,7 +192,7 @@ where
     fn taken(size: NonZeroUsize) -> Self::Taken {
         Lent {
             batch: Batch::with_capacity(size),
-            deliveries: Vec::with_capacity(size.get()),
+            deliveries: BatchVec::with_room(size.get()),
             recorded: lent_nothing(),
             _lane: PhantomData,
         }
@@ -239,9 +241,9 @@ where
         // the way a single delivery without one does. One its broker could not read is among
         // them, and is logged for the error the broker reported.
         let gone = if deliveries.len() > lent {
-            deliveries.split_off(lent)
+            deliveries.drain(lent..).collect()
         } else {
-            Vec::new()
+            BatchVec::new()
         };
         for msg in gone {
             let outcome = reported(&msg, type_name::<T>(), self.decode, ctx).unwrap_or_else(|| {
@@ -268,8 +270,16 @@ where
             )
             .await;
         }
-        if let Some(result) = result {
-            settle_lent_batch(deliveries, result, subscription, delivery, host, recorded).await;
+        if let Some(mut result) = result {
+            settle_lent_batch(
+                deliveries,
+                &mut result,
+                subscription,
+                delivery,
+                host,
+                recorded,
+            )
+            .await;
         }
     }
 }

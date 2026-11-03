@@ -20,10 +20,10 @@
 //! error at the next use. A [`BrokerScope`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html) opens the same chain,
 //! and the app commits it through the same terminal once the `with_broker` closure returns it.
 
-use alloc::borrow::Cow;
 use core::fmt;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
+use ruststream_core::NameText;
 
 use crate::retry::{
     CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DestinationLast, DestinationOpen, Retry,
@@ -327,7 +327,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn dead_letter(
         self,
-        destination: impl Into<Cow<'static, str>>,
+        destination: impl Into<NameText>,
     ) -> RouterWith<Mount, R, Def, <Attach as DeclareDeadLetter>::Out, Last>
     where
         Attach: DeclareDeadLetter<Step: DeadLetterOpen>,
@@ -387,7 +387,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn to(
         self,
-        destination: impl Into<Cow<'static, str>>,
+        destination: impl Into<NameText>,
     ) -> RouterWith<Mount, R, Def, <Attach as DestinationLast<Last>>::Out, Last>
     where
         Attach: DestinationLast<Last, Step: DestinationOpen>,

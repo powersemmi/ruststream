@@ -31,7 +31,10 @@ mod local;
 mod local_out;
 mod local_publish;
 mod mount;
+// The sink is the multi-thread runner's collector, whose closures own `Arc`s.
+#[cfg(ruststream_alloc)]
 mod mount_sink;
+mod reply_room;
 mod routes;
 mod routes_inject;
 mod routes_publish;
@@ -70,11 +73,16 @@ pub use mount::{
     BatchPublishInjectMount, BatchPublishMount, PublishInjectMount, PublishMount,
     RawReplyInjectMount, RawReplyMount, ReplyAttachment, RouterMount,
 };
+#[cfg(ruststream_alloc)]
 #[doc(hidden)]
 pub use mount_sink::{MountSink, Opened};
+pub use reply_room::ReplyRoom;
+#[cfg(ruststream_alloc)]
+pub use routes::RouterDef;
+#[cfg(ruststream_alloc)]
+pub use routes::RouterHandlers;
 #[doc(hidden)]
 pub use routes::{RetryDestinationsDeclared, RouteMetadata, RouteSubscription};
-pub use routes::{RouterDef, RouterHandlers};
 
 use crate::Connected;
 use crate::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch};
@@ -85,7 +93,9 @@ use routes::{BatchRoute, SubscribeRoute};
 use routes_inject::{BatchInjectRoute, InjectRoute};
 use routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 
-pub(crate) use crate::{LocalSourceMessage, SourceBatch, SourceMessage};
+#[cfg(ruststream_alloc)]
+pub(crate) use crate::SourceBatch;
+pub(crate) use crate::{LocalSourceMessage, SourceMessage};
 
 /// The route a [`SubscriberDef`] `D` mounted on source `S` (decoded with `C`) becomes. Names the
 /// otherwise unwieldy registration type.

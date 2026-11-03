@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```
-//! # #[cfg(feature = "json")]
+//! # #[cfg(all(feature = "json", feature = "tracing"))]
 //! # mod demo {
 //! use ruststream::memory::prelude::*;
 //! use ruststream::runtime::layers::TracingLayer;
@@ -43,8 +43,11 @@
 //! # fn main() {}
 //! ```
 
+#[cfg(ruststream_tracing)]
 use super::context::Context;
-use super::handler::{Handler, HandlerOutcome};
+use super::handler::Handler;
+#[cfg(ruststream_tracing)]
+use super::handler::HandlerOutcome;
 use ruststream_core::{MaybeSend, MaybeSendSync};
 
 /// A function from one handler to another. Apply with [`HandlerExt::with`], or to one
@@ -72,7 +75,7 @@ pub trait Layer<H> {
 /// layer that applies uniformly (logging, metrics) can wrap every router handler from one bound.
 ///
 /// Implemented for [`Identity`], a [`Stack`] of blanket layers, and the bundled
-/// [`TracingLayer`](layers::TracingLayer). Implement it for a custom layer to let the app's global
+/// `TracingLayer`. Implement it for a custom layer to let the app's global
 /// stack reach router handlers; a layer that only wraps specific handler types cannot be blanket.
 ///
 /// # Examples
@@ -242,15 +245,16 @@ where
 }
 
 /// Bundled, opinionated middleware layers ready to drop into a handler stack.
+#[cfg(ruststream_tracing)]
 pub mod layers {
+    use ruststream_core::__alloc::tracing::{Instrument as _, debug, info, trace_span, warn};
     use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
-    use tracing::{debug, info, instrument, warn};
 
     use super::super::handler::HandlerResult;
     use super::{BlanketLayer, Context, Handler, HandlerOutcome, Layer};
 
-    /// Logs every delivery and its outcome via [`tracing`]. Default level is `INFO` for the
-    /// outcome and `DEBUG` for arrival.
+    /// Logs every delivery and its outcome via [`tracing`](https://docs.rs/tracing). Default
+    /// level is `INFO` for the outcome and `DEBUG` for arrival.
     #[derive(Debug, Clone, Default)]
     pub struct TracingLayer {
         target: Option<&'static str>,
@@ -303,14 +307,14 @@ pub mod layers {
         S: MaybeSendSync,
         H: Handler<M, C, S>,
     {
-        #[instrument(level = "trace", skip(self, msg, ctx), fields(target = self.target))]
         fn handle(
             &self,
             msg: &M,
             ctx: &mut Context<'_, C, S>,
         ) -> impl Future<Output = HandlerOutcome> + MaybeSend {
-            // An `async move` block, so `instrument` enters its span around the whole future.
-            async move { traced(move || self.inner.handle(msg, ctx)).await }
+            // The span is entered around the whole future, not only its construction.
+            let span = trace_span!("handle", target = self.target);
+            async move { traced(move || self.inner.handle(msg, ctx)).await }.instrument(span)
         }
     }
 
@@ -342,11 +346,12 @@ pub mod layers {
     }
 
     #[cfg(test)]
+    #[cfg(ruststream_alloc)]
     mod tests {
         use core::time::Duration;
 
         use super::*;
-        use crate::HeaderMap;
+        use crate::HeaderSet;
         use crate::dispatch::Delivery;
 
         struct Fixed(HandlerResult);
@@ -365,7 +370,7 @@ pub mod layers {
         async fn traced(layer: &TracingLayer, outcome: HandlerResult) -> HandlerResult {
             let state = ();
             let delivery = Delivery::empty();
-            let headers = HeaderMap::new();
+            let headers = HeaderSet::new();
             let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
             Handler::handle(&layer.layer(Fixed(outcome)), &(), &mut ctx)
                 .await
@@ -395,7 +400,7 @@ pub mod layers {
         async fn the_blanket_form_passes_the_outcome_through() {
             let state = ();
             let delivery = Delivery::empty();
-            let headers = HeaderMap::new();
+            let headers = HeaderSet::new();
             let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
             let delayed = HandlerResult::retry_after(Duration::from_secs(3));
             let layer = TracingLayer::default();

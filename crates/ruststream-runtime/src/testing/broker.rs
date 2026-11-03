@@ -2,10 +2,14 @@
 //! inside the test process, and [`TestableBroker`], the view of its connected form the
 //! [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) harness and the [`conformance`](https://docs.rs/ruststream/latest/ruststream/conformance/index.html) suite drive.
 
+#[cfg(ruststream_alloc)]
 use alloc::boxed::Box;
+#[cfg(ruststream_alloc)]
 use alloc::format;
 use alloc::vec::Vec;
+#[cfg(ruststream_alloc)]
 use core::any::{Any, TypeId, type_name};
+#[cfg(ruststream_alloc)]
 use core::fmt;
 use core::time::Duration;
 use ruststream_core::MaybeSendSync;
@@ -13,8 +17,11 @@ use ruststream_core::MaybeSendSync;
 use tokio::time;
 use tokio::time::Instant;
 
+#[cfg(ruststream_alloc)]
 use crate::{BoxError, InProcessConnect, LocalBoxFuture, SendBroker};
-use crate::{Broker, DefaultPublish, OutgoingMessage, PublishPolicy, Publisher, RawMessage};
+use crate::{Broker, OutgoingMessage, RawMessage};
+#[cfg(ruststream_alloc)]
+use crate::{DefaultPublish, PublishPolicy, Publisher};
 
 use super::Coordinator;
 
@@ -350,6 +357,7 @@ pub enum Backlog {
     Delivered,
 }
 
+#[cfg(ruststream_alloc)]
 /// The harness's record of one [`InProcess`] broker type: how to recognise it in a built app, how
 /// to connect it in process, and how to reach the [`TestableBroker`] view of what that produced.
 ///
@@ -362,6 +370,7 @@ pub struct TestableRegistration {
     live: LivePublish,
 }
 
+#[cfg(ruststream_alloc)]
 /// Publishes a test's input onto a connected broker, the connected form erased.
 ///
 /// It is what an injection is in live mode, where no in-process transport takes it. Built for one
@@ -371,6 +380,7 @@ pub type LivePublish = for<'m> fn(
     OutgoingMessage<'m>,
 ) -> LocalBoxFuture<'m, Result<(), BoxError>>;
 
+#[cfg(ruststream_alloc)]
 /// Publishes `msg` onto `connected`, the connected form of `B`, through the broker's own
 /// [`DefaultPublish`] policy: the way an external producer reaches a live broker.
 #[doc(hidden)]
@@ -406,6 +416,7 @@ where
     })
 }
 
+#[cfg(ruststream_alloc)]
 impl fmt::Debug for TestableRegistration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TestableRegistration")
@@ -413,6 +424,7 @@ impl fmt::Debug for TestableRegistration {
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl TestableRegistration {
     /// The registration of the broker type `B` (the
     /// [`register_testable_broker!`](crate::register_testable_broker) macro builds this for you).
@@ -443,6 +455,7 @@ impl TestableRegistration {
         }
     }
 
+    #[cfg(ruststream_alloc)]
     /// Whether this registration is the one for the broker type `broker`.
     #[doc(hidden)]
     #[must_use]
@@ -450,6 +463,7 @@ impl TestableRegistration {
         (self.broker)() == broker
     }
 
+    #[cfg(ruststream_alloc)]
     /// The erased in-process transition of the registered broker type.
     #[doc(hidden)]
     #[must_use]
@@ -457,6 +471,7 @@ impl TestableRegistration {
         self.connect
     }
 
+    #[cfg(ruststream_alloc)]
     /// How a test's input reaches the registered broker type once it is connected live.
     #[doc(hidden)]
     #[must_use]
@@ -464,6 +479,7 @@ impl TestableRegistration {
         self.live
     }
 
+    #[cfg(ruststream_alloc)]
     /// Resolves `any` to a `TestableBroker` if it is the connected form of this registration's
     /// broker type.
     #[doc(hidden)]
@@ -472,6 +488,7 @@ impl TestableRegistration {
     }
 }
 
+#[cfg(ruststream_alloc)]
 /// `B`'s in-process transition over erased values: the harness hands it the broker it found under
 /// `B`'s type, and gets the connected form back the same way.
 fn connect_erased<B: InProcess + SendBroker>(
@@ -490,6 +507,7 @@ fn connect_erased<B: InProcess + SendBroker>(
     })
 }
 
+#[cfg(ruststream_alloc)]
 /// The [`TestableBroker`] view of `B`'s connected form, when `any` is one.
 fn testable_view<B>(any: &dyn Any) -> Option<&dyn TestableBroker>
 where
@@ -500,8 +518,10 @@ where
     Some(connected)
 }
 
+#[cfg(ruststream_alloc)]
 inventory::collect!(TestableRegistration);
 
+#[cfg(ruststream_alloc)]
 /// Registers a production broker type with the test harness, so
 /// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) runs every broker of that type in process.
 ///

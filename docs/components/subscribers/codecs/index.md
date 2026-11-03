@@ -25,6 +25,7 @@ A handler decodes with the codec of the most specific level that names one:
 A [router](../router.md) names one for the handlers it mounts with [`Router::with_codec`](api:ruststream::runtime::Router::with_codec).
 `DefaultCodec` is the first enabled of the `json`, `cbor` and `msgpack` features, in that order.
 With no codec feature, a mounting that needs the default does not compile, and the error lists the ways out.
+The embedded runtime built without `alloc` uses [slice codecs](./slice-codecs.md), which encode into a slice, and the mount names one.
 
 The publish side names its codec at its own position.
 A reply takes the default codec unless `.out_reply(policy).codec(codec)` names another, so a request and its reply may use different formats.

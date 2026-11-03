@@ -7,20 +7,39 @@
 //! its own definition pair because the handler consumes a slice and returns a
 //! [`BatchResult`], not a per-message [`HandlerOutcome`](super::HandlerOutcome).
 
+#[cfg(ruststream_alloc)]
+use alloc::borrow::ToOwned;
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
+#[cfg(ruststream_alloc)]
 use core::fmt;
+#[cfg(ruststream_alloc)]
 use core::num::NonZeroUsize;
-use ruststream_core::{BatchSlot, MaybeSend, MaybeSendSync};
+use ruststream_core::MaybeSendSync;
+#[cfg(ruststream_alloc)]
+use ruststream_core::{BatchSlot, MaybeSend};
 
+#[cfg(ruststream_alloc)]
+use crate::batch::{BatchVec, Gather};
+#[cfg(ruststream_alloc)]
 use crate::{BuildBatchContext, Settle};
 
+#[cfg(ruststream_alloc)]
 use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
+#[cfg(ruststream_alloc)]
 use super::context::Context;
 use super::dispatch::Workers;
-use super::failure::{FailurePolicies, FailurePolicy};
+use super::failure::FailurePolicies;
+#[cfg(ruststream_alloc)]
+use super::failure::FailurePolicy;
+#[cfg(ruststream_alloc)]
 use super::host::SendHost;
-use super::input::{DecodeWith, InputKind};
+#[cfg(ruststream_alloc)]
+use super::input::DecodeWith;
+use super::input::InputKind;
+#[cfg(ruststream_alloc)]
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 
 /// A batch definition whose handler takes startup-injected parameters.
@@ -62,11 +81,13 @@ pub trait BatchInjectDef: MaybeSendSync {
     }
 
     /// The element type's serialized JSON Schema, when available.
+    #[cfg(ruststream_alloc)]
     fn input_schema(&self) -> Option<String> {
         None
     }
 
     /// The serialized JSON Schema of the element type's header contract, when one is declared.
+    #[cfg(ruststream_alloc)]
     fn headers_schema(&self) -> Option<String> {
         None
     }
@@ -74,6 +95,7 @@ pub trait BatchInjectDef: MaybeSendSync {
     /// The messages this handler publishes, for the `AsyncAPI` `send` operations: every `Out`
     /// slot dictionary entry. The macro fills this in; the default declares nothing. Called
     /// once at registration.
+    #[cfg(ruststream_alloc)]
     fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
         Vec::new()
     }
@@ -94,6 +116,7 @@ pub trait BatchInjectDef: MaybeSendSync {
 ///
 /// The same state-generic shape as [`SliceHandler`](super::SliceHandler); see
 /// [`PublishingCall`](super::PublishingCall) for the rationale.
+#[cfg(ruststream_alloc)]
 pub(crate) trait BatchInjectCall<S>: BatchInjectDef {
     /// Runs the handler body on one decoded batch, with the resolved injections.
     fn call(
@@ -105,8 +128,9 @@ pub(crate) trait BatchInjectCall<S>: BatchInjectDef {
 }
 
 /// Builds the registration metadata for an injected batch definition mounted under `name`.
-pub(crate) fn batch_inject_metadata<D: BatchInjectDef>(name: String, def: &D) -> HandlerMetadata {
-    let mut meta = HandlerMetadata::raw(name).with_def_details(
+#[cfg(ruststream_alloc)]
+pub(crate) fn batch_inject_metadata<D: BatchInjectDef>(name: &str, def: &D) -> HandlerMetadata {
+    let mut meta = HandlerMetadata::raw(name.to_owned()).with_def_details(
         def.description(),
         def.input_schema(),
         def.headers_schema(),
@@ -121,6 +145,7 @@ pub(crate) fn batch_inject_metadata<D: BatchInjectDef>(name: String, def: &D) ->
 
 /// The batch handler built from a [`BatchInjectDef`] once its injections resolved: decode
 /// the batch, run the body with them, settle every delivery.
+#[cfg(ruststream_alloc)]
 pub(crate) struct BatchInjectHandler<Def: BatchInjectDef, DecodeCodec> {
     pub(crate) def: Def,
     pub(crate) codec: DecodeCodec,
@@ -128,12 +153,14 @@ pub(crate) struct BatchInjectHandler<Def: BatchInjectDef, DecodeCodec> {
     pub(crate) decode: FailurePolicy,
 }
 
+#[cfg(ruststream_alloc)]
 impl<Def: BatchInjectDef, DecodeCodec> fmt::Debug for BatchInjectHandler<Def, DecodeCodec> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BatchInjectHandler").finish_non_exhaustive()
     }
 }
 
+#[cfg(ruststream_alloc)]
 impl<Batch, Msg, Def, DecodeCodec, State> BatchHandler<Batch, Def::Context, State>
     for BatchInjectHandler<Def, DecodeCodec>
 where
@@ -146,20 +173,21 @@ where
     DecodeCodec: MaybeSendSync,
     State: MaybeSendSync,
 {
-    type Scratch = Vec<<Def::Input as InputKind>::Owned>;
-    type Taken = Vec<Msg>;
+    type Scratch = BatchVec<<Def::Input as InputKind>::Owned>;
+    type Taken = BatchVec<Msg>;
 
-    fn taken(size: NonZeroUsize) -> Vec<Msg> {
-        Vec::with_capacity(size.get())
+    fn taken(size: NonZeroUsize) -> BatchVec<Msg> {
+        BatchVec::with_room(size.get())
     }
 
-    fn load(taken: &mut Vec<Msg>, slot: &mut Batch) {
+    fn load(taken: &mut BatchVec<Msg>, slot: &mut Batch) {
         taken.extend(slot.drain());
     }
 
+    #[cfg(ruststream_alloc)]
     async fn handle_batch<Host: SendHost<Def::Context>>(
         &self,
-        batch: &mut Vec<Msg>,
+        batch: &mut BatchVec<Msg>,
         values: &mut Self::Scratch,
         ctx: &mut Context<'_, Def::Context, State>,
         host: &Host,
@@ -178,15 +206,14 @@ where
             return;
         }
         let delivery = ctx.delivery();
-        let result = self.def.call(values, &self.injections, ctx).await;
+        let mut result = self.def.call(values, &self.injections, ctx).await;
         values.clear();
-        settle_batch(batch, result, subscription, delivery, host).await;
+        settle_batch(batch, &mut result, subscription, delivery, host).await;
     }
 }
 
 #[cfg(all(test, feature = "json"))]
 mod tests {
-    use alloc::borrow::ToOwned;
     use alloc::format;
     use core::future::ready;
     use core::sync::atomic::{AtomicUsize, Ordering};
@@ -203,14 +230,14 @@ mod tests {
     use crate::codec::JsonCodec;
     use crate::testkit::Tracked;
     use crate::testkit::batch::{publish_payloads, pull_batch};
-    use crate::{HeaderMap, Name, Subscriber, SubscriptionSource};
+    use crate::{HeaderSet, Name, Subscriber, SubscriptionSource};
     use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker};
 
     /// A definition whose "injection" is a plain multiplier: the real ones are `Out`
     /// values, but the handler side only cares that the resolved tuple is handed to every call.
     struct Scale {
         calls: Arc<AtomicUsize>,
-        seen: Arc<Mutex<Vec<u32>>>,
+        seen: Arc<Mutex<BatchVec<u32>>>,
     }
 
     impl Scale {
@@ -255,7 +282,7 @@ mod tests {
         let def = Scale::new();
         // The mount site names the registration after the def's own source.
         let source = def.source();
-        let name = SubscriptionSource::<ConnectedMemoryBroker>::name(&source).to_owned();
+        let name = SubscriptionSource::<ConnectedMemoryBroker>::name(&source);
         let meta = batch_inject_metadata(name, &def);
 
         assert_eq!(meta.name, "scale");
@@ -303,7 +330,7 @@ mod tests {
         let state = ();
         let delivery = Delivery::empty();
         let host = Tracked(TaskTracker::new());
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);
@@ -335,7 +362,7 @@ mod tests {
         let state = ();
         let delivery = Delivery::empty();
         let host = Tracked(TaskTracker::new());
-        let headers = HeaderMap::new();
+        let headers = HeaderSet::new();
         let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);

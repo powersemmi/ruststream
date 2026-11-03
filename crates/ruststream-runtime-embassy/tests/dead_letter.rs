@@ -12,13 +12,13 @@ use core::cell::Cell;
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
 
-use bytes::BytesMut;
 use embassy_executor::{Executor, Spawner};
 use embassy_futures::yield_now;
 use embassy_time::{Duration as Ticks, MockDriver};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{EmbeddedApp, HandlerOutcome, MountSteps, Mounts};
 use ruststream::{Broker, Deserialized, OutgoingMessage, Publisher, nonzero, subscriber};
+use ruststream_core::__alloc::bytes::BytesMut;
 use static_cell::StaticCell;
 
 /// Executor rounds a step yields: a round polls every task woken before it began.

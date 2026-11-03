@@ -9,7 +9,7 @@ use core::{error::Error as StdError, num::NonZeroUsize, time::Duration};
 
 use crate::subscription::copy_path::Sealed as CopyPathDeclares;
 use crate::{
-    ConnectedBroker, CopyPath, DeclareRetryError, HeaderMap, IncomingMessage, MaybeSend,
+    ConnectedBroker, CopyPath, DeclareRetryError, Headers, IncomingMessage, MaybeSend,
     MaybeSendSync, OutgoingFor, PayloadForm, PublishOutcome, Publisher, RetryDeclaration, Settle,
     Subscriber,
 };
@@ -367,9 +367,9 @@ pub trait Transaction: MaybeSend {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{HeaderMap, OutgoingFor, Transaction, PublishOutcome};
+    /// use ruststream::{Headers, OutgoingFor, Transaction, PublishOutcome};
     ///
-    /// struct Tagged<T>(T, HeaderMap);
+    /// struct Tagged<T>(T, Headers);
     ///
     /// impl<T: Transaction> Transaction for Tagged<T> {
     ///     type Payload = T::Payload;
@@ -392,7 +392,7 @@ pub trait Transaction: MaybeSend {
     ///         self.0.abort().await
     ///     }
     ///
-    ///     fn base_headers(&self) -> Option<&HeaderMap> {
+    ///     fn base_headers(&self) -> Option<&Headers> {
     ///         Some(&self.1)
     ///     }
     /// }
@@ -404,7 +404,7 @@ pub trait Transaction: MaybeSend {
     /// ```
     ///
     /// [`Publisher::base_headers`]: crate::Publisher::base_headers
-    fn base_headers(&self) -> Option<&HeaderMap> {
+    fn base_headers(&self) -> Option<&Headers> {
         None
     }
 }
@@ -621,8 +621,10 @@ pub trait Subscribe: ConnectedBroker {
 
 mod batch;
 mod carries;
+#[cfg(feature = "alloc")]
 mod server;
 
 pub use batch::{BatchSlot, BatchStream};
 pub use carries::{Carries, CarriesBatch};
+#[cfg(feature = "alloc")]
 pub use server::{ApiKeyLocation, DescribeServer, HttpApiKeyLocation, SecurityScheme, ServerSpec};

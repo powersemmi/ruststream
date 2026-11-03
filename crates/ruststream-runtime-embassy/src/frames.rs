@@ -25,7 +25,7 @@ use embassy_sync::channel::{Channel, Receiver};
 use futures_core::Stream;
 use ruststream_core::{
     AckError, BatchSlot, BatchStream, BatchSubscriber, Broker, BrokerMoves, ConnectedBroker,
-    DefaultPublish, HeaderMap, IfSend, IncomingMessage, Lend, OutgoingMessage, PairError,
+    DefaultPublish, Headers, IfSend, IncomingMessage, Lend, OutgoingMessage, PairError,
     PublishMessageError, PublishOutcome, PublishPolicy, Publisher, Settle, Subscriber,
     SubscriptionSource,
 };
@@ -122,7 +122,7 @@ impl FrameSubscriber {
     fn delivery(&self, frame: Frame) -> FrameDelivery {
         FrameDelivery {
             frame,
-            headers: HeaderMap::new(),
+            headers: Headers::new(),
             settled: self.settled,
         }
     }
@@ -222,7 +222,7 @@ impl BatchStream<FrameBatch> for Bursts<'_> {
 #[derive(Debug)]
 pub struct FrameDelivery {
     frame: Frame,
-    headers: HeaderMap,
+    headers: Headers,
     settled: &'static Settlements,
 }
 
@@ -231,7 +231,7 @@ impl IncomingMessage for FrameDelivery {
         &self.frame.0
     }
 
-    fn headers(&self) -> &HeaderMap {
+    fn headers(&self) -> &Headers {
         &self.headers
     }
 }
@@ -354,12 +354,12 @@ impl ConnectedBroker for FrameConnected {
 #[derive(Debug, Clone, Copy)]
 pub struct FrameSource {
     name: &'static str,
-    lane: Lane,
+    feed: Feed,
 }
 
 /// Which of the broker's channels a [`FrameSource`] reads.
 #[derive(Debug, Clone, Copy)]
-enum Lane {
+enum Feed {
     Frames,
     Bursts,
     Requests,
@@ -372,7 +372,7 @@ impl FrameSource {
     pub const fn new(name: &'static str) -> Self {
         Self {
             name,
-            lane: Lane::Frames,
+            feed: Feed::Frames,
         }
     }
 
@@ -381,7 +381,7 @@ impl FrameSource {
     pub const fn bursts(name: &'static str) -> Self {
         Self {
             name,
-            lane: Lane::Bursts,
+            feed: Feed::Bursts,
         }
     }
 
@@ -390,7 +390,7 @@ impl FrameSource {
     pub const fn requests(name: &'static str) -> Self {
         Self {
             name,
-            lane: Lane::Requests,
+            feed: Feed::Requests,
         }
     }
 }
@@ -401,7 +401,7 @@ impl FrameSource {
     pub const fn events(name: &'static str) -> Self {
         Self {
             name,
-            lane: Lane::Events,
+            feed: Feed::Events,
         }
     }
 }
@@ -420,11 +420,11 @@ impl SubscriptionSource<FrameConnected> for FrameSource {
         self,
         connected: &FrameConnected,
     ) -> impl Future<Output = Result<FrameSubscriber, Infallible>> {
-        let frames = match self.lane {
-            Lane::Frames => connected.frames,
-            Lane::Bursts => connected.bursts,
-            Lane::Requests => connected.requests,
-            Lane::Events => connected.events,
+        let frames = match self.feed {
+            Feed::Frames => connected.frames,
+            Feed::Bursts => connected.bursts,
+            Feed::Requests => connected.requests,
+            Feed::Events => connected.events,
         };
         ready(Ok(FrameSubscriber::new(frames, connected.settled)))
     }

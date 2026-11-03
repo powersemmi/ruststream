@@ -18,8 +18,8 @@ use std::task::Poll;
 
 use bytes::BytesMut;
 use crossbeam_queue::ArrayQueue;
+use ruststream_core::diag::error;
 use tokio::sync::Notify;
-use tracing::error;
 
 use super::pool::{Crew, Shared};
 use super::{Shutdown, Turn, Workers};

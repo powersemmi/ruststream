@@ -11,7 +11,9 @@
 //! Associated types are named through the wrapped definition rather than through `Self`: the
 //! builder implements every definition form, so a bare `Self::Input` would be ambiguous.
 
+#[cfg(ruststream_alloc)]
 use alloc::string::String;
+#[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 use ruststream_core::{MaybeSend, MaybeSendSync};
@@ -19,9 +21,15 @@ use ruststream_core::{MaybeSend, MaybeSendSync};
 use crate::ConnectedBroker;
 
 use super::SubscriberBuilder;
-use crate::batch::{BatchDef, BatchResult};
-use crate::batch_inject::{BatchInjectCall, BatchInjectDef};
-use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
+use crate::batch::BatchDef;
+#[cfg(ruststream_alloc)]
+use crate::batch::BatchResult;
+#[cfg(ruststream_alloc)]
+use crate::batch_inject::BatchInjectCall;
+use crate::batch_inject::BatchInjectDef;
+#[cfg(ruststream_alloc)]
+use crate::batch_publishing::BatchPublishingCall;
+use crate::batch_publishing::BatchPublishingDef;
 use crate::context::Context;
 use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
@@ -29,6 +37,7 @@ use crate::handle::DeclaresReply;
 use crate::handler::HandlerOutcome;
 use crate::inject::{InjectCall, InjectDef};
 use crate::input::InputKind;
+#[cfg(ruststream_alloc)]
 use crate::metadata::OutgoingMessageMetadata;
 use crate::publishing::{PublishingCall, PublishingDef};
 use crate::slot::{BindSlots, HasSlots};
@@ -73,10 +82,12 @@ macro_rules! forward_common {
             <Def as $def>::description(&self.def)
         }
 
+        #[cfg(ruststream_alloc)]
         fn input_schema(&self) -> Option<String> {
             <Def as $def>::input_schema(&self.def)
         }
 
+        #[cfg(ruststream_alloc)]
         fn headers_schema(&self) -> Option<String> {
             <Def as $def>::headers_schema(&self.def)
         }
@@ -94,6 +105,7 @@ macro_rules! forward_common {
 /// The `outgoing()` declaration, on the forms that carry one.
 macro_rules! forward_outgoing {
     ($def:ty) => {
+        #[cfg(ruststream_alloc)]
         fn outgoing(&self) -> Vec<OutgoingMessageMetadata> {
             <Def as $def>::outgoing(&self.def)
         }
@@ -224,6 +236,7 @@ where
     forward_outgoing!(BatchInjectDef);
 }
 
+#[cfg(ruststream_alloc)]
 impl<Def, Src, State, DC, S> BatchInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchInjectCall<S>,
@@ -266,6 +279,8 @@ where
     }
 }
 
+// The heap form of a batch's replies; the fixed form belongs to the batch handlers.
+#[cfg(ruststream_alloc)]
 impl<Def, Src, State, DC, S> BatchPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
 where
     Def: BatchPublishingCall<S>,

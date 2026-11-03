@@ -5,6 +5,7 @@
 // one embassy task that awaits it.
 #![allow(clippy::future_not_send)]
 
+#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
 use core::error::Error as StdError;
 use core::pin::pin;
@@ -22,6 +23,8 @@ use crate::hooks::{HookList, Hooks, NoHooks};
 use crate::host::AppHost;
 #[cfg(feature = "testing")]
 use crate::in_process::StartInProcess;
+use ruststream_core::diag::Logger;
+
 use crate::mounts::{BrokerMount, CloseAll, Registration, StartMounts};
 
 /// The router a broker's scope hands the closure of [`EmbeddedApp::with_broker`].
@@ -94,7 +97,7 @@ pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 ///         _outs: &(),
 ///         _ctx: &mut Context<'_>,
 ///     ) -> impl Future<Output = Result<(), ruststream_runtime::HandlerOutcome>> {
-///         tracing::info!(bytes = reading.0.len(), "reading");
+///         log::info!("reading, {} bytes", reading.0.len());
 ///         ready(Ok(()))
 ///     }
 /// }
@@ -112,7 +115,7 @@ pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 /// // The app's task in a firmware: `#[embassy_executor::task] async fn run_app(bus: Bus)`.
 /// async fn run_app(bus: Bus) {
 ///     if let Err(err) = app(bus).run(&CONTROL).await {
-///         tracing::error!(error = %err, "the app stopped on an error");
+///         log::error!("the app stopped on an error: {err}");
 ///     }
 /// }
 /// # use embassy_executor as _;
@@ -122,6 +125,7 @@ pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 #[derive(Debug)]
 #[must_use = "an app does nothing until it runs"]
 pub struct EmbeddedApp<M> {
+    logger: Option<fn()>,
     mounts: M,
 }
 
@@ -138,6 +142,7 @@ impl EmbeddedApp<Parts<(), (), NoHooks>> {
     /// An app with no broker, no state and no hooks.
     pub const fn new() -> Self {
         Self {
+            logger: None,
             mounts: Parts {
                 state: (),
                 brokers: (),
@@ -179,7 +184,7 @@ impl<Brokers> EmbeddedApp<Parts<(), Brokers, NoHooks>> {
     ///         .with_state(Device { serial: 7 })
     ///         .with_broker(bus, |b| b)
     ///         .after_startup(async |device: std::sync::Arc<Device>| {
-    ///             tracing::info!(serial = device.serial, "up");
+    ///             log::info!("up, serial {}", device.serial);
     ///             Ok::<(), core::fmt::Error>(())
     ///         })
     /// }
@@ -189,6 +194,7 @@ impl<Brokers> EmbeddedApp<Parts<(), Brokers, NoHooks>> {
     /// ```
     pub fn with_state<State>(self, state: State) -> EmbeddedApp<Parts<State, Brokers, NoHooks>> {
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers: self.mounts.brokers,
@@ -249,6 +255,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
             hooks,
         } = self.mounts;
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers: (
@@ -264,6 +271,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
         }
     }
 
+    #[cfg(ruststream_alloc)]
     /// Adds a hook called once every subscription is open, beside the running subscriptions;
     /// an error stops the app and [`run`](Self::run) returns it.
     ///
@@ -286,6 +294,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
             hooks,
         } = self.mounts;
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers,
@@ -298,6 +307,37 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
         }
     }
 
+    #[cfg(not(ruststream_alloc))]
+    /// The hook borrows the app's state: `async |state: &State| ..`.
+    #[allow(clippy::type_complexity)] // the app's own type, which the caller names as `impl Mounts`
+    pub fn after_startup<Hook, E>(
+        self,
+        hook: Hook,
+    ) -> EmbeddedApp<Parts<State, Brokers, Hooks<(AfterStartup, Hook), OnShutdown, AfterShutdown>>>
+    where
+        Hook: AsyncFnOnce(&State) -> Result<(), E>,
+        E: StdError + Send + Sync + 'static,
+    {
+        let Parts {
+            state,
+            brokers,
+            hooks,
+        } = self.mounts;
+        EmbeddedApp {
+            logger: self.logger,
+            mounts: Parts {
+                state,
+                brokers,
+                hooks: Hooks {
+                    after_startup: (hooks.after_startup, hook),
+                    on_shutdown: hooks.on_shutdown,
+                    after_shutdown: hooks.after_shutdown,
+                },
+            },
+        }
+    }
+
+    #[cfg(ruststream_alloc)]
     /// Adds a hook called once every subscription has stopped, while the brokers are still
     /// connected; an error is logged.
     ///
@@ -311,7 +351,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
     ///     EmbeddedApp::new()
     ///         .with_broker(bus, |b| b)
     ///         .on_shutdown(async |_state| {
-    ///             tracing::info!("flushing the log");
+    ///             log::info!("flushing the log");
     ///             Ok::<(), core::fmt::Error>(())
     ///         })
     /// }
@@ -333,6 +373,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
             hooks,
         } = self.mounts;
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers,
@@ -345,6 +386,37 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
         }
     }
 
+    #[cfg(not(ruststream_alloc))]
+    /// The hook borrows the app's state: `async |state: &State| ..`.
+    #[allow(clippy::type_complexity)] // the app's own type, which the caller names as `impl Mounts`
+    pub fn on_shutdown<Hook, E>(
+        self,
+        hook: Hook,
+    ) -> EmbeddedApp<Parts<State, Brokers, Hooks<AfterStartup, (OnShutdown, Hook), AfterShutdown>>>
+    where
+        Hook: AsyncFnOnce(&State) -> Result<(), E>,
+        E: StdError + Send + Sync + 'static,
+    {
+        let Parts {
+            state,
+            brokers,
+            hooks,
+        } = self.mounts;
+        EmbeddedApp {
+            logger: self.logger,
+            mounts: Parts {
+                state,
+                brokers,
+                hooks: Hooks {
+                    after_startup: hooks.after_startup,
+                    on_shutdown: (hooks.on_shutdown, hook),
+                    after_shutdown: hooks.after_shutdown,
+                },
+            },
+        }
+    }
+
+    #[cfg(ruststream_alloc)]
     /// Adds a hook called once every broker has shut down; an error is logged.
     ///
     /// # Examples
@@ -357,7 +429,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
     ///     EmbeddedApp::new()
     ///         .with_broker(bus, |b| b)
     ///         .after_shutdown(async |_state| {
-    ///             tracing::info!("radio off");
+    ///             log::info!("radio off");
     ///             Ok::<(), core::fmt::Error>(())
     ///         })
     /// }
@@ -379,6 +451,7 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
             hooks,
         } = self.mounts;
         EmbeddedApp {
+            logger: self.logger,
             mounts: Parts {
                 state,
                 brokers,
@@ -389,6 +462,65 @@ impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown>
                 },
             },
         }
+    }
+
+    #[cfg(not(ruststream_alloc))]
+    /// The hook borrows the app's state: `async |state: &State| ..`.
+    #[allow(clippy::type_complexity)] // the app's own type, which the caller names as `impl Mounts`
+    pub fn after_shutdown<Hook, E>(
+        self,
+        hook: Hook,
+    ) -> EmbeddedApp<Parts<State, Brokers, Hooks<AfterStartup, OnShutdown, (AfterShutdown, Hook)>>>
+    where
+        Hook: AsyncFnOnce(&State) -> Result<(), E>,
+        E: StdError + Send + Sync + 'static,
+    {
+        let Parts {
+            state,
+            brokers,
+            hooks,
+        } = self.mounts;
+        EmbeddedApp {
+            logger: self.logger,
+            mounts: Parts {
+                state,
+                brokers,
+                hooks: Hooks {
+                    after_startup: hooks.after_startup,
+                    on_shutdown: hooks.on_shutdown,
+                    after_shutdown: (hooks.after_shutdown, hook),
+                },
+            },
+        }
+    }
+}
+
+impl<M> EmbeddedApp<M> {
+    /// Selects the logger the framework reports through, when the app runs and before its brokers
+    /// connect.
+    ///
+    /// Nothing is reported until an app selects one. The selection is process-wide, like the
+    /// `log` crate's: two apps in one process share one logger, and the last to start decides.
+    /// Each logger hands an event to its backend, whose level filter decides what shows.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "log")]
+    /// # {
+    /// use ruststream_core::diag::LogLogger;
+    /// use ruststream_memory::local::LocalMemoryBroker;
+    /// use ruststream_runtime_embassy::{EmbeddedApp, Mounts};
+    ///
+    /// fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
+    ///     EmbeddedApp::new().logger(LogLogger).with_broker(bus, |b| b)
+    /// }
+    /// # let _ = app(LocalMemoryBroker::new());
+    /// # }
+    /// ```
+    pub fn logger<L: Logger>(mut self, _logger: L) -> Self {
+        self.logger = Some(L::select);
+        self
     }
 }
 
@@ -409,6 +541,9 @@ impl<M: Mounts> EmbeddedApp<M> {
     ///
     /// See [`EmbeddedApp`].
     pub fn run(self, control: &Control) -> impl Future<Output = Result<(), RunError>> {
+        if let Some(select) = self.logger {
+            select();
+        }
         self.mounts.run_app(control)
     }
 
@@ -430,6 +565,9 @@ impl<M: Mounts> EmbeddedApp<M> {
     where
         Swap: FnOnce(M::State) -> M::State,
     {
+        if let Some(select) = self.logger {
+            select();
+        }
         self.mounts.run_in_process(control, run, state)
     }
 }
@@ -558,7 +696,10 @@ where
             return Err(err);
         }
     };
+    #[cfg(ruststream_alloc)]
     let state = Arc::new(state());
+    #[cfg(not(ruststream_alloc))]
+    let state = state();
     control.running();
     let host = AppHost::new();
     let startup = async {
@@ -570,7 +711,10 @@ where
     };
     let serve = async {
         let signal = LoopSignal::new(control);
-        let loops = pin!(opened.run(signal, &state, &host));
+        // The idle flags of the subscriptions live in this future, above the join of the loops
+        // that borrow them.
+        let parks = <Opened as RunRoutes<State>>::Parks::default();
+        let loops = pin!(opened.run_parked(&parks, signal, &state, &host));
         // The loops end on the stop, or on their own once every stream has ended.
         if let Either::Right(((), loops)) = select(loops, pin!(signal.watch())).await {
             loops.await;

@@ -86,6 +86,7 @@ impl Shutdown {
     }
 
     /// The first failure recorded, naming its subscription.
+    #[cfg(ruststream_alloc)]
     pub(crate) fn peek_failure(&self) -> Option<String> {
         self.0
             .lock()
@@ -120,9 +121,10 @@ pub(crate) mod log_capture {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, Once};
 
+    use ruststream_core::diag::{Logger as _, TracingLogger};
     use tracing::field::{Field, Visit};
     use tracing::subscriber::DefaultGuard;
-    use tracing::{Subscriber, subscriber};
+    use tracing::{Event, Subscriber, subscriber};
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::{Context, SubscriberExt as _};
 
@@ -155,7 +157,7 @@ pub(crate) mod log_capture {
     struct Capture(Events);
 
     impl<S: Subscriber> Layer<S> for Capture {
-        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+        fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
             let mut grab = FieldGrab::default();
             event.record(&mut grab);
             self.0.lock().unwrap().push(grab.0);
@@ -171,6 +173,8 @@ pub(crate) mod log_capture {
     /// installed a moment later then misses that event.
     pub(crate) fn start() -> (Events, DefaultGuard) {
         static INTERESTED: Once = Once::new();
+        // The framework reports nothing until a logger is selected; these tests read `tracing`.
+        TracingLogger::select();
         INTERESTED.call_once(|| {
             // Another test binary's global subscriber is not this process's concern: a failure
             // here means one is already installed, which keeps the interest open just as well.
@@ -210,14 +214,14 @@ pub(crate) mod unreadable {
     use core::future::ready;
 
     use crate::codec::CodecError;
-    use crate::{AckError, HeaderMap, IncomingMessage, Settle};
+    use crate::{AckError, HeaderSet, IncomingMessage, Settle};
 
     /// What the delivery reports, as the inner error of a [`CodecError::Decode`].
     pub(crate) const REASON: &str = "the column `amount` holds text";
 
     pub(crate) struct Unreadable {
         payload: Vec<u8>,
-        headers: HeaderMap,
+        headers: HeaderSet,
         error: CodecError,
     }
 
@@ -225,7 +229,7 @@ pub(crate) mod unreadable {
         pub(crate) fn new(payload: &[u8]) -> Self {
             Self {
                 payload: payload.to_vec(),
-                headers: HeaderMap::new(),
+                headers: HeaderSet::new(),
                 error: CodecError::Decode(REASON.into()),
             }
         }
@@ -236,7 +240,7 @@ pub(crate) mod unreadable {
             &self.payload
         }
 
-        fn headers(&self) -> &HeaderMap {
+        fn headers(&self) -> &HeaderSet {
             &self.headers
         }
 
