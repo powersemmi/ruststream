@@ -334,6 +334,12 @@ name = "compio_quiescence"
 path = "tests/compio_quiescence.rs"
 required-features = ["compio", "json"]
 
+# A compio shutdown that fails on a busy handler still stops it and closes the brokers.
+[[test]]
+name = "compio_busy"
+path = "tests/compio_busy.rs"
+required-features = ["compio", "json"]
+
 # The `.error` of a compio service's failed reply, through the compio `TestApp`.
 [[test]]
 name = "compio_error"
