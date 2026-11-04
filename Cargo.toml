@@ -27,7 +27,7 @@ resolver = "3"
 exclude = ["templates"]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.8.0-rc.1"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
@@ -101,20 +101,20 @@ dyn-utils = { version = "0.1.1", default-features = false }
 # Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
 # release for release (a loose range let a partial `cargo update` pair a new core with an old
 # macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
-ruststream-macros = { version = "=0.8.0", path = "crates/macros" }
+ruststream-macros = { version = "=0.8.0-rc.1", path = "crates/macros" }
 # The crates the facade re-exports, pinned exactly for the same reason as the macros crate.
-ruststream-core = { version = "=0.8.0", path = "crates/core", default-features = false }
-ruststream-runtime = { version = "=0.8.0", path = "crates/runtime", default-features = false }
-ruststream-runtime-tokio = { version = "=0.8.0", path = "crates/runtime-tokio" }
-ruststream-runtime-embassy = { version = "=0.8.0", path = "crates/runtime-embassy" }
-ruststream-runtime-compio = { version = "=0.8.0", path = "crates/runtime-compio" }
+ruststream-core = { version = "=0.8.0-rc.1", path = "crates/core", default-features = false }
+ruststream-runtime = { version = "=0.8.0-rc.1", path = "crates/runtime", default-features = false }
+ruststream-runtime-tokio = { version = "=0.8.0-rc.1", path = "crates/runtime-tokio" }
+ruststream-runtime-embassy = { version = "=0.8.0-rc.1", path = "crates/runtime-embassy" }
+ruststream-runtime-compio = { version = "=0.8.0-rc.1", path = "crates/runtime-compio" }
 # Without its default `std`: the facade's runtime feature picks the tokio side or the embassy side.
-ruststream-memory = { version = "=0.8.0", path = "crates/memory", default-features = false }
-ruststream-asyncapi = { version = "=0.8.0", path = "crates/asyncapi" }
-ruststream-observability = { version = "=0.8.0", path = "crates/observability" }
-ruststream-testing = { version = "=0.8.0", path = "crates/testing" }
-ruststream-cli = { version = "=0.8.0", path = "crates/cli", default-features = false }
-ruststream-conformance = { version = "=0.8.0", path = "crates/conformance" }
+ruststream-memory = { version = "=0.8.0-rc.1", path = "crates/memory", default-features = false }
+ruststream-asyncapi = { version = "=0.8.0-rc.1", path = "crates/asyncapi" }
+ruststream-observability = { version = "=0.8.0-rc.1", path = "crates/observability" }
+ruststream-testing = { version = "=0.8.0-rc.1", path = "crates/testing" }
+ruststream-cli = { version = "=0.8.0-rc.1", path = "crates/cli", default-features = false }
+ruststream-conformance = { version = "=0.8.0-rc.1", path = "crates/conformance" }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases
 # that were never built against.
@@ -156,6 +156,13 @@ lto = "fat"
 [profile.bench]
 inherits = "release"
 debug = "line-tables-only"
+
+# Tests build without debug information, which cuts the build of a test suite by about 40% against
+# full debug information and takes a quarter of its disk. A failing test still names its file and
+# line: a panic carries its location without debug information. A backtrace names the functions
+# without their lines. `cargo build`, `cargo run` and the benchmarks keep their own profiles.
+[profile.test]
+debug = false
 
 # One lint table for both crates of the workspace, so the macros crate is held to what the
 # runtime crate is held to.

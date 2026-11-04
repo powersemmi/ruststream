@@ -2,7 +2,7 @@
 //! the error that names the fix.
 //!
 //! ```text
-//! TRYBUILD=overwrite RUN_UI_TESTS=1 cargo test --manifest-path crates/runtime-noalloc/Cargo.toml --test ui
+//! TRYBUILD=overwrite RUN_UI_TESTS=1 cargo test --manifest-path checks/noalloc/runtime/Cargo.toml --test ui
 //! ```
 
 use std::env;

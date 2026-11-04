@@ -713,7 +713,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream"
-version = "0.8.0"
+version = "0.8.0-rc.1"
 dependencies = [
  "ruststream-core",
  "ruststream-macros",
@@ -725,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-core"
-version = "0.8.0"
+version = "0.8.0-rc.1"
 dependencies = [
  "bytes",
  "bytes-utils",
@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-macros"
-version = "0.8.0"
+version = "0.8.0-rc.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-memory"
-version = "0.8.0"
+version = "0.8.0-rc.1"
 dependencies = [
  "embassy-sync",
  "futures-core",
@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-runtime"
-version = "0.8.0"
+version = "0.8.0-rc.1"
 dependencies = [
  "assert_no_alloc",
  "dyn-utils",
@@ -797,7 +797,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-runtime-embassy"
-version = "0.8.0"
+version = "0.8.0-rc.1"
 dependencies = [
  "assert_no_alloc",
  "embassy-futures",
@@ -816,7 +816,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-testing"
-version = "0.8.0"
+version = "0.8.0-rc.1"
 dependencies = [
  "assert_no_alloc",
  "critical-section",
