@@ -43,6 +43,10 @@ default: check
 
 check:
     cargo fmt --all -- --check
+    # The check crates are workspaces of their own, which `--all` above does not reach.
+    for manifest in checks/{firmware-noalloc,no-std-probe,noalloc}/Cargo.toml; do \
+        cargo fmt --manifest-path "$manifest" --all -- --check || exit 1; \
+    done
     # The site's excerpts: every `reference=` names a file and a region that exist, and the fences
     # follow the page rules. The site build fails on the same file, minutes later.
     python3 scripts/lint_doc_fences.py
@@ -58,10 +62,7 @@ check:
     cargo check --bench consume_compio --no-default-features --features {{ compio_bench_features }}
     cargo check --workspace {{ embassy_tests_exclude }} --lib --bins --tests --examples \
         --all-features
-    # The probe always asks for `macros`, `json` and `tokio`, and a workspace build unifies a
-    # dependency's features across members, so the reduced legs leave it out and check it on its
-    # own.
-    cargo check --workspace --exclude ruststream-no-std-probe --no-default-features
+    cargo check --workspace --no-default-features
     # The embedded runner on its own, in both variants (a workspace build above has the variant
     # its neighbours chose).
     cargo check -p ruststream-runtime-embassy --no-default-features
@@ -69,7 +70,7 @@ check:
     # The codec-free build. A codec is optional, so the self-carrying lanes
     # (`Serialized` / `Deserialized`) and the typed publish entry point over them must stand with
     # no codec feature at all; only encoding and decoding may demand one.
-    cargo check --workspace --exclude ruststream-no-std-probe --no-default-features \
+    cargo check --workspace --no-default-features \
         --features testing,memory,macros
     # The core's `send` feature is additive: a build that enables it without the Tokio runner (any
     # crate may) takes the `Send` bounds in every boxed future of the runtime as well.
@@ -87,7 +88,9 @@ check:
     # The firmware facade with no serde codec: an embedded handler's `Out` slot mounts, and only
     # an encoding publish asks for a codec.
     cargo check -p ruststream --no-default-features --features embassy,macros,memory --tests
-    cargo check -p ruststream-no-std-probe
+    # The macros' output in a crate without the standard library prelude: the probe is a workspace
+    # of its own, so no workspace build carries its features.
+    cargo check --manifest-path checks/no-std-probe/Cargo.toml
     # The contract builds without `std`, for a Cortex-M4F with an allocator and for a Cortex-M0+,
     # which has no compare-and-swap: there `bytes` takes `extra-platforms`, and the library build
     # takes `portable-atomic`'s single-core option in place of the one a firmware binary chooses.

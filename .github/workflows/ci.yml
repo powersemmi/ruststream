@@ -157,7 +157,12 @@ jobs:
 
       - name: cargo fmt
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
-        run: cargo fmt --all -- --check
+        # The check crates are workspaces of their own, which `--all` does not reach.
+        run: |
+          cargo fmt --all -- --check
+          for manifest in checks/{firmware-noalloc,no-std-probe,noalloc}/Cargo.toml; do
+            cargo fmt --manifest-path "$manifest" --all -- --check
+          done
 
       # The benchmarks are not in the workspace lints: they are built with the production
       # feature set, and the harness feature is a compile error in them. CI only keeps them
@@ -478,11 +483,11 @@ jobs:
       - name: cargo check (no default features)
         env:
           CARGO_BUILD_WARNINGS: deny
-        # The probe always asks for `macros`, `json` and `tokio`, and a workspace build unifies a
-        # dependency's features across members, so it is left out here and checked on its own.
+        # The probe is a workspace of its own: the macros' output in a crate without the standard
+        # library prelude, checked against its own lock file.
         run: |
-          cargo check --locked --workspace --exclude ruststream-no-std-probe --no-default-features
-          cargo check --locked -p ruststream-no-std-probe
+          cargo check --locked --workspace --no-default-features
+          cargo check --locked --manifest-path checks/no-std-probe/Cargo.toml
 
       # The test run below builds every other target with the workspace features, and clippy
       # holds that build to its warnings.
@@ -594,7 +599,7 @@ jobs:
           CARGO_BUILD_WARNINGS: deny
         run: |
           cargo test --locked --no-default-features --lib
-          cargo check --locked --workspace --exclude ruststream-no-std-probe --no-default-features \
+          cargo check --locked --workspace --no-default-features \
             --features testing,memory,macros
           cargo test --locked --no-default-features --features macros,memory,testing,tokio --test suite \
             -- raw_subscriber:: codec_free_lanes:: ui_codec_free::
@@ -702,7 +707,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "beta"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-beta
-        run: cargo check --locked --workspace --exclude ruststream-no-std-probe --no-default-features
+        run: cargo check --locked --workspace --no-default-features
 
       - name: cargo check (benchmarks, beta)
         if: "!cancelled() && steps.stable.outcome == 'success'"
@@ -732,7 +737,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-floor
-        run: cargo check --locked --workspace --exclude ruststream-no-std-probe --no-default-features
+        run: cargo check --locked --workspace --no-default-features
 
       - name: cargo check (benchmarks, 1.95)
         if: "!cancelled() && steps.stable.outcome == 'success'"
