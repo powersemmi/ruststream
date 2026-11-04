@@ -27,8 +27,9 @@ ruststream = { version = "0.8", default-features = false, features = ["embassy",
 - The codec is a `SliceCodec`, named at the mount: `b.with_codec(PostcardCodec)` for handlers and
   `.out_reply(policy).codec(PostcardCodec)` for a reply. A type that is its own encoding
   (`Deserialized`, `Serialized`) needs no codec.
-- A continuation (`and_after`, `.then`, `.error`) lives in a room of 128 bytes; a larger capture
-  is a build error, an overflow in `ROOM - size_of::<Work>()` that prints both sizes.
+- A continuation (`and_after`, `.then`, `.error`) lives in a room of 128 bytes aligned to 8; a
+  larger capture is a build error, an overflow in `ROOM - size_of::<Work>()` that prints both
+  sizes. An `embassy-time` timer fits on every core.
 - `.error` borrows the failures: `async move |failures: &Failures| ..`.
 - `ctx.after(..)`, `ctx.after_ack(..)` and `ctx.after_settle(..)` return a `Result`: a delivery
   holds four registrations and a fifth is refused, never dropped.

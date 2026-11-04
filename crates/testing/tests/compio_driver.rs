@@ -1,6 +1,7 @@
 //! The compio `TestApp` refuses a test runtime on the polling driver where the environment asks for
-//! `io_uring`, and starts on it otherwise.
+//! `io_uring`, and starts on it otherwise. `io_uring` is a Linux driver, so the test is Linux's.
 
+#![cfg(target_os = "linux")]
 #![allow(clippy::future_not_send)]
 
 use std::env;
@@ -28,7 +29,6 @@ async fn on_command(command: &Command<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn a_polling_runtime_is_refused_where_io_uring_is_required() -> Result<(), Box<dyn Error>> {
     let required = env::var_os("RUSTSTREAM_COMPIO_REQUIRE_IO_URING").is_some_and(|v| v == "1");

@@ -230,7 +230,7 @@ pub use host::{Detach, Halt, HostDetach};
 pub use host::{Keeping, KeptCopies, KeptDelivery, NoKept, PrepareKept};
 #[cfg(not(ruststream_alloc))]
 #[doc(hidden)]
-pub use inline::{CONTINUATION_ROOM, Continuation, InlineFuture, Room};
+pub use inline::{CONTINUATION_ROOM, Continuation, InlineFuture, ROOM_ALIGN, Room};
 #[cfg(feature = "tokio")]
 pub use main_runtime::MainRuntime;
 #[cfg(not(ruststream_alloc))]

@@ -12,14 +12,13 @@ use core::task::{Poll, Waker};
 use core::{fmt, iter};
 
 use dyn_utils::DynObject;
-use dyn_utils::storage::Raw;
 use futures::future::join;
 use heapless::{Vec, VecView};
 use ruststream_core::diag::warn;
 
 use super::{Failed, FailedMessage};
 use crate::handler::{Continuation, MaybeSend};
-use crate::inline::{InlineFuture, Room};
+use crate::inline::{InlineFuture, ROOM_ALIGN, Room};
 use crate::lifecycle::BoxError;
 
 /// The failures an `.error` closure reads: one for a single delivery, every failed element for a
@@ -62,7 +61,7 @@ where
 /// the runtime makes for it fails. Machinery; never named directly.
 #[doc(hidden)]
 pub struct ErrorHook {
-    react: DynObject<dyn Reactor, Raw<HOOK_ROOM>>,
+    react: DynObject<dyn Reactor, Room<HOOK_ROOM>>,
     /// Whether the closure is the one a uniform batch outcome shares between its elements, riding
     /// the last element until the mount's fan takes it.
     shared: bool,
@@ -71,8 +70,8 @@ pub struct ErrorHook {
 impl ErrorHook {
     /// A hook that runs `react` on the failures.
     ///
-    /// A closure whose captures take more than the room, or are aligned more than a pointer, is a
-    /// compile error that names the closure's size and the room.
+    /// A closure whose captures take more than the room, or are aligned to more than
+    /// [`ROOM_ALIGN`] bytes, is a compile error that names the closure's size and the room.
     #[must_use]
     pub fn new<React>(react: React) -> Self
     where
@@ -80,8 +79,9 @@ impl ErrorHook {
     {
         const {
             assert!(
-                align_of::<Owned<React>>() <= align_of::<usize>(),
-                "an `.error` closure may not be aligned more than a pointer"
+                align_of::<Owned<React>>() <= ROOM_ALIGN,
+                "an `.error` closure may not be aligned to more than 8 bytes: keep a value of a \
+                 larger alignment in a `static` and capture a reference to it"
             );
             let _spare = HOOK_ROOM - size_of::<Owned<React>>();
         }

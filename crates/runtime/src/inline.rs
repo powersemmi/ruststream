@@ -17,9 +17,15 @@ use pin_project_lite::pin_project;
 #[doc(hidden)]
 pub const CONTINUATION_ROOM: usize = 128;
 
-/// The room of `BYTES` bytes, aligned as a pointer.
+/// The alignment of every room, in bytes: that of a `u64`, so a future holding an `embassy-time`
+/// instant fits on a 32-bit core, where a pointer is aligned to 4. On a 64-bit target it is the
+/// alignment of a pointer, so the room there is the one a pointer-aligned room would be.
 #[doc(hidden)]
-pub type Room<const BYTES: usize> = Raw<BYTES>;
+pub const ROOM_ALIGN: usize = 8;
+
+/// The room of `BYTES` bytes, aligned to [`ROOM_ALIGN`].
+#[doc(hidden)]
+pub type Room<const BYTES: usize> = Raw<BYTES, ROOM_ALIGN>;
 
 pin_project! {
     /// A future of no output, stored in the room `Store` names (`Room<128>` is the continuation
@@ -39,17 +45,18 @@ pub type Continuation = InlineFuture<'static>;
 impl<'work, const ROOM: usize> InlineFuture<'work, Room<ROOM>> {
     /// Moves `work` into the room.
     ///
-    /// A `Work` larger than `ROOM`, or aligned more than a pointer, is a compile error that
-    /// names the size found and the room. The check runs when the code is built, not on
-    /// `cargo check`.
+    /// A `Work` larger than `ROOM`, or aligned to more than [`ROOM_ALIGN`] bytes, is a compile
+    /// error that names the size found and the room. The check runs when the code is built, not
+    /// on `cargo check`.
     pub fn new<Work>(work: Work) -> Self
     where
         Work: Future<Output = ()> + 'work,
     {
         const {
             assert!(
-                align_of::<Work>() <= align_of::<usize>(),
-                "a continuation may not be aligned more than a pointer"
+                align_of::<Work>() <= ROOM_ALIGN,
+                "a continuation may not be aligned to more than 8 bytes: keep a value of a \
+                 larger alignment in a `static` and capture a reference to it"
             );
             // Too large a capture overflows this subtraction, and the error prints both numbers:
             // the room and the size of the capture.
@@ -63,7 +70,7 @@ impl<'work, const ROOM: usize> InlineFuture<'work, Room<ROOM>> {
     /// Whether a `Work` fits the room: its size and its alignment.
     #[must_use]
     pub const fn fits<Work>() -> bool {
-        Raw::<ROOM>::can_store::<Work>()
+        Room::<ROOM>::can_store::<Work>()
     }
 }
 
@@ -195,11 +202,16 @@ mod tests {
         assert_eq!(seen.get(), 1);
     }
 
+    /// A value aligned past the room.
+    #[repr(align(16))]
+    struct Align16;
+
     #[test]
     fn the_room_takes_a_capture_up_to_its_size_and_refuses_a_larger_one() {
         assert!(InlineFuture::<Room<CONTINUATION_ROOM>>::fits::<[u8; 128]>());
         assert!(!InlineFuture::<Room<CONTINUATION_ROOM>>::fits::<[u8; 129]>());
-        assert!(!InlineFuture::<Room<CONTINUATION_ROOM>>::fits::<u128>());
+        assert!(InlineFuture::<Room<CONTINUATION_ROOM>>::fits::<[u64; 16]>());
+        assert!(!InlineFuture::<Room<CONTINUATION_ROOM>>::fits::<Align16>());
         assert!(InlineFuture::<Room<256>>::fits::<[u8; 129]>());
     }
 }
