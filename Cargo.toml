@@ -157,6 +157,13 @@ lto = "fat"
 inherits = "release"
 debug = "line-tables-only"
 
+# Tests build without debug information, which cuts the build of a test suite by about 40% against
+# full debug information and takes a quarter of its disk. A failing test still names its file and
+# line: a panic carries its location without debug information. A backtrace names the functions
+# without their lines. `cargo build`, `cargo run` and the benchmarks keep their own profiles.
+[profile.test]
+debug = false
+
 # One lint table for both crates of the workspace, so the macros crate is held to what the
 # runtime crate is held to.
 [workspace.lints.rust]
