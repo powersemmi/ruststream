@@ -373,6 +373,10 @@ bench *ARGS:
 
 fmt:
     cargo fmt --all
+    # The check crates are workspaces of their own, which `--all` above does not reach.
+    for manifest in checks/{firmware-noalloc,no-std-probe,noalloc}/Cargo.toml; do \
+        cargo fmt --manifest-path "$manifest" --all || exit 1; \
+    done
 
 # Dependency-graph checks (advisories, licenses, duplicates, sources).
 # Needs cargo-deny: cargo install cargo-deny --locked
