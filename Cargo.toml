@@ -13,7 +13,6 @@ members = [
     "crates/conformance",
     "crates/macros",
     "checks/example-suite",
-    "checks/no-std-probe",
     "crates/runtime-embassy",
 ]
 # A bare cargo command at the root builds the facade, the crate a service depends on.

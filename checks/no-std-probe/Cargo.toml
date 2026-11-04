@@ -1,17 +1,21 @@
 [package]
 name = "ruststream-no-std-probe"
 version = "0.0.0"
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+repository = "https://github.com/powersemmi/ruststream"
 description = "A #![no_std] crate that uses every derive and the subscriber attribute, so the code the macros emit is held to names outside the standard library."
 publish = false
+
+# A workspace of its own: its one job is a `cargo check`, and as a member of the main workspace
+# every `--workspace` build, test and coverage run would build it too.
+[workspace]
 
 [dependencies]
 # A path dependency without a version: the crate is never published.
 ruststream = { path = "../../crates/ruststream", default-features = false, features = ["macros", "json", "tokio"] }
-serde.workspace = true
+serde = { version = "1.0.69", default-features = false, features = ["derive"] }
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "forbid"
