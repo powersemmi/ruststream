@@ -81,7 +81,8 @@ PAGE_LIST_ITEM = re.compile(r"^\s*[-*+]\s+\[[^\]]+\]\(\./")
 
 
 def region_lines(source: Path, name: str) -> list[str] | None:
-    """The lines of region `name` in `source`, markers dropped; None when it is not there."""
+    """The lines of region `name` in `source`, markers dropped; None when it is not there or its
+    end marker is missing."""
     lines = None
     for line in source.read_text().splitlines():
         marker = MARKER.match(line)
@@ -95,7 +96,7 @@ def region_lines(source: Path, name: str) -> list[str] | None:
             continue
         if lines is not None:
             lines.append(line)
-    return lines
+    return None
 
 
 def testing_region_errors(path: Path, n: int, target: str, region: str) -> list[str]:
