@@ -108,7 +108,7 @@ pub fn app() -> impl App {
 ```toml title="Cargo.toml"
 [dependencies]
 froodi = { version = "1.0.0-beta.19", features = ["ruststream"] }
-ruststream = { version = "0.8", default-features = false, features = ["memory", "json"] }
+ruststream = { version = "0.8", default-features = false, features = ["tokio", "memory", "json"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 ```
