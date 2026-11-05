@@ -182,7 +182,8 @@ publishes to returns the scope as it is, `|b| b`. `b.after_startup(..)` and
 ### A publish that fails keeps its message
 
 A handler's own `out.message(&m).publish().await` returns an error that holds the message the
-broker refused, so a handler can send it through another `Out`. The publishes the runtime makes for
+broker refused, so a handler can send it through another `Out`. A publisher that takes the payload
+(`Take`) may consume it, and then `unsent()` is `None`. The publishes the runtime makes for
 a delivery (the `out_reply` reply, a `retry_after` copy, a dead-letter copy) report their failure to
 `.error(async move |failures: Failures| ..)` on the returned outcome; a failed reply is acknowledged,
 never retried, and without `.error` the loss is logged.

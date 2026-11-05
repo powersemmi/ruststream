@@ -277,7 +277,9 @@ use crate::bindable::Bindable;
 ///   [`lifecycle`][conformance-lifecycle], [`settlement`][conformance-settlement], the retry
 ///   address and moves of [`retry`][conformance-retry], keys and per-message settings in
 ///   [`message_shape`][conformance-message-shape], the credentials check
-///   [`harness::describes_without_credentials`][credentials], and the suite of each capability.
+///   [`harness::describes_without_credentials`][credentials] where the crate has an `asyncapi`
+///   feature (it needs the facade's `asyncapi` beside `conformance`), and the suite of each
+///   capability.
 ///
 /// The [`conformance`][conformance] overview ends with the author checklist.
 ///

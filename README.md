@@ -41,8 +41,8 @@ broker is an independent crate held to one contract. The core is 100% safe Rust.
   scaffolds, runs and documents a service.
 - **Observability:** AsyncAPI 3.1, Prometheus metrics, a health probe, and OpenTelemetry.
 - **Tests without a broker.** The service's own app runs in process under a test harness.
-- **Publish errors keep the message.** A refused publish hands the unsent message back, so the
-  caller can send it elsewhere.
+- **Publish errors keep the message.** A refused publish hands the unsent message back wherever
+  the broker's client did not take the payload, so the caller can send it elsewhere.
 - **Capability traits** for batches, transactions, request-reply, partitioning and repositioning;
   a broker implements only what it supports.
 

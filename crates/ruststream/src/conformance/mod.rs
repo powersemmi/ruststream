@@ -76,8 +76,9 @@
 //! - [`harness::redelivery_address`] passes for every `AddressedCopies` descriptor, and for the
 //!   bare `Name` where `Subscribe::Copies` is `AddressedCopies`; [`retry::broker_moves`] passes for
 //!   every `BrokerMoves` descriptor.
-//! - [`harness::describes_without_credentials`] passes for the broker and each descriptor, with
-//!   credentials in the configuration.
+//! - Where the crate has an `asyncapi` feature, [`harness::describes_without_credentials`] passes
+//!   for the broker and each descriptor, with credentials in the configuration; the check needs
+//!   the facade's `asyncapi` feature beside `conformance` in the dev-dependencies.
 //! - Where the transport batches, [`capabilities::batches`] passes: it holds the lent slot to
 //!   its size, empties it after a failed fill, and leaves it untouched when the subscription
 //!   ends.

@@ -96,8 +96,8 @@ b.include(forward).out(DefaultSlot, Publish)
 
 `publish()` returns `PublishError` on failure. `Encode` and `Serialize` mean the value did not
 encode. `Publish { source, message }` carries the broker's own error and, from `unsent()`, the
-message the broker did not send (bytes, headers and destination); another `Out` publishes that
-message as it was. The publishes the runtime makes for a delivery report through `.error` instead
+message the broker did not send (bytes, headers and destination), or `None` where a `Take` client
+consumed the buffer; another `Out` publishes that message as it was. The publishes the runtime makes for a delivery report through `.error` instead
 (see `handlers.md`).
 
 ### Several publishers: one marker per path

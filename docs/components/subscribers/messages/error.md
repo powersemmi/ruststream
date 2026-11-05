@@ -18,6 +18,7 @@ The continuation receives [`Failures`](api:ruststream::runtime::Failures), one [
 `error()` is the cause, the publisher's own error: downcast it to the broker's error type to tell a transient failure, such as a refused connection, from a permanent one, such as a message the broker rejected.
 `message()` is the message the runtime tried to send, with its destination, bytes and headers.
 It is a [`Serialized`](api:ruststream::Serialized) value, so another `Out` republishes it as it was.
+Its bytes are `None` where the publisher took the payload buffer and did not give it back, and such a message cannot be republished.
 
 The continuation runs once, after the delivery is settled.
 The handler never runs again because a runtime publish failed.
