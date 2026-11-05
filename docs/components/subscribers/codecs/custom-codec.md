@@ -11,13 +11,13 @@ import TabItem from '@theme/TabItem';
 
 A codec of your own implements the [`Codec`](api:ruststream::codec::Codec) trait over any serde format and mounts wherever a built-in codec does.
 
-The trait has two required methods: `encode` writes a value into a new buffer, and `decode` reads a value from the delivery's bytes.
+The trait has three required methods: `encode` writes a value into a new buffer, `decode` reads a value from the delivery's bytes, and `frame` reads what the codec knows about a payload before it decodes.
 [`encode_into`](api:ruststream::codec::Codec::encode_into) writes into a buffer the caller passes.
 The publish path calls it for a broker that only reads the payload, and inside a dispatch loop that buffer is reused, so a codec that implements it allocates nothing per publish.
 Its default encodes into a buffer of its own and copies.
 Both sides return a [`CodecError`](api:ruststream::codec::CodecError): the format's error goes in `CodecError::Decode` or `CodecError::Encode` as the source.
 `CONTENT_TYPE` is the media type the generated AsyncAPI document reports.
-Every codec declares a frame: `type Frame<'a>` is what the codec reads from the payload before decoding it, and `frame` reads it.
+Every codec declares a frame: `type Frame<'a>` is what `frame` returns.
 A codec that reads none writes `type Frame<'a> = ();` and a `frame` that returns `Ok(())`.
 A codec whose frame names records, such as a schema-registry codec that resolves a schema id, implements [`FrameNames`](api:ruststream::codec::FrameNames) for the models it can tell apart, and a [message set](../message-sets.md) with `#[in_messages(by_codec)]` picks its variant through it.
 
@@ -33,7 +33,7 @@ It uses `rmp-serde`, the crate behind the `msgpack` feature.
 The example builds with `msgpack` as the only codec feature:
 
 ```text
-cargo test --example custom_codec --no-default-features --features testing,macros,memory,msgpack
+cargo test --example custom_codec --no-default-features --features tokio,testing,macros,memory,msgpack
 ```
 
 {/* single-form: a Codec impl is plain Rust; the macros do not write one */}

@@ -1,7 +1,7 @@
 //! The service of `examples/codec_json.rs` written without the `macros` feature.
 //!
 //! ```text
-//! cargo test --example manual_codec_json --no-default-features --features testing,memory,json
+//! cargo test --example manual_codec_json --no-default-features --features tokio,testing,memory,json
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

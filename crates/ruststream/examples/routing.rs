@@ -86,7 +86,6 @@ mod layer {
 
     use super::{Order, Shipment};
 
-    // --8<-- [start:layer]
     /// Counts the deliveries of the handlers it wraps.
     #[derive(Clone)]
     struct Count(Arc<AtomicUsize>);
@@ -125,6 +124,7 @@ mod layer {
         }
     }
 
+    // --8<-- [start:layer]
     #[subscriber("orders")]
     async fn accept(order: &Order) -> HandlerOutcome {
         tracing::info!(order.id, "accepted");

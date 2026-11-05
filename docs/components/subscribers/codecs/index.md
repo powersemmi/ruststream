@@ -17,7 +17,7 @@ A handler decodes with the codec of the most specific level that names one:
 
 | Level | Macros | Manual |
 |---|---|---|
-| registration | `Router::new().with_codec(codec).include(def)` | `subscriber(..).codec(codec)` |
+| router or registration | `Router::new().with_codec(codec).include(def)` | `subscriber(..).codec(codec)` |
 | scope | `with_broker_codec(broker, codec, \|b\| ..)` | the same |
 | default | [`DefaultCodec`](api:ruststream::codec::DefaultCodec) | the same |
 
@@ -29,7 +29,8 @@ The embedded runtime built without `alloc` uses [slice codecs](./slice-codecs.md
 
 The publish side names its codec at its own position.
 A reply takes the default codec unless `.out_reply(policy).codec(codec)` names another, so a request and its reply may use different formats.
-An `Out` slot takes `.out(marker, policy).codec(codec)`; without it a slot encodes with the codec of the router or scope it is mounted in, not the default codec a reply falls back to. A single publish takes `.with_codec(codec)` on the builder.
+An `Out` slot takes `.out(marker, policy).codec(codec)`; without it a slot encodes with the codec of the router or scope it is mounted in, not the default codec a reply falls back to.
+A single publish takes `.with_codec(codec)` on the builder.
 
 A payload that does not decode never reaches the body.
 The subscriber's `on_failure(decode = ..)` [policy](../failure-policy.md) settles it, a drop by default.

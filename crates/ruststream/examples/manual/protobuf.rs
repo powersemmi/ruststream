@@ -10,7 +10,7 @@
 //! Note the feature list: no `macros`, and no codec either. Neither lane resolves one.
 //!
 //! ```text
-//! cargo test --example manual_protobuf --no-default-features --features testing,memory
+//! cargo test --example manual_protobuf --no-default-features --features tokio,testing,memory
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

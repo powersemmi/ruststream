@@ -2,7 +2,7 @@
 //! the same, and the registration names it at the same two positions.
 //!
 //! ```text
-//! cargo test --example manual_custom_codec --no-default-features --features testing,memory,msgpack
+//! cargo test --example manual_custom_codec --no-default-features --features tokio,testing,memory,msgpack
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.
