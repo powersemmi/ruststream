@@ -32,6 +32,7 @@ A service with a subscriber of its own turns the bridge off with [`tracing_bridg
 | `ruststream.batch.size` | decoded batch sizes, recorded by batch dispatch once `init` has run |
 
 The duration histograms use the buckets the conventions advise, 5 ms to 10 s; [`view`](api:ruststream::otel::export::OtelBuilder::view) changes them per instrument.
+With the `poll-diagnostics` feature, [`observe_poll_diagnostics`](api:ruststream::otel::export::Otel::observe_poll_diagnostics) adds the poll-time gauges and counter of [Diagnostics](../subscribers/dispatch/poll-diagnostics.md): `ruststream.handler.poll.average`, `ruststream.handler.poll.p99` and `ruststream.handler.poll.samples`.
 [`observe_health`](api:ruststream::otel::export::Otel::observe_health) adds the `ruststream.app.state` gauge over the app's [health](../application/running/health.md) probe.
 The service's own instruments come from `opentelemetry::global::meter` and go out through the same pipeline; the example builds them once at startup and shares them as [state](../application/state/index.md).
 Spans and metric points are batched in the background.

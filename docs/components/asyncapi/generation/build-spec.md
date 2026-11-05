@@ -19,6 +19,7 @@ A [reply](../reports/replies.md) rides the `receive` operation, and each message
 The result is a [`Spec`](api:ruststream::asyncapi::Spec): plain data with public fields, which a test reads and a tool may complete before it is [serialized](./to-json-yaml.md).
 The document is built when the function is called, so it costs the running service nothing.
 The `asyncapi` feature turns it on.
+The warnings it raises, such as a message without a schema, go through the logger the app selected (see [Logging](../../observability/logging.md)).
 The example runs with `cargo test --example asyncapi_generation --features macros,memory,asyncapi`.
 
 ## Example
