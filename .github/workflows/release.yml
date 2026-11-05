@@ -49,7 +49,8 @@ jobs:
         run: |
           # Publish a crate only if its current version is not already on crates.io,
           # so re-running a release after a partial failure is safe. Each crate goes up after
-          # every crate it depends on: the macros and the contract first, the facade last.
+          # every crate it names with a version, versioned dev-dependencies included (cargo
+          # resolves them against crates.io): the macros and the contract first, the facade last.
           publish() {
             name="$1"; shift
             version=$(cargo metadata --format-version 1 --no-deps \
@@ -64,10 +65,10 @@ jobs:
           publish ruststream-macros
           publish ruststream-core --all-features
           publish ruststream-runtime --all-features
+          publish ruststream-memory --all-features
           publish ruststream-runtime-tokio --all-features
           publish ruststream-runtime-embassy --all-features
           publish ruststream-runtime-compio --all-features
-          publish ruststream-memory --all-features
           publish ruststream-asyncapi --all-features
           publish ruststream-observability --all-features
           publish ruststream-testing --all-features
