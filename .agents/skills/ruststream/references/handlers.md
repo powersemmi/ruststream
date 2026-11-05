@@ -101,7 +101,10 @@ The runtime publishes the delayed `retry_after` copy, the copy for a declared de
 reply of `out_reply`. When such a publish fails, `.error(async move |failures: Failures| ..)` on the
 returned `HandlerOutcome` (or `ctx.after(outcome).error(..)` from the context) learns of it: each
 `Failed` of `failures` has `error()`, the cause, and `message()`, the very message that did not go
-out (bytes and headers), which another `Out` republishes as it is. The handler never runs again
+out (bytes and headers), which another `Out` republishes as it is. `error()` is the publisher's own
+error, so downcasting it to the broker's error type tells a transient failure from a permanent one.
+On a `BrokerMoves` subscription the runtime publishes no copy and `.error` never runs; a warning
+names the subscription. The handler never runs again
 because of it, and a failed reply is acknowledged. A `.then` chained beside it
 (`and_after(..).error(..)` on the outcome, `.then(..).error(..)` or `.error(..).then(..)` on the
 context) runs only when the publish succeeded. Without `.error` the failure is logged with the

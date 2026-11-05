@@ -1,5 +1,6 @@
-//! A dead-letter copy or a reply the broker refuses: the handler's `.error` continuation learns of
-//! it and records what was lost. Each scenario is a test.
+//! A dead-letter copy, a batch element's retry copy or a reply the broker refuses: the handler's
+//! `.error` continuation learns of it, tells a transient cause from a permanent one, and records
+//! what was lost. Each scenario is a test.
 //!
 //! ```text
 //! cargo test --example retry_error --features testing,macros,memory,json
@@ -28,6 +29,8 @@ struct Payment {
 struct Alert {
     destination: String,
     cause: String,
+    /// Whether the broker could take the message later.
+    transient: bool,
 }
 
 /// A publisher whose broker is down.
@@ -46,7 +49,7 @@ impl Publisher for Down {
     ) -> impl Future<Output = PublishOutcome<'msg, io::Error, Lend>> {
         // The broker is down: the message did not go out, so it comes back with the error.
         ready(Err(PublishMessageError::with_message(
-            io::Error::other("broker down"),
+            io::Error::new(io::ErrorKind::ConnectionRefused, "broker down"),
             msg,
         )))
     }
@@ -69,6 +72,7 @@ impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for DownPublish {
 mod error_continuation {
     use std::convert::Infallible;
     use std::error::Error;
+    use std::io;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -89,12 +93,19 @@ mod error_continuation {
         let alerts = Arc::clone(ctx.state());
         HandlerOutcome::retry_after(RECHECK).error(async move |failures: Failures| {
             for failed in failures {
+                // The cause is the publisher's own error: a refused connection may pass later,
+                // anything else will not.
+                let transient = failed
+                    .error()
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|err| err.kind() == io::ErrorKind::ConnectionRefused);
                 let (err, lost) = failed.into_parts();
                 // The dead-letter copy never left: record where it was going and why.
                 tracing::error!(id, %err, destination = lost.destination(), "dead letter lost");
                 alerts.lock().expect("alerts").push(Alert {
                     destination: lost.destination().to_owned(),
                     cause: err.to_string(),
+                    transient,
                 });
             }
         })
@@ -127,6 +138,7 @@ mod error_continuation {
             [Alert {
                 destination: "payments.dead".to_owned(),
                 cause: "broker down".to_owned(),
+                transient: true,
             }]
         );
         tb.broker::<MemoryBroker>()
@@ -203,6 +215,73 @@ mod reply_error {
             .subscriber("prices")
             .assert_called_once()
             .settled(HandlerOutcome::ack());
+        Ok(())
+    }
+}
+
+mod batch_error {
+    use std::convert::Infallible;
+    use std::error::Error;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::{DownPublish, Payment};
+
+    /// The payments whose copy was lost, kept where the test reads them.
+    type Lost = Arc<Mutex<Vec<u64>>>;
+
+    // --8<-- [start:batch]
+    const RECHECK: Duration = Duration::from_secs(5);
+
+    #[subscriber("payments")]
+    async fn reconcile_all(
+        payments: &[Payment],
+        ctx: &mut Context<'_, (), Lost>,
+    ) -> Vec<HandlerOutcome> {
+        payments
+            .iter()
+            .map(|payment| {
+                let (id, lost) = (payment.id, Arc::clone(ctx.state()));
+                // Each element's `.error` receives the failure of that element's copy.
+                HandlerOutcome::retry_after(RECHECK).error(async move |failures: Failures| {
+                    for failed in failures {
+                        tracing::error!(id, error = %failed.error(), "the copy is lost");
+                        lost.lock().expect("lost").push(id);
+                    }
+                })
+            })
+            .collect()
+    }
+    // --8<-- [end:batch]
+
+    fn app(lost: &Lost) -> impl App<State = Lost> {
+        let lost = Arc::clone(lost);
+        RustStream::new(AppInfo::new("payments", "0.1.0"))
+            .on_startup(async move |()| Ok::<_, Infallible>(lost))
+            .with_broker(MemoryBroker::new(), |b| {
+                // The first attempt is the cap, so each retry becomes a dead letter.
+                b.include(reconcile_all.batch(nonzero!(2)))
+                    .max_attempts(nonzero!(1u32))
+                    .dead_letter("payments.dead")
+                    .out_retry(DownPublish)
+            })
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_lost_copies_of_a_batch_reach_the_handler() -> Result<(), Box<dyn Error>> {
+        let lost = Lost::default();
+        let tb = TestApp::start(app(&lost)).await?;
+
+        tb.message(&Payment { id: 1 }).publish().await?;
+        tb.message(&Payment { id: 2 }).publish().await?;
+        tb.settle().await?;
+
+        let mut lost = lost.lock().expect("lost").clone();
+        lost.sort_unstable();
+        assert_eq!(lost, [1, 2]);
         Ok(())
     }
 }

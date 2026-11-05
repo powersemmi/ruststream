@@ -65,6 +65,9 @@ below shows its attribute form and its manual form ([`subscriber`], [`Handle`]) 
   [`HandlerOutcome::and_after`], a continuation once the delivery is settled.
 - [Hooks](https://powersemmi.github.io/ruststream/latest/components/subscribers/messages/hooks/):
   [`Context::after_ack`], [`Context::after_settle`] and [`Context::after`].
+- [error](https://powersemmi.github.io/ruststream/latest/components/subscribers/messages/error/):
+  [`HandlerOutcome::error`] and [`After::error`], the [`Failures`] of a retry copy, a dead-letter
+  copy or a reply the runtime failed to publish.
 
 ## Dispatch
 
