@@ -10,7 +10,8 @@ import TabItem from '@theme/TabItem';
 Обработчики, роутеры, кодеки и middleware не зависят от брокера. Перевести сервис на другой брокер
 вы можете, изменив одну строку в `with_broker`.
 
-В составе фреймворка идёт полноценный in-memory брокер для очередей внутри одного приложения.
+В составе фреймворка идут два полноценных in-memory брокера для очередей внутри одного приложения:
+один для рантайма tokio, другой для рантайма embassy.
 Для внешнего брокера очереди вы добавляете в зависимости отдельный крейт - адаптацию его
 клиентской библиотеки.
 
@@ -20,6 +21,7 @@ import TabItem from '@theme/TabItem';
 | Брокер | Крейт | Транспорт | Документация |
 |---|---|---|---|
 | [Memory](memory.md) | `ruststream` (фича `memory`) | очередь внутри процесса, без сервера и без зависимостей | этот сайт |
+| [Local memory](local-memory.md) | `ruststream` (фичи `memory` и `embassy`) | очередь внутри одной прошивки, с кучей и без неё | этот сайт |
 | NATS | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS и JetStream | [powersemmi.github.io/ruststream-nats](https://powersemmi.github.io/ruststream-nats/) |
 | Redis | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams (standalone, кластер, sentinel) | [powersemmi.github.io/ruststream-fred](https://powersemmi.github.io/ruststream-fred/) |
 | RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1 (очереди, обменники, подтверждения издателя, direct reply-to) | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |
