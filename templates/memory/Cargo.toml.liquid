@@ -8,3 +8,8 @@ ruststream = { version = "0.8", features = ["macros", "memory", "json", "asyncap
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
+
+[dev-dependencies]
+# `testing` adds `ruststream::testing::TestApp`, which runs the service's own app in process.
+ruststream = { version = "0.8", features = ["testing"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
