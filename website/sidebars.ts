@@ -60,6 +60,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'brokers/index',
         'brokers/memory',
+        'brokers/local-memory',
         ...brokerSites.map(([label, repo]) => ({
           type: 'link' as const,
           label,

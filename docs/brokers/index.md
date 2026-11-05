@@ -10,7 +10,8 @@ import TabItem from '@theme/TabItem';
 Handlers, routers, codecs, and middleware are broker-agnostic. You can move a service to another
 broker by changing one line at `with_broker`.
 
-The framework ships a full in-memory broker for queues that stay inside a single application.
+The framework ships two in-memory brokers for queues that stay inside a single application: one
+for the tokio runtime and one for the embassy runtime.
 Brokers backed by an external service are separate crates you add as a dependency.
 
 Each broker crate has its own documentation site, linked in the Docs column and from the
@@ -19,6 +20,7 @@ Each broker crate has its own documentation site, linked in the Docs column and 
 | Broker | Crate | Transport | Docs |
 |---|---|---|---|
 | [Memory](memory.md) | `ruststream` (feature `memory`) | in-process queue, no external service | this site |
+| [Local memory](local-memory.md) | `ruststream` (features `memory` and `embassy`) | in-process queue of one firmware, with or without a heap | this site |
 | NATS | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS and JetStream | [powersemmi.github.io/ruststream-nats](https://powersemmi.github.io/ruststream-nats/) |
 | Redis | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams (standalone, cluster, sentinel) | [powersemmi.github.io/ruststream-fred](https://powersemmi.github.io/ruststream-fred/) |
 | RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1 (queues, exchanges, publisher confirms, direct reply-to) | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |
