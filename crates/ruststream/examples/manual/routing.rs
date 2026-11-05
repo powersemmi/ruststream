@@ -2,7 +2,7 @@
 //! merge, the layer and the codec are the same calls; only the handlers are written by hand.
 //!
 //! ```text
-//! cargo test --example manual_routing --no-default-features --features testing,memory,json,cbor
+//! cargo test --example manual_routing --no-default-features --features testing,memory,json,cbor,tokio
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

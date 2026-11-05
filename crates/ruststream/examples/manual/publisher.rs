@@ -2,7 +2,7 @@
 //! the startup hook are the same in both forms; only the handler differs.
 //!
 //! ```text
-//! cargo test --example manual_publisher --no-default-features --features testing,memory,json
+//! cargo test --example manual_publisher --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the tests that use it exist only in the test build.

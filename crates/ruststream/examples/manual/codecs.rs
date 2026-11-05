@@ -3,7 +3,7 @@
 //! position names the codec its replies leave with.
 //!
 //! ```text
-//! cargo test --example manual_codecs --no-default-features --features testing,memory,json,cbor
+//! cargo test --example manual_codecs --no-default-features --features testing,memory,json,cbor,tokio
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

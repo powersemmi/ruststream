@@ -2,7 +2,7 @@
 //! second axis of `Handle`, and the chain says where it goes when the type does not.
 //!
 //! ```text
-//! cargo test --example manual_replies --no-default-features --features testing,memory,json
+//! cargo test --example manual_replies --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the tests that use it exist only in the test build.

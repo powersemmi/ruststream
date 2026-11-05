@@ -2,7 +2,7 @@
 //! handlers are named types, and the diagnostics are set and read the same way.
 //!
 //! ```text
-//! cargo test --example manual_poll_diagnostics --no-default-features --features testing,memory,json,poll-diagnostics
+//! cargo test --example manual_poll_diagnostics --no-default-features --features testing,memory,json,poll-diagnostics,tokio
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

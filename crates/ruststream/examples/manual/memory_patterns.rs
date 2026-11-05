@@ -2,8 +2,8 @@
 //! source the `subscriber` constructor takes.
 //!
 //! ```text
-//! cargo run --example manual_memory_patterns --no-default-features --features testing,memory,json -- run
-//! cargo test --example manual_memory_patterns --no-default-features --features testing,memory,json
+//! cargo run --example manual_memory_patterns --no-default-features --features testing,memory,json,tokio -- run
+//! cargo test --example manual_memory_patterns --no-default-features --features testing,memory,json,tokio
 //! ```
 
 use std::future::ready;

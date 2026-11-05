@@ -9,7 +9,7 @@
 //! `Repository`, so the mount checks that state against the app's.
 //!
 //! ```text
-//! cargo run --example manual_routed_service_orders --no-default-features --features memory,json
+//! cargo run --example manual_routed_service_orders --no-default-features --features memory,json,tokio
 //! ```
 
 use std::collections::HashSet;

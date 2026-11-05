@@ -2,7 +2,7 @@
 //! over `[T]` is a batch handler, and its error side is one outcome per element.
 //!
 //! ```text
-//! cargo test --example manual_subscriber_batch --no-default-features --features testing,memory,json
+//! cargo test --example manual_subscriber_batch --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

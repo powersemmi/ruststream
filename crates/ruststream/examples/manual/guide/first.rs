@@ -4,7 +4,7 @@
 //! ```text
 //! cargo run --example manual_guide_first --no-default-features \
 //!     --features testing,memory,json,logging -- run
-//! cargo test --example manual_guide_first --no-default-features --features testing,memory,json
+//! cargo test --example manual_guide_first --no-default-features --features testing,memory,json,tokio
 //! ```
 
 use ruststream::diagnostics::TracingLogger;

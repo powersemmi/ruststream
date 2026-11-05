@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! cargo run --example manual_app_macro --no-default-features --features testing,memory,json,asyncapi -- asyncapi gen
-//! cargo test --example manual_app_macro --no-default-features --features testing,memory,json
+//! cargo test --example manual_app_macro --no-default-features --features testing,memory,json,tokio
 //! ```
 
 use std::future::ready;

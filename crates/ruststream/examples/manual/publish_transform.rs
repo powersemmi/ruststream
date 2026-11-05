@@ -2,7 +2,7 @@
 //! transforms are the same code in both forms; only the handlers and their mounting differ.
 //!
 //! ```text
-//! cargo test --example manual_publish_transform --no-default-features --features testing,memory,json
+//! cargo test --example manual_publish_transform --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the tests that use it exist only in the test build.

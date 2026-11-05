@@ -2,7 +2,7 @@
 //! and the scopes are the same in both forms; only the handlers differ.
 //!
 //! ```text
-//! cargo test --example manual_cross_broker --no-default-features --features testing,memory,json
+//! cargo test --example manual_cross_broker --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the tests that use it exist only in the test build.

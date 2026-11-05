@@ -8,7 +8,7 @@
 //! seals it, and `include` mounts it.
 //!
 //! ```text
-//! cargo run --example manual_subscribers --no-default-features --features memory,json
+//! cargo run --example manual_subscribers --no-default-features --features memory,json,tokio
 //! ```
 
 use std::convert::Infallible;
