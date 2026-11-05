@@ -127,13 +127,18 @@ impl<T: Transaction> PublishSink for &mut T {
     type Error = T::Error;
     type Options = T::Options;
 
-    fn send(
+    // An `async fn`, so the transaction's publish future is built in the state that awaits it:
+    // built first and captured by a block, it would be copied into the await slot on the first
+    // poll, a copy of the whole client future per publish.
+    async fn send(
         &mut self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error>> + MaybeSend {
-        let sent = (**self).publish(msg, options);
-        async move { sent.await.map_err(SinkRefusal::returned::<T::Payload>) }
+    ) -> SinkOutcome<Self::Error> {
+        (**self)
+            .publish(msg, options)
+            .await
+            .map_err(SinkRefusal::returned::<T::Payload>)
     }
 
     fn base_headers(&self) -> Option<&HeaderSet> {
@@ -237,5 +242,61 @@ impl<C: Codec> PublishCodec for CallCodec<C> {
 
     fn codec(&self) -> &C {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::future::ready;
+    use core::hint::black_box;
+    use std::io;
+
+    use super::*;
+    use crate::{Lend, OutgoingMessage, PublishOutcome};
+
+    /// A transaction whose publish future holds a large buffer across its await point, as a
+    /// client's own buffered write does.
+    struct LargeTransaction;
+
+    impl Transaction for LargeTransaction {
+        type Payload = Lend;
+        type Error = io::Error;
+        type Options = ();
+
+        async fn publish<'msg>(
+            &mut self,
+            msg: OutgoingMessage<'msg, &'msg [u8]>,
+            _options: Option<&()>,
+        ) -> PublishOutcome<'msg, io::Error, Lend> {
+            let buffer = [0_u8; 8192];
+            ready(()).await;
+            black_box((&buffer, msg));
+            Ok(())
+        }
+
+        fn commit(self) -> impl Future<Output = Result<(), io::Error>> {
+            ready(Ok(()))
+        }
+
+        fn abort(self) -> impl Future<Output = Result<(), io::Error>> {
+            ready(Ok(()))
+        }
+    }
+
+    #[test]
+    fn a_transaction_sink_holds_the_publish_future_once() {
+        let payload = b"order";
+        let mut transaction = LargeTransaction;
+        let publish =
+            size_of_val(&transaction.publish(OutgoingMessage::new("orders", payload), None));
+        let mut sink = &mut transaction;
+        let sent = size_of_val(&sink.send(OutgoingMessage::new("orders", payload), None));
+        let message = size_of::<OutgoingMessage<'_, &[u8]>>();
+        // The sink adds the message it carries until the first poll, never a second copy of the
+        // transaction's future.
+        assert!(
+            sent <= publish + message + 64,
+            "send: {sent} bytes for a {publish}-byte future and a {message}-byte message"
+        );
     }
 }
