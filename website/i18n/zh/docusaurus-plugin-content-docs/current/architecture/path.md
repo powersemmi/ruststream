@@ -17,7 +17,7 @@ export const words = {
   "transforms": ["发布变换", "按挂载链写下的顺序"],
   "publishLayers": ["发布层", "包裹每一次发布"],
   "publisher": ["发布者", "把应答发给 Broker"],
-  "settle": ["确认", "ack；应答失败则重试"]
+  "settle": ["确认", "ack；发布失败的应答进入 .error"]
 };
 
 # 路径
@@ -30,6 +30,6 @@ export const words = {
 
 [消费层](../components/subscribers/middleware/layer.md)包在解码之外，所以即使消息内容无法解码，层也能看到这条消息。无法解码的内容到不了处理器，由[失败策略](../components/subscribers/failure-policy.md)决定如何处置。
 
-不带应答的处理器在函数体返回后立即确认。返回错误结果的处理器不发布应答。应答发布失败时，这条消息以重试的方式确认，请求不会丢失。
+不带应答的处理器在函数体返回后立即确认。返回错误结果的处理器不发布应答。应答发布失败时，这条消息照常确认，处理器不会再次运行。失败原因和未发出的应答会交给处理器的 [`.error` 延续](../components/subscribers/messages/error.md)；没有 `.error` 时则写入日志。
 
 [应答](../components/subscribers/publishing/replies.md)发往其类型声明的地址。只读取字节的发布者会借用分发循环自己的缓冲区，应答不做任何内存分配。需要保留字节的发布者会得到一个属于自己的缓冲区。

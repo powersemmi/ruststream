@@ -26,11 +26,15 @@ RustStream 面向 **edition 2024**，最低支持的 Rust 版本是 **1.95**。�
 
 ## Features
 
-核心的各个 trait、`RustStream` 应用对象、`Router`、中间件和面向订阅者的消息分发始终参与编译。
-其余的一切都是可加的 feature，你按需启用。
+核心的各个 trait、`Router`、中间件和面向订阅者的消息分发始终参与编译。应用对象随运行器 feature
+一起提供，其余的一切都是可加的 feature，你按需启用。
 
 | feature | 引入依赖 | 提供什么 |
 |---|---|---|
+| `tokio` *（默认）* | `tokio` | tokio 运行器：`RustStream`，运行在 tokio 上的应用对象 |
+| `compio` | `compio` | compio 运行器，每个核心一个运行时，内核支持时使用 io_uring |
+| `embassy` | `embassy` | 面向固件的 embassy 运行器：`EmbeddedApp` |
+| `tracing`、`log`、`defmt` | 同名的日志 crate | 应用通过 `.logger(..)` 选用的日志记录器；tokio 运行器会启用 `tracing` |
 | `json` *（默认）* | serde_json | `JsonCodec` |
 | `msgpack` | rmp-serde | `MsgpackCodec` |
 | `cbor` | ciborium | `CborCodec` |
