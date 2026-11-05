@@ -1,6 +1,7 @@
-//! The in-process broker for local runtimes: [`LocalMemoryBroker`], a full broker on
-//! embassy-sync channels whose types are not `Send`, and the reference implementation of the
-//! contract for a broker whose types are not `Send`.
+//! The in-process broker for local runtimes: [`LocalMemoryBroker`], on embassy-sync channels.
+//!
+//! It is a full broker whose types are not `Send`, and the reference implementation of the
+//! contract for such a broker.
 //!
 //! It runs on any executor and builds without `std`. With the framework's `alloc` the bus lives on
 //! the heap and a broker is built with `new()`. Without it the bus is a `LocalMemoryBus` of fixed
