@@ -250,13 +250,13 @@ jobs:
         if: always() && env.DIST_CHANGED == 'true'
         run: rm -rf target/package
 
-      # Renders each scaffold and builds it, so template drift fails here and not on a user's
-      # first build. A build, not a check: a symbol only the link asks for (the critical section
+      # Renders each scaffold, builds it and runs its tests, so template drift fails here and not
+      # on a user's first build. A build, not a check: a symbol only the link asks for (the critical section
       # the in-process bus locks through) fails a check-clean scaffold. The rendered project is
       # patched to this checkout. No --locked: a fresh scaffold has no lock file, which is the
       # situation a user starts from. The firmware builds for its own target with the
-      # environment's flags left out, as the board does.
-      - name: Render and build the templates
+      # environment's flags left out, as the board does; its service tests run on the host.
+      - name: Render, build and test the templates
         if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
         run: |
           rustup target add thumbv7em-none-eabihf
@@ -287,6 +287,14 @@ jobs:
             # The firmware's target comes from its own `.cargo/config.toml`, which cargo reads
             # from the directory it runs in.
             (cd "$dest" && cargo build --release)
+            # The tests of the firmware's service run on the host, under the harness and a failing
+            # allocator, so they name the host's target in place of the board's.
+            if [ "$template" = embassy-memory ]; then
+              host=$(rustc -vV | sed -n 's/^host: //p')
+              (cd "$dest" && cargo test --target "$host")
+            else
+              (cd "$dest" && cargo test)
+            fi
           done
 
       # The contract without `std`: a Cortex-M4F with an allocator, and a Cortex-M0+, which has no
