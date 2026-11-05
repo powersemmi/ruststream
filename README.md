@@ -34,11 +34,15 @@ broker is an independent crate held to one contract. The core is 100% safe Rust.
 - **Broker-agnostic core.** Brokers are separate crates, checked by a conformance harness.
 - **Misuse does not compile.** Double acks, out-of-order lifecycle calls and under-specified
   publishes are compile errors that name the fix.
+- **Three runtimes.** `tokio` (the default), `compio` with one `io_uring` runtime per core, and
+  `embassy` for a device, with or without a heap; the app picks its runner by type.
 - **Pluggable codecs:** JSON, MessagePack, and CBOR behind cargo features, or raw bytes with none.
 - **Zero-boilerplate binaries.** `#[subscriber]` and `#[ruststream::app]` macros, and a CLI that
   scaffolds, runs and documents a service.
 - **Observability:** AsyncAPI 3.1, Prometheus metrics, a health probe, and OpenTelemetry.
 - **Tests without a broker.** The service's own app runs in process under a test harness.
+- **Publish errors keep the message.** A refused publish hands the unsent message back, so the
+  caller can send it elsewhere.
 - **Capability traits** for batches, transactions, request-reply, partitioning and repositioning;
   a broker implements only what it supports.
 
@@ -46,7 +50,7 @@ broker is an independent crate held to one contract. The core is 100% safe Rust.
 
 ```toml
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 ```
 

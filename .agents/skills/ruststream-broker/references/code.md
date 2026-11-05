@@ -1,6 +1,6 @@
 # The main impls
 
-The shapes of the impls a broker crate writes, against the core's 0.7 signatures. `MyBroker`, `MyOptions` and `Client` stand for the crate's own types.
+The shapes of the impls a broker crate writes, against the core's 0.8 signatures. `MyBroker`, `MyOptions` and `Client` stand for the crate's own types.
 
 ## The lifecycle ladder
 
@@ -124,7 +124,8 @@ destination, the payload and the header map in one move, nothing copied.
 
 ## Deliveries
 
-The subscriber is a stream of deliveries; one delivery is an `IncomingMessage` that is `Settle`d once.
+The subscriber is a stream of deliveries. One delivery implements `IncomingMessage` (the accessors)
+and `Settle` (`ack` and `nack`, each consuming the delivery), so it settles once.
 
 ```rust
 use futures::{Stream, StreamExt};
@@ -165,7 +166,9 @@ impl Settle for MyDelivery {
 }
 ```
 
-A transport with no acknowledgement answers `Err(AckError::Unsupported)` from both.
+A transport with no acknowledgement answers `Err(AckError::Unsupported)` from both. `Settle` also
+holds `supports_nack_after` and `nack_after`, which a transport with a native delayed redelivery
+overrides.
 
 ## Batches on a transport that delivers one at a time
 
@@ -247,7 +250,8 @@ impl BatchStream<Vec<MyDelivery>> for Fetches<'_> {
 ```
 
 A batch type of the crate's own (the rows of a database page beside the deliveries that settle
-them) implements `BatchSlot` and names itself as `BatchSubscriber::Batch`. Its `hand_over` resets
+them) implements `BatchSlot` and names itself as `BatchSubscriber::Batch`. The trait's `hand_over`
+takes a `BatchVec<Message>`, which is a `Vec` in a build with `alloc`. Its `hand_over` resets
 what the page holds beside its deliveries and hands the deliveries' `Vec` over with `Vec`'s own
 `hand_over`, which trades storage instead of moving each delivery:
 
@@ -405,6 +409,29 @@ where the position slot reads `Fixed` by construction, so the two never overlap;
 `StartAt::map_inner` takes the descriptor out and hands the position back untouched, so each method
 stays one line.
 
+A step written right after the handler, before any setting of the core's, is a trait bounded on
+`IntoDeclared<Mk>`. `Mk` is the marker that keeps a handler and a ready definition apart, and it
+is inferred at the call:
+
+```rust
+use ruststream::runtime::{AsDeclared, Declared, IntoDeclared};
+
+pub trait MyMountSteps<Mk = AsDeclared>: IntoDeclared<Mk> {
+    fn lane(self, lane: u8) -> <Self::Decl as Declared>::Settings
+    where
+        <Self::Decl as Declared>::Settings: LaneStep,
+    {
+        self.into_declared().declare().apply_lane(lane)
+    }
+}
+
+impl<Def: IntoDeclared<Mk>, Mk> MyMountSteps<Mk> for Def {}
+```
+
+`LaneStep` is implemented for `SubscriberBuilder<Def, MySubscribeOptions, State, DefCodec>`, so the
+step exists only on a subscription over this broker's source. A handler or router that no mount has
+given a state names it: `handler::<()>.lane(2)`.
+
 The publish side mirrors it. A mount site names a publish policy with `.out(marker, policy)` -
 `Reply` for what a `reply("dest")` handler returns, an `Out` slot's marker for a slot - and
 `MapPublisher` is the hook over the policy that position carries. Bind the extension trait to the
@@ -505,6 +532,7 @@ refuses_like_the_server}` hold the in-process transport's backlog declaration an
 the real server; run them with the live suites.
 
 ```rust
+use ruststream::conformance::lifecycle::{self, Unsent};
 use ruststream::conformance::harness;
 
 // sync Fn() -> B, where B: InProcess and B::Connected: Subscribe; the production broker, connected
@@ -512,6 +540,19 @@ use ruststream::conformance::harness;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn routing_conformance() {
     harness::run_suite(|| MyBroker::new("my://localhost")).await;
+}
+
+// a publish refused after the shutdown hands the message back; `Unsent::Consumed` for a client
+// that eats the buffer
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refused_publish_conformance() {
+    let Ok(url) = std::env::var("MY_BROKER_TEST_URL") else { return };
+    lifecycle::refused_publish_returns_message(
+        move || MyBroker::new(url.clone()),
+        |connected| connected.publisher(),
+        Unsent::Returned,
+    )
+    .await;
 }
 
 // the ladder: sync new -> connect(self) -> subscribe via SubscriptionSource -> publish ->

@@ -2,7 +2,7 @@
 
 > RustStream is a Rust framework for services that subscribe to message brokers and publish to them. The core crate `ruststream` re-exports the crates that hold the traits, the router runtime, the codecs and an in-memory broker. The contract crate, `ruststream-core`, builds with `#![no_std]`, with or without an allocator. Each broker (NATS, Redis, RabbitMQ, Kafka, AMQP 1.0, Google Cloud Pub/Sub, SQS / SNS, Pulsar, MQTT 5, ZeroMQ, stream files, Kinesis) is a crate of its own.
 
-A handler is an `async fn` under `#[subscriber(..)]`, mounted on a broker with `b.include(handler)`; the `with_broker` closure returns that chain (`|b| b.include(a).include(b)`). It takes `&T` for one message or `&[T]` for a batch. A service imports `ruststream::prelude::*` or its broker crate's prelude. The codec is a compile-time type chosen at the mount site; JSON is the default. Misuse is rejected at compile time, and the compiler error names the fix.
+A handler is an `async fn` under `#[subscriber(..)]`, mounted on a broker with `b.include(handler)`; the `with_broker` closure returns that chain (`|b| b.include(a).include(b)`). It takes `&T` for one message or `&[T]` for a batch. The runner is a cargo feature (`tokio` by default, `compio`, `embassy`), and the app selects the logger the framework reports through. A service imports `ruststream::prelude::*` or its broker crate's prelude. The codec is a compile-time type chosen at the mount site; JSON is the default. Misuse is rejected at compile time, and the compiler error names the fix.
 
 This site holds the entry pages. How each topic is done lives in the module overviews on docs.rs, and a broker's own settings live in its crate's documentation.
 
@@ -50,7 +50,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Codecs](https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/): where a mounting's codec comes from, JSON, CBOR, MessagePack, the slice codecs of a build without `alloc`, a codec of your own, Protobuf and the byte lanes
 - [Dispatch](https://powersemmi.github.io/ruststream/latest/components/subscribers/dispatch/): `workers(n)` for handlers that wait on I/O, `threads(n)` for handlers that compute, and the `poll-diagnostics` feature that finds them
 - [Middleware](https://powersemmi.github.io/ruststream/latest/components/subscribers/middleware/): `Layer` around handlers, `PublishLayer` around publishes, and the chains assembled at run time, `DynStack` and `PublishDynStack`
-- [Publishing](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/): replies, `Out` slots, where a message type goes, the publish builder, per-message settings and another broker's publisher
+- [Publishing](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/): replies, `Out` slots, where a message type goes, the publish builder, the message a refused publish returns, per-message settings and another broker's publisher
 - [Publishers](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/publishers/): the publisher capabilities, one page each: `Publisher`, `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`
 - [Transforms](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/transforms/): `PublishTransform` on a reply or a slot, naming transforms that set the destination, and batch reply transforms
 - [Observability](https://powersemmi.github.io/ruststream/latest/components/observability/): the logger the app selects, console logging, `TracingLayer`, Prometheus metrics, W3C trace propagation and OpenTelemetry export
@@ -123,9 +123,9 @@ This site holds the entry pages. How each topic is done lives in the module over
 
 ## Broker authors
 
-- [Writing a broker](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html): the `Broker` trait is the hub of the contract a broker crate implements, linking every trait, the lazy-startup ladder and the in-process mode
+- [Writing a broker](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html): the `Broker` trait is the route through the contract a broker crate implements, step by step: its dependencies, the lazy-startup ladder, subscriptions, deliveries, publishing, batches, capabilities, bindings, the prelude and mount steps, the in-process mode, the conformance suites and the zero-cost floor
 - [Brokers whose types are not Send](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html#brokers-whose-types-are-not-send): the lifecycle traits without `Send`, and the per-message traits whose `Send` bound follows the runtime, for a broker over an `Rc` or `RefCell` client
-- [Conformance](https://docs.rs/ruststream/latest/ruststream/conformance/index.html): the suites that check a broker against the contract
+- [Conformance](https://docs.rs/ruststream/latest/ruststream/conformance/index.html): the suites that check a broker against the contract, in process and against a server, and the author checklist
 - [Templates](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html#templates-a-broker-crate-ships): the `cargo generate` template a broker crate ships
 - [A worked broker crate](https://docs.rs/ruststream-nats/latest/ruststream_nats/): the NATS broker, a complete implementation of the contract
 

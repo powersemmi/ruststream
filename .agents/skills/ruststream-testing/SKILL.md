@@ -8,14 +8,14 @@ description: "Use when writing, fixing or reviewing tests of a service built on 
 `TestApp` (the `testing` feature) runs the service's production app, the same builder `main`
 runs, with every broker connected in process: no server, no network, no second app for tests.
 A publish from the test returns once everything it set off has settled, so the next line can
-assert on the result. This guidance targets ruststream 0.7.
+assert on the result. This guidance targets ruststream 0.8.
 
 ```toml
 [dev-dependencies]
-ruststream = { version = "0.7", features = ["testing"] }
+ruststream = { version = "0.8", features = ["testing"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 # a networked broker crate brings its in-process mode under its own `testing` feature:
-# ruststream-nats = { version = "0.7", features = ["testing"] }
+# ruststream-nats = { version = "0.8", features = ["testing"] }
 ```
 
 ## A whole test module

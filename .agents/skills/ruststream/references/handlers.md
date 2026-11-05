@@ -102,7 +102,7 @@ reply of `out_reply`. When such a publish fails, `.error(async move |failures: F
 returned `HandlerOutcome` (or `ctx.after(outcome).error(..)` from the context) learns of it: each
 `Failed` of `failures` has `error()`, the cause, and `message()`, the very message that did not go
 out (bytes and headers), which another `Out` republishes as it is. The handler never runs again
-because of it, and a failed reply no longer requeues the delivery. A `.then` chained beside it
+because of it, and a failed reply is acknowledged. A `.then` chained beside it
 (`and_after(..).error(..)` on the outcome, `.then(..).error(..)` or `.error(..).then(..)` on the
 context) runs only when the publish succeeded. Without `.error` the failure is logged with the
 subscription, the destination, the message type and the error, and the copy is lost. The closure is
@@ -139,30 +139,30 @@ async fn bill(order: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-// in with_broker(broker, |b| { ... }):
+// the chain a `with_broker` closure returns (`|b| ..`):
 b.include(
     bill.name("orders")
         .workers(nonzero!(4))
         .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
-);
+)
 
 // a batch body: `batch(n)` is the batch size, the one batch parameter the framework carries, and it
 // is mandatory - a batch handler mounted without it does not compile. The size goes to the broker,
 // which builds its batches to it; the body sees exactly what the broker delivered. It applies to
 // every batch shape and composes with a start position
-b.include(settle.name("orders").batch(nonzero!(64)));
+b.include(settle.name("orders").batch(nonzero!(64)))
 b.include(
     drain
         .name("orders")
         .batch(nonzero!(128))
         .start_at(MemoryPosition::start()),
-);
+)
 
 // a broker's own batching options ride its subscription source, after the core's size:
-// b.include(settle.name("orders").batch(nonzero!(6)).block(Duration::from_secs(5)));
+// b.include(settle.name("orders").batch(nonzero!(6)).block(Duration::from_secs(5)))
 
 // where the subscription opens, on a broker with a replayable log (Seekable)
-b.include(audit.name("orders").start_at(MemoryPosition::start()));
+b.include(audit.name("orders").start_at(MemoryPosition::start()))
 ```
 
 `workers(n)`, `threads(n)`, `on_failure(..)` and `start_at(..)` can also be written as attribute
