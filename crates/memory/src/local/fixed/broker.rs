@@ -11,8 +11,9 @@ use super::{LocalMemoryError, LocalMemoryPublisher, LocalMemorySubscriber};
 /// The in-process broker for local runtimes: a full broker whose queues live in a [`LocalMemoryBus`]
 /// of fixed size that the board declares as a `static`, so it needs no allocator.
 ///
-/// It is the reference implementation of the `Local*` broker contract, and it runs on any
-/// executor: its primitives wake whatever task polls them, and it reads no clock.
+/// It is the reference implementation of the contract for a broker whose types are not `Send`,
+/// and it runs on any executor: its primitives wake whatever task polls them, and it reads no
+/// clock.
 ///
 /// `MESSAGES` is the capacity of each subscription: how many messages one subscription holds,
 /// waiting or in its handler's hands, before a publish to it is refused with
