@@ -1,11 +1,12 @@
 ---
 title: Build a service, step by step
-description: "Eleven chapters grow one RustStream service, a small shop, from its first subscriber to a networked broker."
+description: "Eleven chapters grow one RustStream service, a small shop, from its first subscriber to a networked broker; a twelfth builds a device service on the embassy runtime."
 ---
 
 # Build a service, step by step
 
 Eleven chapters grow one RustStream service, a small shop, from its first subscriber to a networked broker.
+A twelfth chapter builds a small device service on the embassy runtime and tests it on the host.
 
 The shop takes an order, charges it, ships it and tells the customer.
 Each step is a subscriber, and the steps talk to each other through topics.

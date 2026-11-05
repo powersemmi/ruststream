@@ -19,10 +19,10 @@ use ruststream::memory::local::{
     LocalMemoryBroker, LocalMemoryBus, LocalMemoryPublish, LocalMemorySource,
 };
 use ruststream::runtime::{
-    EmbeddedApp, Failures, HandlerOutcome, MountSteps, Mounts, Outcomes, SubscriberSettings,
+    EmbeddedApp, Failures, HandlerOutcome, MountSteps, Mounts, Out, Outcomes, SubscriberSettings,
 };
 use ruststream::testing::embedded::TestApp;
-use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
+use ruststream::{Deserialized, OutSlot, Outgoing, Publisher, Serialized, subscriber};
 use serde::{Deserialize, Serialize};
 
 // --8<-- [start:bus]
@@ -36,6 +36,7 @@ static BUS: LocalMemoryBus<4> = LocalMemoryBus::new();
 
 // --8<-- [start:service]
 
+// --8<-- [start:messages]
 /// A sensor's reading, as the other end of the bus encodes it with postcard.
 #[derive(Serialize, Deserialize, Outgoing)]
 #[outgoing(name = "sensors/temp")]
@@ -51,7 +52,9 @@ struct Report {
     sensor: u8,
     celsius: i16,
 }
+// --8<-- [end:messages]
 
+// --8<-- [start:reading-handler]
 /// Reports every reading in degrees.
 #[subscriber(LocalMemorySource::new("sensors/temp"), reply)]
 async fn on_reading(reading: &Reading) -> Report {
@@ -61,6 +64,7 @@ async fn on_reading(reading: &Reading) -> Report {
         celsius: i16::try_from((millivolts - 500) / 10).unwrap_or(i16::MAX),
     }
 }
+// --8<-- [end:reading-handler]
 
 /// Takes the reports and updates the display once each is acknowledged.
 #[subscriber(LocalMemorySource::new("reports"))]
@@ -102,6 +106,56 @@ struct Lost(&'static AtomicUsize);
 #[global_allocator]
 static ALLOCATOR: AllocDisabler = AllocDisabler;
 // --8<-- [end:allocator]
+
+// --8<-- [start:reply-mount]
+fn reply_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.with_codec(PostcardCodec)
+            .include(on_reading)
+            .out_reply(LocalMemoryPublish)
+            .codec(PostcardCodec)
+            .encode_capacity::<64>()
+    })
+}
+// --8<-- [end:reply-mount]
+
+// --8<-- [start:alarm]
+/// The alert the board raises: the sensor's number, as its own byte.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "alerts")]
+struct Alert([u8; 1]);
+
+/// The slot alerts leave through.
+#[derive(OutSlot)]
+#[publishes(Alert)]
+struct Alarms;
+
+/// Raises an alert for a report past fifty degrees.
+#[subscriber(LocalMemorySource::new("reports"))]
+async fn on_hot(report: &Report, Out(alarms): Out<impl Publisher, Alarms>) -> HandlerOutcome {
+    if report.celsius <= 50 {
+        return HandlerOutcome::ack();
+    }
+    match alarms.message(&Alert([report.sensor])).publish().await {
+        Ok(()) => HandlerOutcome::ack(),
+        Err(_) => HandlerOutcome::retry(),
+    }
+}
+// --8<-- [end:alarm]
+
+// --8<-- [start:alarm-mount]
+fn device_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.with_codec(PostcardCodec)
+            .include(on_reading)
+            .out_reply(LocalMemoryPublish)
+            .codec(PostcardCodec)
+            .encode_capacity::<64>()
+            .include(on_hot)
+            .out(Alarms, LocalMemoryPublish)
+    })
+}
+// --8<-- [end:alarm-mount]
 
 // --8<-- [start:retry]
 /// A humidity reading.
@@ -293,6 +347,54 @@ fn a_reading_is_reported() -> Result<(), Box<dyn Error>> {
         Ok(())
     })
 }
+
+// --8<-- [start:device-test]
+#[test]
+fn a_hot_reading_raises_an_alert() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(device_app(Bus::new(&BUS))).await?;
+        let reading = Reading {
+            sensor: 2,
+            millivolts: 1200,
+        };
+        tb.broker::<Bus>()
+            .message(&reading)
+            .with_codec(PostcardCodec)
+            .publish()
+            .await?;
+        tb.broker::<Bus>()
+            .subscriber("reports")
+            .assert_called_once();
+        tb.out::<Alarms>().assert_called_once().with_raw(&[2]);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+// --8<-- [end:device-test]
+
+#[test]
+fn a_mild_reading_is_only_reported() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(reply_app(Bus::new(&MILD_BUS))).await?;
+        let reading = Reading {
+            sensor: 1,
+            millivolts: 700,
+        };
+        tb.broker::<Bus>()
+            .message(&reading)
+            .with_codec(PostcardCodec)
+            .publish()
+            .await?;
+        tb.broker::<Bus>()
+            .subscriber("sensors/temp")
+            .assert_called_once();
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+/// The bus of the mild scenario.
+static MILD_BUS: LocalMemoryBus<4> = LocalMemoryBus::new();
 
 // --8<-- [start:test]
 #[test]

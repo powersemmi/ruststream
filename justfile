@@ -230,6 +230,7 @@ test-no-alloc:
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_name
     # The device service the embedded runtime page teaches, under the failing allocator.
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test doc_device
+    cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test doc_device_manual
     # The device build's own futures, without the harness that wraps them in the test above.
     cargo test --no-default-features --features embassy,memory,macros --test embedded_future_size
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test ui_no_alloc

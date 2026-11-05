@@ -51,6 +51,7 @@ const sidebars: SidebarsConfig = {
         'guides/build-a-service/asyncapi',
         'guides/build-a-service/http',
         'guides/build-a-service/networked-broker',
+        'guides/build-a-service/device',
       ],
     },
     {
