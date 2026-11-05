@@ -323,7 +323,7 @@ where
     }
 
     fn load(taken: &mut BatchVec<M>, slot: &mut Batch) {
-        taken.extend(slot.drain());
+        slot.hand_over(taken);
     }
 
     async fn handle_batch<Host: SendHost<D::Context>>(

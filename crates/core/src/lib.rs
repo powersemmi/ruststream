@@ -88,8 +88,9 @@ pub use capability::{
     ApiKeyLocation, DescribeServer, HttpApiKeyLocation, SecurityScheme, ServerSpec,
 };
 pub use capability::{
-    BatchSlot, BatchStream, BatchSubscriber, Carries, CarriesBatch, OwnedTransactions, Partitioned,
-    Positioned, RequestReply, Seekable, Seeker, Subscribe, Transaction, TransactionalPublisher,
+    BATCH_CAPACITY, BatchSlot, BatchStream, BatchSubscriber, BatchVec, Carries, CarriesBatch,
+    OwnedTransactions, Partitioned, Positioned, RequestReply, Seekable, Seeker, Subscribe,
+    Transaction, TransactionalPublisher,
 };
 #[cfg(feature = "alloc")]
 pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};

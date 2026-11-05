@@ -383,9 +383,9 @@ pub async fn carries<
 /// #     fn with_capacity(size: NonZeroUsize) -> Self {
 /// #         Page { rows: Vec::with_capacity(size.get()), deliveries: Vec::with_capacity(size.get()) }
 /// #     }
-/// #     fn drain(&mut self) -> impl Iterator<Item = MemoryMessage> + '_ {
+/// #     fn hand_over(&mut self, taken: &mut Vec<MemoryMessage>) {
 /// #         self.rows.clear();
-/// #         self.deliveries.drain(..)
+/// #         self.deliveries.hand_over(taken);
 /// #     }
 /// # }
 /// use ruststream::conformance::capabilities;
@@ -899,7 +899,8 @@ where
         .unwrap_or_else(|err| panic!("{label}: the batch stream yielded an error: {err:?}"));
     let mut batch = batch;
     let lent = batch.carried().to_vec();
-    let deliveries: Vec<M> = batch.drain().collect();
+    let mut deliveries = Vec::new();
+    batch.hand_over(&mut deliveries);
     assert!(
         !deliveries.is_empty(),
         "{label}: a yielded batch must not be empty; {expected}",

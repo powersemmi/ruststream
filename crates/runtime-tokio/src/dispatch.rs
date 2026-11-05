@@ -13,8 +13,8 @@ use tokio::task::{JoinError, JoinHandle};
 use ruststream_core::{BatchSlot, BatchStream};
 use ruststream_runtime::DeliverySlot as Slot;
 use ruststream_runtime::{
-    BatchHandler, DispatchFailure, Handler, HeadersOnDemand, Placement, RING, RetryCopies, Turn,
-    Workers, dispatch, key_index, placed, run_batch, run_sequential,
+    BatchHandler, DispatchFailure, Handler, HeadersOnDemand, Placement, RING, RetryCopies,
+    TakenBatch, Turn, Workers, dispatch, key_index, placed, run_batch, run_sequential,
 };
 
 pub(crate) use crate::detach::{Hosted, on_thread};
@@ -293,9 +293,10 @@ async fn batch_loop<S, H, C, St, Retry>(
                 .await;
             }
             Turn::Delivery(Err(err)) => {
-                // A failed fill leaves the slot empty; draining it keeps that true of a broker
-                // that left a message behind.
-                slot.drain().for_each(drop);
+                // A failed fill leaves the slot empty; taking what a broker left behind and
+                // dropping it keeps that true.
+                <H as BatchHandler<S::Batch, C, St>>::load(&mut taken, &mut slot);
+                taken.discard();
                 error!(
                     target: "ruststream::dispatch",
                     error = %err,

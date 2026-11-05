@@ -18,16 +18,7 @@ use crate::batch::{BatchResult, IntoBatchResult};
 #[cfg(not(ruststream_alloc))]
 use crate::handler::HandlerOutcome;
 
-/// The most messages one batch holds on a build without `alloc`.
-pub const BATCH_CAPACITY: usize = 16;
-
-/// The runtime's storage of one batch's elements.
-#[cfg(ruststream_alloc)]
-pub type BatchVec<T> = Vec<T>;
-
-/// The runtime's storage of one batch's elements.
-#[cfg(not(ruststream_alloc))]
-pub type BatchVec<T> = heapless::Vec<T, BATCH_CAPACITY>;
+pub use ruststream_core::{BATCH_CAPACITY, BatchVec};
 
 /// What draining a [`BatchVec`] yields: its elements, taken out in place.
 #[cfg(ruststream_alloc)]

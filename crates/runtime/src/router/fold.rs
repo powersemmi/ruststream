@@ -25,7 +25,7 @@ use futures::future::MaybeDone;
 use pin_project_lite::pin_project;
 use ruststream_core::{EncodeBuf, PayloadBuf};
 
-use crate::batch::BatchHandler;
+use crate::batch::{BatchHandler, TakenBatch};
 use crate::coop::Cooperative;
 use crate::dispatch::{Delivery, Gated, HeadersAtOnce, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
@@ -483,6 +483,9 @@ pub trait RunsBatches<Batch, C, S> {
     /// Allocates the loop's [`Taken`](Self::Taken) for batches of `size`.
     fn taken(size: NonZeroUsize) -> Self::Taken;
 
+    /// Empties `slot` after a failed fill, dropping whatever the broker left in it.
+    fn discard_fill(slot: &mut Batch, taken: &mut Self::Taken);
+
     /// Runs one batch through the shared body.
     #[allow(clippy::too_many_arguments)]
     fn run_one<Signal, Host>(
@@ -511,6 +514,11 @@ where
 
     fn taken(size: NonZeroUsize) -> Self::Taken {
         Handler::taken(size)
+    }
+
+    fn discard_fill(slot: &mut Batch, taken: &mut Handler::Taken) {
+        Handler::load(taken, slot);
+        taken.discard();
     }
 
     fn run_one<Signal, Host>(

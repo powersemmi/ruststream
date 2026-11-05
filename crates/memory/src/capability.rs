@@ -125,7 +125,7 @@ mod tests {
     use std::future::poll_fn;
 
     use futures::StreamExt;
-    use ruststream_core::{BatchSlot, Settle};
+    use ruststream_core::Settle;
 
     use super::*;
     use crate::{MemoryBroker, Retaining, Retention};
@@ -191,7 +191,7 @@ mod tests {
         assert_eq!(slot.len(), 8);
         assert_eq!(slot.capacity(), 8);
         assert_eq!(slot.as_ptr(), storage);
-        for msg in BatchSlot::drain(&mut slot) {
+        for msg in slot.drain(..) {
             msg.ack().await.unwrap();
         }
         poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot))
