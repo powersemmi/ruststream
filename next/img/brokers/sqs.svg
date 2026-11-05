@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>AWS SQS / SNS</title>
+  <rect x="3" y="10" width="12" height="12" rx="2"/>
+  <path d="M7 10v12M11 10v12M15 16h3M18 16l7-8M18 16h8M18 16l7 8"/>
+  <circle cx="26.5" cy="6.5" r="2" fill="currentColor" stroke="none"/>
+  <circle cx="28" cy="16" r="2" fill="currentColor" stroke="none"/>
+  <circle cx="26.5" cy="25.5" r="2" fill="currentColor" stroke="none"/>
+</svg>

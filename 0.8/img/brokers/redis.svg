@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>Redis / Valkey</title>
+  <path d="M16 4l12 5-12 5-12-5z"/>
+  <path d="M4 15l12 5 12-5"/>
+  <path d="M4 21l12 5 12-5"/>
+</svg>
