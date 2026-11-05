@@ -7,7 +7,7 @@
 //!
 //! ```toml
 //! [dev-dependencies]
-//! ruststream = { version = "0.7", features = ["conformance"] }
+//! ruststream = { version = "0.8", features = ["conformance"] }
 //! ```
 //!
 //! Every suite panics with a message naming the step on the first contract violation. The
@@ -22,7 +22,8 @@
 //!   crate's end-to-end suite against a real server.
 //! - [`harness::lifecycle`]: the lifecycle ladder end to end on the real broker, from every runtime
 //!   a service reaches it from, and the aliased-handle contract after shutdown.
-//! - [`lifecycle`]: what a shutdown must finish, and clones of a shareable connected form.
+//! - [`lifecycle`]: what a shutdown must finish, clones of a shareable connected form, and a
+//!   refused publish that hands the message back.
 //! - [`settlement`]: what `ack` and `nack` mean on the transport the broker connects to, and the
 //!   same answers live and in process.
 //! - [`retry`]: where a retry copy goes and how a broker that moves deliveries itself maps the
@@ -31,6 +32,8 @@
 //! - [`message_shape`]: keys, per-message settings and credentials in what a broker publishes.
 //! - [`capabilities`]: one suite per capability trait, called for each capability the broker
 //!   implements.
+//! - [`harness::run_local_suite`] and [`harness::local_lifecycle`]: the routing suite and the
+//!   ladder for a broker whose types are not `Send`, on a current-thread runtime.
 //!
 //! The suites that take a [`Broker`](crate::Broker) connect it with `connect`. Wrapping the
 //! production broker in [`harness::InProcessBroker`] runs each of them a second time with no
@@ -49,8 +52,9 @@
 //! - [`Broker`](crate::Broker), [`ConnectedBroker`](crate::ConnectedBroker),
 //!   [`Subscribe`](crate::Subscribe) or a [`SubscriptionSource`](crate::SubscriptionSource),
 //!   [`Subscriber`](crate::Subscriber), [`IncomingMessage`](crate::IncomingMessage),
-//!   [`Publisher`](crate::Publisher) and the [`PublishPolicy`](crate::PublishPolicy) that
-//!   constructs it are implemented.
+//!   [`Settle`](crate::Settle), [`Publisher`](crate::Publisher) and the
+//!   [`PublishPolicy`](crate::PublishPolicy) that constructs it are implemented; the
+//!   [`Broker`](crate::Broker) page walks through them in order.
 //! - `shutdown` performs every teardown step that can fail, and never blocks or panics.
 //! - `nack` honours its `requeue` flag.
 //! - The crate owns its `Config`, and a field with no sane default has no `Default`.
@@ -66,10 +70,17 @@
 //! - [`harness::lifecycle`] passes against a real server.
 //! - [`lifecycle::shutdown_flushes`] passes with the broker's `Backlog` answer, and
 //!   [`lifecycle::shared_handle_closes`] where the connected form is `Clone`.
+//! - [`lifecycle::refused_publish_returns_message`] passes for every publisher the crate ships,
+//!   declaring whether a refused publish returns its message or a `Take` client consumed it.
 //! - [`settlement::matches_in_process`] passes against a real server.
 //! - [`harness::redelivery_address`] passes for every `AddressedCopies` descriptor, and for the
 //!   bare `Name` where `Subscribe::Copies` is `AddressedCopies`; [`retry::broker_moves`] passes for
 //!   every `BrokerMoves` descriptor.
+//! - [`harness::describes_without_credentials`] passes for the broker and each descriptor, with
+//!   credentials in the configuration.
+//! - Where the transport batches, [`capabilities::batches`] passes: it holds the lent slot to
+//!   its size, empties it after a failed fill, and leaves it untouched when the subscription
+//!   ends.
 //! - Where the transport has keys or per-message settings, [`message_shape::keyed_order`] and
 //!   [`message_shape::publish_options`] pass, in process and against a real server.
 //! - An end-to-end suite covers the broker's own semantics against a real server.
