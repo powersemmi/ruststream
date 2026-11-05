@@ -1007,8 +1007,14 @@ pub trait Publisher: MaybeSendSync + Clone {
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = SinkOutcome<Self::Error>> + MaybeSend {
-        let sent = self.publish(msg, options);
-        async move { sent.await.map_err(SinkRefusal::returned::<Self::Payload>) }
+        // The publish future is built inside the block, where the block's state holds it: built
+        // outside and captured, it would sit in the block's upvars and be copied into the await
+        // slot on the first poll, a copy of the whole broker future per publish.
+        async move {
+            self.publish(msg, options)
+                .await
+                .map_err(SinkRefusal::returned::<Self::Payload>)
+        }
     }
 
     /// The headers this publisher contributes to every message it sends, underneath whatever
@@ -1435,9 +1441,47 @@ pub trait DefaultPublish: ConnectedBroker {
 
 #[cfg(test)]
 mod tests {
+    use core::future::ready;
+    use core::hint::black_box;
     use std::io;
 
     use super::*;
+
+    /// A publisher whose publish future holds a large buffer across its await point, as a
+    /// client's own connection and statement futures do.
+    #[derive(Clone)]
+    struct Large;
+
+    impl Publisher for Large {
+        type Payload = Lend;
+        type Error = io::Error;
+        type Options = ();
+
+        async fn publish<'msg>(
+            &self,
+            msg: OutgoingMessage<'msg, &'msg [u8]>,
+            _options: Option<&()>,
+        ) -> PublishOutcome<'msg, io::Error, Lend> {
+            let buffer = [0_u8; 8192];
+            ready(()).await;
+            black_box((&buffer, msg));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_kept_publish_holds_the_broker_future_once() {
+        let payload = b"order";
+        let publish = size_of_val(&Large.publish(OutgoingMessage::new("orders", payload), None));
+        let kept = size_of_val(&Large.publish_kept(OutgoingMessage::new("orders", payload), None));
+        let message = size_of::<OutgoingMessage<'_, &[u8]>>();
+        // The wrapper adds the message it carries until the first poll, never a second copy of
+        // the broker's future.
+        assert!(
+            kept <= publish + message + 64,
+            "publish_kept: {kept} bytes for a {publish}-byte future and a {message}-byte message"
+        );
+    }
 
     #[test]
     fn a_publish_that_went_out_returns_an_outcome_of_the_cause_alone() {
