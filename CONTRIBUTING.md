@@ -63,10 +63,11 @@ done
 ## Checking a change to the core
 
 ```bash
-just check            # rustfmt, clippy, cargo check on the feature edges, the contract on two
-                      # no_std targets, rustdoc, compile-fail snapshots, then check-firmware
-just check-firmware   # a firmware binary for both Cortex-M targets: it links with no heap, and
-                      # the board's bus lies in .bss
+just check            # rustfmt, clippy on every crate and feature set the gates build, the
+                      # contract on two no_std targets, rustdoc, compile-fail snapshots, then
+                      # check-firmware
+just check-firmware   # a firmware binary for both Cortex-M targets: it links with no heap, the
+                      # board's bus lies in .bss, and clippy holds it and the facade it builds
 just test             # the test suite, the reduced-feature legs, doctests on both feature edges
 just ci               # both
 ```

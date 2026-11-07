@@ -164,10 +164,12 @@ jobs:
             cargo fmt --manifest-path "$manifest" --all -- --check
           done
 
-      # The benchmarks are not in the workspace lints: they are built with the production
-      # feature set, and the harness feature is a compile error in them. CI only keeps them
-      # compiling; `just bench` runs them. A rustc warning fails their build, through cargo's
-      # `build.warnings` as in the justfile, which leaves the build fingerprint alone.
+      # Clippy lints every crate and feature set the gates build, with the commands `just check`
+      # runs, so no build compiles code that no lint has read. The workspace leg holds every
+      # member with every feature; the benchmarks are left out of it, because the harness feature
+      # is a compile error in them, and have legs of their own on the production feature set they
+      # are measured with. The legs after them are the builds of the other gates, each in its own
+      # feature set.
       - name: cargo clippy
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         env:
@@ -175,8 +177,64 @@ jobs:
         run: |
           cargo clippy --locked --workspace $EMBASSY_TESTS_EXCLUDE --lib --bins --tests --examples \
             --all-features -- -D warnings
-          cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
-          cargo check --locked --bench consume_compio --no-default-features --features compio,memory,macros,json
+          cargo clippy --locked --benches --no-default-features \
+            --features memory,macros,json,tokio -- -D warnings
+          cargo clippy --locked --bench consume_compio --no-default-features \
+            --features compio,memory,macros,json -- -D warnings
+          cargo clippy --locked --workspace --no-default-features -- -D warnings
+          cargo clippy --locked -p ruststream-runtime-embassy --no-default-features -- -D warnings
+          cargo clippy --locked -p ruststream-runtime-embassy --features alloc -- -D warnings
+          # The codec-free build, the default codec's fallbacks, and the core's `send` and `alloc`
+          # turned on from below.
+          cargo clippy --locked --workspace --no-default-features \
+            --features testing,memory,macros -- -D warnings
+          cargo clippy --locked --no-default-features --features cbor,memory,macros -- -D warnings
+          cargo clippy --locked --no-default-features --features msgpack,memory,macros \
+            -- -D warnings
+          cargo clippy --locked -p ruststream-runtime --features ruststream-core/send -- -D warnings
+          cargo clippy --locked -p ruststream-runtime --no-default-features \
+            --features alloc,ruststream-core/send -- -D warnings
+          cargo clippy --locked -p ruststream-runtime --no-default-features \
+            --features ruststream-core/alloc -- -D warnings
+          cargo clippy --locked -p ruststream-memory --no-default-features \
+            --features embassy,ruststream-core/alloc -- -D warnings
+          cargo clippy --locked -p ruststream-testing --no-default-features \
+            --features embassy,ruststream-core/alloc -- -D warnings
+          cargo clippy --locked -p ruststream-runtime-embassy --no-default-features \
+            --features ruststream-core/alloc -- -D warnings
+          cargo clippy --locked -p ruststream-conformance --no-default-features \
+            --features ruststream-core/alloc -- -D warnings
+          cargo clippy --locked -p ruststream --no-default-features \
+            --features embassy,macros,memory,ruststream-core/alloc -- -D warnings
+          # The firmware facade with no serde codec, with the benchmarks of a device app without
+          # `alloc`.
+          cargo clippy --locked -p ruststream --no-default-features \
+            --features embassy,macros,memory --tests --benches -- -D warnings
+          # The no_std probe, and the facade as it builds it: a path dependency is no member of
+          # the probe's workspace.
+          cargo clippy --locked --manifest-path checks/no-std-probe/Cargo.toml -- -D warnings
+          cargo clippy --locked -p ruststream --no-default-features --features json,macros,tokio \
+            -- -D warnings
+          # The builds of the test legs and of the compile-fail snapshots, in the feature sets no
+          # leg above has: the facade with its default features and with none, the suite without
+          # a codec and without the macros, the manual examples (`cargo test --example` builds an
+          # example as a test), the harness on the tokio runner alone, the local suites beside the
+          # embedded runner, and the CLI's compile-fail suite.
+          cargo clippy --locked -p ruststream --lib --bins --tests --examples -- -D warnings
+          cargo clippy --locked --no-default-features --lib --tests -- -D warnings
+          cargo clippy --locked --no-default-features --features macros,memory,testing,tokio \
+            --test suite -- -D warnings
+          cargo clippy --locked --no-default-features --features memory,testing,tokio \
+            --test suite -- -D warnings
+          cargo clippy --locked --no-default-features --features testing,memory,json,tokio \
+            --examples --test examples -- -D warnings
+          cargo clippy --locked --no-default-features --features testing,memory,json,tokio \
+            --example manual_app_running --profile test -- -D warnings
+          cargo clippy --locked -p ruststream-testing --all-targets --features tokio,json \
+            -- -D warnings
+          cargo clippy --locked --no-default-features --features memory,testing,json,embassy \
+            --test local_family -- -D warnings
+          cargo clippy --locked -p ruststream-cli --all-targets -- -D warnings
 
       # The embassy runtime alone, as a device service builds it: the facade with the embassy
       # set, where every target that needs tokio names it and drops out, then the embedded runner
@@ -194,11 +252,17 @@ jobs:
           cargo clippy --locked -p ruststream-testing --all-targets --features embassy,json \
             -- -D warnings
           # A broker crate on the embedded runner whose types are never `Send`, with its contract
-          # checks: the facade's `conformance` feature without tokio, in both variants.
+          # checks: the facade's `conformance` feature without tokio, in both variants. The
+          # facade as that broker builds it is linted from this workspace: a path dependency is
+          # no member of the broker's.
           cargo clippy --locked --manifest-path checks/embedded-broker/Cargo.toml --all-targets \
             -- -D warnings
           cargo clippy --locked --manifest-path checks/embedded-broker/Cargo.toml --all-targets \
             --features ruststream/alloc -- -D warnings
+          cargo clippy --locked -p ruststream --no-default-features \
+            --features conformance,embassy,memory,testing -- -D warnings
+          cargo clippy --locked -p ruststream --no-default-features \
+            --features alloc,conformance,embassy,memory,testing -- -D warnings
           tree="$(cargo tree --locked -p ruststream --no-default-features \
             --features "$EMBASSY_FEATURES" -e normal -i tokio)"
           if [ -n "$tree" ]; then
@@ -213,6 +277,45 @@ jobs:
             echo "$tree"
             exit 1
           fi
+
+      # The embassy runtime without a heap, linted as `just check` lints it: the contract, the
+      # delivery body and the embedded runner without `alloc`, with the crates that run their own
+      # unit tests; the facade's tests in each feature set `just test-no-alloc` builds; and the
+      # local bus and the delivery body as crates of their own.
+      - name: Embassy without alloc (lints)
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        env:
+          CARGO_BUILD_WARNINGS: deny
+        run: |
+          cargo clippy --locked --manifest-path checks/noalloc/core/Cargo.toml --lib --tests \
+            -- -D warnings
+          cargo clippy --locked -p ruststream-runtime --no-default-features --lib -- -D warnings
+          cargo clippy --locked -p ruststream-runtime --no-default-features \
+            --features postcard,json-core --lib -- -D warnings
+          cargo clippy --locked --manifest-path checks/noalloc/runtime/Cargo.toml --lib --tests \
+            -- -D warnings
+          cargo clippy --locked -p ruststream-runtime-embassy --no-default-features --lib \
+            -- -D warnings
+          cargo clippy --locked --manifest-path checks/noalloc/runtime-embassy/Cargo.toml --lib \
+            --tests -- -D warnings
+          cargo clippy --locked --no-default-features --features embassy,memory,macros,testing \
+            --test embedded_no_alloc -- -D warnings
+          cargo clippy --locked --no-default-features \
+            --features embassy,memory,macros,testing,postcard \
+            --test embedded_no_alloc_out --test embedded_no_alloc_out_retry \
+            --test embedded_no_alloc_batch --test embedded_no_alloc_batch_input \
+            --test embedded_no_alloc_batch_reply --test embedded_no_alloc_batch_out \
+            --test embedded_no_alloc_name --test doc_device --test doc_device_manual \
+            --test ui_no_alloc -- -D warnings
+          cargo clippy --locked --no-default-features \
+            --features embassy,memory,macros,testing,log --test embedded_diagnostics \
+            -- -D warnings
+          cargo clippy --locked --manifest-path checks/noalloc/memory/Cargo.toml --all-targets \
+            --features testing -- -D warnings
+          cargo clippy --locked --manifest-path checks/noalloc/memory/Cargo.toml --all-targets \
+            -- -D warnings
+          cargo clippy --locked --manifest-path checks/noalloc/runtime/Cargo.toml --lib --tests \
+            --features postcard,json-core -- -D warnings
 
       # Allow-list in external-types.toml, one for every published crate: the facade shows the
       # crates behind it only as re-exports, so each is checked where its items are defined. The
@@ -306,7 +409,8 @@ jobs:
       # The contract without `std`: a Cortex-M4F with an allocator, and a Cortex-M0+, which has no
       # compare-and-swap. There `bytes` takes `extra-platforms`, and the library build takes
       # `portable-atomic`'s single-core option in place of the one a firmware binary chooses.
-      - name: Build the contract, the body, the embedded runner and the facade for no_std targets
+      # Each build is then linted on its target.
+      - name: Build and lint the contract, body, embedded runner and facade for no_std targets
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         env:
           CARGO_BUILD_WARNINGS: deny
@@ -347,10 +451,43 @@ jobs:
             --features embassy,macros,memory,defmt,log --target thumbv7em-none-eabihf
           cargo build --locked -p ruststream-runtime --no-default-features --features defmt \
             --target thumbv6m-none-eabi
+          # The same builds, linted on their targets.
+          cargo clippy --locked -p ruststream-core --no-default-features --features alloc \
+            --target thumbv7em-none-eabihf -- -D warnings
+          RUSTFLAGS="--cfg portable_atomic_unsafe_assume_single_core" cargo clippy --locked \
+            -p ruststream-core --no-default-features --features alloc,bytes/extra-platforms \
+            --target thumbv6m-none-eabi -- -D warnings
+          cargo clippy --locked -p ruststream-runtime --no-default-features --features alloc \
+            --target thumbv7em-none-eabihf -- -D warnings
+          cargo clippy --locked -p ruststream-runtime --no-default-features --features alloc,json \
+            --target thumbv7em-none-eabihf -- -D warnings
+          cargo clippy --locked -p ruststream-runtime --no-default-features \
+            --target thumbv7em-none-eabihf -- -D warnings
+          cargo clippy --locked -p ruststream-runtime --no-default-features \
+            --target thumbv6m-none-eabi -- -D warnings
+          cargo clippy --locked -p ruststream-runtime-embassy --target thumbv7em-none-eabihf \
+            -- -D warnings
+          cargo clippy --locked -p ruststream-memory --no-default-features --features embassy \
+            --target thumbv7em-none-eabihf -- -D warnings
+          cargo clippy --locked -p ruststream --no-default-features \
+            --features cbor,embassy,macros,memory --target thumbv7em-none-eabihf -- -D warnings
+          cargo clippy --locked -p ruststream --no-default-features \
+            --features json,embassy,macros,memory --target thumbv7em-none-eabihf -- -D warnings
+          cargo clippy --locked -p ruststream-runtime-embassy --no-default-features \
+            --features ruststream-core/alloc --target thumbv7em-none-eabihf -- -D warnings
+          cargo clippy --locked -p ruststream --no-default-features \
+            --features embassy,macros,memory,ruststream-core/alloc --target thumbv7em-none-eabihf \
+            -- -D warnings
+          cargo clippy --locked -p ruststream --no-default-features \
+            --features embassy,macros,memory,defmt --target thumbv7em-none-eabihf -- -D warnings
+          cargo clippy --locked -p ruststream --no-default-features \
+            --features embassy,macros,memory,defmt,log --target thumbv7em-none-eabihf -- -D warnings
+          cargo clippy --locked -p ruststream-runtime --no-default-features --features defmt \
+            --target thumbv6m-none-eabi -- -D warnings
 
       # A firmware binary on the no-alloc build, linked as a board links it, with no global
-      # allocator. The recipe `check-firmware` of the justfile runs the same commands.
-      - name: Firmware without a heap (link, defmt, the bus in .bss)
+      # allocator, then linted. The recipe `check-firmware` of the justfile runs the same commands.
+      - name: Firmware without a heap (link, defmt, the bus in .bss, lints)
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         env:
           CARGO_BUILD_WARNINGS: deny
@@ -377,16 +514,35 @@ jobs:
           for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do
             checks/firmware-noalloc/check-bss.sh $target
           done
+          # The binary linted in each configuration above, and the facade as the binary builds
+          # it: a path dependency is no member of the firmware's workspace. A Cortex-M0+ has no
+          # compare-and-swap, so there the facade takes `portable-atomic`'s single-core option in
+          # place of the critical section the firmware chooses.
+          for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do
+            for features in "" postcard json-core defmt defmt-unselected; do
+              cargo clippy --locked --manifest-path checks/firmware-noalloc/Cargo.toml \
+                --target $target ${features:+--features $features} -- -D warnings
+            done
+            flags=""
+            if [ $target = thumbv6m-none-eabi ]; then
+              flags="--cfg portable_atomic_unsafe_assume_single_core"
+            fi
+            for features in "" postcard json-core defmt; do
+              RUSTFLAGS="$flags" cargo clippy --locked -p ruststream --no-default-features \
+                --features embassy,macros,memory${features:+,$features} --target $target \
+                -- -D warnings
+            done
+          done
 
-      # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
-      # It also rewrites the manifests while it runs, which is why this is the last step and the
-      # one without --locked. A feature that leaves code unreached on its own fails on the
-      # warning.
-      - name: cargo hack check (each feature)
+      # Each feature alone, linted. --no-dev-deps: a dev-dependency in scope masks a missing
+      # feature gate in the library. It also rewrites the manifests while it runs, which is why
+      # this is the last step and the one without --locked. A feature that leaves code unreached
+      # on its own fails on the warning.
+      - name: cargo hack clippy (each feature)
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         env:
           CARGO_BUILD_WARNINGS: deny
-        run: cargo hack check --workspace --each-feature --no-dev-deps
+        run: cargo hack clippy --workspace --each-feature --no-dev-deps -- -D warnings
 
       # Minimal versions is one chain: each step runs only when the one before it succeeded, since
       # a step on a graph that failed to resolve checks nothing.

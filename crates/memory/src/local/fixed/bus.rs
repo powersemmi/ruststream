@@ -197,6 +197,24 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
             .get_mut(held.index)
             .filter(|slot| slot.generation == held.generation && !slot.is_free())
     }
+
+    /// Hands each slot its places, and marks the slots placed. Called under the bus's lock by the
+    /// first connect alone.
+    fn place(
+        &mut self,
+        places: &'static [[ConstStaticCell<Delivery<PAYLOAD>>; MESSAGES]; SUBSCRIPTIONS],
+    ) {
+        for (slot, places) in self.slots.iter_mut().zip(places) {
+            for place in places {
+                // Taken here alone, under the bus's lock and once: `placed` is set below.
+                let Some(place) = place.try_take() else {
+                    unreachable!("a place of the bus is taken once, at its first connect");
+                };
+                slot.release(place);
+            }
+        }
+        self.placed = true;
+    }
 }
 
 /// The bus a broker, its connected form and its publishers share: a value of fixed size that a
@@ -321,16 +339,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
     pub(super) fn connect(&'static self) {
         self.with(|state| {
             if !state.placed {
-                for (slot, places) in state.slots.iter_mut().zip(&self.places) {
-                    for place in places {
-                        // Taken here alone, under the bus's lock and once: `placed` is set below.
-                        let Some(place) = place.try_take() else {
-                            unreachable!("a place of the bus is taken once, at its first connect");
-                        };
-                        slot.release(place);
-                    }
-                }
-                state.placed = true;
+                state.place(&self.places);
             }
             state.live = true;
         });
