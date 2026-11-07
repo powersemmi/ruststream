@@ -32,6 +32,7 @@ The service reads a sensor's readings from the board's bus, reports them in degr
 
 The board declares the bus as a `static` and the app function receives a broker built over it.
 The binary supplies the `critical-section` implementation the bus needs.
+On a core without compare-and-swap, such as a Cortex-M0+, the firmware also gives `portable-atomic` its `critical-section` feature.
 
 ```rust reference="crates/ruststream/tests/doc_device.rs#bus"
 ```
