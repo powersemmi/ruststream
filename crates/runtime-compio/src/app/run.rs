@@ -452,9 +452,10 @@ impl RunningApp {
     ///
     /// # Errors
     ///
-    /// Returns [`RustStreamError`] if a dispatch task panicked, a broker failed to shut down, or
-    /// the service had already torn itself down on a fail-fast failure (surfaced as
-    /// [`RustStreamError::Dispatch`] so the operator sees a non-zero exit, not a silent stop).
+    /// Returns [`RustStreamError`] if a broker failed to shut down, or if the service had already
+    /// torn itself down on a fail-fast failure, a panic of its dispatch loop or a worker outside
+    /// the handler included (surfaced as [`RustStreamError::Dispatch`] naming the subscription,
+    /// so the operator sees a non-zero exit, not a silent stop).
     /// A failure does not cut the teardown short: every broker is still shut down and the
     /// `after_shutdown` hooks still run before the first failure is returned.
     pub async fn shutdown(mut self) -> Result<(), RustStreamError> {
