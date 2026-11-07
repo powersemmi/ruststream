@@ -3,13 +3,32 @@ name = "{{project-name}}"
 version = "0.1.0"
 edition = "2024"
 
+# The firmware binary is the board: `src/main.rs`. The service lives in the library beside it, so a
+# test on the host can run it.
+[lib]
+doctest = false
+
+[[bin]]
+name = "{{project-name}}"
+path = "src/main.rs"
+# The binary is `no_main` for the board; the tests run from the library.
+test = false
+
 [dependencies]
 # The framework without `alloc`: the embassy runner, the local bus, the attributes, the postcard
 # codec, and defmt for the logger the app selects.
 ruststream = { version = "0.8", default-features = false, features = ["embassy", "memory", "macros", "postcard", "defmt"] }
 serde = { version = "1", default-features = false, features = ["derive"] }
+defmt = "1"
+# The executor the app's task is declared for; the board names its architecture below, a test on
+# the host names the standard library's.
+embassy-executor = { version = "0.10", features = ["executor-thread"] }
+
+# The board: the executor, the clock, the core support and the log transport exist only for the
+# firmware target (`target_os = "none"`), so the library builds and tests on the host without them.
+[target.'cfg(target_os = "none")'.dependencies]
 # The executor the app's task runs on: a Cortex-M thread-mode executor.
-embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+embassy-executor = { version = "0.10", features = ["platform-cortex-m"] }
 # The tick source `embassy-time` links against, over the core's SysTick, which every Cortex-M has.
 # A board with a timer of its own names its HAL's driver here instead.
 embassy-time-driver = "0.2.2"
@@ -18,9 +37,20 @@ systick-timer = { version = "0.2.3", features = ["embassy-time-driver"] }
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7.5"
 # The log lines go to a debug probe over RTT.
-defmt = "1"
 defmt-rtt = "1"
 panic-halt = "1"
+
+# The host tests of the service. `testing` adds `ruststream::testing::embedded::TestApp`; it does
+# not turn `alloc` on, so the test checks the same no-heap form the board runs. A dependency here
+# must not enable `alloc` of `ruststream` either: cargo unifies features across them.
+[dev-dependencies]
+ruststream = { version = "0.8", default-features = false, features = ["testing"] }
+embassy-executor = { version = "0.10", features = ["platform-std"] }
+embassy-futures = "0.1.2"
+# Fails an allocation the framework makes while the test polls the app.
+assert_no_alloc = "1.1.2"
+# The log transport the service's `defmt` lines need to link on the host.
+defmt-rtt = "1"
 
 [profile.release]
 debug = true

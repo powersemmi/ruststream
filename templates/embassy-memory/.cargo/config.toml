@@ -2,3 +2,6 @@
 # (`thumbv6m-none-eabi` for an M0+, `thumbv8m.main-none-eabihf` for an M33).
 [build]
 target = "thumbv7em-none-eabihf"
+
+# The tests run on the host, not on the board: name the host's target for them,
+#   cargo test --target "$(rustc -vV | sed -n 's/^host: //p')"

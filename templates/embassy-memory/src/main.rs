@@ -1,27 +1,31 @@
 //! {{project-name}} - a RustStream device service on the embassy runtime.
 //!
-//! The service lives in `service`; this file is the board: the bus, the clock and `main`, which
-//! spawns the app's task. The framework is built without `alloc`, so the firmware has no heap and
-//! the service allocates nothing at startup or per message.
+//! The service lives in the library (`service`); this file is the board: the bus, the clock and
+//! `main`, which spawns the app's task. The framework is built without `alloc`, so the firmware has
+//! no heap and the service allocates nothing at startup or per message.
 //!
 //! `cargo build --release` links the firmware for the target `.cargo/config.toml` names, and
 //! `probe-rs run --chip <chip> target/thumbv7em-none-eabihf/release/{{project-name}}` flashes it
 //! and prints its log lines. `memory.x` and the clock below describe the board.
+//!
+//! The service is tested on the host, where it runs under `ruststream::testing::embedded::TestApp`
+//! and a test fails on an allocation the framework makes:
+//!
+//! ```text
+//! cargo test --target "$(rustc -vV | sed -n 's/^host: //p')"
+//! ```
 
 #![no_std]
 #![no_main]
-
-mod service;
 
 use cortex_m_rt::exception;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
 use panic_halt as _;
-use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryBus};
+use ruststream::memory::local::LocalMemoryBus;
 use systick_timer::SystickDriver;
 
-/// The board's bus: each subscription holds four messages, waiting or in its handler's hands.
-pub type Bus = LocalMemoryBroker<4>;
+use {{crate_name}}::{Bus, service};
 
 /// The bus is a `static` the board declares; the app's task receives a broker built over it.
 static BUS: LocalMemoryBus<4> = LocalMemoryBus::new();

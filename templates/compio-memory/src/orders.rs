@@ -11,7 +11,10 @@ use ruststream::{Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
 /// An order placed on the `orders` channel.
-#[derive(Debug, Deserialize)]
+///
+/// `Serialize` and `Outgoing` are what a test needs to place an order through the bus.
+#[derive(Debug, PartialEq, Serialize, Deserialize, Outgoing)]
+#[outgoing(name = "orders")]
 pub struct Order {
     pub id: u64,
     pub quantity: u32,
@@ -20,7 +23,7 @@ pub struct Order {
 /// The reply published to `confirmations` for each order.
 ///
 /// `Outgoing` is what declares it a message this service sends, and `name` is where it goes.
-#[derive(Debug, Serialize, Outgoing)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Outgoing)]
 #[outgoing(name = "confirmations")]
 pub struct Confirmation {
     pub id: u64,
