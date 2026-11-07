@@ -42,9 +42,7 @@ ruststream = { version = "0.8", default-features = false, features = ["embassy",
 - A batch mount takes `.retry_capacity::<CAP>()` (at least N, at most 1024), `.max_attempts(n)
   .dead_letter(..)` and `.out_retry(..)`; `retry_after` and dead letters work per element. A
   uniform `.error` reads every failed copy once, and a second uniform-`.error` batch waits for the
-  first. A batch handler takes `Out` slots, but not a reply and `Out` together. An app with a
-  batch handler that takes `Out` beside a retry store or several other batch routes sets
-  `#![recursion_limit = "256"]`.
+  first. A batch handler takes `Out` slots, but not a reply and `Out` together.
 - State is borrowed, `async |state: &State| ..`, and a state that holds a heap type (`Rc`) frees
   it inside the app's poll; a `static` counter does not.
 

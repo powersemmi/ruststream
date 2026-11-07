@@ -141,9 +141,6 @@ Each worker of the mount has one continuation slot, so the continuations of the 
 A batch handler may take `Out` slots and publish through them as a single-message handler does.
 A handler that both replies and takes `Out` is refused, as on a single delivery.
 
-An app with a batch handler that takes `Out` beside a retry store or several other batch routes may pass the compiler's default recursion limit.
-Such an app sets `#![recursion_limit = "256"]` in its crate root; every other combination builds on the default limit.
-
 ## Diagnostics
 
 The app selects the logger with `.logger(..)` on the `EmbeddedApp`, and nothing is reported until it does.
