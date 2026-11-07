@@ -228,6 +228,7 @@ test-no-alloc:
     fi
     cargo test --no-default-features --features embassy,memory,macros,testing --test embedded_no_alloc
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_out
+    cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_out_retry
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch_input
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch_reply

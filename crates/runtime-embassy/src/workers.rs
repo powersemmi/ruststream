@@ -241,9 +241,11 @@ impl WorkerSet for OneWorker {
     {
         // The worker's own continuation slot, beside its deliveries.
         let worker = WorkerHost::new(host);
-        worker
-            .around(route.run_sequential(signal, state, &worker, worker.parks(parked), Enc::room()))
-            .await;
+        // Pinned in this frame, so the join beside the slot's driver holds a reference to the
+        // loop and the app's future nests no deeper for the slot than for this frame.
+        let run =
+            pin!(route.run_sequential(signal, state, &worker, worker.parks(parked), Enc::room()));
+        worker.around(run).await;
     }
 }
 

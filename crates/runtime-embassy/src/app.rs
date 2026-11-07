@@ -702,6 +702,10 @@ where
     let state = state();
     control.running();
     let host = AppHost::new();
+    let signal = LoopSignal::new(control);
+    // The idle flags of the subscriptions live in this future, above the join of the loops that
+    // borrow them.
+    let parks = <Opened as RunRoutes<State>>::Parks::default();
     let startup = async {
         let outcome = hooks.after_startup.call(&state).await;
         if outcome.is_err() {
@@ -709,20 +713,24 @@ where
         }
         outcome
     };
-    let serve = async {
-        let signal = LoopSignal::new(control);
-        // The idle flags of the subscriptions live in this future, above the join of the loops
-        // that borrow them.
-        let parks = <Opened as RunRoutes<State>>::Parks::default();
-        let loops = pin!(opened.run_parked(&parks, signal, &state, &host));
-        // The loops end on the stop, or on their own once every stream has ended.
-        if let Either::Right(((), loops)) = select(loops, pin!(signal.watch())).await {
-            loops.await;
-        }
-        // Every loop has ended, so nothing detaches more work: the host finishes what it holds.
-        host.close();
+    let startup = {
+        // The loops are the deepest future of the app, so they lie pinned in this frame and the
+        // join below holds a reference to them: a reference nests no type the compiler lays out,
+        // so the app's future is as deep as its loops plus this frame. They go when the join
+        // ends, before the shutdown hooks run.
+        let mut loops = pin!(opened.run_parked(&parks, signal, &state, &host));
+        let serve = async {
+            // The loops end on the stop, or on their own once every stream has ended.
+            if let Either::Right(((), rest)) = select(loops.as_mut(), pin!(signal.watch())).await {
+                rest.await;
+            }
+            // Every loop has ended, so nothing detaches more work: the host finishes what it
+            // holds.
+            host.close();
+        };
+        let ((), (), startup) = join3(serve, host.drive(), startup).await;
+        startup
     };
-    let ((), (), startup) = join3(serve, host.drive(), startup).await;
     hooks.on_shutdown.call_all(&state, "on_shutdown").await;
     connections.close_all().await;
     hooks

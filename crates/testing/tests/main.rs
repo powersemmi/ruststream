@@ -1,10 +1,9 @@
 //! The harness's integration suite, one test binary: each module is named for the module of the
 //! crate it covers, and is gated on the runtime it drives. The compio tests keep a binary each.
-
-// A batch handler with an `Out` slot and a store of retries nests the app's futures past the default
-// recursion limit of 128 (#684 lowers the depth of the `Out` forms); the app of a service sets the
-// same attribute.
-#![recursion_limit = "256"]
+//!
+//! The suite builds at the compiler's default recursion limit: the embedded apps of its `Out`
+//! forms (a slot beside a store of retries, a batch handler with a slot) fail this build where a
+//! change nests their futures deeper than a service's app may.
 
 #[cfg(all(feature = "tokio", feature = "embassy", feature = "json"))]
 mod both_runtimes;
