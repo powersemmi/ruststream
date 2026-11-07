@@ -22,9 +22,9 @@ use tokio::task::futures::TaskLocalFuture;
 use crate::HandlerResult;
 use crate::pairing::Origin;
 use crate::testing::attribution::{RecordedOptions, RuntimePublish, Span};
-use crate::testing::hooks::{DueCall, DuePublish};
+use crate::testing::hooks::{DueCall, DuePublish, HooksDone};
 use crate::testing::on_thread::OnThread;
-use crate::testing::{Bookkept, harness_future, harness_section};
+use crate::testing::{Bookkept, HarnessFuture, harness_future, harness_section};
 use crate::{OutgoingMessage, RawMessage};
 
 use super::{Coordinator, LiveSubscription};
@@ -150,17 +150,19 @@ impl PipelinePublish {
         }))
     }
 
-    /// Records the captured message, the broker took it, and runs the hooks registered on the
-    /// destination it went to.
-    pub(crate) async fn sent(self) {
-        if let Some(captured) = self.0 {
-            let (coordinator, origin, mut publish) = captured.into_inner();
-            harness_future(async move {
+    /// Records the captured message, the broker took it, and starts the hooks registered on the
+    /// destination it went to; the future it returns waits until they are done. A future of its
+    /// own rather than an `async fn`, so a publish nested in a device service's handler does not
+    /// deepen the layout query of the app's future.
+    pub(crate) fn sent(self) -> HarnessFuture<HooksDone> {
+        let hooks = self.0.map_or(HooksDone::Nothing, |captured| {
+            harness_section(|| {
+                let (coordinator, origin, mut publish) = captured.into_inner();
                 publish.span.finished = coordinator.tick();
-                coordinator.record_sent(origin, publish).run().await;
+                coordinator.record_sent(origin, publish).run()
             })
-            .await;
-        }
+        });
+        harness_future(hooks)
     }
 }
 
