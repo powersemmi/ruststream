@@ -47,12 +47,6 @@ impl<P, const N: usize> WithPlaces<P, N> {
             places: PlaceRoom::new(),
         }
     }
-
-    /// The publisher this one wraps, without its places.
-    #[must_use]
-    pub fn into_inner(self) -> P {
-        self.publisher
-    }
 }
 
 impl<P: Publisher, const N: usize> WithPlaces<P, N> {
