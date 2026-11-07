@@ -33,7 +33,7 @@ fn app(messages: usize) -> Pending {
     common::pending_with_headers(messages, ONE_KEY, |b| b.include(consume))
 }
 
-#[library_benchmark(config = common::config(0, 134))]
+#[library_benchmark(config = common::config(0, 137))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]
