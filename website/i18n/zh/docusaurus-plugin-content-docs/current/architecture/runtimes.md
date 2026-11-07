@@ -55,7 +55,7 @@ tokio 运行器提供 `workers(n)`、`threads(n)`、信号处理、指标、Open
 compio 运行器提供按核心放置的 `workers(n)`、`threads(n)` 和 `by_key`，告诉处理器自己在哪个核心上运行的 `Core`，信号处理、优雅关闭、健康状态，以及经由 `run_main` 的 `asyncapi gen`。
 核心 0 接收所有订阅，`threads(n)` 挂载从核心 1 起独占 `n` 个核心。
 组件页面[Compio 运行时](../components/application/compio-runtime.md)展示了一个服务及其放置方式。
-embassy 运行器提供固定数量的 worker（`.pool::<N>()` 和 `.keyed::<N>()`）、容量在挂载处声明的重试存储（`.retry_capacity::<CAP>()`），以及通过 `Control` 和 `Health` 进行的关闭与健康状态。
+embassy 运行器提供固定数量的 worker（`.pool::<N>()` 和 `.keyed::<N>()`）、容量在挂载处声明的重试存储（`.retry_capacity::<CAP>()`）、存放被拒绝发布的消息的位置（`.refusal_capacity::<N>()`），以及通过 `Control` 和 `Health` 进行的关闭与健康状态。
 某个运行器没有提供的条目，在另一个运行器上使用就是编译错误。
 
 当延迟重试发现 embassy 的存储已满时，副本无处等待。

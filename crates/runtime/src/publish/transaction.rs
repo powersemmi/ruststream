@@ -382,8 +382,9 @@ pub enum TransactionPublishError<E> {
         /// The broker's own error.
         #[source]
         source: E,
-        /// The message the transaction did not take, when it gave it back. It is a
-        /// [`Serialized`](crate::Serialized) value, so another `Out` publishes it unchanged.
+        /// The message the transaction did not take, when it gave it back and, in a build
+        /// without `alloc`, a place held it. It is a [`Serialized`](crate::Serialized) value, so
+        /// another `Out` publishes it unchanged.
         message: Option<FailedMessage>,
     },
 }

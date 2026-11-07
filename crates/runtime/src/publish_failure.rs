@@ -58,8 +58,9 @@ pub(crate) type DestinationName = SentName;
 /// The message a runtime publish failed to send: the destination it was bound for, its bytes and
 /// its headers.
 ///
-/// The bytes are `None` only where the publisher took the payload buffer and did not give it back;
-/// the destination and the headers the runtime held are then all there is.
+/// The bytes are `None` where the publisher took the payload buffer and did not give it back, and,
+/// in a build without `alloc`, where every place the subscription keeps for refused messages was
+/// taken; the destination and the headers the runtime held are then all there is.
 ///
 /// A handler's `.error` continuation receives it inside a [`Failed`], beside the error. The runtime builds
 /// it only for an outcome that registered `.error`, so a failure nobody asked about copies
@@ -142,7 +143,7 @@ impl FailedMessage {
     }
 
     /// The message's bytes, as they were to leave, or `None` when the publisher consumed the
-    /// buffer and did not give it back.
+    /// buffer and did not give it back, or when no place held the message.
     #[must_use]
     pub const fn payload(&self) -> Option<&CopiedPayload> {
         self.payload.as_ref()

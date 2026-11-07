@@ -423,8 +423,10 @@ pub type PublishOutcome<'msg, Error, Form> =
 /// are never consumed by a client that fails, and a [`Lend`] payload is only borrowed. Success
 /// carries nothing extra, so a publish that works costs what it did before.
 ///
-/// In a build without `alloc` a refusal that crosses the runtime's sinks keeps the destination in
-/// a room of 64 bytes. A destination longer than that comes back without its message.
+/// In a build without `alloc` a refusal that crosses the runtime's sinks keeps the message in a
+/// place of fixed size that the publishing side keeps, with the destination in a room of 64 bytes.
+/// A destination longer than that, or a refusal that finds every place taken, comes back without
+/// its message.
 ///
 /// The error converts into this type with [`From`], so `Err(error.into())` and `?` on a
 /// client call whose error is `Self::Error` hand the broker's error over with no message.

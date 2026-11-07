@@ -55,7 +55,7 @@ The tokio runner offers `workers(n)`, `threads(n)`, the signals, metrics, OpenTe
 The compio runner offers `workers(n)`, `threads(n)` and `by_key` placed across the cores, `Core` to tell a handler where it runs, the signals, graceful shutdown, health and `asyncapi gen` through `run_main`.
 Core 0 receives every subscription, and a `threads(n)` mount holds `n` cores of its own from core 1 up.
 The component page [Compio runtime](../components/application/compio-runtime.md) shows a service and the placement.
-The embassy runner offers constant-count workers (`.pool::<N>()` and `.keyed::<N>()`), a retry store with a capacity declared at the mount site (`.retry_capacity::<CAP>()`), continuations after the settlement, and shutdown and health through `Control` and `Health`.
+The embassy runner offers constant-count workers (`.pool::<N>()` and `.keyed::<N>()`), a retry store with a capacity declared at the mount site (`.retry_capacity::<CAP>()`), places for the messages of refused publishes (`.refusal_capacity::<N>()`), continuations after the settlement, and shutdown and health through `Control` and `Health`.
 An item one runner does not offer is a compile error on the other.
 
 When a delayed retry finds the embassy store full, the copy has nowhere to wait.

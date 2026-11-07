@@ -412,14 +412,16 @@ pub enum PublishError<E> {
         /// The sink's own error.
         #[source]
         source: E,
-        /// The message the sink did not send, when its client gave it back. It is a
-        /// [`Serialized`] value, so another `Out` publishes it unchanged.
+        /// The message the sink did not send, when its client gave it back and, in a build
+        /// without `alloc`, a place held it. It is a [`Serialized`] value, so another `Out`
+        /// publishes it unchanged.
         message: Option<FailedMessage>,
     },
 }
 
 impl<E> PublishError<E> {
-    /// The message the sink did not send, when its client gave it back.
+    /// The message the sink did not send, when its client gave it back and, in a build without
+    /// `alloc`, a place held it.
     #[must_use]
     pub const fn unsent(&self) -> Option<&FailedMessage> {
         match self {
