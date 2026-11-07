@@ -440,8 +440,9 @@ mod tests {
     use core::pin::pin;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use core::task::{Context, Poll};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::task::Wake;
+    use std::vec::Vec;
 
     use embassy_futures::block_on;
     use futures::{FutureExt, Stream, StreamExt};
@@ -613,6 +614,47 @@ mod tests {
             connected.shutdown().await.unwrap();
             assert_eq!(counted.0.load(Ordering::Relaxed), 1);
             assert!(matches!(stream.poll_next(&mut cx), Poll::Ready(None)));
+        });
+    }
+
+    /// A waker that reads the subscription's ready hint the moment it is woken, as a reader on
+    /// another core may.
+    struct Probing<Hint> {
+        hint: Hint,
+        answers: Mutex<Vec<bool>>,
+    }
+
+    impl<Hint: ReadyHint + Send + Sync + 'static> Wake for Probing<Hint> {
+        fn wake(self: Arc<Self>) {
+            let answer = self.hint.may_be_ready();
+            self.answers.lock().unwrap().push(answer);
+        }
+    }
+
+    #[test]
+    fn a_woken_reader_finds_its_ready_hint_set() {
+        static BUS: Bus = LocalMemoryBus::new();
+        block_on(async {
+            let (connected, mut subscriber) = open(&BUS, "cmd").await;
+            let probing = Arc::new(Probing {
+                hint: subscriber.ready_hint(),
+                answers: Mutex::new(Vec::new()),
+            });
+            let waker = Arc::clone(&probing).into();
+            let mut cx = Context::from_waker(&waker);
+            let mut stream = pin!(subscriber.stream());
+
+            // A publish wakes the waiting reader.
+            assert!(stream.as_mut().poll_next(&mut cx).is_pending());
+            publish(&connected, "cmd", b"go", Headers::new()).await;
+            let Poll::Ready(Some(Ok(delivery))) = stream.as_mut().poll_next(&mut cx) else {
+                panic!("the publish waits in the stream");
+            };
+            // So does a requeue, once the reader waits again.
+            assert!(stream.as_mut().poll_next(&mut cx).is_pending());
+            delivery.nack(true).await.unwrap();
+
+            assert_eq!(*probing.answers.lock().unwrap(), [true, true]);
         });
     }
 

@@ -5,6 +5,7 @@
 use core::cell::RefCell;
 use core::fmt;
 use core::num::NonZeroU64;
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::task::{Context, Poll};
 
 use embassy_sync::blocking_mutex::Mutex;
@@ -228,6 +229,12 @@ pub struct LocalMemoryBus<
     // Where each subscription's deliveries lie: `MESSAGES` places per subscription, each handed to
     // its slot once as a `&'static mut`.
     places: [[ConstStaticCell<Delivery<PAYLOAD>>; MESSAGES]; SUBSCRIPTIONS],
+    // Whether each slot's stream may be ready: a delivery waits, or the stream ends. Written under
+    // the lock wherever the answer changes, and before the wake that announces it, and read
+    // without the lock, so the app's readiness probe of an idle subscription takes no critical
+    // section. A relaxed load is enough: the probe runs in the poll the wake leads to, and the
+    // wake orders the write before that poll.
+    ready: [AtomicBool; SUBSCRIPTIONS],
     #[cfg(feature = "testing")]
     harness: Harness,
 }
@@ -276,6 +283,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
             })),
             places: [const { [const { ConstStaticCell::new(Delivery::EMPTY) }; MESSAGES] };
                 SUBSCRIPTIONS],
+            ready: [const { AtomicBool::new(false) }; SUBSCRIPTIONS],
             #[cfg(feature = "testing")]
             harness: Harness::new(),
         }
@@ -286,6 +294,11 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
         access: impl FnOnce(&mut BusState<MESSAGES, PAYLOAD, SUBSCRIPTIONS>) -> Out,
     ) -> Out {
         self.state.lock(|cell| access(&mut cell.borrow_mut()))
+    }
+
+    /// Records whether the stream of the slot at `index` may be ready. Called under the lock.
+    fn mark(&self, index: usize, ready: bool) {
+        self.ready[index].store(ready, Ordering::Relaxed);
     }
 
     /// Opens the bus to publishes; the first connect hands each subscription its places.
@@ -326,13 +339,15 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
             slot.generation = slot.generation.wrapping_add(1);
             slot.standing = Standing::Open;
             slot.name = Some(name);
+            let held = Held {
+                index,
+                generation: slot.generation,
+            };
             if state.held.push(index).is_err() {
                 unreachable!("the bus lists as many held slots as it has");
             }
-            Ok(Held {
-                index,
-                generation: slot.generation,
-            })
+            self.mark(index, false);
+            Ok(held)
         })
     }
 
@@ -352,6 +367,8 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
                 slot.standing = Standing::Free;
                 slot.reader = WakerRegistration::new();
                 state.held.retain(|&index| index != held.index);
+                // A slot nobody reads answers as an ended stream does.
+                self.mark(held.index, true);
             }
         });
     }
@@ -362,9 +379,10 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
         self.with(|state| {
             state.live = false;
             let mut closed = 0;
-            for slot in &mut state.slots {
+            for (index, slot) in state.slots.iter_mut().enumerate() {
                 if slot.standing == Standing::Open {
                     slot.standing = Standing::ShutDown;
+                    self.mark(index, true);
                     slot.reader.wake();
                     closed += 1;
                 }
@@ -391,6 +409,8 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
                 return Poll::Pending;
             }
             if let Some(place) = slot.queue.pop_front() {
+                let more = !slot.queue.is_empty() || slot.standing == Standing::ShutDown;
+                self.mark(held.index, more);
                 Poll::Ready(Some(place))
             } else if slot.standing == Standing::ShutDown {
                 Poll::Ready(None)
@@ -403,17 +423,23 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
 
     /// The next delivery already waiting, without registering a waker.
     pub(super) fn try_next(&self, held: Held) -> Option<Place<PAYLOAD>> {
-        self.with(|state| state.slot(held)?.queue.pop_front())
+        self.with(|state| {
+            let slot = state.slot(held)?;
+            let place = slot.queue.pop_front()?;
+            let more = !slot.queue.is_empty() || slot.standing == Standing::ShutDown;
+            self.mark(held.index, more);
+            Some(place)
+        })
     }
 
     /// Whether the next poll of the subscription's stream could return `Ready`: a delivery waits,
-    /// or the bus shut down and the stream ends.
+    /// or the bus shut down and the stream ends. Read without the lock.
+    ///
+    /// Under the test harness the subscription may hold deliveries back while the harness is
+    /// exhausted; the answer is then `true` all the same, which costs one poll that answers
+    /// `Pending`.
     pub(super) fn may_be_ready(&self, held: Held) -> bool {
-        self.with(|state| {
-            state
-                .slot(held)
-                .is_none_or(|slot| !slot.queue.is_empty() || slot.standing == Standing::ShutDown)
-        })
+        self.ready[held.index].load(Ordering::Relaxed)
     }
 
     /// Frees the place of a delivery that left its handler's hands. The place belongs to its slot
@@ -438,6 +464,8 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
             let refused = match state.slot(held) {
                 Some(slot) if slot.standing == Standing::Open => {
                     place.deliveries = place.deliveries.saturating_add(1);
+                    // Marked before the wake, so the probe the wake leads to reads it.
+                    self.mark(held.index, true);
                     slot.enqueue(place);
                     #[cfg(feature = "testing")]
                     self.harness.enqueued();
@@ -508,6 +536,8 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
                     unreachable!("every reader had a free place a moment ago");
                 };
                 place.write(payload, headers, deliveries);
+                // Marked before the wake, so the probe the wake leads to reads it.
+                self.mark(index, true);
                 slot.enqueue(place);
                 #[cfg(feature = "testing")]
                 self.harness.enqueued();

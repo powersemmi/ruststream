@@ -727,13 +727,21 @@ mod tests {
             let mut readings = connected.subscribe("temp").await.unwrap();
             let hint = readings.ready_hint();
             assert!(!hint.may_be_ready());
-            connected
-                .publisher()
-                .publish(reading("temp", b"21"), None)
-                .await
-                .unwrap();
+            let publisher = connected.publisher();
+            for celsius in [b"21", b"22"] {
+                publisher
+                    .publish(reading("temp", celsius), None)
+                    .await
+                    .unwrap();
+            }
             assert!(hint.may_be_ready());
-            drop(waiting(&mut pin!(readings.stream())).unwrap().ack());
+            let mut stream = pin!(readings.stream());
+            waiting(&mut stream).unwrap().ack().await.unwrap();
+            assert!(hint.may_be_ready(), "a second delivery waits");
+            waiting(&mut stream).unwrap().ack().await.unwrap();
+            assert!(!hint.may_be_ready(), "the queue is drained");
+            connected.shutdown().await.unwrap();
+            assert!(hint.may_be_ready(), "the stream ends");
         });
     }
 
