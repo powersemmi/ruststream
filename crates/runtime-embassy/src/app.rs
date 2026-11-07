@@ -10,7 +10,7 @@ use alloc::sync::Arc;
 use core::error::Error as StdError;
 use core::pin::pin;
 
-use futures::future::{Either, join3, select};
+use futures::future::{Either, MaybeDone, join3, select};
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::InProcessRun;
 use ruststream_runtime::{
@@ -702,6 +702,17 @@ where
     let state = state();
     control.running();
     let host = AppHost::new();
+    let signal = LoopSignal::new(control);
+    // The idle flags of the subscriptions live in this future, above the join of the loops that
+    // borrow them.
+    let parks = <Opened as RunRoutes<State>>::Parks::default();
+    // The loops are the deepest future of the app, so they are pinned in this frame and the join
+    // below holds a reference to them: a reference nests no type the compiler lays out, and the
+    // app's future stays as deep as its loops plus this frame. Each loop is dropped where it
+    // ends, as it was inside the join.
+    let mut loops = pin!(MaybeDone::Future(
+        opened.run_parked(&parks, signal, &state, &host)
+    ));
     let startup = async {
         let outcome = hooks.after_startup.call(&state).await;
         if outcome.is_err() {
@@ -710,14 +721,9 @@ where
         outcome
     };
     let serve = async {
-        let signal = LoopSignal::new(control);
-        // The idle flags of the subscriptions live in this future, above the join of the loops
-        // that borrow them.
-        let parks = <Opened as RunRoutes<State>>::Parks::default();
-        let loops = pin!(opened.run_parked(&parks, signal, &state, &host));
         // The loops end on the stop, or on their own once every stream has ended.
-        if let Either::Right(((), loops)) = select(loops, pin!(signal.watch())).await {
-            loops.await;
+        if let Either::Right(((), rest)) = select(loops.as_mut(), pin!(signal.watch())).await {
+            rest.await;
         }
         // Every loop has ended, so nothing detaches more work: the host finishes what it holds.
         host.close();

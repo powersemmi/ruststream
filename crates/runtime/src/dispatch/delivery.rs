@@ -276,6 +276,24 @@ impl<C, Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>> Lent<C>
     }
 }
 
+// The loop owns its publish context: a one-task runner hands the loop's future straight to its
+// join, with no frame of its own around the loop to hold the context the loop would borrow.
+impl<C, Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>> Lent<C>
+    for (Delivery<C>, &Host)
+{
+    type Host = Host;
+
+    #[inline]
+    fn delivery(&self) -> &Delivery<C> {
+        &self.0
+    }
+
+    #[inline]
+    fn host(&self) -> &Host {
+        self.1
+    }
+}
+
 #[cfg(test)]
 #[cfg(ruststream_alloc)]
 mod tests {
