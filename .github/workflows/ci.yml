@@ -635,7 +635,7 @@ jobs:
       # any of the graphs; the tests then run under an allocator that fails the framework's own
       # allocations. The apps of the `Out` forms and of the batch routes set no
       # `recursion_limit`, so an app nested past the compiler's default limit fails this leg. The
-      # recipe `test-no-alloc` of the justfile runs these commands among its own.
+      # recipe `test-no-alloc` of the justfile runs the same commands.
       - name: cargo test (embassy without alloc)
         env:
           CARGO_BUILD_WARNINGS: deny
@@ -664,9 +664,25 @@ jobs:
           cargo test --locked --no-default-features \
             --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch
           cargo test --locked --no-default-features \
+            --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch_input
+          cargo test --locked --no-default-features \
+            --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch_reply
+          cargo test --locked --no-default-features \
             --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch_out
           cargo test --locked --no-default-features --features embassy,memory,macros,testing,log \
             --test embedded_diagnostics
+          cargo test --locked --no-default-features \
+            --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_name
+          # The device service the embedded runtime page teaches, under the failing allocator.
+          cargo test --locked --no-default-features \
+            --features embassy,memory,macros,testing,postcard --test doc_device
+          cargo test --locked --no-default-features \
+            --features embassy,memory,macros,testing,postcard --test doc_device_manual
+          # The device build's own futures, without the harness that wraps them in the test above.
+          cargo test --locked --no-default-features --features embassy,memory,macros \
+            --test embedded_future_size
+          RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --locked --no-default-features \
+            --features embassy,memory,macros,testing,postcard --test ui_no_alloc
           cargo test --locked --manifest-path checks/noalloc/memory/Cargo.toml \
             --features testing
           cargo test --locked --manifest-path checks/noalloc/runtime/Cargo.toml --lib
