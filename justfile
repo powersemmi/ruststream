@@ -44,7 +44,7 @@ default: check
 check:
     cargo fmt --all -- --check
     # The check crates are workspaces of their own, which `--all` above does not reach.
-    for manifest in checks/{firmware-noalloc,no-std-probe,noalloc}/Cargo.toml; do \
+    for manifest in checks/{embedded-broker,firmware-noalloc,no-std-probe,noalloc}/Cargo.toml; do \
         cargo fmt --manifest-path "$manifest" --all -- --check || exit 1; \
     done
     # The site's excerpts: every `reference=` names a file and a region that exist, and the fences
@@ -166,6 +166,11 @@ check:
     # The harness of the embedded runtime, with its tests and doc examples on the facade's
     # embassy side.
     cargo clippy -p ruststream-testing --all-targets --features embassy,json -- -D warnings
+    # A broker crate on the embedded runner, whose types are never `Send`, with its contract
+    # checks: the facade's `conformance` feature without tokio, in both variants.
+    cargo clippy --manifest-path checks/embedded-broker/Cargo.toml --all-targets -- -D warnings
+    cargo clippy --manifest-path checks/embedded-broker/Cargo.toml --all-targets \
+        --features ruststream/alloc -- -D warnings
     # The embassy set keeps tokio out of the facade's dependency graph.
     tree="$(cargo tree -p ruststream --no-default-features --features {{ embassy_set }} \
         -e normal -i tokio)"; \
@@ -204,13 +209,14 @@ check:
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-runtime-embassy --test ui
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-cli --test ui
 
-# The embassy runtime without a heap: the facade of a device service with no `alloc`, and the
-# crates under it, each as its own invocation so a workspace neighbour cannot unify `alloc` on.
+# The embassy runtime without a heap: the facade of a device service with no `alloc`, the facade
+# a device broker's contract checks name, and the crates under them, each as its own invocation
+# so a workspace neighbour cannot unify `alloc` on.
 # The tree check comes first and fails the leg if the framework's `alloc` is in any graph; the
 # tests run under an allocator that fails the framework's own allocations.
 test-no-alloc:
     for graph in "-p ruststream --features embassy,memory,macros,testing" \
-        "-p ruststream-runtime-embassy"; do \
+        "-p ruststream --features embassy,conformance" "-p ruststream-runtime-embassy"; do \
         tree="$(cargo tree $graph --no-default-features -e features,normal,build -i ruststream-core -i ruststream-runtime)"; \
         if printf '%s\n' "$tree" | grep -E 'ruststream-(core|runtime) feature "alloc"'; then \
             echo "error: the framework's alloc feature is on in: $graph" >&2; exit 1; \
@@ -258,6 +264,10 @@ test:
     # The Tokio runner off: the contract traits ask nothing of a broker's types, and a broker that
     # keeps its state in `Rc` runs a body written once for every broker.
     cargo test --no-default-features --features memory,testing,json,embassy --test local_family
+    # The local conformance suites against such a broker, through the facade's `conformance`
+    # feature beside the embedded runner: without a heap and with one.
+    cargo test --manifest-path checks/embedded-broker/Cargo.toml
+    cargo test --manifest-path checks/embedded-broker/Cargo.toml --features ruststream/alloc
     # The reduced-feature legs CI runs, in CI's order. A module compiled only with a feature off
     # is invisible to the workspace run above, so an API a refactor removed can survive there
     # until CI says otherwise: `codec_free_lanes` and `ui_codec_free` build only where no codec
@@ -375,7 +385,7 @@ bench *ARGS:
 fmt:
     cargo fmt --all
     # The check crates are workspaces of their own, which `--all` above does not reach.
-    for manifest in checks/{firmware-noalloc,no-std-probe,noalloc}/Cargo.toml; do \
+    for manifest in checks/{embedded-broker,firmware-noalloc,no-std-probe,noalloc}/Cargo.toml; do \
         cargo fmt --manifest-path "$manifest" --all || exit 1; \
     done
 

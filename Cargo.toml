@@ -113,7 +113,8 @@ ruststream-asyncapi = { version = "=0.8.0-rc.2", path = "crates/asyncapi" }
 ruststream-observability = { version = "=0.8.0-rc.2", path = "crates/observability" }
 ruststream-testing = { version = "=0.8.0-rc.2", path = "crates/testing" }
 ruststream-cli = { version = "=0.8.0-rc.2", path = "crates/cli", default-features = false }
-ruststream-conformance = { version = "=0.8.0-rc.2", path = "crates/conformance" }
+# Without its default `alloc`: the facade's `tokio` feature adds the suites of the `Send` family.
+ruststream-conformance = { version = "=0.8.0-rc.2", path = "crates/conformance", default-features = false }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases
 # that were never built against.

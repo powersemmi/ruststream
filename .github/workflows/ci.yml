@@ -160,7 +160,7 @@ jobs:
         # The check crates are workspaces of their own, which `--all` does not reach.
         run: |
           cargo fmt --all -- --check
-          for manifest in checks/{firmware-noalloc,no-std-probe,noalloc}/Cargo.toml; do
+          for manifest in checks/{embedded-broker,firmware-noalloc,no-std-probe,noalloc}/Cargo.toml; do
             cargo fmt --manifest-path "$manifest" --all -- --check
           done
 
@@ -193,6 +193,12 @@ jobs:
             --features embassy -- -D warnings
           cargo clippy --locked -p ruststream-testing --all-targets --features embassy,json \
             -- -D warnings
+          # A broker crate on the embedded runner whose types are never `Send`, with its contract
+          # checks: the facade's `conformance` feature without tokio, in both variants.
+          cargo clippy --locked --manifest-path checks/embedded-broker/Cargo.toml --all-targets \
+            -- -D warnings
+          cargo clippy --locked --manifest-path checks/embedded-broker/Cargo.toml --all-targets \
+            --features ruststream/alloc -- -D warnings
           tree="$(cargo tree --locked -p ruststream --no-default-features \
             --features "$EMBASSY_FEATURES" -e normal -i tokio)"
           if [ -n "$tree" ]; then
@@ -617,6 +623,12 @@ jobs:
           cargo test --locked --no-default-features --features testing,memory,json,tokio --test examples
           cargo test --locked --no-default-features --features testing,memory,json,tokio \
             --example manual_app_running
+          # The local conformance suites against a broker whose types are never `Send`, through
+          # the facade's `conformance` feature beside the embedded runner: without a heap and
+          # with one.
+          cargo test --locked --manifest-path checks/embedded-broker/Cargo.toml
+          cargo test --locked --manifest-path checks/embedded-broker/Cargo.toml \
+            --features ruststream/alloc
 
       # The embassy runtime without a heap, one invocation per graph so a workspace neighbour
       # cannot unify the framework's `alloc` on. The tree check fails the leg if `alloc` is in
@@ -627,7 +639,7 @@ jobs:
           CARGO_BUILD_WARNINGS: deny
         run: |
           for graph in "-p ruststream --features embassy,memory,macros,testing" \
-              "-p ruststream-runtime-embassy"; do
+              "-p ruststream --features embassy,conformance" "-p ruststream-runtime-embassy"; do
             tree="$(cargo tree --locked $graph --no-default-features -e features,normal,build \
               -i ruststream-core -i ruststream-runtime)"
             if printf '%s\n' "$tree" | grep -E 'ruststream-(core|runtime) feature "alloc"'; then
