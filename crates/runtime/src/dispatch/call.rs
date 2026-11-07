@@ -90,6 +90,7 @@ impl<Call: MakeFuture> Future for CallOnPoll<Call> {
 #[cfg(test)]
 mod tests {
     use core::cell::Cell;
+    use core::future::Ready;
     use core::panic::AssertUnwindSafe;
     use core::pin::pin;
     use core::task::{Context, Poll, Waker};
@@ -143,7 +144,7 @@ mod tests {
 
     #[test]
     fn a_panic_while_the_call_builds_its_future_is_caught_by_the_poll_around_it() {
-        let call = pin!(CallOnPoll::new(|| -> core::future::Ready<u32> {
+        let call = pin!(CallOnPoll::new(|| -> Ready<u32> {
             panic!("the call refused to build its future")
         }));
         let mut caught = pin!(AssertUnwindSafe(call).catch_unwind());
