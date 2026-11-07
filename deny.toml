@@ -10,6 +10,13 @@ exclude-dev = true
 
 [advisories]
 yanked = "deny"
+ignore = [
+    # pin-utils is unmaintained. It reaches the graph only through loom, the model checker that
+    # compio-executor, compio-send-wrapper and synchrony name under `cfg(loom)`, a cfg set only
+    # for their own loom runs. Drop this entry once pin-utils leaves the lock file; cargo deny
+    # warns when an ignored advisory matches nothing.
+    { id = "RUSTSEC-2026-0441", reason = "via loom under cfg(loom) in compio-executor; never built" },
+]
 
 [licenses]
 # Apache-2.0/MIT-compatible permissive licenses only.
