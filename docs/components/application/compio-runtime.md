@@ -88,7 +88,7 @@ Retries, batch deadlines and `retry_after` ride the same clock.
 `SIGINT` and `SIGTERM` end the run.
 The app stops receiving, lets the handlers in flight finish, runs the shutdown hooks and shuts every broker down once the workers of every core are gone.
 [`shutdown_timeout`](api:ruststream::runtime::compio::RustStream::shutdown_timeout) bounds the wait for handlers still running.
-A core that fails or panics stops the others, and `run` returns the failure of the lowest core. A worker that panics outside its handler stops the service the way a handler that panics does.
+A core that fails or panics stops the others, and `run` returns the failure of the lowest core. A dispatch loop or a worker that panics outside its handler stops the service the way a handler that panics does, and `run` returns an error that names the subscription.
 
 [`RustStream::run_until`](api:ruststream::runtime::compio::RustStream::run_until) ends the run on a future of the caller's instead of a signal.
 [`RustStream::start`](api:ruststream::runtime::compio::RustStream::start) starts the app on the current runtime and returns a [`RunningApp`](api:ruststream::runtime::compio::RunningApp), whose `health()` is a [`HealthProbe`](api:ruststream::runtime::compio::HealthProbe) a sibling task reads.

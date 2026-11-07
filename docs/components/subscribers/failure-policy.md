@@ -14,6 +14,8 @@ What a subscriber does when its handler panics or a payload cannot decode, set p
 A subscriber carries two policies: one for a handler panic, one for a delivery that cannot decode.
 A panic fails fast by default, and a test reads it with [`panicked`](../application/testing/subscriber-assertions/panicked.md): a loud error names the subscription, the service shuts down gracefully, and `run` returns an error, so an orchestrator restarts it.
 Fail fast takes effect under an unwinding panic profile; with `panic = "abort"` the process is already gone.
+The panic policy covers the handler.
+A panic outside it, in the subscription's dispatch loop, a worker or one of its threads, fails the service whatever the policy: the subscription can no longer consume the way it was declared.
 A decode failure drops the delivery by default: one malformed payload does not stop the consumer, and [`assert_last_failed_to_decode`](../application/testing/subscriber-assertions/assert-last-failed-to-decode.md) checks it in a test.
 A decode failure is a payload the codec rejects, a [header contract](./typed-headers/index.md) that does not parse, a missing carried value, or a delivery the broker reports unreadable.
 Each policy is a [`FailurePolicy`](api:ruststream::runtime::FailurePolicy): `fail_fast`, `drop`, `retry`, `retry_after(delay)` or `skip`.

@@ -17,7 +17,7 @@ use ruststream_runtime_compio::{
     Cores, HealthProbe, HealthState, RustStream, RustStreamError, SubscriptionEnd, time, yield_now,
 };
 
-use super::support::{Log, On, on_runtime, wire};
+use super::support::{Clinging, Log, On, on_runtime, wire};
 
 /// When the signal that ends a healthy run arrives.
 const SIGNAL_AFTER: Duration = Duration::from_secs(3);
@@ -261,21 +261,24 @@ fn a_subscription_that_panics_outside_its_handler_fails_the_run_fast() {
         "the service ran on after its subscription died"
     );
     match error {
-        RustStreamError::Join(reason) => {
-            assert!(reason.contains("the client library broke"), "got: {reason}");
+        RustStreamError::Dispatch(reason) => {
+            assert_eq!(reason, "orders: its dispatch loop panicked");
         }
-        other => panic!("expected the loop's panic, got {other:?}"),
+        other => panic!("expected the dispatch failure, got {other:?}"),
     }
 }
 
+/// The failure that stopped the service is what `run` returns, even when a broker then refuses to
+/// close.
 #[test]
-fn a_subscription_that_panics_without_a_message_is_still_named_as_a_failed_task() {
+fn a_loop_that_panics_is_the_answer_of_the_run_when_a_broker_then_refuses_to_close() {
     let log = Log::default();
     let (orders, _line) = wire("orders", &log);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .with_broker(LocalMemoryBroker::<8>::new(), |b| {
-            b.include(subscriber(orders.exploding_without_a_word(), On(accept)).build())
-        });
+            b.include(subscriber(orders.exploding(), On(accept)).build())
+        })
+        .register_broker(Clinging);
 
     let cores = Cores::new(NonZeroUsize::MIN).without_signals();
     let error = app
@@ -283,7 +286,45 @@ fn a_subscription_that_panics_without_a_message_is_still_named_as_a_failed_task(
         .expect_err("a panic in the subscription's loop fails the service");
 
     match error {
-        RustStreamError::Join(reason) => assert_eq!(reason, "the task panicked"),
-        other => panic!("expected the loop's panic, got {other:?}"),
+        RustStreamError::Dispatch(reason) => {
+            assert_eq!(reason, "orders: its dispatch loop panicked");
+        }
+        other => panic!("expected the dispatch failure, got {other:?}"),
     }
+}
+
+/// The probe and `shutdown` name the subscription the same way, whatever the panic carried.
+#[test]
+fn a_subscription_that_panics_outside_its_handler_flips_the_probe_while_it_runs() {
+    let log = Log::default();
+    let (orders, _line) = wire("orders", &log);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(LocalMemoryBroker::<8>::new(), |b| {
+            b.include(subscriber(orders.exploding_without_a_word(), On(accept)).build())
+        });
+
+    on_runtime(async {
+        let running = app.start().await.expect("the service starts");
+        let mut health = running.health();
+        // Nothing here stops the service: the panic does.
+        running.stopping().await;
+
+        // The watcher flips the probe right after the signal; the wait covers the hop.
+        let reason = loop {
+            if let HealthState::Failed { reason } = health.state() {
+                break reason;
+            }
+            health.changed().await;
+        };
+        assert_eq!(reason, "orders: its dispatch loop panicked");
+
+        let error = running
+            .shutdown()
+            .await
+            .expect_err("the teardown surfaces the failure");
+        match error {
+            RustStreamError::Dispatch(failure) => assert_eq!(failure, reason),
+            other => panic!("expected the dispatch failure, got {other:?}"),
+        }
+    });
 }

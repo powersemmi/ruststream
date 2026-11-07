@@ -21,6 +21,7 @@ The count is a `NonZeroUsize`, and [`nonzero!`](api:ruststream::nonzero) writes 
 A router chain takes a [`Workers`](api:ruststream::runtime::Workers) value through [`Router::workers`](api:ruststream::runtime::Router::workers).
 Handing a delivery to a worker allocates nothing.
 A batch handler gets a pool of batches, each batch in a task of its own.
+A worker that panics outside its handler fails the service, and `run` returns an error that names the subscription.
 On shutdown, the deliveries in flight finish within the app's [`shutdown_timeout`](api:ruststream::runtime::RustStream::shutdown_timeout).
 
 ## Example

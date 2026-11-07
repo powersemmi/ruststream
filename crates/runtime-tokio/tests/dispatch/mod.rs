@@ -4,4 +4,5 @@ mod batch_pool;
 mod batch_slots;
 mod threads;
 mod threads_placement;
+mod watch;
 mod workers;

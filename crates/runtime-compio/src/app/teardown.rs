@@ -126,9 +126,11 @@ impl Teardown {
     ///
     /// # Errors
     ///
-    /// Returns [`RustStreamError`] if a dispatch task panicked, a broker failed to shut down, or
-    /// the service had already torn itself down on a fail-fast failure
-    /// ([`RustStreamError::Dispatch`]).
+    /// Returns [`RustStreamError::Dispatch`] if the service had already torn itself down on a
+    /// fail-fast failure, a panic of a dispatch loop or a worker outside the handler included:
+    /// that failure is the answer even when a broker then fails to shut down, which is logged.
+    /// Otherwise a task of core 0 that panicked is [`RustStreamError::Join`], and a broker that
+    /// failed to shut down is [`RustStreamError::Shutdown`].
     ///
     /// # Cancel safety
     ///
@@ -170,13 +172,16 @@ impl Teardown {
         run_hooks(&mut hooks.after_shutdown, "after_shutdown").await;
         info!(target: "ruststream::lifecycle", "service stopped");
 
+        // A fail-fast failure tore the service down: it is the answer, so an orchestrator
+        // restarts the service and the operator sees why it stopped, not a silent stop. What the
+        // teardown met on the way is no news next to it: a loop that panicked recorded that
+        // failure under its subscription's name, so its join error is the same panic without
+        // the name, and a broker that refused to close is logged where it refused.
+        if let Some(reason) = stop.failure() {
+            return Err(RustStreamError::Dispatch(reason));
+        }
         drained?;
-        closed?;
-
-        // A fail-fast failure tore the service down: surface it so an orchestrator restarts the
-        // service and the operator sees a non-zero exit, not a silent stop.
-        stop.failure()
-            .map_or(Ok(()), |reason| Err(RustStreamError::Dispatch(reason)))
+        closed
     }
 }
 

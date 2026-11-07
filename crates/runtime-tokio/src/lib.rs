@@ -24,8 +24,6 @@ mod dispatch;
 mod follow;
 mod shutdown;
 mod sink;
-#[cfg(test)]
-mod testkit;
 pub mod time;
 
 #[cfg(feature = "testing")]
