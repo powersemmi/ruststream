@@ -8,7 +8,7 @@ use std::task::Poll;
 
 use bytes::BytesMut;
 use ruststream_core::diag::error;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinHandle;
 
 use ruststream_core::{BatchSlot, BatchStream};
 use ruststream_runtime::DeliverySlot as Slot;
@@ -23,9 +23,11 @@ use crate::shutdown::Shutdown;
 use crate::{BatchSubscriber, IncomingMessage, Subscriber};
 pub(crate) use threads::StartThreadError;
 use threads::Threads;
+use watch::{Part, Watch};
 
 /// Spawns a task that drives `subscriber` through `handler` until `shutdown` is triggered or the
-/// stream terminates: [`run_sequential`] on the app's runtime, counted as consuming while it runs.
+/// stream terminates: [`run_sequential`] on the app's runtime, counted as consuming while it runs
+/// and failing the service if it panics outside the handler.
 pub(crate) fn spawn_dispatch<S, H, C, St, Retry>(
     subscriber: S,
     handler: Arc<H>,
@@ -42,7 +44,10 @@ where
     C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
-    let consuming = shutdown.consuming();
+    let guards = (
+        Watch::new(&shutdown, &name, Part::Loop),
+        shutdown.consuming(),
+    );
     spawn_followed(run_sequential(
         subscriber,
         handler,
@@ -51,7 +56,7 @@ where
         state,
         hosted,
         failure,
-        consuming,
+        guards,
         HeadersOnDemand,
         (),
         BytesMut::new(),
@@ -135,6 +140,7 @@ where
         &shared.name,
         workers.count().get(),
         workers.by_key(),
+        &shutdown,
         |own| {
             let shared = Arc::clone(&shared);
             let delivery = shared.hosted.delivery.on_thread();
@@ -158,9 +164,12 @@ where
             }
         },
     )?;
-    let consuming = shutdown.consuming();
+    let guards = (
+        Watch::new(&shutdown, &shared.name, Part::Loop),
+        shutdown.consuming(),
+    );
     Ok(spawn_followed(async move {
-        let _consuming = consuming;
+        let _guards = guards;
         threads
             .feed(
                 subscriber.stream(),
@@ -170,17 +179,6 @@ where
             )
             .await;
     }))
-}
-
-/// What a finished worker handed back, or nothing and a log line where it failed.
-pub(super) fn log_worker_exit<Done>(joined: Result<Done, JoinError>) -> Option<Done> {
-    match joined {
-        Ok(done) => Some(done),
-        Err(err) => {
-            error!(target: "ruststream::dispatch", error = %err, "worker task failed");
-            None
-        }
-    }
 }
 
 /// Spawns a task that drives `subscriber` through a batch `handler`, one
@@ -224,9 +222,12 @@ where
         hosted,
         failure,
     };
-    let consuming = shutdown.consuming();
+    let guards = (
+        Watch::new(&shutdown, &shared.name, Part::Loop),
+        shutdown.consuming(),
+    );
     Ok(spawn_followed(async move {
-        let _consuming = consuming;
+        let _guards = guards;
         if workers.is_sequential() {
             batch_loop(subscriber, &shared, &shutdown, batch_size).await;
         } else {
@@ -348,7 +349,7 @@ where
     // one being filled.
     let most = count * (RING + 1) + 1;
     let stock = slots::Stock::<S::Batch>::new(most);
-    let threads = Threads::start(&shared.name, count, false, |own| {
+    let threads = Threads::start(&shared.name, count, false, &shutdown, |own| {
         let shared = Arc::clone(&shared);
         let stock = Arc::clone(&stock);
         let delivery = shared.hosted.delivery.on_thread();
@@ -373,9 +374,12 @@ where
             stock.give(slot);
         }
     })?;
-    let consuming = shutdown.consuming();
+    let guards = (
+        Watch::new(&shutdown, &shared.name, Part::Loop),
+        shutdown.consuming(),
+    );
     Ok(spawn_followed(async move {
-        let _consuming = consuming;
+        let _guards = guards;
         threads
             .feed(
                 slots::Filled::new(subscriber.batches(batch_size), stock, batch_size, most),
@@ -395,3 +399,4 @@ mod slots;
 #[cfg(test)]
 mod tests;
 mod threads;
+mod watch;

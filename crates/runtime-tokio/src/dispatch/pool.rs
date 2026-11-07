@@ -21,8 +21,8 @@ use tokio::task::JoinHandle;
 use crate::follow::spawn_followed;
 
 use super::{
-    DispatchFailure, Handler, HeadersOnDemand, Hosted, Shutdown, Slot, Turn, Workers, dispatch,
-    key_index, log_worker_exit,
+    DispatchFailure, Handler, HeadersOnDemand, Hosted, Part, Shutdown, Slot, Turn, Watch, Workers,
+    dispatch, key_index,
 };
 use crate::{BuildContext, IncomingMessage, RetryCopies, Settle, Subscriber};
 
@@ -62,11 +62,12 @@ impl Drop for Farewell {
 pub(super) struct Crew(pub(super) Vec<JoinHandle<()>>);
 
 impl Crew {
-    /// Waits for every worker to end, logging the ones that failed. The handles stay in the crew
-    /// until it drops, so a loop aborted mid-join still aborts the workers it had not joined.
+    /// Waits for every worker to end. A worker that panicked failed the service as it went, so
+    /// its end says nothing more. The handles stay in the crew until it drops, so a loop aborted
+    /// mid-join still aborts the workers it had not joined.
     pub(super) async fn join(&mut self) {
         for worker in &mut self.0 {
-            log_worker_exit(worker.await);
+            let _ = worker.await;
         }
     }
 }
@@ -79,11 +80,13 @@ impl Drop for Crew {
     }
 }
 
-/// One worker: a sequential loop over the deliveries handed to it.
+/// One worker: a sequential loop over the deliveries handed to it, failing the service through
+/// its `watch` if it panics outside the handler.
 async fn work<Message, Body, Cx, State, Retry>(
     shared: Arc<Shared<Body, State, Cx, Retry>>,
     mut inbox: mpsc::Receiver<Message>,
     idle: Option<Idle>,
+    _watch: Watch,
 ) where
     Retry: RetryCopies<Cx>,
     Message: Settle,
@@ -128,10 +131,12 @@ struct Started<Message> {
     crew: Crew,
 }
 
-/// Starts `workers.count()` workers over `shared`, reporting when free unless they are keyed workers.
+/// Starts `workers.count()` workers over `shared`, reporting when free unless they are keyed
+/// workers, each failing the service `shutdown` stops if it panics outside the handler.
 fn start<Message, Body, Cx, State, Retry>(
     shared: &Arc<Shared<Body, State, Cx, Retry>>,
     workers: Workers,
+    shutdown: &Shutdown,
 ) -> Started<Message>
 where
     Retry: RetryCopies<Cx>,
@@ -152,8 +157,10 @@ where
             index,
             loop_side: free_side.clone(),
         });
+        let watch = Watch::new(shutdown, &shared.name, Part::Worker);
         let shared = Arc::clone(shared);
-        crew.0.push(spawn_followed(work(shared, inbox, idle)));
+        crew.0
+            .push(spawn_followed(work(shared, inbox, idle, watch)));
         inboxes.push(inbox_side);
         if !workers.by_key() {
             // Room for every worker was made above, and nothing has taken any yet.
@@ -194,9 +201,12 @@ where
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
     State: Send + Sync + 'static,
 {
-    let consuming = shutdown.consuming();
+    let guards = (
+        Watch::new(&shutdown, &name, Part::Loop),
+        shutdown.consuming(),
+    );
     spawn_followed(async move {
-        let _consuming = consuming;
+        let _guards = guards;
         let count = workers.count().get();
         let keyed = workers.by_key();
         let shared = Arc::new(Shared {
@@ -210,7 +220,7 @@ where
             inboxes,
             mut free,
             mut crew,
-        } = start(&shared, workers);
+        } = start(&shared, workers, &shutdown);
         let name = &shared.name;
         let mut stream = pin!(subscriber.stream());
         let mut cancelled = pin!(shutdown.cancelled());

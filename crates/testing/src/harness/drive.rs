@@ -329,8 +329,9 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// # Errors
     ///
-    /// Returns [`RustStreamError::Dispatch`] when a handler panic (or a fail-fast decode failure)
-    /// triggered shutdown.
+    /// Returns [`RustStreamError::Dispatch`] when a handler panic, a panic outside the handler (in
+    /// a subscription's dispatch loop, a worker or a dedicated thread) or a fail-fast decode
+    /// failure triggered shutdown.
     pub fn run_result(&self) -> Result<(), RustStreamError> {
         self.shutdown
             .peek_failure()

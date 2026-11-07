@@ -157,12 +157,14 @@ pub enum RustStreamError {
     /// shutdown.
     #[error("broker shutdown failed: {0}")]
     Shutdown(#[source] BoxError),
-    /// A dispatch task panicked. The string says what the task reported.
+    /// A task of core 0 panicked with no fail-fast failure on record for the service. The string
+    /// says what the task reported.
     #[error("dispatch task failed: {0}")]
     Join(String),
-    /// A subscriber hit a fail-fast failure (a handler panic, or a decode failure under
-    /// `on_failure(decode = fail_fast)`) and tore the service down. The string names the
-    /// subscription and the reason.
+    /// A subscriber hit a fail-fast failure and tore the service down: a handler panic, a panic
+    /// outside the handler (in the subscription's dispatch loop or one of its workers), or a
+    /// decode failure under `on_failure(decode = fail_fast)`. The string names the subscription
+    /// and the reason.
     #[error("dispatch failed: {0}")]
     Dispatch(String),
     /// The `threads` mounts need more cores than the service has besides core 0.

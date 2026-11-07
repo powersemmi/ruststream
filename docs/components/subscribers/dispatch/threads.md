@@ -23,6 +23,7 @@ So does everything the delivery leaves behind: a timer, a plain `tokio::spawn`, 
 `threads(n, by_key)` sends each key to a fixed thread, so a key keeps its order, as with [workers](./workers.md).
 At the mount site the setting is [`.threads(n)`](api:ruststream::runtime::SubscriberSettings::threads) or [`.threads_by_key(n)`](api:ruststream::runtime::SubscriberSettings::threads_by_key); it fills the position `workers` fills, so a subscription takes one of them.
 A delivery allocates nothing on its way to a thread.
+A thread that panics outside its handler fails the service, and `run` returns an error that names the subscription.
 On shutdown the loop stops reading, the threads finish their rings and wait for what the deliveries left behind, all within the app's [`shutdown_timeout`](api:ruststream::runtime::RustStream::shutdown_timeout).
 A plain `tokio::spawn` is not waited for and ends with its thread; work that must outlive the subscription goes through `MainRuntime::spawn`.
 The threads pay from about ten microseconds of computation per delivery; on lighter handlers they cost more CPU than they save.

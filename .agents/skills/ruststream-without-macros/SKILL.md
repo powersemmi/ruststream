@@ -133,11 +133,12 @@ policies (`.out_reply(..)`, `.out(Marker, ..)`) follow `include` exactly as on t
 `Router::handle` and `BrokerScope::handle` are runtime machinery that skips the scope codec and the
 settings; a service mounts through `include`.
 
-### Keep anything that can panic inside the future
+### `handle` runs under the panic policy
 
-The dispatcher calls `handle(..)` and only then guards the returned future. A panic before the
-future exists escapes the `on_failure(panic = ..)` policy and kills the task. A body that awaits
-is written `async fn handle`; one with nothing to await returns `ready(..)`.
+The dispatcher guards the whole call: a panic in `handle(..)`, before or inside the future it
+returns, goes to the `on_failure(panic = ..)` policy. A panic outside the handler, in the
+subscription's loop, a worker or a thread, fails the service. A body that awaits is written
+`async fn handle`; one with nothing to await returns `ready(..)`.
 
 ### `main` is yours
 

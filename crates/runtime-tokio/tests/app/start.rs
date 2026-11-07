@@ -371,8 +371,8 @@ async fn never_delivered(_order: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-/// A dispatch loop that panicked outside a handler fails the shutdown, with the shutdown timeout
-/// the service sets as without one.
+/// A dispatch loop that panicked outside a handler fails the shutdown, naming its subscription,
+/// with the shutdown timeout the service sets as without one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_panicked_subscription_stream_fails_shutdown_under_a_timeout() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
@@ -388,7 +388,12 @@ async fn a_panicked_subscription_stream_fails_shutdown_under_a_timeout() {
         .shutdown()
         .await
         .expect_err("a panicked loop must fail the shutdown");
-    assert!(matches!(err, RustStreamError::Join(_)), "got: {err:?}");
+    match err {
+        RustStreamError::Dispatch(reason) => {
+            assert_eq!(reason, "started.panicking: its dispatch loop panicked");
+        }
+        other => panic!("expected the dispatch failure, got {other:?}"),
+    }
 }
 
 /// `#[ruststream::app(worker_threads = n)]` builds: the generated `main` runs the service on a

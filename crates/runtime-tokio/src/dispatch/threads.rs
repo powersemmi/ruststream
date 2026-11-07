@@ -4,13 +4,14 @@
 //!
 //! This half starts the threads, runs each thread's work on its runtime, and joins them; the
 //! subscription's loop stays on the app's runtime and reads the stream through the rings' feed.
+//! A thread whose work panics outside the handler fails the service.
 
 use std::fmt::Display;
 use std::io;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::thread;
 
 use futures::Stream;
-use ruststream_core::diag::error;
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
@@ -19,7 +20,7 @@ use tokio_util::task::TaskTracker;
 
 use ruststream_runtime::{Feed, open_rings};
 
-use super::Shutdown;
+use super::{Part, Shutdown};
 
 /// A thread of a `threads(n)` subscription could not be started: the subscription does not open.
 #[derive(Debug, Error)]
@@ -40,10 +41,9 @@ struct Member {
 
 impl Member {
     async fn join(&mut self) {
-        // The abort side stays held until the thread reports, so joining cancels nothing.
-        if (&mut self.done).await.is_err() {
-            error!(target: "ruststream::dispatch", "a dedicated thread ended abnormally");
-        }
+        // The abort side stays held until the thread reports, so joining cancels nothing. A thread
+        // whose work panicked failed the service before it reported.
+        let _ = (&mut self.done).await;
         self.abort = None;
     }
 }
@@ -61,11 +61,13 @@ impl Crew {
 }
 
 /// Starts thread `index` of `subscription` on `runtime`, running what `work` builds there. The
-/// work's future is built on the thread and never leaves it.
+/// work's future is built on the thread and never leaves it. Work that panics fails the service
+/// `shutdown` stops.
 fn start_thread<Work, Fut>(
     subscription: &str,
     index: usize,
     runtime: Runtime,
+    shutdown: &Shutdown,
     work: Work,
 ) -> Result<Member, StartThreadError>
 where
@@ -76,17 +78,26 @@ where
     let (abort, mut aborted) = oneshot::channel::<()>();
     // A thread name is a C string: a subscription name with a NUL in it would fail the spawn.
     let name = format!("{}/{index}", subscription.replace('\0', ""));
+    let (shutdown, subscription_name) = (shutdown.clone(), subscription.to_owned());
     thread::Builder::new()
         .name(name)
         .spawn(move || {
-            runtime.block_on(async move {
-                let work = work();
-                tokio::select! {
-                    biased;
-                    _ = &mut aborted => {}
-                    () = work => {}
-                }
-            });
+            // Caught once, around the thread's whole work: a panic outside the handler ends what
+            // drains this thread's ring, so the subscription no longer runs on the threads it
+            // declared. Nothing of the work is touched again: the runtime it ran on goes next.
+            let worked = catch_unwind(AssertUnwindSafe(|| {
+                runtime.block_on(async move {
+                    let work = work();
+                    tokio::select! {
+                        biased;
+                        _ = &mut aborted => {}
+                        () = work => {}
+                    }
+                });
+            }));
+            if worked.is_err() {
+                Part::Thread(index).panicked(&shutdown, &subscription_name);
+            }
             // The runtime goes before the report, so a joined thread has let go of everything it
             // spawned.
             drop(runtime);
@@ -114,10 +125,12 @@ impl<Item: Send + 'static> Threads<Item> {
     /// `each` builds for it, handed the thread's own tracker: what the handler spawns through it
     /// the thread waits for before it ends. Everything that can fail happens here, before the
     /// subscription's loop runs: a runtime or a thread that cannot start refuses the subscription.
+    /// A thread whose work panics outside the handler fails the service `shutdown` stops.
     pub(super) fn start<Each, Handle>(
         subscription: &str,
         count: usize,
         keyed: bool,
+        shutdown: &Shutdown,
         mut each: Each,
     ) -> Result<Self, StartThreadError>
     where
@@ -141,6 +154,7 @@ impl<Item: Send + 'static> Threads<Item> {
                 subscription,
                 index,
                 runtime,
+                shutdown,
                 async move || {
                     // A thread whose ring never stays empty never parks, and a handler that
                     // completes without waiting never yields: without the budget, an `and_after`
@@ -220,7 +234,7 @@ mod tests {
         const ITEMS: u32 = 1000;
         let ran = Arc::new(AtomicBool::new(false));
         let first_seen = Arc::new(AtomicU32::new(u32::MAX));
-        let threads = Threads::start("busy", 1, false, |_own| {
+        let threads = Threads::start("busy", 1, false, &Shutdown::new(), |_own| {
             let (ran, first_seen) = (Arc::clone(&ran), Arc::clone(&first_seen));
             async move |item: u32| handle_busy(item, &ran, &first_seen)
         })

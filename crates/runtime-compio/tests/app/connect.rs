@@ -4,9 +4,7 @@
 use std::future::ready;
 use std::sync::{Arc, Mutex};
 
-use ruststream_core::{
-    Broker, BytesMut, ConnectedBroker, DescribeServer, OutgoingMessage, Publisher, ServerSpec,
-};
+use ruststream_core::{Broker, BytesMut, DescribeServer, OutgoingMessage, Publisher, ServerSpec};
 use ruststream_memory::local::{
     ConnectedLocalMemoryBroker, LocalMemoryBroker, LocalMemoryError, LocalMemoryPublish,
     LocalMemoryPublisher,
@@ -14,7 +12,7 @@ use ruststream_memory::local::{
 use ruststream_runtime::AppInfo;
 use ruststream_runtime_compio::{RustStream, RustStreamError};
 
-use super::support::on_runtime;
+use super::support::{Clinging, on_runtime};
 
 /// A bus that tells the test how to reach it once it is connected.
 struct Watched(
@@ -95,35 +93,6 @@ fn a_running_service_pairs_a_bound_publisher_for_a_task_beside_it() {
         assert!(format!("{running:?}").contains("RunningApp"));
         running.shutdown().await.expect("a clean shutdown");
     });
-}
-
-/// A server that takes the connection and then fails to let it go.
-struct Clinging;
-
-struct ClingingConnected;
-
-impl Broker for Clinging {
-    type Error = LocalMemoryError;
-    type Connected = ClingingConnected;
-
-    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
-        ready(Ok(ClingingConnected))
-    }
-}
-
-impl DescribeServer for Clinging {
-    fn describe_server(&self) -> ServerSpec {
-        ServerSpec::in_process("clinging")
-    }
-}
-
-impl ConnectedBroker for ClingingConnected {
-    type Error = LocalMemoryError;
-    type Closed = ();
-
-    fn shutdown(self) -> impl Future<Output = Result<(), Self::Error>> {
-        ready(Err(LocalMemoryError::ShutDown))
-    }
 }
 
 #[test]

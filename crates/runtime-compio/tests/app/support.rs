@@ -15,7 +15,8 @@ use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use futures::future::{Either, select};
 use futures::{Stream, StreamExt};
 use ruststream_core::{
-    AckError, BrokerMoves, HeaderMap, IncomingMessage, Settle, Subscriber, SubscriptionSource,
+    AckError, Broker, BrokerMoves, ConnectedBroker, DescribeServer, HeaderMap, IncomingMessage,
+    ServerSpec, Settle, Subscriber, SubscriptionSource,
 };
 use ruststream_core::{BytesMut, OutgoingMessage, Publisher};
 use ruststream_memory::local::{
@@ -464,5 +465,34 @@ async fn within<Out>(signal: impl Future<Output = Out> + Send) -> Option<Out> {
     match select(pin!(signal), pin!(late)).await {
         Either::Left((out, _)) => Some(out),
         Either::Right(_) => None,
+    }
+}
+
+/// A server that takes the connection and then fails to let it go.
+pub(crate) struct Clinging;
+
+pub(crate) struct ClingingConnected;
+
+impl Broker for Clinging {
+    type Error = LocalMemoryError;
+    type Connected = ClingingConnected;
+
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
+        ready(Ok(ClingingConnected))
+    }
+}
+
+impl DescribeServer for Clinging {
+    fn describe_server(&self) -> ServerSpec {
+        ServerSpec::in_process("clinging")
+    }
+}
+
+impl ConnectedBroker for ClingingConnected {
+    type Error = LocalMemoryError;
+    type Closed = ();
+
+    fn shutdown(self) -> impl Future<Output = Result<(), Self::Error>> {
+        ready(Err(LocalMemoryError::ShutDown))
     }
 }
