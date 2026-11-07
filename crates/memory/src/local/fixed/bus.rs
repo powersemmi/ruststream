@@ -168,6 +168,9 @@ struct BusState<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS
     live: bool,
     // Whether the slots hold their places: taken once, at the first connect.
     placed: bool,
+    // The slots a subscriber holds, so a publish looks at those alone and not at every slot of
+    // the bus.
+    held: FixedVec<usize, SUBSCRIPTIONS>,
     slots: [Slot<MESSAGES, PAYLOAD>; SUBSCRIPTIONS],
 }
 
@@ -268,6 +271,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
             state: Mutex::new(RefCell::new(BusState {
                 live: false,
                 placed: false,
+                held: FixedVec::new(),
                 slots: [const { Slot::new() }; SUBSCRIPTIONS],
             })),
             places: [const { [const { ConstStaticCell::new(Delivery::EMPTY) }; MESSAGES] };
@@ -322,6 +326,9 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
             slot.generation = slot.generation.wrapping_add(1);
             slot.standing = Standing::Open;
             slot.name = Some(name);
+            if state.held.push(index).is_err() {
+                unreachable!("the bus lists as many held slots as it has");
+            }
             Ok(Held {
                 index,
                 generation: slot.generation,
@@ -344,6 +351,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
                 slot.name = None;
                 slot.standing = Standing::Free;
                 slot.reader = WakerRegistration::new();
+                state.held.retain(|&index| index != held.index);
             }
         });
     }
@@ -467,7 +475,8 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
             // one subscription reaches no other, so the caller can publish it again without
             // doubling it anywhere.
             let mut readers = FixedVec::<usize, SUBSCRIPTIONS>::new();
-            for (index, slot) in state.slots.iter().enumerate() {
+            for &index in &state.held {
+                let slot = &state.slots[index];
                 if !slot.reads(name) {
                     continue;
                 }
@@ -475,7 +484,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
                     return Err(LocalMemoryError::Full { capacity: MESSAGES });
                 }
                 if readers.push(index).is_err() {
-                    unreachable!("the list holds one entry per slot of the bus");
+                    unreachable!("the bus lists each held slot once");
                 }
             }
             if readers.is_empty() {
