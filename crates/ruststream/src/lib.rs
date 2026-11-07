@@ -143,7 +143,7 @@
 //! * `otel`: OpenTelemetry SDK integration: OTLP export for traces and metrics via
 //!   [`otel::OtelBuilder::init`], plus per-handler dispatch metrics middleware and W3C
 //!   trace-context propagation ([`otel::propagation`]).
-//! * `cli`: the `ruststream` binary (`run`, `asyncapi gen`, `new`).
+//! * `cli`: the `ruststream` binary (`run`, `asyncapi gen`).
 //! * `poll-diagnostics`: every subscription samples the time its handler spends in `poll` and
 //!   warns when a handler computes on the app's runtime ([`runtime::PollDiagnostics`]).
 //!

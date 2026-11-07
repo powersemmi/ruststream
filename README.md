@@ -1,6 +1,10 @@
 <h1 align="center">RustStream</h1>
 
 <p align="center">
+  <b>English</b> | <a href="https://github.com/powersemmi/ruststream/blob/main/docs/readme/README.ru.md">Русский</a> | <a href="https://github.com/powersemmi/ruststream/blob/main/docs/readme/README.zh.md">中文</a>
+</p>
+
+<p align="center">
   <i>An async messaging framework for Rust: broker-agnostic traits, a router runtime, codecs, AsyncAPI generation, Prometheus and OpenTelemetry observability, and a conformance harness for broker authors.</i>
 </p>
 
@@ -34,11 +38,13 @@ broker is an independent crate held to one contract. The core is 100% safe Rust.
 - **Broker-agnostic core.** Brokers are separate crates, checked by a conformance harness.
 - **Misuse does not compile.** Double acks, out-of-order lifecycle calls and under-specified
   publishes are compile errors that name the fix.
-- **Three runtimes.** `tokio` (the default), `compio` with one `io_uring` runtime per core, and
-  `embassy` for a device, with or without a heap; the app picks its runner by type.
-- **Pluggable codecs:** JSON, MessagePack, and CBOR behind cargo features, or raw bytes with none.
+- **Three runtimes.** `tokio` (the default), `compio` with one runtime per core on `io_uring` where
+  the kernel has it, and `embassy` for a device, with or without a heap. The handlers are the same
+  on each, and the app picks its runner.
+- **Pluggable codecs:** JSON, MessagePack and CBOR behind cargo features, postcard and JSON over
+  `serde-json-core` for a device without a heap, or raw bytes with none.
 - **Zero-boilerplate binaries.** `#[subscriber]` and `#[ruststream::app]` macros, and a CLI that
-  scaffolds, runs and documents a service.
+  runs a service and prints its AsyncAPI document.
 - **Observability:** AsyncAPI 3.1, Prometheus metrics, a health probe, and OpenTelemetry.
 - **Tests without a broker.** The service's own app runs in process under a test harness.
 - **Publish errors keep the message.** A refused publish hands the unsent message back wherever
@@ -70,7 +76,8 @@ and broker crates the recommended way. In Claude Code:
 /plugin install ruststream@ruststream
 ```
 
-Cursor and Codex read them from [`.agents/skills/`](.agents/skills); the
+Cursor and Codex read them from
+[`.agents/skills/`](https://github.com/powersemmi/ruststream/tree/main/.agents/skills); the
 [Agent skills](https://powersemmi.github.io/ruststream/latest/guides/getting-started/agent-skills/)
 page lists them.
 
@@ -78,9 +85,9 @@ page lists them.
 
 ```rust
 use ruststream::memory::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Outgoing)]
 struct Order {
     id: u64,
 }
@@ -98,7 +105,8 @@ fn app() -> RustStream {
 }
 ```
 
-`#[ruststream::app]` generates `main`, so there is no runtime boilerplate.
+`#[ruststream::app]` generates `main`, so there is no runtime boilerplate. The handler needs only
+`Deserialize`; the other derives are for the test below.
 
 ## Run it
 
@@ -107,37 +115,67 @@ ruststream run                 # start the service (or: cargo run -- run)
 ruststream asyncapi gen        # print the AsyncAPI document
 ```
 
-Scaffold a fresh project with `cargo generate --git https://github.com/powersemmi/ruststream
-templates/memory --name my-service`; `templates/compio-memory` starts one on the compio runtime
-and `templates/embassy-memory` a Cortex-M firmware on embassy. Each broker crate ships its own
-template. See the
-[quick start](https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/).
+`asyncapi gen` needs the `asyncapi` feature of `ruststream`.
+
+To start from a template instead, scaffold a project with `cargo generate`:
+
+```bash
+cargo generate --git https://github.com/powersemmi/ruststream templates/memory --name my-service
+```
+
+`templates/compio-memory` starts a service on the compio runtime, and `templates/embassy-memory` a
+Cortex-M firmware on embassy with no heap. Each template ships tests that run its app in process.
+Several broker crates ship templates of their own and name them in their documentation. The
+[quick start](https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/)
+walks through the first run.
 
 ## Test it
 
-`TestApp` runs the service's own app in process, with no external broker.
+`TestApp` runs the service's own app in process, with no external broker. It comes with the
+`testing` feature, which a service turns on for its tests:
 
-```rust
-use ruststream::testing::TestApp;
-
-let tb = TestApp::start(service()).await?;
-
-// Inject an order; the harness drives the handler to completion before returning.
-tb.broker::<MemoryBroker>()
-    .message(&Order { id: 42 })
-    .to("orders")
-    .publish()
-    .await?;
-
-// The handler ran once, decoded the order, and acked.
-tb.broker::<MemoryBroker>()
-    .subscriber("orders")
-    .assert_called_once()
-    .with(&Order { id: 42 })
-    .settled(HandlerOutcome::ack());
+```toml
+[dev-dependencies]
+ruststream = { version = "0.8", features = ["testing"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Full compiling example: `crates/ruststream/examples/testing.rs`.
+The test places an order through the broker and checks how the handler settled it:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::{Order, app};
+
+    #[tokio::test]
+    async fn an_order_is_acked() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(app()).await?;
+
+        // Inject an order; the publish drives the handler to a standstill before returning.
+        tb.broker::<MemoryBroker>()
+            .message(&Order { id: 42 })
+            .to("orders")
+            .publish()
+            .await?;
+
+        // The handler ran once, decoded the order, and acked.
+        tb.broker::<MemoryBroker>()
+            .subscriber("orders")
+            .assert_called_once()
+            .with(&Order { id: 42 })
+            .settled(HandlerOutcome::ack());
+        Ok(())
+    }
+}
+```
+
+The [testing](https://powersemmi.github.io/ruststream/latest/components/application/testing/)
+pages cover the rest of the harness.
 
 ## Brokers
 
@@ -152,6 +190,7 @@ Full compiling example: `crates/ruststream/examples/testing.rs`.
 | Amazon SQS / SNS | [`ruststream-sqs-sns`](https://github.com/powersemmi/ruststream-sqs-sns) |
 | Apache Pulsar | [`ruststream-pulsar`](https://github.com/powersemmi/ruststream-pulsar) |
 | MQTT 5 | [`ruststream-rumqttc`](https://github.com/powersemmi/ruststream-rumqttc) |
+| MQTT 5 on embassy and compio, with a device variant without a heap | [`ruststream-rust-mqtt`](https://github.com/powersemmi/ruststream-rust-mqtt) |
 | ZeroMQ | [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq) |
 | Files and stdio | [`ruststream-sea-file`](https://github.com/powersemmi/ruststream-sea-file) |
 | Amazon Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) |
@@ -174,10 +213,10 @@ a newer toolchain when its client does.
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
+See [CONTRIBUTING.md](https://github.com/powersemmi/ruststream/blob/main/CONTRIBUTING.md).
 
 ## License
 
-Licensed under the [Apache-2.0](./LICENSE) license.
+Licensed under the [Apache-2.0](https://github.com/powersemmi/ruststream/blob/main/LICENSE) license.
 
 <sub>Inspired by [FastStream](https://github.com/ag2ai/faststream).</sub>
