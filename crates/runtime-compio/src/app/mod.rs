@@ -157,8 +157,10 @@ pub enum RustStreamError {
     /// shutdown.
     #[error("broker shutdown failed: {0}")]
     Shutdown(#[source] BoxError),
-    /// A task of core 0 panicked with no fail-fast failure on record for the service. The string
-    /// says what the task reported.
+    /// A task of the runner itself panicked: a fault of the framework, to be reported as a bug.
+    /// A panic of the service's own code never ends here: the handler's goes to its panic
+    /// policy, and any other fails the service as [`Dispatch`](Self::Dispatch). The string says
+    /// what the task reported.
     #[error("dispatch task failed: {0}")]
     Join(String),
     /// A subscriber hit a fail-fast failure and tore the service down: a handler panic, a panic
