@@ -366,7 +366,7 @@ bench *ARGS:
         --no-default-features --features {{ bench_features }}
     cargo bench -p ruststream-runtime-embassy --bench embedded_idle --no-run
     cargo bench --no-default-features --features embassy,memory,macros --bench embedded_idle_no_alloc \
-        --no-run
+        --bench embedded_publish_no_alloc --no-run
     cargo bench --no-default-features --features {{ compio_bench_features }} --bench consume_compio \
         --no-run
     status=0
@@ -382,9 +382,10 @@ bench *ARGS:
     # crate, and its allocation floor is absolute like the others; its summaries join the rest.
     cargo bench -p ruststream-runtime-embassy --bench embedded_idle --no-fail-fast \
         -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
-    # The same app without `alloc`: its floor is zero allocations, the start included.
+    # The same app without `alloc`, and with a handler that publishes: its floor is zero
+    # allocations, the start included.
     cargo bench --no-default-features --features embassy,memory,macros \
-        --bench embedded_idle_no_alloc --no-fail-fast \
+        --bench embedded_idle_no_alloc --bench embedded_publish_no_alloc --no-fail-fast \
         -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
     # The compio runner on one core, over the local bus: its floor holds a delivery to zero
     # allocations after the start.

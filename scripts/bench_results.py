@@ -184,6 +184,19 @@ SCENARIOS = [
         "embedded_idle_no_alloc/beside_fifteen_idle",
     ),
     Scenario(
+        "the embedded runner without alloc, a handler that publishes through an Out slot",
+        "embedded_publish_no_alloc/through_a_slot",
+    ),
+    Scenario(
+        "the embedded runner without alloc, a handler that publishes through an Out slot with a "
+        "typed header",
+        "embedded_publish_no_alloc/through_a_slot_with_a_header",
+    ),
+    Scenario(
+        "the embedded runner without alloc, a handler that replies",
+        "embedded_publish_no_alloc/as_a_reply",
+    ),
+    Scenario(
         "the compio runner on one core, JSON decode into a small struct",
         "consume_compio/service",
     ),

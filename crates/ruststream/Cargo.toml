@@ -1158,6 +1158,13 @@ name = "embedded_idle_no_alloc"
 harness = false
 required-features = ["embassy", "memory", "macros"]
 
+# The same app with a handler that publishes: what the framework's publish path adds to a
+# delivery, and zero allocations.
+[[bench]]
+name = "embedded_publish_no_alloc"
+harness = false
+required-features = ["embassy", "memory", "macros"]
+
 [[bench]]
 name = "batch"
 harness = false
