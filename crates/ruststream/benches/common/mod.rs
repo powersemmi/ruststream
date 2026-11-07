@@ -206,9 +206,11 @@ const fn messages(configured: Option<&str>) -> usize {
 ///
 /// On a consume scenario `steady` is zero and `cold` is all there is. On a publish scenario it
 /// is what the message costs the transport underneath, with nothing of the framework's above it.
-/// Either way both numbers are floors the code is held to rather than budgets it may spend, so a
-/// number that goes up is a defect and a number that goes down is lowered here in the same
-/// change.
+/// Either way both numbers are floors the code is held to rather than budgets it may spend. A
+/// `steady` number is paid on every delivery or publish, so one that goes up is a defect. A
+/// `cold` number is paid once, at the start: it may rise only in the change that adds the
+/// allocation, with the reason beside the floor. A number that goes down is lowered here in the
+/// same change.
 pub fn config(steady: u64, cold: u64) -> LibraryBenchmarkConfig {
     let mut config = LibraryBenchmarkConfig::default();
     config

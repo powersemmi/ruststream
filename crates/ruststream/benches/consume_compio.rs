@@ -72,8 +72,8 @@ type Bus = LocalMemoryBroker<CAPACITY>;
 const INPUT: &str = "orders";
 
 /// What starting the service and handling the first delivery allocate once; a delivery after it
-/// allocates nothing.
-const COLD_BLOCKS: u64 = 43;
+/// allocates nothing. #691 added two: the live-worker count and the name a panicked loop reports.
+const COLD_BLOCKS: u64 = 45;
 
 /// The payload: two integer fields, so a decode allocates nothing.
 #[derive(Debug, Deserialize)]
