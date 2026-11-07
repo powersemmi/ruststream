@@ -587,3 +587,20 @@ where
         )
     }
 }
+
+#[cfg(all(test, not(ruststream_alloc)))]
+mod tests {
+    use ruststream_core::Place;
+
+    use super::BatchPlaces;
+    use crate::BatchSize;
+
+    // A route keeps a place for each delivery it holds at once: one for a single delivery, the
+    // batch size for a batch.
+    #[test]
+    fn a_route_keeps_a_place_for_each_delivery_it_holds_at_once() {
+        let place = size_of::<Place>();
+        assert_eq!(size_of::<<() as BatchPlaces>::Room>(), place);
+        assert_eq!(size_of::<<BatchSize<3> as BatchPlaces>::Room>(), 3 * place);
+    }
+}

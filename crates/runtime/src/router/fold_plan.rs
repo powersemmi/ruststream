@@ -13,7 +13,7 @@
 
 use core::cell::Cell;
 use core::marker::PhantomData;
-use ruststream_core::{MaybeSendSync, PlaceRoom, Places};
+use ruststream_core::{MaybeSendSync, Places};
 
 use crate::coop::Cooperative;
 use crate::dispatch::{Delivery, EncodeRoom, Gated, HeadersAtOnce, Parks, run_sequential};
@@ -35,7 +35,7 @@ use crate::{
 use ruststream_core::PayloadBuf;
 
 use super::builder::Router;
-use super::fold::{OpenLayered, OpenedRoute, RunRoutes};
+use super::fold::{BatchPlaces, OpenLayered, OpenedRoute, RunRoutes};
 use super::local::LocalPipeline;
 use super::routes::{BatchRoute, DeclaredRoute, RetryDestinationsDeclared, SubscribeRoute};
 use super::routes_inject::{BatchInjectRoute, InjectRoute};
@@ -166,7 +166,7 @@ impl OneTaskDispatch for SequentialPlan {
         Host: Detach,
         Path: PrepareCopy<Cx>,
     {
-        let room = PlaceRoom::<1>::new();
+        let room = <() as BatchPlaces>::Room::default();
         route
             .run_sequential(
                 signal,
