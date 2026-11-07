@@ -119,10 +119,9 @@ impl FrameSubscriber {
     }
 
     /// One received frame as the subscription hands it out.
-    fn delivery(&self, frame: Frame) -> FrameDelivery {
+    const fn delivery(&self, frame: Frame) -> FrameDelivery {
         FrameDelivery {
             frame,
-            headers: Headers::new(),
             settled: self.settled,
         }
     }
@@ -223,9 +222,11 @@ impl BatchStream<FrameBatch> for Bursts<'_> {
 #[derive(Debug)]
 pub struct FrameDelivery {
     frame: Frame,
-    headers: Headers,
     settled: &'static Settlements,
 }
+
+/// The headers of every frame: a frame carries none, so a delivery moves no header room.
+static NO_HEADERS: Headers = Headers::new();
 
 impl IncomingMessage for FrameDelivery {
     fn payload(&self) -> &[u8] {
@@ -233,7 +234,7 @@ impl IncomingMessage for FrameDelivery {
     }
 
     fn headers(&self) -> &Headers {
-        &self.headers
+        &NO_HEADERS
     }
 }
 
