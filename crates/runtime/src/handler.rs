@@ -4,7 +4,6 @@
 use alloc::boxed::Box;
 #[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
-#[cfg(not(ruststream_alloc))]
 use core::mem;
 #[cfg(ruststream_alloc)]
 use core::pin::Pin;
@@ -618,11 +617,34 @@ impl HandlerOutcome {
         self.outcome.status()
     }
 
-    /// Takes the post-settle continuation out of this settlement, leaving none. The dispatcher
-    /// calls this after settling, to spawn the continuation on its tracked task set.
     /// Whether a post-settle continuation is attached.
     pub(crate) const fn has_after(&self) -> bool {
         self.after.is_some()
+    }
+
+    /// Takes the post-settle continuation out of this settlement, leaving none.
+    pub(crate) const fn take_after(&mut self) -> Option<Continuation> {
+        self.after.take()
+    }
+
+    /// Whether the outcome holds its status alone, with no continuation and no `.error` left in
+    /// it to drop.
+    pub(crate) const fn is_spent(&self) -> bool {
+        self.after.is_none() && matches!(self.outcome, Settlement::Plain(_))
+    }
+
+    /// Takes the `.error` continuation out of this settlement, leaving its status; `None`, at the
+    /// cost of the check alone, for an outcome that registered none.
+    pub(crate) fn take_error(&mut self) -> Option<ErrorHook> {
+        let Settlement::Erroring(registered) = &self.outcome else {
+            return None;
+        };
+        let plain = Settlement::Plain(registered.0);
+        let erroring = Self {
+            outcome: mem::replace(&mut self.outcome, plain),
+            after: None,
+        };
+        erroring.into_parts().2
     }
 
     /// Attaches an already boxed continuation, as [`and_after`](Self::and_after) does a future.
