@@ -415,7 +415,7 @@ mod tests {
 
             let mut headers = Headers::new();
             headers.insert("trace", b"a1").unwrap();
-            let late = reading("temp", b"22").with_headers(headers);
+            let late = reading("temp", b"22").with_headers(&headers);
             let refused = publisher.publish(late, None).await.unwrap_err();
 
             let (error, message) = refused.into_parts();
@@ -663,7 +663,7 @@ mod tests {
             headers
                 .insert(ruststream_runtime::RETRY_COUNT_HEADER, b"2")
                 .unwrap();
-            let copy = reading("jobs", b"job").with_headers(headers);
+            let copy = reading("jobs", b"job").with_headers(&headers);
             connected.publisher().publish(copy, None).await.unwrap();
 
             let delivery = waiting(&mut pin!(readings.stream())).unwrap();
@@ -771,7 +771,7 @@ mod tests {
                 block_on(async {
                     let mut headers = Headers::new();
                     headers.insert("trace", b"a1").unwrap();
-                    let message = reading("temp", b"21").with_headers(headers);
+                    let message = reading("temp", b"21").with_headers(&headers);
                     publisher.publish(message, None).await.unwrap();
                     let delivery = waiting(&mut pin!(first.stream())).unwrap();
                     delivery.nack(true).await.unwrap();

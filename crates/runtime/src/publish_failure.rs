@@ -307,7 +307,7 @@ impl Refusal {
         Self {
             error: error.into(),
             unsent: message.map(|message| {
-                let (_, payload, headers) = message.into_parts();
+                let (_, payload, headers) = message.into_owned_parts();
                 Held::new(Unsent {
                     // Handed straight to the publisher: the destination is the one the caller
                     // named.

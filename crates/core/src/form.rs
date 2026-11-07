@@ -36,6 +36,15 @@ fn kept<'a>(name: OutgoingName<'a>, slot: &'a mut Option<OutgoingName<'static>>)
     }
 }
 
+// The map of a message the stage is done with, kept where the message that leaves can borrow it.
+// It is written over with the entries and bytes it holds, never moved as a whole room.
+#[cfg(not(feature = "alloc"))]
+#[inline]
+fn kept_map<'a>(slot: &'a mut Headers, headers: &Headers) -> &'a Headers {
+    slot.clone_from(headers);
+    slot
+}
+
 // What a buffer becomes on its way into `KeptPayload` and back: `Bytes` with `alloc` (a freeze
 // and a unique thaw), the buffer itself without.
 #[cfg(feature = "alloc")]
@@ -111,7 +120,11 @@ impl PayloadForm for Lend {
 
     // The destination where the stage owns it, and the buffer where a stage above the leaf
     // wrote one: the transport reads both, so both outlive the send.
+    #[cfg(feature = "alloc")]
     type Spent = (Option<OutgoingName<'static>>, Option<PayloadBuf>);
+    // The header map as well where there is no heap: the message borrows it.
+    #[cfg(not(feature = "alloc"))]
+    type Spent = (Option<OutgoingName<'static>>, Option<PayloadBuf>, Headers);
 
     #[inline]
     fn encode_slot(buf: &mut EncodeBuf) -> &mut EncodeBuf {
@@ -166,6 +179,7 @@ impl PayloadForm for Lend {
     }
 
     #[inline]
+    #[cfg(feature = "alloc")]
     fn leaving<'a>(out: &'a mut Outgoing<'_>) -> OutgoingMessage<'a, &'a [u8]> {
         let headers = out.take_headers();
         // The mutable borrow ends here; what is left is read, and read for as long as the
@@ -174,13 +188,30 @@ impl PayloadForm for Lend {
         OutgoingMessage::assembled(out.name(), out.payload(), headers)
     }
 
+    // The map stays where the stages wrote it, and the message borrows it there with the rest.
+    #[inline]
+    #[cfg(not(feature = "alloc"))]
+    fn leaving<'a>(out: &'a mut Outgoing<'_>) -> OutgoingMessage<'a, &'a [u8]> {
+        let out: &'a Outgoing<'_> = out;
+        OutgoingMessage::assembled(out.name(), out.payload(), out.headers())
+    }
+
+    #[inline]
+    #[cfg(not(feature = "alloc"))]
+    fn shortened<'short, 'long: 'short>(payload: &'long [u8]) -> &'short [u8] {
+        payload
+    }
+
     #[inline]
     fn handed_on<'a>(
         out: Outgoing<'a>,
         spent: &'a mut Self::Spent,
     ) -> OutgoingMessage<'a, &'a [u8]> {
         let (name, payload, headers) = out.into_parts();
+        #[cfg(feature = "alloc")]
         let (kept_name, kept_buffer) = spent;
+        #[cfg(not(feature = "alloc"))]
+        let (kept_name, kept_buffer, kept_headers) = spent;
         let bytes = match payload {
             Payload::Lent(bytes) => bytes,
             Payload::Consumed => &[],
@@ -188,6 +219,8 @@ impl PayloadForm for Lend {
             // with the caller until the publish is over.
             Payload::Owned(buf) => &**kept_buffer.insert(buf),
         };
+        #[cfg(not(feature = "alloc"))]
+        let headers = kept_map(kept_headers, &headers);
         OutgoingMessage::assembled(kept(name, kept_name), bytes, headers)
     }
 
@@ -218,7 +251,11 @@ impl PayloadForm for Take {
 
     // The destination alone, and only where the stage owns it: the payload and the map move
     // into the message the transport keeps.
+    #[cfg(feature = "alloc")]
     type Spent = Option<OutgoingName<'static>>;
+    // The header map as well where there is no heap: the message borrows it.
+    #[cfg(not(feature = "alloc"))]
+    type Spent = (Option<OutgoingName<'static>>, Headers);
 
     #[inline]
     fn encode_slot(_buf: &mut EncodeBuf) -> PhantomData<&mut EncodeBuf> {
@@ -283,10 +320,27 @@ impl PayloadForm for Take {
     }
 
     #[inline]
+    #[cfg(feature = "alloc")]
     fn leaving<'a>(out: &'a mut Outgoing<'_>) -> OutgoingMessage<'a, PayloadBuf> {
         let payload = taken_payload(out);
         let headers = out.take_headers();
         OutgoingMessage::assembled(out.name(), payload, headers)
+    }
+
+    // The buffer is the transport's to keep; the map stays where the stages wrote it, and the
+    // message borrows it there.
+    #[inline]
+    #[cfg(not(feature = "alloc"))]
+    fn leaving<'a>(out: &'a mut Outgoing<'_>) -> OutgoingMessage<'a, PayloadBuf> {
+        let payload = taken_payload(out);
+        let out: &'a Outgoing<'_> = out;
+        OutgoingMessage::assembled(out.name(), payload, out.headers())
+    }
+
+    #[inline]
+    #[cfg(not(feature = "alloc"))]
+    fn shortened<'short, 'long: 'short>(payload: Self::Form<'long>) -> Self::Form<'short> {
+        payload
     }
 
     #[inline]
@@ -302,7 +356,14 @@ impl PayloadForm for Take {
             Payload::Owned(buf) => buf,
             Payload::Consumed => PayloadBuf::new(),
         };
-        OutgoingMessage::assembled(kept(name, spent), payload, headers)
+        #[cfg(feature = "alloc")]
+        let (kept_name, headers) = (spent, headers);
+        #[cfg(not(feature = "alloc"))]
+        let (kept_name, headers) = {
+            let (kept_name, kept_headers) = spent;
+            (kept_name, kept_map(kept_headers, &headers))
+        };
+        OutgoingMessage::assembled(kept(name, kept_name), payload, headers)
     }
 
     #[inline]
@@ -372,5 +433,60 @@ mod tests {
         consumed.consume();
         let handed = <Take as PayloadForm>::handed_on(consumed, &mut spent);
         assert_eq!(handed.payload(), b"");
+    }
+}
+
+// Without a heap the message that leaves borrows the map: from the pipeline's message while the
+// stage holds it, from what the stage keeps once it spent it.
+#[cfg(all(test, not(feature = "alloc")))]
+mod fixed_tests {
+    use core::ptr;
+
+    use crate::{Headers, HeadersFull, Lend, PayloadBuf, PayloadForm, Take};
+
+    fn traced() -> Result<Headers, HeadersFull> {
+        let mut headers = Headers::new();
+        headers.insert("trace", "t1")?;
+        Ok(headers)
+    }
+
+    #[test]
+    fn the_message_that_leaves_reads_the_map_where_the_stages_wrote_it() -> Result<(), HeadersFull>
+    {
+        let mut lent = <Lend as PayloadForm>::rebuilt("t".into(), b"body", traced()?);
+        let wrote_at: *const Headers = lent.headers();
+        let leaving = <Lend as PayloadForm>::leaving(&mut lent);
+        assert!(ptr::eq(leaving.headers(), wrote_at));
+        assert_eq!(leaving.headers().get_str("trace"), Some("t1"));
+
+        let mut taken = <Take as PayloadForm>::rebuilt(
+            "t".into(),
+            PayloadBuf::try_from(b"body".as_slice()).map_err(|_| HeadersFull)?,
+            traced()?,
+        );
+        let wrote_at: *const Headers = taken.headers();
+        let leaving = <Take as PayloadForm>::leaving(&mut taken);
+        assert!(ptr::eq(leaving.headers(), wrote_at));
+        assert_eq!(leaving.payload(), b"body");
+        Ok(())
+    }
+
+    #[test]
+    fn a_spent_message_lends_the_map_the_stage_keeps() -> Result<(), HeadersFull> {
+        let mut spent = <Lend as PayloadForm>::Spent::default();
+        let out = <Lend as PayloadForm>::rebuilt("t".into(), b"body", traced()?);
+        let handed = <Lend as PayloadForm>::handed_on(out, &mut spent);
+        assert_eq!(handed.headers().get_str("trace"), Some("t1"));
+        let lent_at: *const Headers = handed.headers();
+        assert!(ptr::eq(lent_at, &spent.2));
+
+        let mut spent = <Take as PayloadForm>::Spent::default();
+        let mut out = <Lend as PayloadForm>::rebuilt("t".into(), b"body", Headers::new());
+        out.headers_mut().insert("trace", "t2")?;
+        let handed = <Take as PayloadForm>::handed_on(out, &mut spent);
+        assert_eq!(handed.headers().get_str("trace"), Some("t2"));
+        let lent_at: *const Headers = handed.headers();
+        assert!(ptr::eq(lent_at, &spent.1));
+        Ok(())
     }
 }

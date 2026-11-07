@@ -100,7 +100,11 @@ impl<Live: Publisher, Stack: MaybeSync> CopyPublisher for AddressedCopy<Live, St
         let Some(form) = form_of::<Live::Payload>(payload) else {
             return Err(Refusal::new(NoRoom));
         };
+        #[cfg(ruststream_alloc)]
         let msg = OutgoingMessage::assembled(destination, form, headers);
+        // The copy's map lies in this publish's state, and the message borrows it there.
+        #[cfg(not(ruststream_alloc))]
+        let msg = OutgoingMessage::assembled(destination, form, &headers);
         self.live
             .publish(msg, options)
             .await

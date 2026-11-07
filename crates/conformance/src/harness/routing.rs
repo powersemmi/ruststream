@@ -7,7 +7,7 @@ use ruststream_core::{
 };
 use ruststream_runtime::testing::{Backlog, TestableBroker};
 
-use super::{expect_next, expect_no_more, set_header};
+use super::{expect_next, expect_no_more, set_header, with_map};
 
 pub(super) async fn ordering<C: TestableBroker + Subscribe>(broker: C) {
     let mut subscriber = Subscribe::subscribe(&broker, "conformance.ordering")
@@ -183,9 +183,10 @@ pub(super) async fn headers_propagate<C: TestableBroker + Subscribe>(broker: C) 
     set_header(&mut headers, "Content-Type", "application/json");
     set_header(&mut headers, "X-Tenant", "acme");
 
-    broker.inject(
-        OutgoingMessage::new("conformance.headers", b"{}".as_slice()).with_headers(headers),
-    );
+    broker.inject(with_map(
+        OutgoingMessage::new("conformance.headers", b"{}".as_slice()),
+        &headers,
+    ));
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let msg = expect_next(&mut stream, "headers_propagate").await;

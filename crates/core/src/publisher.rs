@@ -178,14 +178,23 @@ pub trait PayloadForm: sealed::Sealed {
     /// The message that leaves the pipeline, in this form.
     ///
     /// The broker is the last reader, so a taking transport is handed the buffer the stages
-    /// wrote and a lending one the bytes where they are; either way the map the transforms
-    /// filled moves into the message rather than being cloned into it.
+    /// wrote and a lending one the bytes where they are; the map the transforms filled moves
+    /// into the message where there is a heap, and is borrowed where it lies where there is not.
     #[doc(hidden)]
     fn leaving<'a>(out: &'a mut Outgoing<'_>) -> OutgoingMessage<'a, Self::Form<'a>>;
 
+    /// The payload over a shorter borrow, so a stage can lend it beside a map of its own that
+    /// lives shorter than the payload.
+    ///
+    /// Every form is covariant in its lifetime (a lent slice, an owned buffer); a generic stage
+    /// cannot see that, so the form says it here.
+    #[doc(hidden)]
+    #[cfg(not(feature = "alloc"))]
+    fn shortened<'short, 'long: 'short>(payload: Self::Form<'long>) -> Self::Form<'short>;
+
     /// What a stage that owns its [`Outgoing`] has to keep alive for the length of the publish
-    /// it hands on: a destination it owns, and - only where the transport reads the payload -
-    /// the buffer a stage above wrote.
+    /// it hands on: a destination it owns, the buffer a stage above wrote where the transport
+    /// reads the payload, and the header map where there is no heap, since the message borrows it.
     ///
     /// The stage holds one of these instead of the message it spent, so a publish to a taking
     /// transport carries no buffer across its send, and a message addressed to a literal
@@ -630,7 +639,7 @@ impl<Error> SinkRefusal<Error> {
         let (error, message) = failed.into_parts();
         match message {
             Some(message) => {
-                let (destination, payload, headers) = message.into_parts();
+                let (destination, payload, headers) = message.into_owned_parts();
                 Self::with_message(error, destination, Form::kept(payload), headers)
             }
             None => Self::new(error),

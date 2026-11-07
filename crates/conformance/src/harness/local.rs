@@ -25,7 +25,7 @@ use super::routing::{
     nack_without_requeue_drops, ordering, publish_before_subscribe,
     published_log_observes_publishes,
 };
-use super::{expect_next, expect_no_more, outgoing, set_header};
+use super::{expect_next, expect_no_more, outgoing, set_header, with_map};
 use crate::helpers::unique_subject;
 use crate::lifecycle::Unsent;
 
@@ -136,7 +136,10 @@ where
     set_header(&mut headers, "x-conformance", "own");
     publish_own(
         &connected,
-        OutgoingMessage::new(name.as_str(), b"first".as_slice()).with_headers(headers),
+        with_map(
+            OutgoingMessage::new(name.as_str(), b"first".as_slice()),
+            &headers,
+        ),
     )
     .await;
     connected.inject(OutgoingMessage::new(name.as_str(), b"injected".as_slice()));
@@ -490,7 +493,7 @@ pub async fn local_refused_publish_returns_message<B, MkBroker, Pub, MkPub>(
 
     let mut headers = Headers::new();
     set_header(&mut headers, "conformance", "unsent");
-    let outgoing = outgoing::<Pub::Payload>(&subject, UNSENT).with_headers(headers.clone());
+    let outgoing = with_map(outgoing::<Pub::Payload>(&subject, UNSENT), &headers);
     let answer = within(
         "the publish after the shutdown",
         publisher.publish(outgoing, None),

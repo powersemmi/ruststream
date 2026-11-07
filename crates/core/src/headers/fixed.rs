@@ -27,6 +27,10 @@ struct Entry {
 }
 
 /// Case-insensitive map of broker-message headers in fixed storage.
+///
+/// The storage is written as headers arrive and never zeroed: an empty map costs two lengths to
+/// make, and a clone copies the entries and bytes the map holds, not its room. An
+/// [`OutgoingMessage`](crate::OutgoingMessage) borrows the map from where it was built.
 pub struct FixedHeaders<const ENTRIES: usize, const BYTES: usize> {
     // The entries and the bytes are written as they arrive and never zeroed, so an empty map costs
     // two lengths to make and a copy of a map copies what it holds.

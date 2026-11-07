@@ -507,6 +507,7 @@ impl<'a> Outgoing<'a> {
     /// reason: the map the transforms filled moves into the outgoing message instead of being
     /// cloned into it, and what the dead `Outgoing` is left holding is never read again.
     #[inline]
+    #[cfg(feature = "alloc")]
     pub(crate) fn take_headers(&mut self) -> Headers {
         mem::take(&mut self.headers)
     }
