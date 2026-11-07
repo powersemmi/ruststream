@@ -573,4 +573,34 @@ async fn lifecycle_conformance() {
 }
 ```
 
+A broker whose types are not `Send` runs the local family instead. The facade's `conformance`
+feature brings it without the `tokio` feature, beside the embedded runner, and its suites drive
+the broker on the test's own thread:
+
+```rust
+use ruststream::conformance::harness;
+use ruststream::conformance::lifecycle::Unsent;
+
+// dev-dependencies: ruststream with default-features = false, features = ["embassy",
+// "conformance"], and tokio with "rt" and "macros"
+#[tokio::test(flavor = "current_thread")]
+async fn local_routing_conformance() {
+    harness::run_local_suite(|| MyBroker::new("my://localhost")).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn local_refused_publish_conformance() {
+    let Ok(url) = std::env::var("MY_BROKER_TEST_URL") else { return };
+    harness::local_refused_publish_returns_message(
+        move || MyBroker::new(url.clone()),
+        |connected| connected.publisher(),
+        Unsent::Returned,
+    )
+    .await;
+}
+```
+
+`harness::local_lifecycle` and `harness::local_readiness` take the broker, its descriptor and its
+publisher the same way.
+
 Run the live suites against a real server before a release: an in-process pass is not enough.

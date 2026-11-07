@@ -17,7 +17,8 @@ pub mod in_process;
 #[cfg(ruststream_send_family)]
 pub mod lifecycle;
 /// The refused-publish declaration of the local family's checks; the ladder of the `Send`
-/// family is in the build with the crate's `alloc` feature.
+/// family is in the build with the crate's `alloc` feature, which the facade's `tokio` feature
+/// turns on.
 #[cfg(not(ruststream_send_family))]
 pub mod lifecycle {
     pub use crate::unsent::Unsent;

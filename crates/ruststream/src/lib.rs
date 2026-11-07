@@ -136,8 +136,9 @@
 //!   [`conformance::capabilities`], the in-process transport held to the server in
 //!   [`conformance::in_process`], the checks of what a message carries in
 //!   [`conformance::message_shape`], and broker-agnostic [`conformance::helpers`] for application
-//!   tests. Generic over any broker's [`testing::TestableBroker`], so it pulls in no concrete broker
-//!   (enable `memory` too to run it against [`memory::MemoryBroker`]).
+//!   tests. On its own it brings the local family of suites, which asks nothing of `Send`; the
+//!   others need `tokio` beside it. Generic over any broker's [`testing::TestableBroker`], so it
+//!   pulls in no concrete broker (enable `memory` too to run it against [`memory::MemoryBroker`]).
 //! * `testing`: the [`testing::TestApp`] harness, which runs the service's production app in
 //!   process or against running brokers.
 //! * `cli`: the `ruststream` binary (`run`, `asyncapi gen`, `new`).
