@@ -63,10 +63,12 @@ done
 ## Checking a change to the core
 
 ```bash
-just check   # rustfmt, clippy, cargo check on the feature edges, the contract on two no_std
-             # targets, rustdoc, compile-fail snapshots
-just test    # the test suite, the reduced-feature legs, doctests on both feature edges
-just ci      # both
+just check            # rustfmt, clippy, cargo check on the feature edges, the contract on two
+                      # no_std targets, rustdoc, compile-fail snapshots, then check-firmware
+just check-firmware   # a firmware binary for both Cortex-M targets: it links with no heap, and
+                      # the board's bus lies in .bss
+just test             # the test suite, the reduced-feature legs, doctests on both feature edges
+just ci               # both
 ```
 
 The compile-fail snapshots record the exact wording of the stable rustc that
