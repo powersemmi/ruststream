@@ -16,8 +16,8 @@ use crate::{HeaderSet, MaybeSend, OutgoingDestination, OutgoingFor, PublishOutco
 /// Without `alloc`, a refused publish moves its message into a free place, and the publishes that
 /// run through this publisher at once share the places; when every place is taken, a refused
 /// publish comes back without its message. A publisher used without the step keeps one place in
-/// each of its publishes instead. With `alloc` a refused message is boxed, and the places hold
-/// nothing.
+/// each of its publishes instead. With `alloc` a refused message is boxed, and the places are
+/// values of no size.
 ///
 /// It dereferences to the publisher it wraps, so the publisher's own surface stays reachable, and
 /// a clone is another handle on that publisher with places of its own.

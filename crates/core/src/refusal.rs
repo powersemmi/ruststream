@@ -107,7 +107,7 @@ impl Unsent {
 /// One place a refused message lies in until its refusal is read or dropped. Machinery; a
 /// [`PlaceRoom`] holds them.
 ///
-/// With `alloc` it holds nothing: a refusal boxes its message instead.
+/// With `alloc` a refusal boxes its message, and a place is a value of no size.
 #[doc(hidden)]
 pub struct Place {
     // Borrowed for as long as a refusal holds the place: the borrow is the lease, and its end

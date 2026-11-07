@@ -71,10 +71,10 @@ pub trait PublishSink: MaybeSend {
     /// publisher and on no other. See [`Publisher::Options`](crate::Publisher::Options).
     type Options: Clone + MaybeSendSync + 'static;
 
-    /// Where a refusal keeps the message it hands back, held by the publish that sends through
-    /// this sink: one place of the publish's own for a sink that brings none, nothing for one
-    /// that brings places of its own. Machinery; without `alloc` it is the room a refused message
-    /// moves into, and with it the message is boxed and this holds nothing.
+    /// The room of places the publish that sends through this sink holds: one place for a sink
+    /// whose publisher keeps no places, and a room of none for one whose publisher keeps its own.
+    /// Machinery; without `alloc` a refused message moves into one of the places, and with it the
+    /// message is boxed and the room is a value of no size.
     #[doc(hidden)]
     type OwnPlaces: Default + MaybeSendSync;
 
