@@ -4,8 +4,12 @@
 //! - Core 0 receives every subscription. A sequential mount runs [`spawn_dispatch`] there and
 //!   yields to the core after each delivery.
 //! - `workers(n)` and `threads(n)` hand deliveries to workers on other cores ([`spawn_dispatch_workers`]) through
-//!   the rings of `ruststream-runtime`: one queue push and a wake per delivery, no allocation
-//!   once the workers have started. `by_key` hashes the key on core 0.
+//!   the rings of `ruststream-runtime`: one queue push and a wake per delivery, and no allocation
+//!   of the runner's once the workers have started. `by_key` hashes the key on core 0.
+//! - Waking a parked core allocates inside compio: its wake queue takes a block per 31 wakes, and
+//!   its polling driver (macOS, or a Linux host without `io_uring`) allocates on such a wake too
+//!   (<https://github.com/compio-rs/compio/issues/1107>, and on kqueue
+//!   <https://github.com/smol-rs/polling/issues/273>).
 //! - [`Layout`] places the mounts over the cores at startup and [`Fabric`] starts the workers there.
 
 mod batch;
