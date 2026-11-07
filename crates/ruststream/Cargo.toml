@@ -1137,6 +1137,11 @@ harness = false
 required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
+name = "consume_threads_by_key"
+harness = false
+required-features = ["memory", "json", "macros", "tokio"]
+
+[[bench]]
 name = "middleware"
 harness = false
 required-features = ["memory", "json", "macros", "tokio"]
