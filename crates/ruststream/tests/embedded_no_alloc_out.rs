@@ -1,7 +1,8 @@
 //! A handler of one message publishes through an `Out` slot on the build without `alloc`: the
 //! harness records the publish as its own bookkeeping, under an allocator that fails the
 //! framework's own allocations, and a publish the bus refuses hands its message back from the
-//! slot's place.
+//! slot's place. A publisher used on its own hands a refused message back from a place of its
+//! own as well.
 //!
 //! The app builds with no `recursion_limit` attribute, so an `Out` form that nests the futures of
 //! an app deeper than the compiler's default limit fails this build.
@@ -20,9 +21,14 @@ use ruststream::codec::PostcardCodec;
 use ruststream::memory::local::{
     LocalMemoryBroker, LocalMemoryBus, LocalMemoryPublish, LocalMemorySource,
 };
-use ruststream::runtime::{EmbeddedApp, FailedMessage, HandlerOutcome, Mounts, Out};
+use ruststream::runtime::{
+    EmbeddedApp, FailedMessage, HandlerOutcome, Mounts, Out, PublishError, PublishExt,
+};
 use ruststream::testing::embedded::TestApp;
-use ruststream::{OutSlot, Outgoing, Publisher, Serialized, subscriber};
+use ruststream::{
+    Broker, ConnectedBroker, OutSlot, Outgoing, PublishPolicy, Publisher, Serialized,
+    SubscriptionSource, subscriber,
+};
 use serde::Deserialize;
 
 /// Fails an allocation made while the harness polls the app.
@@ -156,6 +162,71 @@ fn a_refused_slot_publish_hands_back_the_bytes_its_place_kept() -> Result<(), Bo
 
         assert_eq!(kept.0.get(), Some(7));
         tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+/// A reading a sensor task publishes on its own, outside every subscription.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "readings")]
+struct Reading([u8; 1]);
+
+/// The first byte of the message a refused publish handed back.
+fn first_byte<E>(refused: &PublishError<E>) -> Option<u8> {
+    refused
+        .unsent()
+        .and_then(FailedMessage::payload)
+        .and_then(|payload| payload.first().copied())
+}
+
+/// One bus for the scenario of a publisher's own place.
+static SENSOR_BUS: LocalMemoryBus<1> = LocalMemoryBus::new();
+
+#[test]
+fn a_refused_publish_of_a_publisher_used_on_its_own_hands_back_its_message()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let connected = Tight::new(&SENSOR_BUS).connect().await?;
+        // The one slot of the readings subscription is taken for good by the first reading.
+        let _readings = LocalMemorySource::new("readings")
+            .subscribe(&connected)
+            .await?;
+        let sensor = LocalMemoryPublish.pair(&connected).await?;
+        sensor.message(&Reading([1])).publish().await?;
+
+        let refused = sensor.message(&Reading([7])).publish().await;
+        let refused = refused.expect_err("the readings subscription is full");
+        assert_eq!(first_byte(&refused), Some(7));
+        connected.shutdown().await?;
+        Ok(())
+    })
+}
+
+/// One bus for the scenario of a publisher's places named with `refusal_capacity`.
+static PLACED_BUS: LocalMemoryBus<1> = LocalMemoryBus::new();
+
+#[test]
+fn a_refused_publish_keeps_its_message_in_a_place_the_publisher_was_given()
+-> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let connected = Tight::new(&PLACED_BUS).connect().await?;
+        let _readings = LocalMemorySource::new("readings")
+            .subscribe(&connected)
+            .await?;
+        let sensor = LocalMemoryPublish
+            .pair(&connected)
+            .await?
+            .refusal_capacity::<1>();
+        sensor.message(&Reading([1])).publish().await?;
+
+        // The publisher's one place serves each refusal in turn: the place is read out before
+        // the publish returns.
+        for byte in [7, 8] {
+            let refused = sensor.message(&Reading([byte])).publish().await;
+            let refused = refused.expect_err("the readings subscription is full");
+            assert_eq!(first_byte(&refused), Some(byte));
+        }
+        connected.shutdown().await?;
         Ok(())
     })
 }
