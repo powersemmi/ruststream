@@ -1,6 +1,6 @@
 ---
 title: A device service on the local memory broker
-description: "A thermometer board runs a RustStream service on the embassy runtime with no heap, and tests it on the host under an allocator that fails on any allocation the framework makes."
+description: "A thermometer board runs a RustStream service on the embassy runtime with no heap, and its tests on the host fail on any allocation the framework makes."
 ---
 
 import Tabs from '@theme/Tabs';

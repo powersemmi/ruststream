@@ -1,5 +1,5 @@
 ---
-description: "LocalMemoryBroker is the in-process bus of the embassy runtime: a queue between the parts of one firmware, with a heap form and a fixed form that allocates nothing."
+description: "LocalMemoryBroker is the bus of the embassy runtime: a queue between the parts of one firmware, with a heap form and a fixed form that allocates nothing."
 ---
 
 # Local memory
