@@ -1,7 +1,7 @@
 //! The service of `examples/codec_cbor.rs` written without the `macros` feature.
 //!
 //! ```text
-//! cargo test --example manual_codec_cbor --no-default-features --features testing,memory,cbor
+//! cargo test --example manual_codec_cbor --no-default-features --features tokio,testing,memory,cbor
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

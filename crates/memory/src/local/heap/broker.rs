@@ -28,9 +28,9 @@ use super::bus::Bus;
 /// The in-process broker for local runtimes: a full broker whose queues live in the process, on
 /// embassy-sync channels, with types that are not `Send`.
 ///
-/// It is the reference implementation of the `Local*` broker contract, as
-/// [`MemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.MemoryBroker.html)
-/// is of the Send one. A device service uses it for a queue between parts of one firmware, and it
+/// It is the reference implementation of the contract for a broker whose types are not `Send`,
+/// as [`MemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.MemoryBroker.html)
+/// is for one whose types are. A device service uses it for a queue between parts of one firmware, and it
 /// runs on any executor: its channels wake whatever task polls them, and it reads no clock.
 ///
 /// `CAP` is the capacity of each subscription: how many messages one subscription holds, waiting

@@ -2,7 +2,7 @@
 //! the same builder calls; only the handler and the message types are written by hand.
 //!
 //! ```text
-//! cargo test --example manual_app_lifecycle --no-default-features --features testing,memory,json
+//! cargo test --example manual_app_lifecycle --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

@@ -2,8 +2,8 @@
 //! named types and `main` is written by hand.
 //!
 //! ```text
-//! cargo run --example manual_memory_broker --no-default-features --features testing,memory,json -- run
-//! cargo test --example manual_memory_broker --no-default-features --features testing,memory,json
+//! cargo run --example manual_memory_broker --no-default-features --features testing,memory,json,tokio -- run
+//! cargo test --example manual_memory_broker --no-default-features --features testing,memory,json,tokio
 //! ```
 
 use std::future::ready;

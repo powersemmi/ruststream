@@ -3,7 +3,7 @@
 //! stops the same app whichever way the service was declared.
 //!
 //! ```text
-//! cargo test --example manual_testing_starting --no-default-features --features testing,memory,json
+//! cargo test --example manual_testing_starting --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A test drives the app on its own task; the app's cold path carries no Send.

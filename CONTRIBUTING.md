@@ -43,8 +43,9 @@ done
 - **Rust** through rustup. `rust-toolchain.toml` selects stable with rustfmt and clippy. The
   minimum supported version is 1.95: `rustup toolchain install 1.95` builds against it with
   `cargo +1.95 check --workspace --features testing,conformance,asyncapi,cli,metrics,otel`. The
-  two runtime features, `tokio` and `embassy`, add up, so `--all-features` builds the workspace;
-  the justfile keeps `embassy_set` for the device build that leaves tokio out. The
+  three runtime features, `tokio`, `compio` and `embassy`, add up, so `--all-features` builds the
+  workspace; the justfile keeps `embassy_set` and `compio_bench_features` for the builds that leave
+  tokio out. The
   MSRV rises only to a Rust release at least six months old, and only in a minor release.
 - **just**, which runs every recipe below.
 - Per task:

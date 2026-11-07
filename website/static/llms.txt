@@ -2,7 +2,7 @@
 
 > RustStream is a Rust framework for services that subscribe to message brokers and publish to them. The core crate `ruststream` re-exports the crates that hold the traits, the router runtime, the codecs and an in-memory broker. The contract crate, `ruststream-core`, builds with `#![no_std]`, with or without an allocator. Each broker (NATS, Redis, RabbitMQ, Kafka, AMQP 1.0, Google Cloud Pub/Sub, SQS / SNS, Pulsar, MQTT 5, ZeroMQ, stream files, Kinesis) is a crate of its own.
 
-A handler is an `async fn` under `#[subscriber(..)]`, mounted on a broker with `b.include(handler)`; the `with_broker` closure returns that chain (`|b| b.include(a).include(b)`). It takes `&T` for one message or `&[T]` for a batch. A service imports `ruststream::prelude::*` or its broker crate's prelude. The codec is a compile-time type chosen at the mount site; JSON is the default. Misuse is rejected at compile time, and the compiler error names the fix.
+A handler is an `async fn` under `#[subscriber(..)]`, mounted on a broker with `b.include(handler)`; the `with_broker` closure returns that chain (`|b| b.include(a).include(b)`). It takes `&T` for one message or `&[T]` for a batch. The runner is a cargo feature (`tokio` by default, `compio`, `embassy`), and the app selects the logger the framework reports through. A service imports `ruststream::prelude::*` or its broker crate's prelude. The codec is a compile-time type chosen at the mount site; JSON is the default. Misuse is rejected at compile time, and the compiler error names the fix.
 
 This site holds the entry pages. How each topic is done lives in the module overviews on docs.rs, and a broker's own settings live in its crate's documentation.
 
@@ -14,7 +14,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Quick start](https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/): a running service scaffolded with `cargo generate`
 - [Tutorial](https://powersemmi.github.io/ruststream/latest/guides/getting-started/tutorial/): an orders service with a message type, a handler, a reply and a router, on the in-memory broker
 - [Agent skills](https://powersemmi.github.io/ruststream/latest/guides/getting-started/agent-skills/): the skills a coding agent installs from this repository to write services, tests and broker crates
-- [Build a service, step by step](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/): eleven chapters that grow one shop service on the in-memory broker, from its first subscriber to NATS
+- [Build a service, step by step](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/): twelve chapters: one shop service on the in-memory broker, from its first subscriber to NATS, and a device service on the embassy runtime
 - [The service and its first subscriber](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/service/): `#[subscriber]`, `include` and `#[ruststream::app]`
 - [Messages: payloads, headers, codecs](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/messages/): a payload type, a header contract read with `Headers<T>`, and a codec per topic
 - [Replies and publishing to other topics](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/replies/): a reply, an `Out` slot, and a router that binds both
@@ -26,6 +26,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [The AsyncAPI document](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/asyncapi/): `asyncapi gen`, `AppInfo`, and a document test shared by both forms
 - [Running beside an HTTP server, outbox](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/http/): `start` beside axum, and a transactional outbox relayed to the broker
 - [Switching to a networked broker](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/networked-broker/): the same shop on NATS: the broker type changes, the subscribers and tests do not
+- [A device service on the local memory broker](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/device/): a no-heap service on the embassy runtime, and its tests on the host under an allocator that fails on any allocation
 
 ## Components
 
@@ -46,11 +47,12 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Subscribers](https://powersemmi.github.io/ruststream/latest/components/subscribers/): `#[subscriber]`, subscription sources, mount-site settings, batches, start positions, routers, the retry cap and destination, failure policy, typed headers
 - [Message sets](https://powersemmi.github.io/ruststream/latest/components/subscribers/message-sets/): several message types on one subscription with `#[derive(InMessages)]`: the header rule, a rule of your own, a rule the decode codec answers through its frame, left to right, and what the derive checks
 - [Messages](https://powersemmi.github.io/ruststream/latest/components/subscribers/messages/): what a handler returns: ack, retry, drop, `retry_after`, `and_after`, post-settle hooks and `.error` for a failed runtime publish
+- [error](https://powersemmi.github.io/ruststream/latest/components/subscribers/messages/error/): `.error(async move |failures: Failures| ..)` on an outcome or `ctx.after(..)`, for a retry copy, a dead-letter copy or a reply the runtime failed to publish; the cause tells a transient failure from a permanent one
 - [Context and extractors](https://powersemmi.github.io/ruststream/latest/components/subscribers/context/): the per-delivery `Context`, `Ctx<K>` and custom extractors
 - [Codecs](https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/): where a mounting's codec comes from, JSON, CBOR, MessagePack, the slice codecs of a build without `alloc`, a codec of your own, Protobuf and the byte lanes
 - [Dispatch](https://powersemmi.github.io/ruststream/latest/components/subscribers/dispatch/): `workers(n)` for handlers that wait on I/O, `threads(n)` for handlers that compute, and the `poll-diagnostics` feature that finds them
 - [Middleware](https://powersemmi.github.io/ruststream/latest/components/subscribers/middleware/): `Layer` around handlers, `PublishLayer` around publishes, and the chains assembled at run time, `DynStack` and `PublishDynStack`
-- [Publishing](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/): replies, `Out` slots, where a message type goes, the publish builder, per-message settings and another broker's publisher
+- [Publishing](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/): replies, `Out` slots, where a message type goes, the publish builder, the message a refused publish returns, per-message settings and another broker's publisher
 - [Publishers](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/publishers/): the publisher capabilities, one page each: `Publisher`, `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`
 - [Transforms](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/transforms/): `PublishTransform` on a reply or a slot, naming transforms that set the destination, and batch reply transforms
 - [Observability](https://powersemmi.github.io/ruststream/latest/components/observability/): the logger the app selects, console logging, `TracingLayer`, Prometheus metrics, W3C trace propagation and OpenTelemetry export
@@ -91,6 +93,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 
 - [Brokers](https://powersemmi.github.io/ruststream/latest/brokers/): the broker crates, and moving a service to another broker
 - [In-memory broker](https://powersemmi.github.io/ruststream/latest/brokers/memory/): the broker inside one process, and the reference implementation of the contract
+- [Local memory broker](https://powersemmi.github.io/ruststream/latest/brokers/local-memory/): the in-process bus of the embassy runtime, with a heap form and a fixed form that allocates nothing, and what each supports
 - [NATS](https://docs.rs/ruststream-nats): `ruststream-nats`, Core NATS and JetStream
 - [Redis / Valkey](https://docs.rs/ruststream-fred): `ruststream-fred`, streams, lists and Pub/Sub
 - [RabbitMQ](https://docs.rs/ruststream-lapin): `ruststream-lapin`, AMQP 0.9.1
@@ -123,9 +126,9 @@ This site holds the entry pages. How each topic is done lives in the module over
 
 ## Broker authors
 
-- [Writing a broker](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html): the `Broker` trait is the hub of the contract a broker crate implements, linking every trait, the lazy-startup ladder and the in-process mode
+- [Writing a broker](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html): the `Broker` trait is the route through the contract a broker crate implements, step by step: its dependencies, the lazy-startup ladder, subscriptions, deliveries, publishing, batches, capabilities, bindings, the prelude and mount steps, the in-process mode, the conformance suites and the zero-cost floor
 - [Brokers whose types are not Send](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html#brokers-whose-types-are-not-send): the lifecycle traits without `Send`, and the per-message traits whose `Send` bound follows the runtime, for a broker over an `Rc` or `RefCell` client
-- [Conformance](https://docs.rs/ruststream/latest/ruststream/conformance/index.html): the suites that check a broker against the contract
+- [Conformance](https://docs.rs/ruststream/latest/ruststream/conformance/index.html): the suites that check a broker against the contract, in process and against a server, and the author checklist
 - [Templates](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html#templates-a-broker-crate-ships): the `cargo generate` template a broker crate ships
 - [A worked broker crate](https://docs.rs/ruststream-nats/latest/ruststream_nats/): the NATS broker, a complete implementation of the contract
 

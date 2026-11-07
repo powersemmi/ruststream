@@ -440,6 +440,11 @@ impl HandlerOutcome {
     /// With the Tokio runner on, the closure and its future are `Send`; on the embedded runtime
     /// alone they carry no `Send`.
     ///
+    /// Beside an [`and_after`](Self::and_after), the `and_after` runs once the copy was published
+    /// and never when it failed; `.error` runs when it failed. The closure costs one allocation,
+    /// its box, when the outcome carries it; the list of failures is allocated only when a copy
+    /// fails.
+    ///
     /// # Cancel safety
     ///
     /// At-most-once, like [`and_after`](Self::and_after): the message is already settled when the

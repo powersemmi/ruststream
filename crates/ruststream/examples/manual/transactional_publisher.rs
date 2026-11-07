@@ -1,7 +1,7 @@
 //! The service of `examples/transactional_publisher.rs` written without the `macros` feature.
 //!
 //! ```text
-//! cargo test --example manual_transactional_publisher --no-default-features --features testing,memory,json
+//! cargo test --example manual_transactional_publisher --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the tests that use it exist only in the test build.

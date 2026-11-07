@@ -1,7 +1,7 @@
 ---
 sidebar_position: 5
 title: error
-description: "error tells the handler when a publish the runtime makes for its outcome fails: a retry copy, a dead-letter copy or a reply."
+description: "error tells the handler when a publish the runtime makes for it fails: a retry copy, a dead-letter copy or a reply."
 ---
 
 import Tabs from '@theme/Tabs';
@@ -9,38 +9,36 @@ import TabItem from '@theme/TabItem';
 
 # error
 
-[`error`](api:ruststream::runtime::HandlerOutcome::error) tells the handler when a publish the runtime makes for its outcome fails.
+[`error`](api:ruststream::runtime::HandlerOutcome::error) tells the handler when a publish the runtime makes on its behalf fails.
 
-Some publishes are the runtime's, not the handler's: the delayed copy of a [`retry_after`](./retry-after.md), the copy that goes to a declared [dead letter](../retry-cap.md), and the reply of an [`out_reply`](../publishing/replies.md).
-A publish in the handler body returns a `Result`, and the handler decides.
-A publish the runtime makes on its behalf gives the same control through `.error`.
+Three publishes are the runtime's: the delayed copy of a [`retry_after`](./retry-after.md), the copy that goes to a declared [dead letter](../retry-cap.md), and the reply of an [`out_reply`](../publishing/replies.md).
+A publish in the handler body returns a `Result`; for these three, `.error` gives the handler the same control.
 
-The continuation receives [`Failures`](api:ruststream::runtime::Failures), the publishes that failed.
-Each [`Failed`](api:ruststream::runtime::Failed) holds the cause, `error()`, and the very [message](api:ruststream::runtime::FailedMessage) the runtime tried to send, `message()`: its destination, its bytes and its headers.
-The message is the one that was sent: the headers and bytes the publish transforms and the publisher's base headers produced, so a reply arrives as it left.
-The bytes are `None` only when the publisher took the payload buffer and did not give it back.
-The message is a [`Serialized`](api:ruststream::Serialized) value, so another `Out` republishes it as it is, and nothing is decoded again.
-A message with no bytes cannot be republished: the publish returns [`MissingPayloadError`](api:ruststream::runtime::MissingPayloadError).
-It returns nothing, like [`and_after`](./and-after.md), and runs once the delivery is settled.
-Whatever the reaction needs (a client, state, a counter, an `Out` publisher) the handler moves into the closure.
-An `Out` publisher is cloned for that: declare it `Out<impl Publisher>` and move `alerts.clone()` in, then publish through it in the continuation as in the handler body.
-The closure runs at most once, like `and_after`, so it may own what it captures.
+The continuation receives [`Failures`](api:ruststream::runtime::Failures), one [`Failed`](api:ruststream::runtime::Failed) per message that did not go out.
+`error()` is the cause.
+When the publisher fails, it is the publisher's own error: downcast it to the broker's error type to tell a transient failure, such as a refused connection, from a permanent one, such as a message the broker rejected.
+A reply that fails to encode never reaches the publisher, and its cause is the encode error, such as the codec's [`CodecError`](api:ruststream::codec::CodecError).
+On the embedded runtime, a delayed retry copy that finds the mount's store of copies full fails with [`NoFreeRecordError`](api:ruststream::runtime::NoFreeRecordError).
+`message()` is the message the runtime tried to send, with its destination, bytes and headers.
+It is a [`Serialized`](api:ruststream::Serialized) value, so another `Out` republishes it as it was.
+Its bytes are `None` where the publisher took the payload buffer and did not give it back, and such a message cannot be republished.
 
+The continuation runs once, after the delivery is settled.
 The handler never runs again because a runtime publish failed.
-The delivery is settled before the copy is published, so a failed copy cannot make the handler repeat its side effects or run past its `max_attempts` cap.
-A failed reply settles the same way: the delivery is acknowledged, and the `.error` registered from the context runs.
 
-`.error` runs for every cause: the network, a broker that is down, full or overloaded, a broker that rejected the message, a codec or a publish transform that failed, or, on the embedded runner, a store of retry copies with no free record ([`NoFreeRecordError`](api:ruststream::runtime::NoFreeRecordError)).
-`Failed::error` is the cause itself, so the continuation can tell a transient failure from a permanent one.
+Without `.error`, the failure is logged with the subscription, the destination, the message type and the error, the delivery stays acknowledged, and the message is lost.
 
-Without `.error` the failure is logged with the subscription, the destination, the message type and the error, and the copy is lost.
+On a subscription whose broker moves deliveries itself ([`BrokerMoves`](api:ruststream::BrokerMoves)), the runtime publishes no copy, so the continuation never runs.
+Each outcome that carries `.error` there logs a warning naming the subscription.
+
+`.error` combines with [`and_after`](./and-after.md) on an outcome and with [`then`](./hooks.md) on the context: the success half runs once the publish succeeded, `.error` once it failed.
+The embedded runtime's forms, rooms and costs are in the rustdoc of [`HandlerOutcome::error`](api:ruststream::runtime::HandlerOutcome::error) and [`After::error`](api:ruststream::runtime::After::error).
 
 ## Example
 
 ### On the outcome
 
-`HandlerOutcome::error` covers the publishes the runtime makes for that outcome: the delayed retry copy, and the dead-letter copy when the mount's `max_attempts(..).dead_letter(..)` turns this retry into a dead letter at the cap.
-The handler below retries once at its cap, so the retry becomes a dead letter, and the broker refuses the dead-letter copy.
+The handler retries once at its cap, so the retry becomes a dead letter, and the broker refuses the dead-letter copy.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
@@ -57,23 +55,30 @@ The handler below retries once at its cap, so the retry becomes a dead letter, a
 </TabItem>
 </Tabs>
 
-On a subscription whose broker retries and dead-letters natively the runtime publishes nothing, so the continuation never runs.
-Each outcome that carries `.error` there logs a warning naming the subscription.
-A batch handler has two forms.
-A `Vec<HandlerOutcome>` attaches a one-shot `.error` to the outcome of the element it concerns; its `Failures` holds that element's failure.
-A single `HandlerOutcome` returned for the whole batch runs its `.error` once, with the failure of every element whose copy failed, in the batch's order.
-The list is allocated only when a copy fails; on the embedded runtime without `alloc` it sits in a fixed buffer of the subscription instead.
-The [`and_after`](./and-after.md) beside a uniform outcome runs once, after the batch, when at least one copy was published; when every copy fails it does not run.
-Both continuations run beside each other, so neither waits for the other.
-On the embedded runtime a single outcome for a batch gathers the failures of its elements in one place for the mount, so a second batch outcome with an `.error` waits until the first has run its closure; with `retry_after` the wait lasts the delay of the first batch's copies.
-Outcomes without an `.error`, one outcome per element, and copies that go out at once do not wait.
+### A batch
 
-### From the context
+A batch handler that returns one outcome per element attaches `.error` to each; its `Failures` holds that element's failure.
+A `#[subscriber]` batch body that returns a single `HandlerOutcome` runs its `.error` once, with the failure of every element whose copy failed, in the batch's order.
 
-The context form covers a delivery whose handler returns no outcome of its own, and the reply of `out_reply`:
-[`ctx.after(outcome).error(..)`](api:ruststream::runtime::After::error) names the settlement it stands behind, as [`then`](./hooks.md) does.
-A batch handler that returns replies registers it the same way; when the replies of a batch fail to publish, the continuation receives every reply of the batch.
-On the embedded runtime a reply that is refused is lost with the replies behind it in the batch, and the continuation receives those; there are at most as many as the mount's batch size.
+<Tabs groupId="api">
+<TabItem value="macros" label="Macros">
+
+```rust reference="crates/ruststream/examples/retry_error.rs#batch"
+```
+
+</TabItem>
+<TabItem value="manual" label="Manual">
+
+```rust reference="crates/ruststream/examples/manual/retry_error.rs#batch"
+```
+
+</TabItem>
+</Tabs>
+
+### A reply
+
+A reply has no outcome to carry `.error`, so the handler registers it on the context: [`ctx.after(outcome).error(..)`](api:ruststream::runtime::After::error).
+When the replies of a batch fail to publish, the continuation receives every one of them.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
@@ -89,18 +94,3 @@ On the embedded runtime a reply that is refused is lost with the replies behind 
 
 </TabItem>
 </Tabs>
-
-### With a continuation that follows the publish
-
-`.then` and `.error` combine on both forms, in either order: `.and_after(..).error(..)` on the outcome, `.then(..).error(..)` or `.error(..).then(..)` on the context.
-With both registered, `.then` waits for the publish: it runs once the publish succeeded and never when it failed, and `.error` runs when it failed and never when it succeeded.
-Each runs once.
-Where the runtime makes no publish for the delivery, the `.then` runs once the delivery is settled.
-
-### The closure and the runtime
-
-With the tokio runtime on, the closure and its future are `Send`.
-On the embedded runtime alone they carry no `Send`, so they may hold the local bus's publisher or an `Rc`.
-A closure registered on an outcome that never fails costs one allocation, its box; an outcome without `.error` stores and runs nothing for it.
-On the embedded runtime without `alloc` the closure sits in a room of 128 bytes and allocates nothing, and it borrows the failures from the subscription's fixed buffer: `async move |failures: &Failures| ..` in place of `async move |failures: Failures| ..`.
-The runtime copies the failed message for the continuation only when one is registered.

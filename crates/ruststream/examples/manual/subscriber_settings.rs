@@ -2,7 +2,7 @@
 //! settings chain on `subscriber(..)` before `.build()`.
 //!
 //! ```text
-//! cargo test --example manual_subscriber_settings --no-default-features --features testing,memory,json
+//! cargo test --example manual_subscriber_settings --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

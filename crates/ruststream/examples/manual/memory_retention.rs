@@ -2,7 +2,7 @@
 //! a step of the `subscriber` chain.
 //!
 //! ```text
-//! cargo test --example manual_memory_retention --no-default-features --features testing,memory,json
+//! cargo test --example manual_memory_retention --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the test that runs it exists only in the test build.

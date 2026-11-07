@@ -131,6 +131,12 @@ name = "compio_reply"
 path = "tests/compio_reply.rs"
 required-features = ["compio", "json"]
 
+# The compio services of the three tests above, declared without the macros.
+[[test]]
+name = "compio_manual"
+path = "tests/compio_manual.rs"
+required-features = ["compio", "json"]
+
 # A delayed retry of a compio service, through the compio `TestApp` and its virtual clock.
 [[test]]
 name = "compio_retry"

@@ -52,6 +52,7 @@
 //!   [observability][observability].
 //! * [`runtime::cli`]: the generated entry point and the `ruststream` command.
 //! * [`conformance`]: the contract suite a broker crate runs against itself.
+//! * [`Broker`]: the route through a broker crate, step by step, for its author.
 //!
 //! The broker crates document their own descriptors and publish policies. Installation, the
 //! guides and the list of brokers are on the site: <https://powersemmi.github.io/ruststream/>.
@@ -64,7 +65,7 @@
 //! # Cargo features
 //!
 //! The core traits, the router, middleware and dispatch are always present. Every feature is
-//! additive and opt-in.
+//! additive; `tokio` and `json` are the defaults.
 //!
 //! The runtime runs the app's subscriptions. `tokio`, `compio` and `embassy` provide one each: the
 //! handlers are the same for all of them, and the app picks its runner. `tokio` builds beside

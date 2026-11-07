@@ -19,7 +19,7 @@ A broker that publishes under a thousand names keeps up to that much for each of
 The newest message always stays, so a payload larger than a byte bound is kept alone.
 The retaining broker is a type of its own, `MemoryBroker<Retaining>`, and only its subscriptions implement [`Seekable`](api:ruststream::Seekable).
 A [`start_at`](../subscribers/replay/start-at.md) or a [seek](../subscribers/replay/seek.md) therefore does not compile on `MemoryBroker::new()`, which keeps nothing.
-A [`MemoryPosition`](api:ruststream::memory::MemoryPosition) names a place in the log of one name: `start()` is the oldest message still kept, `sequence(n)` the `n`-th message ever published to the name, and `end()` the tip.
+A [`MemoryPosition`](api:ruststream::memory::MemoryPosition) names a place in the log of one name: `start()` is the oldest message still kept, `sequence(n)` the zero-based `n`-th message ever published to the name, and `end()` the tip.
 A sequence number keeps naming the same message as the bound evicts older ones.
 A sequence the bound has already evicted is refused with `MemoryError::PositionEvicted`, which names the oldest position left.
 A [pattern subscription](./patterns.md) does not replay, because the log is kept per name.

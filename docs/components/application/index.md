@@ -16,6 +16,7 @@ They name the service in its logs and in its AsyncAPI document.
 Each handler is one more `.include(..)` on that chain, after the steps of the one before it.
 A broker the service only publishes to returns the empty chain, `|b| b`.
 A service with several brokers calls it once per broker.
+[`logger`](api:ruststream::runtime::RustStream::logger) selects the logger the framework reports to, as the [Logging](../observability/logging.md) page shows.
 A broker constructor does no I/O: the application connects every broker when it [starts](./running/index.md).
 Handlers mounted with `b.include(..)` decode with the default codec; `with_broker_codec` names another one for the whole scope.
 `register_broker` adds a broker that only publishes, with no label and no handlers.

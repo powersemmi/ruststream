@@ -825,6 +825,12 @@ name = "doc_device"
 path = "tests/doc_device.rs"
 required-features = ["embassy", "memory", "macros", "testing", "postcard"]
 
+# The same device service declared without the macros: the Manual tabs of the guide's chapter.
+[[test]]
+name = "doc_device_manual"
+path = "tests/doc_device_manual.rs"
+required-features = ["embassy", "memory", "macros", "testing", "postcard"]
+
 # A device service's deliveries under an allocator that fails the framework's own allocations,
 # built where the framework's `alloc` feature is off.
 [[test]]

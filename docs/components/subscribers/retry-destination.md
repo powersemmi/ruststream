@@ -43,6 +43,8 @@ A broker that moves a spent delivery itself declares `BrokerMoves`, and `.out_re
 
 ## A subscription that addresses nothing
 
+A descriptor that reads a pattern declares `Copies = NamedCopies`.
+
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 
@@ -57,6 +59,8 @@ A broker that moves a spent delivery itself declares `BrokerMoves`, and `.out_re
 
 </TabItem>
 </Tabs>
+
+Its mount names where a copy goes; the same registration without `.to(..)` is refused.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">

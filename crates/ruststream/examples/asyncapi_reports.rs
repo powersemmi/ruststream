@@ -85,6 +85,7 @@ async fn ship(shipment: &Shipment, Headers(meta): Headers<ShipmentMeta>) -> Hand
 }
 // --8<-- [end:headers]
 
+// --8<-- [start:retry]
 /// A payment to charge.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Payment {
@@ -97,7 +98,6 @@ async fn charge(payment: &Payment) -> HandlerOutcome {
     HandlerOutcome::retry()
 }
 
-// --8<-- [start:retry]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(confirm)

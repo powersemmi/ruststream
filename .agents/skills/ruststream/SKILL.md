@@ -10,7 +10,7 @@ RustStream is an async messaging framework for Rust. A handler is an `async fn` 
 crate decides the transport. Misuse is a compile error that names the fix, so read the compiler
 message before changing the design.
 
-This guidance targets ruststream 0.7. Check the version in `Cargo.toml` before applying it to
+This guidance targets ruststream 0.8. Check the version in `Cargo.toml` before applying it to
 another line. Deeper material:
 
 - [references/handlers.md](references/handlers.md): outcomes, retries and dead letters, `and_after`, mount-site settings (`workers`, `threads`, `batch`, `start_at`, `on_failure`), extractors, raw payloads
@@ -143,6 +143,15 @@ builder (`ruststream::diagnostics`; the `tracing` feature is on with tokio), or 
 `DefmtLogger` with their features. The selection is process-wide. Every warning stays on, and the
 level of the backend (a `tracing` filter, `log::max_level()`, defmt's level) silences one.
 
+### The runner is a cargo feature
+
+`ruststream` enables `json` and `tokio` by default, and `#[ruststream::app]` runs the service on
+tokio. `compio` and `embassy` are the other runners and add up with `tokio`; a crate that turns
+default features off names the runner it uses:
+`ruststream = { version = "0.8", default-features = false, features = ["tokio", "json", "macros"] }`.
+The app picks its runner by type: `#[ruststream::app(runtime = compio, cores = n)]` or
+`#[ruststream::app(runtime = embassy)]` (see `references/compio.md` and `references/embedded.md`).
+
 ### The first parameter's type picks the form
 
 `&T` is one message, `&[T]` a batch. `T: Deserialize` decodes with the codec. A type with
@@ -169,6 +178,15 @@ opens: `|b| b.include(a).include(b)`. The cap and the dead letter follow `includ
 follows directly. Chain nothing and the broker's default policy is used. A broker the service only
 publishes to returns the scope as it is, `|b| b`. `b.after_startup(..)` and
 `b.include_router(r)` are steps of the same chain, written before the `include`s. A handler signature never names a broker type.
+
+### A publish that fails keeps its message
+
+A handler's own `out.message(&m).publish().await` returns an error that holds the message the
+broker refused, so a handler can send it through another `Out`. A publisher that takes the payload
+(`Take`) may consume it, and then `unsent()` is `None`. The publishes the runtime makes for
+a delivery (the `out_reply` reply, a `retry_after` copy, a dead-letter copy) report their failure to
+`.error(async move |failures: Failures| ..)` on the returned outcome; a failed reply is acknowledged,
+never retried, and without `.error` the loss is logged.
 
 ### Where a message goes belongs to its type
 

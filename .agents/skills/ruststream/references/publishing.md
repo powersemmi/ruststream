@@ -45,11 +45,11 @@ async fn confirm(order: &Order) -> Confirmation {
     Confirmation { id: order.id, accepted: true }
 }
 
-// in with_broker(broker, |b| { ... }):
-b.include(issue_receipt);                              // the type carries the destination
-b.include(confirm);                                    // broker's default publish policy
-b.include(confirm).out_reply(Publish);                 // an explicit one
-b.include(confirm).out_reply(Publish).codec(CborCodec).transform(Envelope);  // the whole wiring
+// the chain a `with_broker` closure returns (`|b| ..`):
+b.include(issue_receipt)                               // the type carries the destination
+b.include(confirm)                                     // broker's default publish policy
+b.include(confirm).out_reply(Publish)                 // an explicit one
+b.include(confirm).out_reply(Publish).codec(CborCodec).transform(Envelope)  // the whole wiring
 ```
 
 The steps after `.out_reply(..)` fill the reply wiring, each once: `.codec(..)` names the reply
@@ -90,15 +90,21 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome
     HandlerOutcome::ack()
 }
 
-// in with_broker(broker, |b| { ... }): the single unnamed slot is DefaultSlot
-b.include(forward).out(DefaultSlot, Publish).build();
+// the single unnamed slot is DefaultSlot:
+b.include(forward).out(DefaultSlot, Publish)
 ```
+
+`publish()` returns `PublishError` on failure. `Encode` and `Serialize` mean the value did not
+encode. `Publish { source, message }` carries the broker's own error and, from `unsent()`, the
+message the broker did not send (bytes, headers and destination), or `None` where a `Take` client
+consumed the buffer; another `Out` publishes that message as it was. The publishes the runtime makes for a delivery report through `.error` instead
+(see `handlers.md`).
 
 ### Several publishers: one marker per path
 
 A handler that publishes down more than one path names a **slot marker** per parameter - a unit
 struct deriving `OutSlot`, whose `#[publishes(..)]` list is what may leave through that path. The
-include site binds each marker with `.out(marker, policy)` and commits with a terminal `.build()`;
+include site binds each marker with `.out(marker, policy)`;
 the calls bind by marker, so their order does not matter. A forgotten binding is a compile error
 naming the slot (`MissingSlot<Audit>`), never a runtime surprise. `DefaultSlot` (in the
 prelude) names the implicit single slot when a handler also has a reply side.
@@ -127,7 +133,6 @@ b.include(route)
     .out(Audit, Publish)
     .transform(OutboxEnvelope)  // rides the slot the .out(..) before it bound
     .out(Orders, Publish)
-    .build();
 ```
 
 `.transform(..)` composes a `PublishTransform` onto the position named right before it, and onto
@@ -226,8 +231,8 @@ headers. They reach a publish from two places. The publish policy carries the de
 the mount site, and every message through that position is sent with them:
 
 ```rust
-b.include(record).out(Ledger, Publish::default().qos(1)).build();
-b.include(acknowledge).out_reply(Publish::default().qos(1));  // a reply has no call site
+b.include(record).out(Ledger, Publish::default().qos(1))
+b.include(acknowledge).out_reply(Publish::default().qos(1))  // a reply has no call site
 ```
 
 The call adjusts one setting for one message, through a step the broker adds to the publish
@@ -352,7 +357,7 @@ impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
 
 // `Response` leaves its destination open, so this position offers the naming right;
 // "answers" is the declared fallback and what the document reports
-b.include(answer).out_reply(Publish).transform(ReplyTo);
+b.include(answer).out_reply(Publish).transform(ReplyTo)
 ```
 
 `get_shared` hands the header value over as the buffer the delivery holds, and `Str::try_from`
@@ -379,7 +384,7 @@ The policy is the broker's own - usually there is nothing to wrap:
 ```rust
 use ruststream::memory::prelude::*;
 
-// in with_broker(broker, |b| { ... }):
+// a scope step, written before the `include`s of the closure's chain:
 b.after_startup(Publish, async move |publisher| {
     // `publisher` is the live MemoryPublisher, already connected
     publisher

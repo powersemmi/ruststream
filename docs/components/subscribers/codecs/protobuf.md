@@ -25,7 +25,7 @@ In the manual form the impls the derives write are spelled out, and `wire_bytes`
 The example builds with no codec feature:
 
 ```text
-cargo test --example protobuf --no-default-features --features testing,macros,memory
+cargo test --example protobuf --no-default-features --features tokio,testing,macros,memory
 ```
 
 <Tabs groupId="api">

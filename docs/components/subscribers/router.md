@@ -45,6 +45,7 @@ Each module returns its router, and the service merges them and mounts the resul
 ## Middleware of one router
 
 `Router::layer` wraps every handler of the router, and nothing mounted outside it.
+`Count` is a `BlanketLayer` that counts deliveries, written as on the [Layer](./middleware/layer.md) page.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">

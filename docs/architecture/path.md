@@ -17,7 +17,7 @@ export const words = {
   "transforms": ["Publish transforms", "in the order the chain names them"],
   "publishLayers": ["Publish layers", "around every publish"],
   "publisher": ["Publisher", "sends the reply to the broker"],
-  "settle": ["Settlement", "ack, or retry if the reply failed"]
+  "settle": ["Settlement", "ack; a failed reply goes to .error"]
 };
 
 # Path
@@ -36,8 +36,10 @@ delivery even when its payload does not decode. A payload that does not decode n
 handler: the [failure policy](../components/subscribers/failure-policy.md) settles it.
 
 A handler with no reply settles right after its body. A handler that returns an error outcome
-skips the reply. A reply that fails to publish settles the delivery with a retry, so the request is
-not lost.
+skips the reply. When the reply fails to publish, the runtime still acknowledges the delivery,
+and the handler does not run again. The failure and the unsent reply reach the handler's
+[`.error` continuation](../components/subscribers/messages/error.md), and are logged when it has
+none.
 
 The [reply](../components/subscribers/publishing/replies.md) goes where its type declares. A
 publisher that only reads the bytes is lent the dispatch loop's own buffer, so a reply allocates
