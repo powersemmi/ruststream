@@ -857,13 +857,22 @@ name = "embedded_no_alloc_batch_reply"
 path = "tests/embedded_no_alloc_batch_reply.rs"
 required-features = ["embassy", "memory", "macros", "testing", "postcard"]
 
-# The `Out` slot of a handler of one message, on the build without `alloc`.
+# The `Out` slot of a handler of one message, on the build without `alloc`. Each `Out` form's app
+# is a binary of its own and sets no `recursion_limit`: the compiler lays a type out once per
+# crate, so an app beside it could lay out the deepest futures first and hide how deep this one is.
 [[test]]
 name = "embedded_no_alloc_out"
 path = "tests/embedded_no_alloc_out.rs"
 required-features = ["embassy", "memory", "macros", "testing", "postcard"]
 
-# The `Out` slots of a batch handler, on the build without `alloc`.
+# The `Out` slot of a handler of one message beside a store of retries, on the build without
+# `alloc`: a binary of its own, as above.
+[[test]]
+name = "embedded_no_alloc_out_retry"
+path = "tests/embedded_no_alloc_out_retry.rs"
+required-features = ["embassy", "memory", "macros", "testing", "postcard"]
+
+# The `Out` slots of a batch handler, on the build without `alloc`: a binary of its own, as above.
 [[test]]
 name = "embedded_no_alloc_batch_out"
 path = "tests/embedded_no_alloc_batch_out.rs"
