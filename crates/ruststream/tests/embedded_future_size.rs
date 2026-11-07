@@ -155,17 +155,32 @@ fn a_route_keeps_a_place_for_each_delivery_it_holds_at_once() {
 
     let waiting = size_of_returned(&|bus, control| waiting_app(bus).run(control));
     let waiting_of_one = size_of_returned(&|bus, control| waiting_app_with::<1>(bus).run(control));
-    assert_eq!(waiting, waiting_of_one, "one delivery at a time keeps one place");
+    assert_eq!(
+        waiting, waiting_of_one,
+        "one delivery at a time keeps one place"
+    );
 
     let pool = size_of_returned(&|bus, control| pool_app(bus).run(control));
-    assert_eq!(pool - pool_of_one, 3 * place, "a pool of four keeps four places");
+    assert_eq!(
+        pool - pool_of_one,
+        3 * place,
+        "a pool of four keeps four places"
+    );
 
     let keyed = size_of_returned(&|bus, control| keyed_app(bus).run(control));
     let keyed_of_one = size_of_returned(&|bus, control| keyed_app_with::<1>(bus).run(control));
-    assert_eq!(keyed - keyed_of_one, 2 * place, "three keyed workers keep three places");
+    assert_eq!(
+        keyed - keyed_of_one,
+        2 * place,
+        "three keyed workers keep three places"
+    );
 
     let batch = size_of_returned(&|bus, control| waiting_batch_app(bus).run(control));
     let batch_of_one =
         size_of_returned(&|bus, control| waiting_batch_app_with::<1>(bus).run(control));
-    assert_eq!(batch - batch_of_one, 2 * place, "a batch of three keeps three places");
+    assert_eq!(
+        batch - batch_of_one,
+        2 * place,
+        "a batch of three keeps three places"
+    );
 }
