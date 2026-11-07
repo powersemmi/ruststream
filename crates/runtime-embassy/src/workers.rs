@@ -910,9 +910,9 @@ pub trait MountSteps: Sized {
     ///
     /// A publish the runtime makes for a delivery (its reply, a retry or a dead-letter copy) that
     /// the broker refuses hands its message back: the message moves into a free place, and the
-    /// refusal holds the place until the message is read out (by the handler's
-    /// [`.error`](ruststream_runtime::HandlerOutcome::error) continuation) or dropped. A publish
-    /// that goes out takes no place. By default the registration keeps one place for each
+    /// runtime reads it out of the place as the publish returns, for the handler's
+    /// [`.error`](ruststream_runtime::HandlerOutcome::error) continuation. A publish that goes out
+    /// takes no place. By default the registration keeps one place for each
     /// delivery it holds at once: one for a handler that takes one delivery at a time, the batch
     /// size for a batch handler, and the worker count for `.pool::<N>()` or `.keyed::<N>()`.
     ///
