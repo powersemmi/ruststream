@@ -411,7 +411,7 @@ checksum = "5974e397833d890f2f74963408e0d4a6cd8eda2f6a445ae06750291b5d7a997e"
 
 [[package]]
 name = "ruststream"
-version = "0.8.0-rc.1"
+version = "0.8.0-rc.2"
 dependencies = [
  "ruststream-cli",
  "ruststream-core",
@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-cli"
-version = "0.8.0-rc.1"
+version = "0.8.0-rc.2"
 dependencies = [
  "ruststream-runtime",
  "ruststream-runtime-tokio",
@@ -435,7 +435,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-core"
-version = "0.8.0-rc.1"
+version = "0.8.0-rc.2"
 dependencies = [
  "bytes",
  "bytes-utils",
@@ -453,7 +453,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-macros"
-version = "0.8.0-rc.1"
+version = "0.8.0-rc.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-memory"
-version = "0.8.0-rc.1"
+version = "0.8.0-rc.2"
 dependencies = [
  "critical-section",
  "futures",
@@ -483,7 +483,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-runtime"
-version = "0.8.0-rc.1"
+version = "0.8.0-rc.2"
 dependencies = [
  "assert_no_alloc",
  "dyn-utils",
@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-runtime-embassy"
-version = "0.8.0-rc.1"
+version = "0.8.0-rc.2"
 dependencies = [
  "embassy-futures",
  "embassy-sync",
@@ -522,7 +522,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-runtime-tokio"
-version = "0.8.0-rc.1"
+version = "0.8.0-rc.2"
 dependencies = [
  "bytes",
  "crossbeam-queue",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-testing"
-version = "0.8.0-rc.1"
+version = "0.8.0-rc.2"
 dependencies = [
  "inventory",
  "ruststream-core",
