@@ -19,6 +19,7 @@ With the `alloc` feature the bus lives on the heap and the broker is built with 
 Without it the bus is a `LocalMemoryBus` of fixed size, which the board declares as a `static`, and the broker is built over it with `LocalMemoryBroker::new(&BUS)`.
 `LocalMemoryBus<MESSAGES, PAYLOAD, SUBSCRIPTIONS>` fixes the messages each subscription holds, the largest payload in bytes (64 unless named), and how many subscriptions are open at once (8 unless named).
 A bus that holds no message, no byte or no subscription does not build.
+An empty bus is all zero bytes, so the board's `static` lies in `.bss`: it takes RAM that the startup code zeroes, and no flash.
 The bus sits behind a critical section, so the binary supplies the `critical-section` implementation.
 A delivery lies in a place of the bus from its publish to its settlement, and the message a handler reads holds that place, so it moves a reference rather than the payload and headers.
 Settling the message frees the place; a delivery whose subscriber left keeps its place until it is settled.
