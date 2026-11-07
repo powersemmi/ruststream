@@ -34,7 +34,7 @@ pub struct WithPlaces<P, const N: usize> {
 
 impl<P, const N: usize> WithPlaces<P, N> {
     /// `publisher`, with `N` places of its own.
-    pub(crate) const fn new(publisher: P) -> Self {
+    pub(crate) fn new(publisher: P) -> Self {
         const {
             assert!(
                 N > 0,

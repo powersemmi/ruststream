@@ -232,12 +232,12 @@ impl<'p> Refusal<'p> {
             error: error.into(),
             unsent: message.and_then(|message| {
                 let (_, payload, headers) = message.into_parts();
-                places.hold(|place| {
+                places.hold(|| Unsent {
                     // Handed straight to the publisher: the destination is the one the caller
                     // named.
-                    place.sent = None;
-                    place.payload = Form::kept(payload);
-                    take_headers(&mut place.headers, headers);
+                    sent: None,
+                    payload: Form::kept(payload),
+                    headers: owned_headers(headers),
                 })
             }),
         }
@@ -262,16 +262,16 @@ impl<'p> Refusal<'p> {
         if out.is_consumed() {
             return Self::new(error);
         }
-        let unsent = places.hold(|place| {
-            place.sent = None;
-            place.payload = out.take_owned_payload().map_or_else(
+        let unsent = places.hold(|| Unsent {
+            sent: None,
+            payload: out.take_owned_payload().map_or_else(
                 || KeptPayload::Lent {
                     addr: out.payload().as_ptr() as usize,
                     len: out.payload().len(),
                 },
                 KeptPayload::Owned,
-            );
-            take_out_headers(&mut place.headers, out);
+            ),
+            headers: out_headers(out),
         });
         Self { error, unsent }
     }
@@ -281,7 +281,7 @@ impl<'p> Refusal<'p> {
     #[must_use]
     pub(crate) fn sent_to(mut self, declared: &str, sent: &str) -> Self {
         if sent != declared
-            && let Some(unsent) = self.unsent.as_mut()
+            && let Some(unsent) = self.unsent.as_mut().and_then(Lease::get_mut)
         {
             unsent.sent = Some(sent_name(sent));
         }
@@ -297,13 +297,14 @@ impl<'p> Refusal<'p> {
         wrap: impl FnOnce(BoxError) -> Error,
     ) -> SinkRefusal<'p, Error> {
         let error = wrap(self.error);
-        let unsent = self.unsent.and_then(|mut unsent| {
+        let unsent = self.unsent.and_then(|mut lease| {
+            let unsent = lease.get_mut()?;
             if unsent.sent.is_none() {
                 unsent.sent = Some(sent_name(destination));
             }
             // A name past the fixed room is not a destination to report: the message would be
             // republished to the wrong place, so the sink hands back the error alone.
-            routable(unsent.sent.as_ref()).then_some(unsent)
+            routable(unsent.sent.as_ref()).then_some(lease)
         });
         SinkRefusal::leasing(error, unsent)
     }
@@ -333,7 +334,7 @@ impl<'p> Refusal<'p> {
         destination: &str,
         lent: impl FnOnce(usize, usize) -> CopiedPayload,
     ) -> (BoxError, FailedMessage) {
-        let message = match self.unsent.map(Lease::into_unsent) {
+        let message = match self.unsent.and_then(Lease::into_unsent) {
             Some(Unsent {
                 sent,
                 payload,
@@ -426,30 +427,30 @@ fn restore_parts<Form: PayloadForm>(payload: ReturnedParts, out: &mut Outgoing<'
     Form::restored(payload, out);
 }
 
-/// Puts the map a refused message carried into its place: moved where there is a heap.
+/// The map a refused message carried, as its place keeps it: moved where there is a heap.
 #[cfg(ruststream_alloc)]
-fn take_headers(place: &mut HeaderSet, headers: HeaderSet) {
-    *place = headers;
+const fn owned_headers(headers: HeaderSet) -> HeaderSet {
+    headers
 }
 
-/// Puts the map a refused message carried into its place: the entries and bytes it holds, where
-/// there is no heap.
+/// The map a refused message carried, as its place keeps it: a copy of the entries and bytes the
+/// borrowed map holds, where there is no heap.
 #[cfg(not(ruststream_alloc))]
-fn take_headers(place: &mut HeaderSet, headers: &HeaderSet) {
-    place.clone_from(headers);
+fn owned_headers(headers: &HeaderSet) -> HeaderSet {
+    headers.clone()
 }
 
-/// Moves the map of the message `out` holds into its place where there is a heap.
+/// The map of the message `out` holds, moved out where there is a heap.
 #[cfg(ruststream_alloc)]
-fn take_out_headers(place: &mut HeaderSet, out: &mut Outgoing<'_>) {
-    *place = mem::take(out.headers_mut());
+fn out_headers(out: &mut Outgoing<'_>) -> HeaderSet {
+    mem::take(out.headers_mut())
 }
 
-/// Copies the entries and bytes of the map the message `out` holds into its place, where there is
-/// no heap: what `out` keeps is dropped with it.
+/// The map of the message `out` holds, copied where there is no heap: what `out` keeps is dropped
+/// with it.
 #[cfg(not(ruststream_alloc))]
-fn take_out_headers(place: &mut HeaderSet, out: &Outgoing<'_>) {
-    place.clone_from(out.headers());
+fn out_headers(out: &Outgoing<'_>) -> HeaderSet {
+    out.headers().clone()
 }
 
 /// Whether a recorded destination is one a message can be republished to.

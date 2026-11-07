@@ -11,14 +11,12 @@
 use alloc::boxed::Box;
 #[cfg(feature = "alloc")]
 use alloc::string::String;
+use core::array;
 #[cfg(not(feature = "alloc"))]
 use core::cell::{RefCell, RefMut};
 use core::fmt;
 #[cfg(feature = "alloc")]
 use core::marker::PhantomData;
-#[cfg(not(feature = "alloc"))]
-use core::mem;
-use core::ops::{Deref, DerefMut};
 
 use crate::Headers;
 use crate::publisher::{KeptPayload, OutgoingFor, PayloadForm, PublishMessageError};
@@ -94,16 +92,6 @@ pub struct Unsent {
     pub headers: Headers,
 }
 
-impl Unsent {
-    /// An empty place's content: no name, no bytes, an empty map. Two lengths and two tags, so a
-    /// place is cheap to make and to empty.
-    pub const EMPTY: Self = Self {
-        sent: None,
-        payload: KeptPayload::Lent { addr: 0, len: 0 },
-        headers: Headers::new(),
-    };
-}
-
 /// One place a refused message lies in until its refusal is read or dropped. Machinery; a
 /// [`PlaceRoom`] holds them.
 ///
@@ -112,8 +100,10 @@ impl Unsent {
 pub struct Place {
     // Borrowed for as long as a refusal holds the place: the borrow is the lease, and its end
     // gives the place back. The storage belongs to one task, so a `RefCell` is the whole lock.
+    // An empty place is `None`, written as a tag: a constant of the whole room would be copied
+    // from the binary's data each time a place is made.
     #[cfg(not(feature = "alloc"))]
-    unsent: RefCell<Unsent>,
+    unsent: RefCell<Option<Unsent>>,
 }
 
 impl Place {
@@ -122,7 +112,7 @@ impl Place {
     pub const fn new() -> Self {
         Self {
             #[cfg(not(feature = "alloc"))]
-            unsent: RefCell::new(Unsent::EMPTY),
+            unsent: RefCell::new(None),
         }
     }
 }
@@ -146,9 +136,12 @@ pub struct PlaceRoom<const N: usize>([Place; N]);
 
 impl<const N: usize> PlaceRoom<N> {
     /// `N` empty places.
+    ///
+    /// Each is made in place, so a room costs a tag and a borrow flag per place: a constant
+    /// array of them would be copied whole from the binary's data.
     #[must_use]
-    pub const fn new() -> Self {
-        Self([const { Place::new() }; N])
+    pub fn new() -> Self {
+        Self(array::from_fn(|_| Place::new()))
     }
 
     /// The places, for a refusal to take one of.
@@ -201,33 +194,34 @@ impl<'p> Places<'p> {
         Self::new(&[])
     }
 
-    /// Moves a refused message into a free place, which `fill` writes it into, and leases the
-    /// place to the refusal. With `alloc` the message is boxed instead.
+    /// Moves the refused message `unsent` makes into a free place and leases the place to the
+    /// refusal. With `alloc` the message is boxed instead.
     ///
-    /// `None` where every place is taken: the refusal then comes back without its message.
+    /// `None` where every place is taken: the refusal then comes back without its message, and
+    /// the message is never made.
     #[cfg(feature = "alloc")]
-    pub fn hold(self, fill: impl FnOnce(&mut Unsent)) -> Option<Lease<'p>> {
-        let mut unsent = Unsent::EMPTY;
-        fill(&mut unsent);
+    #[allow(clippy::unnecessary_wraps)] // one signature for both variants
+    pub fn hold(self, unsent: impl FnOnce() -> Unsent) -> Option<Lease<'p>> {
         Some(Lease {
-            unsent: Box::new(unsent),
+            unsent: Box::new(unsent()),
             places: PhantomData,
         })
     }
 
-    /// Moves a refused message into a free place, which `fill` writes it into, and leases the
-    /// place to the refusal. With `alloc` the message is boxed instead.
+    /// Moves the refused message `unsent` makes into a free place and leases the place to the
+    /// refusal. With `alloc` the message is boxed instead.
     ///
-    /// `None` where every place is taken: the refusal then comes back without its message.
+    /// `None` where every place is taken: the refusal then comes back without its message, and
+    /// the message is never made.
     #[cfg(not(feature = "alloc"))]
-    pub fn hold(self, fill: impl FnOnce(&mut Unsent)) -> Option<Lease<'p>> {
+    pub fn hold(self, unsent: impl FnOnce() -> Unsent) -> Option<Lease<'p>> {
         // A place a refusal holds is borrowed, so the first one that lends itself is free.
-        let mut unsent = self
+        let mut place = self
             .places
             .iter()
             .find_map(|place| place.unsent.try_borrow_mut().ok())?;
-        fill(&mut unsent);
-        Some(Lease { unsent })
+        *place = Some(unsent());
+        Some(Lease { unsent: place })
     }
 }
 
@@ -241,51 +235,65 @@ impl fmt::Debug for Places<'_> {
 }
 
 /// A refusal's hold on the message it handed back: the box with `alloc`, the place without, given
-/// back when the lease is dropped. Machinery; read through `Deref` and taken with
-/// [`into_unsent`](Self::into_unsent).
+/// back when the lease is dropped. Machinery; read with [`get`](Self::get) and
+/// [`get_mut`](Self::get_mut), taken with [`into_unsent`](Self::into_unsent).
 #[doc(hidden)]
 pub struct Lease<'p> {
     #[cfg(feature = "alloc")]
     unsent: Box<Unsent>,
     #[cfg(feature = "alloc")]
     places: PhantomData<&'p Place>,
+    // The place holds the message for as long as the lease lives: `None` only once
+    // `into_unsent` has taken it, which consumes the lease.
     #[cfg(not(feature = "alloc"))]
-    unsent: RefMut<'p, Unsent>,
+    unsent: RefMut<'p, Option<Unsent>>,
 }
 
 impl Lease<'_> {
-    /// The message, moved out; the place is empty and free again.
+    /// The message.
     #[must_use]
-    pub fn into_unsent(self) -> Unsent {
+    pub fn get(&self) -> Option<&Unsent> {
         #[cfg(feature = "alloc")]
         {
-            *self.unsent
+            Some(&self.unsent)
+        }
+        #[cfg(not(feature = "alloc"))]
+        {
+            self.unsent.as_ref()
+        }
+    }
+
+    /// The message, to write where it went or what its payload became.
+    #[must_use]
+    pub fn get_mut(&mut self) -> Option<&mut Unsent> {
+        #[cfg(feature = "alloc")]
+        {
+            Some(&mut self.unsent)
+        }
+        #[cfg(not(feature = "alloc"))]
+        {
+            self.unsent.as_mut()
+        }
+    }
+
+    /// The message, moved out; the place is empty and free again.
+    #[must_use]
+    pub fn into_unsent(self) -> Option<Unsent> {
+        #[cfg(feature = "alloc")]
+        {
+            Some(*self.unsent)
         }
         #[cfg(not(feature = "alloc"))]
         {
             let mut lease = self;
-            mem::replace(&mut *lease.unsent, Unsent::EMPTY)
+            lease.unsent.take()
         }
-    }
-}
-
-impl Deref for Lease<'_> {
-    type Target = Unsent;
-
-    fn deref(&self) -> &Unsent {
-        &self.unsent
-    }
-}
-
-impl DerefMut for Lease<'_> {
-    fn deref_mut(&mut self) -> &mut Unsent {
-        &mut self.unsent
     }
 }
 
 impl fmt::Debug for Lease<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&**self, f)
+        fmt::Debug::fmt(&self.get(), f)
     }
 }
 
@@ -353,10 +361,10 @@ impl<'p, Error> SinkRefusal<'p, Error> {
         let Some(destination) = usable(sent_name(name)) else {
             return Self::new(error);
         };
-        let unsent = places.hold(|place| {
-            place.sent = Some(sent(destination));
-            place.payload = Form::kept(payload);
-            take_headers(&mut place.headers, headers);
+        let unsent = places.hold(|| Unsent {
+            sent: Some(sent(destination)),
+            payload: Form::kept(payload),
+            headers: owned_headers(headers),
         });
         Self { error, unsent }
     }
@@ -386,7 +394,7 @@ impl<'p, Error> SinkRefusal<'p, Error> {
     /// the buffer a stage wrote moves into the message, and nothing is copied.
     #[must_use]
     pub fn reclaiming<Form: PayloadForm>(mut self, spent: &mut Form::Spent) -> Self {
-        if let Some(unsent) = &mut self.unsent {
+        if let Some(unsent) = self.unsent.as_mut().and_then(Lease::get_mut) {
             Form::reclaimed(spent, &mut unsent.payload);
         }
         self
@@ -402,7 +410,7 @@ impl<'p, Error> SinkRefusal<'p, Error> {
     /// and its headers, moved out of the place. `None` where there is no message.
     #[must_use]
     pub fn into_parts(self) -> (Error, Option<(Destination, KeptPayload, Headers)>) {
-        let unsent = self.unsent.map(Lease::into_unsent).and_then(|unsent| {
+        let unsent = self.unsent.and_then(Lease::into_unsent).and_then(|unsent| {
             let destination = usable(unsent.sent?)?;
             Some((destination, unsent.payload, unsent.headers))
         });
@@ -425,17 +433,17 @@ const fn sent(destination: Destination) -> SentName {
     Some(destination)
 }
 
-/// Puts the map a refused message carried into its place: moved where there is a heap.
+/// The map a refused message carried, as its place keeps it: moved where there is a heap.
 #[cfg(feature = "alloc")]
-fn take_headers(place: &mut Headers, headers: Headers) {
-    *place = headers;
+const fn owned_headers(headers: Headers) -> Headers {
+    headers
 }
 
-/// Puts the map a refused message carried into its place: the entries and bytes it holds, written
-/// over what the place held, where there is none.
+/// The map a refused message carried, as its place keeps it: a copy of the entries and bytes the
+/// borrowed map holds, where there is no heap.
 #[cfg(not(feature = "alloc"))]
-fn take_headers(place: &mut Headers, headers: &Headers) {
-    place.clone_from(headers);
+fn owned_headers(headers: &Headers) -> Headers {
+    headers.clone()
 }
 
 #[cfg(test)]

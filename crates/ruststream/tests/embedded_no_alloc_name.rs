@@ -156,7 +156,7 @@ async fn on_ask(ask: &Job<'_>, ctx: &mut Context<'_, (), Kept>) -> Answer {
     let kept = ctx.state().clone();
     if let Ok(after) = ctx.after(HandlerOutcome::ack()) {
         after.error(async move |failures: &Failures| {
-            for failed in failures.iter() {
+            for failed in failures {
                 let first = failed
                     .message()
                     .payload()
