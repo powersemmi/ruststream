@@ -15,7 +15,10 @@ Three publishes are the runtime's: the delayed copy of a [`retry_after`](./retry
 A publish in the handler body returns a `Result`; for these three, `.error` gives the handler the same control.
 
 The continuation receives [`Failures`](api:ruststream::runtime::Failures), one [`Failed`](api:ruststream::runtime::Failed) per message that did not go out.
-`error()` is the cause, the publisher's own error: downcast it to the broker's error type to tell a transient failure, such as a refused connection, from a permanent one, such as a message the broker rejected.
+`error()` is the cause.
+When the publisher fails, it is the publisher's own error: downcast it to the broker's error type to tell a transient failure, such as a refused connection, from a permanent one, such as a message the broker rejected.
+A reply that fails to encode never reaches the publisher, and its cause is the encode error, such as the codec's [`CodecError`](api:ruststream::codec::CodecError).
+On the embedded runtime, a delayed retry copy that finds the mount's store of copies full fails with [`NoFreeRecordError`](api:ruststream::runtime::NoFreeRecordError).
 `message()` is the message the runtime tried to send, with its destination, bytes and headers.
 It is a [`Serialized`](api:ruststream::Serialized) value, so another `Out` republishes it as it was.
 Its bytes are `None` where the publisher took the payload buffer and did not give it back, and such a message cannot be republished.

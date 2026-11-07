@@ -102,7 +102,10 @@ reply of `out_reply`. When such a publish fails, `.error(async move |failures: F
 returned `HandlerOutcome` (or `ctx.after(outcome).error(..)` from the context) learns of it: each
 `Failed` of `failures` has `error()`, the cause, and `message()`, the very message that did not go
 out (bytes and headers), which another `Out` republishes as it is. `error()` is the publisher's own
-error, so downcasting it to the broker's error type tells a transient failure from a permanent one.
+error when the publisher failed, so downcasting it to the broker's error type tells a transient
+failure from a permanent one; a reply that failed to encode never reaches the publisher and carries
+the encode error (such as the codec's `CodecError`), and on the embedded runtime a delayed retry
+copy whose store of copies is full carries `NoFreeRecordError`.
 On a `BrokerMoves` subscription the runtime publishes no copy and `.error` never runs; a warning
 names the subscription. The handler never runs again
 because of it, and a failed reply is acknowledged. A `.then` chained beside it
