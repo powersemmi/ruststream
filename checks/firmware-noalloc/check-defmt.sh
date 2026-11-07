@@ -23,7 +23,9 @@ for row in "${rows[@]}"; do
     read -r features any_symbol logger sink line <<<"$row"
     args=()
     [ "$features" = none ] || args=(--features "$features")
-    DEFMT_LOG=warn RUSTFLAGS="" cargo build --release --locked --target "$target" "${args[@]}"
+    # The empty array expands to nothing under `set -u` on the bash a macOS host ships, too.
+    DEFMT_LOG=warn RUSTFLAGS="" cargo build --release --locked --target "$target" \
+        ${args[@]+"${args[@]}"}
     for check in "_defmt_:$any_symbol" "_defmt_acquire:$logger" "DefmtSink:$sink" \
         "\"package\":\"ruststream-core\":$line"; do
         text="${check%:*}"
