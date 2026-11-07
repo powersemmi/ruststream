@@ -13,7 +13,7 @@ import TabItem from '@theme/TabItem';
 
 It is for a failure the service must survive.
 Under the default [`FailurePolicy`](api:ruststream::runtime::FailurePolicy) a delivery that does not decode is dropped, and the service keeps running; [`assert_last_failed_to_decode`](../subscriber-assertions/assert-last-failed-to-decode.md) checks that delivery.
-A handler panic under the default policy stops the service, and so does a decode failure under a `fail_fast` decode policy.
+A handler panic under the default policy stops the service, and so do a panic outside the handler and a decode failure under a `fail_fast` decode policy.
 On failure the assertion names the failure that stopped the service.
 [`assert_shut_down`](./assert-shut-down.md) is the opposite assertion, and [`run_result`](./run-result.md) gives the same state as a value.
 

@@ -31,6 +31,7 @@ The probe still reports `Running` and counts one subscription fewer, and the ser
 [`on_subscription_end`](api:ruststream::runtime::RustStream::on_subscription_end) with [`SubscriptionEnd::FailFast`](api:ruststream::runtime::SubscriptionEnd) makes the end a fail-fast failure instead.
 The service then shuts down gracefully, `run` returns an error that names the subscription, and the probe reports `Failed`.
 An end during shutdown is part of the shutdown and is never reported.
+A subscription whose dispatch loop, worker or thread panics outside the handler is a fail-fast failure whatever this setting, and the probe reports `Failed` naming the subscription.
 
 {/* single-form: the setting is the same with and without the macros; the Manual tab of the full file differs only in the handler */}
 ```rust reference="crates/ruststream/examples/app_running.rs#subscription_end"
