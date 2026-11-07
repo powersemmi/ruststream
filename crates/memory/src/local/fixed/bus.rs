@@ -29,15 +29,17 @@ pub(super) const NAME_BYTES: usize = 64;
 pub(super) struct Delivery<const PAYLOAD: usize> {
     pub(super) payload: FixedBuf<PAYLOAD>,
     pub(super) headers: Headers,
-    pub(super) deliveries: NonZeroU64,
+    // `None` in a place no publish has written yet, which the language lays out as zero bytes.
+    pub(super) deliveries: Option<NonZeroU64>,
 }
 
 impl<const PAYLOAD: usize> Delivery<PAYLOAD> {
-    /// A place before its first publish.
+    /// A place before its first publish: all zero bytes, so an empty bus lies in `.bss` and the
+    /// firmware's flash keeps no image of it.
     const EMPTY: Self = Self {
         payload: FixedBuf::new(),
         headers: Headers::new(),
-        deliveries: NonZeroU64::MIN,
+        deliveries: None,
     };
 
     /// Writes a publish into the place: the payload, which the caller checked fits, and the
@@ -48,7 +50,7 @@ impl<const PAYLOAD: usize> Delivery<PAYLOAD> {
             unreachable!("a publish checks that its payload fits before it is written");
         }
         self.headers.clone_from(headers);
-        self.deliveries = deliveries;
+        self.deliveries = Some(deliveries);
     }
 }
 
@@ -91,13 +93,15 @@ impl SlotName {
     }
 }
 
-/// Where a subscription stands.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Where a subscription stands, and the name it reads while it is open.
+// `repr(u8)` stores the discriminant as the tag, so a free slot is a zero tag and nothing else:
+// an empty bus is zero bytes and lies in `.bss`.
+#[repr(u8)]
 enum Standing {
     /// No subscriber holds the slot.
-    Free,
-    /// Its subscriber reads it.
-    Open,
+    Free = 0,
+    /// Its subscriber reads the name.
+    Open(SlotName),
     /// The bus shut down: the stream ends once the queue is drained, and a requeue is refused. The
     /// slot stays held until its subscriber is dropped.
     ShutDown,
@@ -111,7 +115,6 @@ struct Slot<const MESSAGES: usize, const PAYLOAD: usize> {
     // slot taken by another and does not touch it.
     generation: u32,
     standing: Standing,
-    name: Option<SlotName>,
     queue: Deque<Place<PAYLOAD>, MESSAGES>,
     free: FixedVec<Place<PAYLOAD>, MESSAGES>,
     // Woken when a delivery arrives and when the bus shuts down.
@@ -123,7 +126,6 @@ impl<const MESSAGES: usize, const PAYLOAD: usize> Slot<MESSAGES, PAYLOAD> {
         Self {
             generation: 0,
             standing: Standing::Free,
-            name: None,
             queue: Deque::new(),
             free: FixedVec::new(),
             reader: WakerRegistration::new(),
@@ -132,8 +134,19 @@ impl<const MESSAGES: usize, const PAYLOAD: usize> Slot<MESSAGES, PAYLOAD> {
 
     #[inline]
     fn reads(&self, name: &str) -> bool {
-        self.standing == Standing::Open
-            && self.name.as_ref().is_some_and(|own| own.as_str() == name)
+        matches!(&self.standing, Standing::Open(own) if own.as_str() == name)
+    }
+
+    const fn is_free(&self) -> bool {
+        matches!(self.standing, Standing::Free)
+    }
+
+    const fn is_open(&self) -> bool {
+        matches!(self.standing, Standing::Open(_))
+    }
+
+    const fn is_shut_down(&self) -> bool {
+        matches!(self.standing, Standing::ShutDown)
     }
 
     fn has_room(&self) -> bool {
@@ -182,7 +195,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
     fn slot(&mut self, held: Held) -> Option<&mut Slot<MESSAGES, PAYLOAD>> {
         self.slots
             .get_mut(held.index)
-            .filter(|slot| slot.generation == held.generation && slot.standing != Standing::Free)
+            .filter(|slot| slot.generation == held.generation && !slot.is_free())
     }
 }
 
@@ -197,6 +210,9 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
 /// publish to its settlement: the message a handler reads holds the place, so moving it moves a
 /// reference, never the payload and the headers. Settling the message frees the place; a delivery
 /// whose subscriber left keeps its place until it is settled.
+///
+/// An empty bus is all zero bytes, so the board's `static` lies in `.bss`: it takes RAM that the
+/// startup code zeroes, and no flash.
 ///
 /// The state sits behind a critical section, so the bus is `Sync`; the board's binary supplies
 /// the critical-section implementation. The first connect hands each subscription its places
@@ -330,15 +346,14 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
                 .slots
                 .iter_mut()
                 .enumerate()
-                .find(|(_, slot)| slot.standing == Standing::Free);
+                .find(|(_, slot)| slot.is_free());
             let Some((index, slot)) = free else {
                 return Err(LocalMemoryError::NoFreeSubscription {
                     capacity: SUBSCRIPTIONS,
                 });
             };
             slot.generation = slot.generation.wrapping_add(1);
-            slot.standing = Standing::Open;
-            slot.name = Some(name);
+            slot.standing = Standing::Open(name);
             let held = Held {
                 index,
                 generation: slot.generation,
@@ -363,7 +378,6 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
                 while let Some(place) = slot.queue.pop_front() {
                     slot.release(place);
                 }
-                slot.name = None;
                 slot.standing = Standing::Free;
                 slot.reader = WakerRegistration::new();
                 state.held.retain(|&index| index != held.index);
@@ -380,7 +394,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
             state.live = false;
             let mut closed = 0;
             for (index, slot) in state.slots.iter_mut().enumerate() {
-                if slot.standing == Standing::Open {
+                if slot.is_open() {
                     slot.standing = Standing::ShutDown;
                     self.mark(index, true);
                     slot.reader.wake();
@@ -404,15 +418,15 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
                 return Poll::Ready(None);
             };
             #[cfg(feature = "testing")]
-            if held_back && slot.standing == Standing::Open {
+            if held_back && slot.is_open() {
                 slot.reader.register(cx.waker());
                 return Poll::Pending;
             }
             if let Some(place) = slot.queue.pop_front() {
-                let more = !slot.queue.is_empty() || slot.standing == Standing::ShutDown;
+                let more = !slot.queue.is_empty() || slot.is_shut_down();
                 self.mark(held.index, more);
                 Poll::Ready(Some(place))
-            } else if slot.standing == Standing::ShutDown {
+            } else if slot.is_shut_down() {
                 Poll::Ready(None)
             } else {
                 slot.reader.register(cx.waker());
@@ -426,7 +440,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
         self.with(|state| {
             let slot = state.slot(held)?;
             let place = slot.queue.pop_front()?;
-            let more = !slot.queue.is_empty() || slot.standing == Standing::ShutDown;
+            let more = !slot.queue.is_empty() || slot.is_shut_down();
             self.mark(held.index, more);
             Some(place)
         })
@@ -462,8 +476,8 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
         let outcome = self.with(|state| {
             let live = state.live;
             let refused = match state.slot(held) {
-                Some(slot) if slot.standing == Standing::Open => {
-                    place.deliveries = place.deliveries.saturating_add(1);
+                Some(slot) if slot.is_open() => {
+                    place.deliveries = place.deliveries.map(|count| count.saturating_add(1));
                     // Marked before the wake, so the probe the wake leads to reads it.
                     self.mark(held.index, true);
                     slot.enqueue(place);
