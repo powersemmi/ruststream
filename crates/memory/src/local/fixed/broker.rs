@@ -311,8 +311,8 @@ mod tests {
     use embassy_futures::block_on;
     use futures::{FutureExt, StreamExt};
     use ruststream_core::{
-        BatchSlot, BatchStream, BatchSubscriber, Headers, IncomingMessage, OutgoingFor, ReadyHint,
-        Settle, Subscriber, SubscriptionSource,
+        BatchSlot, BatchStream, BatchSubscriber, BatchVec, Headers, IncomingMessage, OutgoingFor,
+        ReadyHint, Settle, Subscriber, SubscriptionSource,
     };
 
     use ruststream_core::{AckError, Lend, OutgoingMessage, PublishMessageError, Publisher};
@@ -703,8 +703,10 @@ mod tests {
             let filled = poll_fn(|cx| batches.as_mut().poll_fill(cx, &mut batch));
             assert!(filled.now_or_never().flatten().unwrap().is_ok());
 
+            let mut taken = BatchVec::new();
+            batch.hand_over(&mut taken);
             let payloads: heapless::Vec<u8, 4> =
-                batch.drain().map(|message| message.payload()[0]).collect();
+                taken.iter().map(|message| message.payload()[0]).collect();
             assert_eq!(payloads.as_slice(), b"12");
         });
     }
@@ -743,6 +745,11 @@ mod tests {
             let size = NonZeroUsize::new(2).unwrap();
             let mut batch =
                 <LocalMemorySubscriber<4> as BatchSubscriber>::Batch::with_capacity(size);
+            // The runtime's buffer for the batch, which it allocates once per worker.
+            #[cfg(ruststream_alloc)]
+            let mut taken = BatchVec::with_capacity(size.get());
+            #[cfg(not(ruststream_alloc))]
+            let mut taken = BatchVec::new();
 
             let cost = allocation_counter::measure(|| {
                 block_on(async {
@@ -765,7 +772,8 @@ mod tests {
                     let mut batches = pin!(second.batches(size));
                     let filled = poll_fn(|cx| batches.as_mut().poll_fill(cx, &mut batch));
                     assert!(filled.now_or_never().flatten().unwrap().is_ok());
-                    batch.drain().for_each(drop);
+                    batch.hand_over(&mut taken);
+                    taken.clear();
                 });
             });
             assert_eq!(cost.count_total, 0, "the fixed bus allocated");

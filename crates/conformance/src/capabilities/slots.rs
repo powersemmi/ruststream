@@ -1,9 +1,10 @@
 //! The lent slot as the checks read it: batch streams as ordinary streams of batches, holding
 //! the broker to the slot rules of [`BatchStream::poll_fill`] on every fill.
 //!
-//! A check drives the stream the way the runtime does: it lends one slot, drains it after each
-//! fill and lends the same one again. A broker that keeps messages in the slot it was handed
-//! back, grows it past the size, or ends the subscription with messages still in the slot fails here.
+//! A check drives the stream the way the runtime does: it lends one slot, takes each batch out of
+//! it with [`BatchSlot::hand_over`] and lends the same one again. A broker that keeps messages in
+//! the slot it was handed back, grows it past the size, hands a batch over without emptying its
+//! slot, or ends the subscription with messages still in the slot fails here.
 
 use std::num::NonZeroUsize;
 use std::pin::Pin;
@@ -44,7 +45,13 @@ where
         let this = &mut *self;
         match this.stream.as_mut().poll_fill(cx, &mut this.slot) {
             Poll::Ready(Some(Ok(()))) => {
-                let batch: Vec<_> = this.slot.drain().collect();
+                let mut batch = Vec::with_capacity(this.size.get());
+                this.slot.hand_over(&mut batch);
+                assert_eq!(
+                    left_in(&mut this.slot, this.size),
+                    0,
+                    "a slot that handed its batch over must be empty, so the next batch starts clean",
+                );
                 assert!(
                     batch.len() <= this.size.get(),
                     "a batch must never carry more than the size it was opened with: got {}, asked {}",
@@ -55,7 +62,7 @@ where
             }
             Poll::Ready(Some(Err(err))) => {
                 assert_eq!(
-                    this.slot.drain().count(),
+                    left_in(&mut this.slot, this.size),
                     0,
                     "a failed fill must leave the slot empty, so the next batch starts clean",
                 );
@@ -63,7 +70,7 @@ where
             }
             Poll::Ready(None) => {
                 assert_eq!(
-                    this.slot.drain().count(),
+                    left_in(&mut this.slot, this.size),
                     0,
                     "a subscription that ended must have handed its partial batch over first and leave the slot empty",
                 );
@@ -74,8 +81,15 @@ where
     }
 }
 
+/// How many messages `slot` still holds, which it hands over and drops.
+fn left_in<Slot: BatchSlot>(slot: &mut Slot, size: NonZeroUsize) -> usize {
+    let mut rest = Vec::with_capacity(size.get());
+    slot.hand_over(&mut rest);
+    rest.len()
+}
+
 /// A batch stream that yields each filled slot whole, for a check that reads the slot itself
-/// (the values a batch lends) before it drains it. Each fill gets a fresh slot.
+/// (the values a batch lends) before it hands the batch over. Each fill gets a fresh slot.
 pub(super) struct Handed<'s, Fill, Slot> {
     stream: Pin<&'s mut Fill>,
     size: NonZeroUsize,

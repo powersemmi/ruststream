@@ -24,9 +24,9 @@ use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::{Channel, Receiver};
 use futures_core::Stream;
 use ruststream_core::{
-    AckError, BatchSlot, BatchStream, BatchSubscriber, Broker, BrokerMoves, ConnectedBroker,
-    DefaultPublish, Headers, IfSend, IncomingMessage, Lend, OutgoingMessage, PairError,
-    PublishMessageError, PublishOutcome, PublishPolicy, Publisher, Settle, Subscriber,
+    AckError, BatchSlot, BatchStream, BatchSubscriber, BatchVec, Broker, BrokerMoves,
+    ConnectedBroker, DefaultPublish, Headers, IfSend, IncomingMessage, Lend, OutgoingMessage,
+    PairError, PublishMessageError, PublishOutcome, PublishPolicy, Publisher, Settle, Subscriber,
     SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
@@ -182,8 +182,9 @@ impl BatchSlot for FrameBatch {
         Self::default()
     }
 
-    fn drain(&mut self) -> impl Iterator<Item = FrameDelivery> + '_ {
-        self.0.drain(..)
+    // The frames lie inline, so each moves into the runtime's buffer once.
+    fn hand_over(&mut self, taken: &mut BatchVec<FrameDelivery>) {
+        taken.extend(self.0.drain(..));
     }
 }
 

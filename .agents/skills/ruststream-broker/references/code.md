@@ -216,8 +216,9 @@ impl BatchSubscriber for MySubscriber {
 ## Batches on a transport that batches on the wire
 
 The runtime lends the stream a slot, a `Vec` of the subscriber's messages, once per worker. The
-stream pushes each message of the batch into it, up to the size, and returns; the runtime drains
-the slot and lends it again. A pending poll may leave messages in the slot: the next poll resumes
+stream pushes each message of the batch into it, up to the size, and returns; the slot hands the
+batch over to the runtime (a `Vec` trades storage with the runtime's buffer, so no message is
+copied) and is lent again, empty. A pending poll may leave messages in the slot: the next poll resumes
 from them. A failed fill leaves the slot empty, and a subscription that ended leaves it untouched.
 
 ```rust
@@ -246,7 +247,27 @@ impl BatchStream<Vec<MyDelivery>> for Fetches<'_> {
 ```
 
 A batch type of the crate's own (the rows of a database page beside the deliveries that settle
-them) implements `BatchSlot` and names itself as `BatchSubscriber::Batch`.
+them) implements `BatchSlot` and names itself as `BatchSubscriber::Batch`. Its `hand_over` resets
+what the page holds beside its deliveries and hands the deliveries' `Vec` over with `Vec`'s own
+`hand_over`, which trades storage instead of moving each delivery:
+
+```rust
+impl BatchSlot for Page {
+    type Message = Claim;
+
+    fn with_capacity(size: NonZeroUsize) -> Self {
+        Self {
+            rows: Vec::with_capacity(size.get()),
+            claims: Vec::with_capacity(size.get()),
+        }
+    }
+
+    fn hand_over(&mut self, taken: &mut Vec<Claim>) {
+        self.rows.clear();
+        self.claims.hand_over(taken);
+    }
+}
+```
 
 ## Per-message settings on the publish builder
 

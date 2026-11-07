@@ -31,8 +31,8 @@ use ruststream_core::{
 /// answers a requeue with [`AckError::Unsupported`](ruststream_core::AckError::Unsupported) passes both with
 /// nothing coming back.
 ///
-/// The stream is driven the way the runtime drives it: one slot is lent to every fill and drained
-/// before the next. A batch never holds more than the size the stream was opened with, a failed
+/// The stream is driven the way the runtime drives it: one slot is lent to every fill and hands
+/// its batch over before the next. A batch never holds more than the size the stream was opened with, a failed
 /// fill leaves the slot empty, and a subscription that ended leaves it untouched.
 ///
 /// The settling runtime is handed the delivered messages, so they are `'static`.

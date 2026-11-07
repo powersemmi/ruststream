@@ -911,3 +911,48 @@ fn recording_the_batch_size_allocates_nothing_per_batch() {
         "a decoded batch records its size without allocating"
     );
 }
+
+/// Takes the batch `slot` holds the way the dispatch loop does, naming the slot type the trait
+/// leaves open.
+fn load_with<H, Slot>(_handler: &H, taken: &mut H::Taken, slot: &mut Slot)
+where
+    H: BatchHandler<Slot>,
+{
+    H::load(taken, slot);
+}
+
+/// A worker's buffer for the batches of `handler`, as the dispatch loop allocates it.
+fn taken_for<H, Slot>(_handler: &H, size: NonZeroUsize) -> H::Taken
+where
+    H: BatchHandler<Slot>,
+{
+    H::taken(size)
+}
+
+#[tokio::test]
+async fn a_vec_slot_hands_its_batch_over_without_moving_a_delivery() {
+    let broker = MemoryBroker::new();
+    let mut sub = broker.subscribe("traded");
+    publish_numbers(&broker, "traded", &[0, 1, 2]).await;
+    let mut slot = pull_batch(&mut sub).await;
+    let filled = slot.as_ptr();
+
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(HandlerOutcome::ack())
+    });
+    let size = NonZeroUsize::new(4).unwrap();
+    let mut taken = taken_for::<_, Vec<MemoryMessage>>(&handler, size);
+    let spare = taken.as_ptr();
+    load_with(&handler, &mut taken, &mut slot);
+
+    // The deliveries stay where the broker put them: the two buffers traded places.
+    assert_eq!(taken.as_ptr(), filled);
+    let payloads: Vec<&[u8]> = taken.iter().map(IncomingMessage::payload).collect();
+    assert_eq!(payloads, [b"0", b"1", b"2"]);
+    assert_eq!(slot.len(), 0);
+    assert_eq!(slot.as_ptr(), spare);
+    assert!(slot.capacity() >= size.get());
+    for msg in taken {
+        Settle::ack(msg).await.unwrap();
+    }
+}

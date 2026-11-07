@@ -11,9 +11,9 @@ use core::task::{Context, Poll};
 use futures_core::Stream;
 use heapless::Vec as FixedVec;
 use ruststream_core::{
-    AckError, AddressedCopies, BatchSlot, BatchStream, BatchSubscriber, FromName, Headers,
-    IncomingMessage, ReadyHint, RedeliveryAddress, RedeliveryAddressed, Settle, Subscriber,
-    SubscriptionSource,
+    AckError, AddressedCopies, BatchSlot, BatchStream, BatchSubscriber, BatchVec, FromName,
+    Headers, IncomingMessage, ReadyHint, RedeliveryAddress, RedeliveryAddressed, Settle,
+    Subscriber, SubscriptionSource,
 };
 use ruststream_runtime::IntoSource;
 
@@ -255,8 +255,9 @@ impl<Message, const MESSAGES: usize> BatchSlot for LocalMemoryBatch<Message, MES
         Self(FixedVec::new())
     }
 
-    fn drain(&mut self) -> impl Iterator<Item = Message> + '_ {
-        self.0.drain(..)
+    // The messages lie inline, so each moves into the runtime's buffer once.
+    fn hand_over(&mut self, taken: &mut BatchVec<Message>) {
+        taken.extend(self.0.drain(..));
     }
 }
 

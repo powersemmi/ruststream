@@ -4,7 +4,7 @@
 //! The workers start with the subscription, each with an inbox of its own and the decode and
 //! encode buffers its batches run with. The loop owns one batch slot per worker: it fills the
 //! slot of a free worker, hands the slot over through the worker's inbox, and the worker gives it
-//! back, drained, with its report that it is free. The loop polls the subscription only with a
+//! back, empty, with its report that it is free. The loop polls the subscription only with a
 //! worker free, so at most `count` batches are in flight, and a batch pays one hand-off through a
 //! queue that was allocated with the crew: no task, no reference count, no allocation.
 
@@ -25,7 +25,7 @@ use super::pool::{Crew, Shared};
 use super::{Shutdown, Turn, Workers};
 use crate::BatchSubscriber;
 use crate::follow::spawn_followed;
-use ruststream_core::{BatchSlot, BatchStream};
+use ruststream_core::{BatchSlot, BatchStream, BatchVec};
 use ruststream_runtime::{BatchHandler, RetryCopies, run_batch};
 
 /// The workers that are free for a batch, in the order they reported, each with the slot it gives
@@ -175,7 +175,7 @@ async fn work<Slot, Body, Cx, State, Retry>(
             &shared.failure,
         )
         .await;
-        // The slot goes back drained, with the report that this worker is free for the next one.
+        // The slot goes back empty, with the report that this worker is free for the next one.
         free.report(index, Some(slot));
     }
     // Out of the loop on its own terms: the loop is stopping or gone, and reads no more reports.
@@ -269,6 +269,8 @@ pub(super) async fn run<Sub, Body, Cx, State, Retry>(
     // The free worker and its slot the pool holds for the next batch: taken before the stream is
     // polled, and kept across a stream error that brought no batch.
     let mut held: Option<(usize, Sub::Batch)> = None;
+    // Where a failed fill's leftovers go to be dropped, trading storage with the slot.
+    let mut spare = BatchVec::with_capacity(batch_size.get());
     loop {
         if shutdown.is_cancelled() {
             break;
@@ -303,9 +305,10 @@ pub(super) async fn run<Sub, Body, Cx, State, Retry>(
                 }
             }
             Turn::Delivery(Err(err)) => {
-                // A failed fill leaves the slot empty; draining it keeps that true of a broker
-                // that left a message behind.
-                slot.drain().for_each(drop);
+                // A failed fill leaves the slot empty; taking what a broker left behind and
+                // dropping it keeps that true.
+                slot.hand_over(&mut spare);
+                spare.clear();
                 held = Some((worker, slot));
                 error!(
                     target: "ruststream::dispatch",
