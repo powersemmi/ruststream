@@ -261,15 +261,16 @@ fn a_subscription_that_panics_outside_its_handler_fails_the_run_fast() {
         "the service ran on after its subscription died"
     );
     match error {
-        RustStreamError::Join(reason) => {
-            assert!(reason.contains("the client library broke"), "got: {reason}");
+        RustStreamError::Dispatch(reason) => {
+            assert_eq!(reason, "orders: its dispatch loop panicked");
         }
-        other => panic!("expected the loop's panic, got {other:?}"),
+        other => panic!("expected the dispatch failure, got {other:?}"),
     }
 }
 
+/// The probe and `shutdown` name the subscription the same way, whatever the panic carried.
 #[test]
-fn a_subscription_that_panics_without_a_message_is_still_named_as_a_failed_task() {
+fn a_subscription_that_panics_outside_its_handler_flips_the_probe_while_it_runs() {
     let log = Log::default();
     let (orders, _line) = wire("orders", &log);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
@@ -277,13 +278,28 @@ fn a_subscription_that_panics_without_a_message_is_still_named_as_a_failed_task(
             b.include(subscriber(orders.exploding_without_a_word(), On(accept)).build())
         });
 
-    let cores = Cores::new(NonZeroUsize::MIN).without_signals();
-    let error = app
-        .run_until(cores, time::sleep(SIGNAL_AFTER))
-        .expect_err("a panic in the subscription's loop fails the service");
+    on_runtime(async {
+        let running = app.start().await.expect("the service starts");
+        let mut health = running.health();
+        // Nothing here stops the service: the panic does.
+        running.stopping().await;
 
-    match error {
-        RustStreamError::Join(reason) => assert_eq!(reason, "the task panicked"),
-        other => panic!("expected the loop's panic, got {other:?}"),
-    }
+        // The watcher flips the probe right after the signal; the wait covers the hop.
+        let reason = loop {
+            if let HealthState::Failed { reason } = health.state() {
+                break reason;
+            }
+            health.changed().await;
+        };
+        assert_eq!(reason, "orders: its dispatch loop panicked");
+
+        let error = running
+            .shutdown()
+            .await
+            .expect_err("the teardown surfaces the failure");
+        match error {
+            RustStreamError::Dispatch(failure) => assert_eq!(failure, reason),
+            other => panic!("expected the dispatch failure, got {other:?}"),
+        }
+    });
 }
