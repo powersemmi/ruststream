@@ -14,7 +14,7 @@ use core::cell::Cell;
 use core::convert::Infallible;
 #[cfg(any(feature = "std", feature = "testing"))]
 use core::panic::AssertUnwindSafe;
-use core::pin::Pin;
+use core::pin::{Pin, pin};
 use core::task::{Context as TaskContext, Poll};
 #[cfg(feature = "testing")]
 use ruststream_core::__alloc::bytes::Bytes;
@@ -56,6 +56,8 @@ use crate::testing::coordinator::{
 use crate::testing::hooks::DueCall;
 #[cfg(feature = "testing")]
 use crate::testing::{Bookkept, harness_section};
+#[cfg(any(feature = "std", feature = "testing"))]
+use call::CallOnPoll;
 pub use delivery::{Delivery, Lent, Slot};
 pub use headers::{HeadersAtOnce, HeadersOnDemand, LendHeaders};
 pub(crate) use settle::{settle_outcome, settle_reacting};
@@ -188,8 +190,8 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers, Park, R
     let host = lent.host();
     // Taken before the stream opens: the stream borrows the subscriber for the whole loop.
     let probe = subscriber.ready_hint();
-    let mut stream = core::pin::pin!(subscriber.stream());
-    let mut cancelled = core::pin::pin!(shutdown.cancelled());
+    let mut stream = pin!(subscriber.stream());
+    let mut cancelled = pin!(shutdown.cancelled());
     // One encode buffer for the whole loop: a reply that leaves through a publisher which
     // reads the payload is written into this one every time, so the subscription allocates
     // it once and never again. The runner chose its room; the loop owns it.
@@ -214,7 +216,7 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers, Park, R
                 // context, the handler's own state and the settle path, and awaiting the
                 // call expression makes the loop build it on the stack and copy it into
                 // its own state on every delivery.
-                let handling = core::pin::pin!(dispatch(
+                let handling = pin!(dispatch(
                     &handler,
                     &mut slot,
                     &mut *encode,
@@ -568,21 +570,17 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         // because the future borrows `&mut ctx`; that state is discarded with the failed delivery.
         // Under the harness, the invocation runs in a task-local slot scope so publishes made
         // through injected `Out` publishers are attributed to their slot.
-        #[cfg(feature = "testing")]
-        let result = in_harness_scope(
-            harness_scope(delivery),
-            observed!(
-                delivery,
-                AssertUnwindSafe(async { handler.handle(msg, &mut ctx).await }).catch_unwind()
-            ),
-        )
-        .await;
-        #[cfg(all(feature = "std", not(feature = "testing")))]
-        let result = observed!(
-            delivery,
-            AssertUnwindSafe(async { handler.handle(msg, &mut ctx).await }).catch_unwind()
-        )
-        .await;
+        // The handler's future lies pinned in this frame and the catch above it holds a
+        // reference: the delivery's future nests the handler's one level below this frame
+        // however many combinators its poll runs under (see `CallOnPoll`).
+        #[cfg(any(feature = "std", feature = "testing"))]
+        let result = {
+            let call = pin!(CallOnPoll::new(|| handler.handle(msg, &mut ctx)));
+            let caught = observed!(delivery, AssertUnwindSafe(call).catch_unwind());
+            #[cfg(feature = "testing")]
+            let caught = in_harness_scope(harness_scope(delivery), caught);
+            caught.await
+        };
         // Without `std` a panic aborts, so the handler's future runs uncaught.
         #[cfg(not(any(feature = "std", feature = "testing")))]
         let result = Ok::<_, Infallible>(observed!(delivery, handler.handle(msg, &mut ctx)).await);
@@ -796,31 +794,26 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     }
     // A batch records its call where it settles, inside the handler, so the scope hands back the
     // hooks that call owes.
+    // As in `dispatch`: the handler's future lies pinned in this frame, made on the first poll
+    // inside the catch.
     #[cfg(feature = "testing")]
-    let (result, mut due_calls) = calls_in_harness_scope(
-        harness_scope(delivery),
-        observed!(
-            delivery,
-            AssertUnwindSafe(async {
-                handler
-                    .handle_batch(&mut *batch, scratch, &mut ctx, host)
-                    .await;
-            })
-            .catch_unwind()
-        ),
-    )
-    .await;
+    let (result, mut due_calls) = {
+        let call = pin!(CallOnPoll::new(|| {
+            handler.handle_batch(&mut *batch, scratch, &mut ctx, host)
+        }));
+        calls_in_harness_scope(
+            harness_scope(delivery),
+            observed!(delivery, AssertUnwindSafe(call).catch_unwind()),
+        )
+        .await
+    };
     #[cfg(all(feature = "std", not(feature = "testing")))]
-    let result = observed!(
-        delivery,
-        AssertUnwindSafe(async {
-            handler
-                .handle_batch(&mut *batch, scratch, &mut ctx, host)
-                .await;
-        })
-        .catch_unwind()
-    )
-    .await;
+    let result = {
+        let call = pin!(CallOnPoll::new(|| {
+            handler.handle_batch(&mut *batch, scratch, &mut ctx, host)
+        }));
+        observed!(delivery, AssertUnwindSafe(call).catch_unwind()).await
+    };
     // Without `std` a panic aborts, so the handler's future runs uncaught.
     #[cfg(not(any(feature = "std", feature = "testing")))]
     let result: Result<(), Infallible> = {
@@ -890,6 +883,8 @@ fn harness_scope<C>(delivery: &Delivery<C>) -> Option<HarnessScope> {
         .map(|coordinator| HarnessScope::new(coordinator, delivery.scope_id, delivery.subscription))
 }
 
+#[cfg(any(feature = "std", feature = "testing"))]
+mod call;
 mod delivery;
 #[cfg(test)]
 #[cfg(ruststream_alloc)]
