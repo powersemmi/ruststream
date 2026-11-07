@@ -95,12 +95,19 @@ async fn on_job(job: &Job<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-fn one_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
-    EmbeddedApp::new().with_broker(bus, |b| b.include(on_job))
+// Each mount below names its dispatch with a step, and `refusal_capacity` keeps that dispatch, so
+// the places are all that differs between a mount's default and a count it names.
+
+fn waiting_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.include(on_job).retry_capacity::<2>())
 }
 
-fn one_app_with<const PLACES: usize>(bus: Bus) -> EmbeddedApp<impl Mounts> {
-    EmbeddedApp::new().with_broker(bus, |b| b.include(on_job).refusal_capacity::<PLACES>())
+fn waiting_app_with<const PLACES: usize>(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_job)
+            .retry_capacity::<2>()
+            .refusal_capacity::<PLACES>()
+    })
 }
 
 fn pool_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
@@ -123,33 +130,42 @@ fn keyed_app_with<const PLACES: usize>(bus: Bus) -> EmbeddedApp<impl Mounts> {
     })
 }
 
-fn batch_app_with<const PLACES: usize>(bus: Bus) -> EmbeddedApp<impl Mounts> {
+fn waiting_batch_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_batched.batch::<3>()).retry_capacity::<3>()
+    })
+}
+
+fn waiting_batch_app_with<const PLACES: usize>(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.include(on_batched.batch::<3>())
+            .retry_capacity::<3>()
             .refusal_capacity::<PLACES>()
     })
 }
 
 // A route keeps a place for each delivery it holds at once unless its mount names a count: the
-// room of one place is what a second place adds to a route of one worker.
+// room of one place is what a second place adds to a pool.
 #[test]
 fn a_route_keeps_a_place_for_each_delivery_it_holds_at_once() {
-    let one = size_of_returned(&|bus, control| one_app_with::<1>(bus).run(control));
-    let place = size_of_returned(&|bus, control| one_app_with::<2>(bus).run(control)) - one;
+    let pool_of_one = size_of_returned(&|bus, control| pool_app_with::<1>(bus).run(control));
+    let pool_of_two = size_of_returned(&|bus, control| pool_app_with::<2>(bus).run(control));
+    let place = pool_of_two - pool_of_one;
     assert!(place > 0, "a place takes room in the app");
 
-    let default = size_of_returned(&|bus, control| one_app(bus).run(control));
-    assert_eq!(default, one, "a handler of one delivery at a time keeps one place");
+    let waiting = size_of_returned(&|bus, control| waiting_app(bus).run(control));
+    let waiting_of_one = size_of_returned(&|bus, control| waiting_app_with::<1>(bus).run(control));
+    assert_eq!(waiting, waiting_of_one, "one delivery at a time keeps one place");
 
     let pool = size_of_returned(&|bus, control| pool_app(bus).run(control));
-    let pool_of_one = size_of_returned(&|bus, control| pool_app_with::<1>(bus).run(control));
     assert_eq!(pool - pool_of_one, 3 * place, "a pool of four keeps four places");
 
     let keyed = size_of_returned(&|bus, control| keyed_app(bus).run(control));
     let keyed_of_one = size_of_returned(&|bus, control| keyed_app_with::<1>(bus).run(control));
     assert_eq!(keyed - keyed_of_one, 2 * place, "three keyed workers keep three places");
 
-    let batch = size_of_returned(&|bus, control| batch_app(bus).run(control));
-    let batch_of_one = size_of_returned(&|bus, control| batch_app_with::<1>(bus).run(control));
+    let batch = size_of_returned(&|bus, control| waiting_batch_app(bus).run(control));
+    let batch_of_one =
+        size_of_returned(&|bus, control| waiting_batch_app_with::<1>(bus).run(control));
     assert_eq!(batch - batch_of_one, 2 * place, "a batch of three keeps three places");
 }
