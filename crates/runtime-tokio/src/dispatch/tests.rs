@@ -16,7 +16,6 @@ use ruststream::memory::{MemoryBroker, MemoryPublish};
 use super::fixtures::{PlainMessage, Settlement, StreamFault, Unscoped, batched};
 use super::*;
 use crate::Settle;
-use crate::testkit::log_capture;
 use crate::{
     CallerName, Connected, Handle, Name, OutgoingDestination, Router, SubscriberBuilder,
     SubscriberSettings, nonzero, subscriber,
@@ -565,24 +564,6 @@ async fn a_subscription_counts_as_consuming_while_its_loop_runs() {
             (count.active, count.started),
             (0, 1),
             "{form:?} after shutdown"
-        );
-    }
-}
-
-/// A worker that died yields nothing to account for, and its failure is logged with the cause.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_panicking_worker_is_reported_when_joined() {
-    let joined = tokio::spawn(async { panic!("worker down") }).await;
-    let (events, guard) = log_capture::start();
-    assert!(log_worker_exit(joined).is_none());
-    {
-        drop(guard);
-        let failure = log_capture::find(&events, "worker task failed");
-        assert!(
-            failure
-                .get("error")
-                .is_some_and(|err| err.contains("worker down")),
-            "the diagnostic must carry the panic: {failure:?}",
         );
     }
 }

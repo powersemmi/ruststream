@@ -22,7 +22,7 @@ use ruststream_core::diag::error;
 use tokio::sync::Notify;
 
 use super::pool::{Crew, Shared};
-use super::{Shutdown, Turn, Workers};
+use super::{Part, Shutdown, Turn, Watch, Workers};
 use crate::BatchSubscriber;
 use crate::follow::spawn_followed;
 use ruststream_core::{BatchSlot, BatchStream, BatchVec};
@@ -139,13 +139,15 @@ impl<Slot> Drop for Farewell<Slot> {
     }
 }
 
-/// One worker: a sequential loop over the batches handed to it, with buffers of its own.
+/// One worker: a sequential loop over the batches handed to it, with buffers of its own, failing
+/// the service through its `watch` if it panics outside the handler.
 async fn work<Slot, Body, Cx, State, Retry>(
     shared: Arc<Shared<Body, State, Cx, Retry>>,
     inbox: Arc<Inbox<Slot>>,
     free: Arc<FreeList<Slot>>,
     index: usize,
     batch_size: NonZeroUsize,
+    _watch: Watch,
 ) where
     Retry: RetryCopies<Cx>,
     Body: BatchHandler<Slot, Cx, State>,
@@ -257,6 +259,7 @@ pub(super) async fn run<Sub, Body, Cx, State, Retry>(
             Arc::clone(&free),
             index,
             batch_size,
+            Watch::new(shutdown, &shared.name, Part::Worker),
         )));
         inboxes.push(inbox);
         free.report(index, None);

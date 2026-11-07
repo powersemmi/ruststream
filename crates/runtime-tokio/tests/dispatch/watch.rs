@@ -180,6 +180,17 @@ fn assert_names(subject: &str, part: &str, reason: &str, error: &RustStreamError
     }
 }
 
+/// The failure one of the two dedicated threads of `subject` reported. The order goes to the
+/// first thread, and the broker hands the delivery that thread dropped to the other one while the
+/// service stops, so either may be the one on record.
+fn assert_a_thread_named(subject: &str, reason: &str, error: &RustStreamError) {
+    let part = ["its dedicated thread 0", "its dedicated thread 1"]
+        .into_iter()
+        .find(|part| reason == format!("{subject}: {part} panicked"))
+        .unwrap_or_else(|| panic!("`{reason}` names no thread of `{subject}`"));
+    assert_names(subject, part, reason, error);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_dispatch_loop_that_panics_fails_the_run() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
@@ -251,8 +262,7 @@ async fn a_dedicated_thread_that_panics_fails_the_service_while_it_runs() {
 
     let (reason, error) = failure_of(app, &publisher, "watch.threads").await;
 
-    // The first delivery goes to the first thread.
-    assert_names("watch.threads", "its dedicated thread 0", &reason, &error);
+    assert_a_thread_named("watch.threads", &reason, &error);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -264,13 +274,7 @@ async fn a_keyed_dedicated_thread_that_panics_fails_the_service_while_it_runs() 
 
     let (reason, error) = failure_of(app, &publisher, "watch.threads_keyed").await;
 
-    // A delivery without a key starts the rotation at the first thread.
-    assert_names(
-        "watch.threads_keyed",
-        "its dedicated thread 0",
-        &reason,
-        &error,
-    );
+    assert_a_thread_named("watch.threads_keyed", &reason, &error);
 }
 
 /// Every call of [`fragile`] reports here before it settles.

@@ -1,3 +1,77 @@
+//! What a part of a subscription does when it panics outside the handler: the dispatch loop, a
+//! worker of its pool and a dedicated thread each fail the service through the fail-fast path,
+//! naming the subscription and the part. A panic inside the handler is the handler's: dispatch
+//! catches it and settles the delivery under the subscription's failure policy.
+
+use std::fmt::{self, Display, Formatter};
+use std::sync::Arc;
+use std::thread;
+
+use crate::shutdown::Shutdown;
+
+/// A part of a subscription the runner runs, named the way its failure reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Part {
+    /// The loop that reads the subscription's stream.
+    Loop,
+    /// A worker of its pool, a task of the app's runtime.
+    Worker,
+    /// One of its dedicated threads, by index.
+    Thread(usize),
+}
+
+impl Part {
+    /// Fails the service through the fail-fast path: this part of `subscription` panicked, so the
+    /// subscription no longer consumes the way it was declared.
+    pub(crate) fn panicked(self, shutdown: &Shutdown, subscription: &str) {
+        shutdown.signal(subscription, &format!("{self} panicked"));
+    }
+}
+
+impl Display for Part {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Loop => f.write_str("its dispatch loop"),
+            Self::Worker => f.write_str("a worker"),
+            Self::Thread(index) => write!(f, "its dedicated thread {index}"),
+        }
+    }
+}
+
+/// Fails the service when the loop or the worker that holds it panics.
+///
+/// The part holds it for as long as it runs, and nothing touches it per delivery. tokio drops a
+/// task's future inside the guard that catches its panic, so a part that panicked drops its watch
+/// while its thread unwinds; an end, a shutdown and an abort drop it on a thread that does not.
+/// A runtime dropped while its own thread unwinds drops the parts it still runs on that thread,
+/// and they read as panicked too: the process is going down on that panic.
+#[derive(Debug)]
+pub(crate) struct Watch {
+    shutdown: Shutdown,
+    subscription: Arc<str>,
+    part: Part,
+}
+
+impl Watch {
+    /// A watch over `part` of `subscription`, failing the service `shutdown` stops.
+    #[must_use]
+    pub(crate) fn new(shutdown: &Shutdown, subscription: &Arc<str>, part: Part) -> Self {
+        Self {
+            shutdown: shutdown.clone(),
+            subscription: Arc::clone(subscription),
+            part,
+        }
+    }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        if thread::panicking() {
+            self.part.panicked(&self.shutdown, &self.subscription);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::future::ready;
