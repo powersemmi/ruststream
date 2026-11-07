@@ -20,10 +20,11 @@ all-features = true
 [features]
 default = ["alloc"]
 # The suites of the `Send` family (the routing contract, the lifecycle ladder and the capability
-# suites), which keep headers and payloads on the heap. Without it the crate holds the suites of
-# the local family, which run against a bus of fixed size.
-# They spawn a broker's work on a multi-thread runtime, so they ask `Send` of the contract types
-# and take the runtime's `std` form, whose shared state sits behind a mutex.
+# suites), which keep headers and payloads on the heap. They spawn a broker's work on a
+# multi-thread runtime, so they ask `Send` of the contract types and take the runtime's `std` form,
+# whose shared state sits behind a mutex. The facade's `tokio` feature turns it on.
+# Without it the crate holds the suites of the local family, which drive a broker on the caller's
+# task and ask nothing of `Send`, in either variant of the framework.
 alloc = [
     "ruststream-core/alloc",
     "ruststream-core/send",

@@ -1,0 +1,31 @@
+[package]
+name = "ruststream-embedded-broker"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+repository = "https://github.com/powersemmi/ruststream"
+description = "A broker crate on the embedded runner whose types are never `Send`, held to the local conformance suites through the facade's `conformance` feature, as such a crate names it."
+publish = false
+
+# A workspace of its own: a member of the main workspace would unify the tokio runner on through
+# its neighbours, and with it the `Send` the contract asks of every broker beside tokio.
+[workspace]
+
+[dependencies]
+# The broker's own dependency: the embedded runner, the local bus its in-process mode routes
+# through, and the harness's view of a connected broker.
+ruststream = { path = "../../crates/ruststream", default-features = false, features = ["embassy", "memory", "testing"] }
+# The contract crate, for the variant of the build its build script reads.
+ruststream-core = { path = "../../crates/core", default-features = false }
+futures = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+# What a broker crate on the embedded runner writes for its contract checks: the runner and the
+# suites, without tokio's runner.
+ruststream = { path = "../../crates/ruststream", default-features = false, features = ["embassy", "conformance"] }
+# The current-thread runtime the local suites run on.
+tokio = { version = "1.49", features = ["rt", "macros", "time"] }
+
+[lints.rust]
+unsafe_code = "forbid"

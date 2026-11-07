@@ -979,6 +979,7 @@ tokio = [
     "dep:ruststream-runtime-tokio",
     "dep:ruststream-cli",
     "ruststream-cli/tokio",
+    "ruststream-conformance?/alloc",
     "ruststream-memory?/std",
     "ruststream-testing?/tokio",
 ]
@@ -1027,7 +1028,9 @@ alloc = [
     "ruststream-testing?/alloc",
 ]
 memory = ["dep:ruststream-memory"]
-conformance = ["alloc", "tokio", "testing", "dep:ruststream-conformance"]
+# The broker-author suites. On its own the feature brings the local family, which drives a broker on
+# the caller's task and asks nothing of `Send`; with `tokio` the `Send` family comes as well.
+conformance = ["testing", "dep:ruststream-conformance"]
 json = [
     "alloc",
     "ruststream-core/json",

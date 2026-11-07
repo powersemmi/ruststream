@@ -46,8 +46,9 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(2);
 /// delivery, not that it is exact. A stream that needs a poll to move a delivery along while its
 /// probe says nothing is ready fails: the app would never make that poll. A broker whose subscriber returns no probe passes the same way.
 ///
-/// Run it on a current-thread Tokio runtime: it spawns nothing, and its timeouts read Tokio's
-/// clock.
+/// The facade's `conformance` feature brings it without the `tokio` feature, so a broker whose
+/// types are not `Send` runs it with those types. Run it on a current-thread Tokio runtime: it
+/// spawns nothing, and its timeouts read Tokio's clock.
 ///
 /// # Examples
 ///

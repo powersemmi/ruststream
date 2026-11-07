@@ -1,0 +1,13 @@
+//! Reads the variant of the build from the contract crate, as a broker crate that serves both
+//! variants does: `ruststream_alloc` is on when `ruststream-core` was built with `alloc`, whichever
+//! crate asked for it.
+
+use std::env;
+
+fn main() {
+    println!("cargo::rustc-check-cfg=cfg(ruststream_alloc)");
+    println!("cargo::rerun-if-env-changed=DEP_RUSTSTREAM_CORE_ALLOC");
+    if env::var_os("DEP_RUSTSTREAM_CORE_ALLOC").is_some() {
+        println!("cargo::rustc-cfg=ruststream_alloc");
+    }
+}
