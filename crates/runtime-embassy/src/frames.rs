@@ -522,8 +522,19 @@ mod tests {
     use embassy_executor as _;
 
     use super::{
-        DEPTH, FrameBroker, FramePublish, FramePublishError, Frames, PAYLOAD, Settlements,
+        DEPTH, Frame, FrameBroker, FrameDelivery, FramePublish, FramePublishError, Frames, PAYLOAD,
+        Settlements,
     };
+
+    #[test]
+    fn a_frame_is_handed_out_without_a_header_room() {
+        // A frame carries no headers, so its delivery is the frame and the settlement it counts
+        // in, and moving it moves no header room.
+        assert_eq!(
+            size_of::<FrameDelivery>(),
+            size_of::<Frame>() + size_of::<&Settlements>()
+        );
+    }
 
     #[test]
     fn a_reply_the_frames_cannot_hold_is_refused_with_the_reason() {
