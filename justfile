@@ -113,6 +113,8 @@ check: && check-firmware
         --features ruststream-core/alloc --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream --no-default-features \
         --features embassy,macros,memory,ruststream-core/alloc --target thumbv7em-none-eabihf
+    # The contract's own unit tests without `alloc` are held to the lints of its sources.
+    cargo clippy --manifest-path checks/noalloc/core/Cargo.toml --lib --tests -- -D warnings
     # The delivery body without `alloc`, and the crate that runs its own unit tests, are held to the
     # same lints.
     cargo clippy -p ruststream-runtime --no-default-features --lib -- -D warnings
@@ -254,8 +256,9 @@ test-no-alloc:
     cargo test --manifest-path checks/noalloc/memory/Cargo.toml --features testing
     # Without the harness as well: the bus's claim that it allocates nothing is checked there.
     cargo test --manifest-path checks/noalloc/memory/Cargo.toml
-    # The runtime's own unit tests of the variant: its dev-dependencies turn `alloc` on, so the
-    # sources build as a crate of their own that has none.
+    # The contract's and the runtime's own unit tests of the variant: their dev-dependencies turn
+    # `alloc` on, so the sources build as crates of their own that have none.
+    cargo test --manifest-path checks/noalloc/core/Cargo.toml --lib
     cargo test --manifest-path checks/noalloc/runtime/Cargo.toml --lib
     cargo test --manifest-path checks/noalloc/runtime/Cargo.toml --lib --features postcard,json-core
     # The same for the embedded runner.

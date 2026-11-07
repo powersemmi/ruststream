@@ -130,6 +130,7 @@ pub enum DeclareRetryError {
 
 #[cfg(all(test, not(feature = "alloc")))]
 mod tests {
+    use core::error::Error as _;
     use core::fmt::Write as _;
 
     use super::*;

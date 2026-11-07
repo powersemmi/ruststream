@@ -861,6 +861,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(any(feature = "alloc", feature = "testing"))]
     fn raw_message_construction() {
         let msg = RawMessage::new("name.a", b"payload".as_slice());
         assert_eq!(msg.name(), "name.a");
@@ -869,6 +870,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(feature = "alloc", feature = "testing"))]
     fn raw_message_with_headers() {
         let mut headers = Headers::new();
         headers.insert("X-Tenant", "acme");
@@ -890,6 +892,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(feature = "alloc", feature = "testing"))]
     fn raw_message_payload_bytes_and_headers_mut() {
         let mut msg = RawMessage::new("n", b"data".as_slice());
         assert_eq!(msg.payload_bytes(), Bytes::from_static(b"data"));

@@ -1483,7 +1483,9 @@ mod tests {
         );
     }
 
+    // The refused message is boxed where there is a heap.
     #[test]
+    #[cfg(feature = "alloc")]
     fn a_publish_that_went_out_returns_an_outcome_of_the_cause_alone() {
         assert!(
             size_of::<PublishOutcome<'_, io::Error, Take>>()

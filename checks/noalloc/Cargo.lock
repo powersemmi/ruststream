@@ -673,6 +673,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruststream-core-noalloc"
+version = "0.0.0"
+dependencies = [
+ "futures-core",
+ "heapless",
+ "serde",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "ruststream-memory-noalloc"
 version = "0.0.0"
 dependencies = [
