@@ -883,6 +883,12 @@ impl<'a, C, S> Context<'a, C, S> {
         &mut self.failures
     }
 
+    /// Whether a failed publish left its failure, and the `.error` waiting on it, in the buffer.
+    #[cfg(not(ruststream_alloc))]
+    pub(crate) const fn has_failures(&self) -> bool {
+        self.failures.is_pending()
+    }
+
     /// The buffer a failed publish left its failure in, taken out so it outlives the context: the
     /// worker runs the `.error` closure on it after the delivery is settled, and the context goes
     /// before that. `None` when nothing failed, which costs the check alone.

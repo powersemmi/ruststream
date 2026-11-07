@@ -521,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn a_delivery_that_outlives_its_subscriber_settles_into_nothing() {
+    fn a_delivery_that_outlives_its_subscriber_keeps_its_place_and_settles_into_nothing() {
         static BUS: LocalMemoryBus<1, 8, 1> = LocalMemoryBus::new();
         block_on(async {
             let connected = LocalMemoryBroker::new(&BUS).connect().await.unwrap();
@@ -534,12 +534,19 @@ mod tests {
             let orphan = waiting(&mut pin!(gone.stream())).unwrap();
             drop(gone);
 
+            // The orphan lies in the slot's one place, so the slot's next subscriber has no room
+            // until the orphan is settled.
             let mut next = connected.subscribe("temp").await.unwrap();
+            let refused = publisher.publish(reading("temp", b"22"), None).await;
+            assert_eq!(
+                refused.map_err(PublishMessageError::into_error),
+                Err(LocalMemoryError::Full { capacity: 1 })
+            );
+            orphan.nack(true).await.unwrap();
             publisher
                 .publish(reading("temp", b"22"), None)
                 .await
                 .unwrap();
-            orphan.nack(true).await.unwrap();
             let delivery = waiting(&mut pin!(next.stream())).unwrap();
             assert_eq!(delivery.payload(), b"22");
             assert!(pin!(next.stream()).next().now_or_never().is_none());
@@ -720,13 +727,21 @@ mod tests {
             let mut readings = connected.subscribe("temp").await.unwrap();
             let hint = readings.ready_hint();
             assert!(!hint.may_be_ready());
-            connected
-                .publisher()
-                .publish(reading("temp", b"21"), None)
-                .await
-                .unwrap();
+            let publisher = connected.publisher();
+            for celsius in [b"21", b"22"] {
+                publisher
+                    .publish(reading("temp", celsius), None)
+                    .await
+                    .unwrap();
+            }
             assert!(hint.may_be_ready());
-            drop(waiting(&mut pin!(readings.stream())).unwrap().ack());
+            let mut stream = pin!(readings.stream());
+            waiting(&mut stream).unwrap().ack().await.unwrap();
+            assert!(hint.may_be_ready(), "a second delivery waits");
+            waiting(&mut stream).unwrap().ack().await.unwrap();
+            assert!(!hint.may_be_ready(), "the queue is drained");
+            connected.shutdown().await.unwrap();
+            assert!(hint.may_be_ready(), "the stream ends");
         });
     }
 

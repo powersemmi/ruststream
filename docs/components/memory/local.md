@@ -20,6 +20,9 @@ Without it the bus is a `LocalMemoryBus` of fixed size, which the board declares
 `LocalMemoryBus<MESSAGES, PAYLOAD, SUBSCRIPTIONS>` fixes the messages each subscription holds, the largest payload in bytes (64 unless named), and how many subscriptions are open at once (8 unless named).
 A bus that holds no message, no byte or no subscription does not build.
 The bus sits behind a critical section, so the binary supplies the `critical-section` implementation.
+A delivery lies in a place of the bus from its publish to its settlement, and the message a handler reads holds that place, so it moves a reference rather than the payload and headers.
+Settling the message frees the place; a delivery whose subscriber left keeps its place until it is settled.
+On a core without compare-and-swap, such as a Cortex-M0+, the firmware also gives `portable-atomic` its `critical-section` feature.
 
 ## Example
 

@@ -2061,6 +2061,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "static_cell",
  "thiserror",
  "tokio",
  "tracing",

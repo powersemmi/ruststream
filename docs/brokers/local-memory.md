@@ -38,7 +38,9 @@ The bus has a form for each build of the framework:
 | Allocations | the bus and its channels | none: the build needs no allocator |
 
 The fixed bus sits behind a critical section, so the binary supplies the `critical-section`
-implementation. A bus that holds no message, no byte or no subscription does not build.
+implementation. On a core without compare-and-swap, such as a Cortex-M0+, the firmware also gives
+`portable-atomic` its `critical-section` feature. A bus that holds no message, no byte or no
+subscription does not build.
 
 How to use it is in the [Local memory broker](../components/memory/local.md) component, the
 [Embedded runtime](../components/application/embedded-runtime.md) page and the
