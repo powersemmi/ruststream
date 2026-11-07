@@ -34,6 +34,10 @@ embassy-time = "0.5.1"
 embassy-time-driver = "0.2.2"
 systick-timer = { version = "0.2.3", features = ["embassy-time-driver"] }
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+# The local bus hands each subscription its places through a compare-and-swap, which a Cortex-M0+
+# lacks: `portable-atomic` makes it through the critical section above there, and a core that has
+# one uses its own.
+portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
 cortex-m-rt = "0.7.5"
 panic-halt = "1"
 # The global logger of a defmt firmware: RTT, which a probe reads. The critical section its

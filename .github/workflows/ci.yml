@@ -685,6 +685,9 @@ jobs:
             --features embassy,memory,macros,testing,postcard --test ui_no_alloc
           cargo test --locked --manifest-path checks/noalloc/memory/Cargo.toml \
             --features testing
+          # Without the harness as well: the bus's claim that it allocates nothing is checked
+          # there.
+          cargo test --locked --manifest-path checks/noalloc/memory/Cargo.toml
           cargo test --locked --manifest-path checks/noalloc/runtime/Cargo.toml --lib
           cargo test --locked --manifest-path checks/noalloc/runtime/Cargo.toml --lib \
             --features postcard,json-core

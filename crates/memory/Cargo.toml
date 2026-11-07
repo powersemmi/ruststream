@@ -46,6 +46,7 @@ embassy = [
     "dep:embassy-sync",
     "dep:futures-core",
     "dep:heapless",
+    "dep:static_cell",
 ]
 # The in-process transport the test harness drives the broker through. It does not turn the
 # framework's `alloc` on: the fixed local bus keeps its publish log in the harness's own
@@ -63,6 +64,11 @@ ruststream-core.workspace = true
 ruststream-runtime = { workspace = true, optional = true }
 embassy-sync = { workspace = true, optional = true }
 heapless = { workspace = true, optional = true }
+# Hands each place of the fixed bus's `static` to its subscription once, as a `&'static mut`: a
+# compare-and-swap per place at the first connect, nothing per delivery. Where the target has no
+# compare-and-swap (a Cortex-M0+), the firmware gives `portable-atomic` its `critical-section`
+# feature or its single-core option.
+static_cell = { version = "2.1.1", optional = true }
 critical-section = { version = "1.1", optional = true }
 # Marks the harness's bookkeeping inside a poll as the harness's, not the framework's.
 assert_no_alloc = { version = "1.1.2", optional = true }

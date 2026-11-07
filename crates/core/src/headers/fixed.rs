@@ -41,6 +41,18 @@ impl<const ENTRIES: usize, const BYTES: usize> Clone for FixedHeaders<ENTRIES, B
             arena: self.arena,
         }
     }
+
+    // A map is written over in place with the entries and bytes the source uses, so a message
+    // with few headers copies few bytes, and one with none copies none of the room.
+    fn clone_from(&mut self, source: &Self) {
+        self.count = source.count;
+        self.used = source.used;
+        if source.count == 0 {
+            return;
+        }
+        self.entries[..source.count].copy_from_slice(&source.entries[..source.count]);
+        self.arena[..source.used].copy_from_slice(&source.arena[..source.used]);
+    }
 }
 
 impl<const ENTRIES: usize, const BYTES: usize> Default for FixedHeaders<ENTRIES, BYTES> {
@@ -259,6 +271,34 @@ mod tests {
     use super::*;
 
     type Small = FixedHeaders<3, 32>;
+
+    #[test]
+    fn a_map_written_over_holds_the_source_alone() -> Result<(), HeadersFull> {
+        let mut source = Small::new();
+        source.insert("trace", "a1")?;
+        let mut kept = Small::new();
+        kept.insert("x-a", "1")?;
+        kept.insert("x-b", "22")?;
+        kept.insert("x-c", "333")?;
+        kept.clone_from(&source);
+        assert_eq!(kept, source);
+        assert_eq!(kept.get("x-b"), None);
+        // The map takes new entries after the source's, in the room the source used.
+        kept.insert("x-d", "4")?;
+        assert_eq!(kept.get_str("trace"), Some("a1"));
+        assert_eq!(kept.get_str("x-d"), Some("4"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_map_written_over_by_an_empty_one_is_empty() -> Result<(), HeadersFull> {
+        let mut kept = Small::new();
+        kept.insert("x-a", "1")?;
+        kept.clone_from(&Small::new());
+        assert!(kept.is_empty());
+        assert_eq!(kept.get("x-a"), None);
+        Ok(())
+    }
 
     #[test]
     fn insert_and_get_are_case_insensitive() -> Result<(), HeadersFull> {

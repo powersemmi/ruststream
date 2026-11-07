@@ -35,7 +35,10 @@ ruststream = { version = "0.8", default-features = false, features = ["embassy",
   holds four registrations and a fifth is refused, never dropped.
 - The local bus is a `LocalMemoryBus<MESSAGES, PAYLOAD, SUBSCRIPTIONS>` declared as a `static`;
   the app function receives `LocalMemoryBroker::new(&BUS)`. The binary supplies
-  `critical-section`.
+  `critical-section`; on a core without compare-and-swap (a Cortex-M0+) it also enables
+  `portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }`.
+- A delivery of the local bus lies in its place in the `static` until it is settled; the handler
+  reads it there, and nothing copies it on the way.
 - A batch is `.batch::<N>()` with N from 1 to 16, of messages that deserialize themselves or that
   the mount's codec decodes. Its outcomes are `Outcomes<HandlerOutcome, N>`, and a batch handler
   mounted with `reply` returns `Outcomes<Reply, N>`, one reply per element.

@@ -36,8 +36,9 @@ ruststream = { version = "0.8", default-features = false, features = ["embassy",
 | 批 | 由投递组成的 `Vec` | 最多容纳 `N` 条投递的固定槽 |
 | 分配 | 总线及其通道 | 无：这种构建不需要分配器 |
 
-固定总线位于临界区之后，因此 `critical-section` 的实现由二进制 crate 提供。容不下任何一条消息、
-任何一个字节或任何一个订阅的总线无法通过构建。
+固定总线位于临界区之后，因此 `critical-section` 的实现由二进制 crate 提供。在没有比较并交换指令的
+内核上（例如 Cortex-M0+），固件还要为 `portable-atomic` 开启 `critical-section` 特性。容不下任何一条
+消息、任何一个字节或任何一个订阅的总线无法通过构建。
 
 用法见 [Local memory broker](../components/memory/local.md) 组件、
 [Embedded runtime](../components/application/embedded-runtime.md) 页面和
