@@ -219,10 +219,7 @@ use parse::SubscriberArgs;
 /// body, and `Out<impl Publisher>` asks for the `Publisher` of the board's broker. Nothing is
 /// asked to be `Send` there: the body's future is polled on the app's one task, so it may hold
 /// values that are not `Send` across an `.await`. A handler with an `Out` parameter, one message or a
-/// batch, does not reply. A batch handler with `Out` parameters nests the app's futures
-/// deeper than one without: beside a store of retries, or beside several other batch routes (seven
-/// measured a depth of 134), the app can pass the compiler's default recursion limit of 128, and
-/// the crate then sets `#![recursion_limit = "256"]`.
+/// batch, does not reply.
 ///
 /// ```ignore
 /// use std::rc::Rc;

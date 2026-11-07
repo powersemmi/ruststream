@@ -193,6 +193,24 @@ name = "compio_hooks"
 path = "tests/compio_hooks.rs"
 required-features = ["compio", "json"]
 
+# A device service's app of one `Out` form each, through the embedded `TestApp`. Each is a binary
+# of its own and sets no `recursion_limit`: the compiler lays a type out once per crate, so an app
+# beside it could lay out the deepest futures first and hide how deep this one is.
+[[test]]
+name = "embedded_out_app"
+path = "tests/embedded_out_app.rs"
+required-features = ["embassy", "json"]
+
+[[test]]
+name = "embedded_out_retry_app"
+path = "tests/embedded_out_retry_app.rs"
+required-features = ["embassy", "json"]
+
+[[test]]
+name = "embedded_batch_out_app"
+path = "tests/embedded_batch_out_app.rs"
+required-features = ["embassy", "json"]
+
 [[test]]
 name = "suite"
 path = "tests/main.rs"

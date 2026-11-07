@@ -206,6 +206,9 @@ impl<M> Slot<M> {
     }
 
     /// Puts the next delivery in the slot.
+    // Inlined into the stream's poll, which then writes the delivery where the slot is rather than
+    // handing it over by value.
+    #[inline]
     pub(super) fn fill(&mut self, msg: M) {
         self.0 = Some(msg);
     }
@@ -268,6 +271,24 @@ impl<C, Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>> Lent<C>
     #[inline]
     fn delivery(&self) -> &Delivery<C> {
         self.0
+    }
+
+    #[inline]
+    fn host(&self) -> &Host {
+        self.1
+    }
+}
+
+// The loop owns its publish context: a one-task runner hands the loop's future straight to its
+// join, with no frame of its own around the loop to hold the context the loop would borrow.
+impl<C, Host: HostDetach<Kept: PrepareKept<C>, Retry: RetryCopies<C>>> Lent<C>
+    for (Delivery<C>, &Host)
+{
+    type Host = Host;
+
+    #[inline]
+    fn delivery(&self) -> &Delivery<C> {
+        &self.0
     }
 
     #[inline]

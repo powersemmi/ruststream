@@ -103,14 +103,17 @@ pub struct OneTaskRoute<Sub, Body, Cx> {
 impl<Sub, Body, Cx> OneTaskRoute<Sub, Body, Cx> {
     /// Runs the route one delivery at a time, on the host the plan lends it: the plan of a route
     /// that declared no workers.
-    pub async fn run_sequential<State, Signal, Lent, Park, Room>(
+    // Not an `async fn`: the loop owns the route's publish context, so no frame of this call sits
+    // between the plan and the loop.
+    pub fn run_sequential<State, Signal, Lent, Park, Room>(
         self,
         signal: Signal,
         state: StateRef<'_, State>,
         host: &Lent,
         parked: Park,
         room: Room,
-    ) where
+    ) -> impl Future<Output = ()>
+    where
         Room: EncodeRoom,
         Park: Parks,
         Sub: Subscriber,
@@ -126,14 +129,13 @@ impl<Sub, Body, Cx> OneTaskRoute<Sub, Body, Cx> {
             signal,
             self.name,
             handle_of(state),
-            (&self.delivery, host),
+            (self.delivery, host),
             failure,
             (),
             HeadersAtOnce,
             parked,
             room,
         )
-        .await;
     }
 }
 

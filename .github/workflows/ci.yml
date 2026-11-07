@@ -633,7 +633,9 @@ jobs:
       # The embassy runtime without a heap, one invocation per graph so a workspace neighbour
       # cannot unify the framework's `alloc` on. The tree check fails the leg if `alloc` is in
       # any of the graphs; the tests then run under an allocator that fails the framework's own
-      # allocations. The recipe `test-no-alloc` of the justfile runs the same commands.
+      # allocations. The apps of the `Out` forms and of the batch routes set no
+      # `recursion_limit`, so an app nested past the compiler's default limit fails this leg. The
+      # recipe `test-no-alloc` of the justfile runs these commands among its own.
       - name: cargo test (embassy without alloc)
         env:
           CARGO_BUILD_WARNINGS: deny
@@ -655,6 +657,14 @@ jobs:
           fi
           cargo test --locked --no-default-features --features embassy,memory,macros,testing \
             --test embedded_no_alloc
+          cargo test --locked --no-default-features \
+            --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_out
+          cargo test --locked --no-default-features \
+            --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_out_retry
+          cargo test --locked --no-default-features \
+            --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch
+          cargo test --locked --no-default-features \
+            --features embassy,memory,macros,testing,postcard --test embedded_no_alloc_batch_out
           cargo test --locked --no-default-features --features embassy,memory,macros,testing,log \
             --test embedded_diagnostics
           cargo test --locked --manifest-path checks/noalloc/memory/Cargo.toml \

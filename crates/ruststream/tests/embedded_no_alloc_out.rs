@@ -1,6 +1,9 @@
 //! A handler of one message publishes through an `Out` slot on the build without `alloc`: the
 //! harness records the publish as its own bookkeeping, under an allocator that fails the
 //! framework's own allocations.
+//!
+//! The app builds with no `recursion_limit` attribute, so an `Out` form that nests the futures of
+//! an app deeper than the compiler's default limit fails this build.
 
 // The app and its handlers are not `Send`: the harness polls them inside the test's future.
 #![allow(clippy::future_not_send)]
@@ -58,6 +61,7 @@ async fn on_ask(ask: &Ask, Out(audit): Out<impl Publisher, Audit>) -> HandlerOut
     }
 }
 
+#[ruststream::app(runtime = embassy)]
 fn audit_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.with_codec(PostcardCodec)

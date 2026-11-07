@@ -11,6 +11,7 @@ use core::marker::PhantomData;
 use core::mem;
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, Ordering};
+use core::task::{Context as TaskContext, Poll, ready};
 use ruststream_core::{MaybeSend, MaybeSendSync};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -405,9 +406,10 @@ impl Coordinator {
 }
 
 impl DuePublish {
-    /// Runs the hooks, if any matched the publish.
+    /// Starts the hooks, if any matched the publish; the future it returns waits until they are
+    /// done. The caller awaits it at once, so they start where the publish is.
     #[doc(hidden)]
-    pub async fn run(self) {
+    pub fn run(self) -> HooksDone {
         let Some(PublishRun {
             coordinator,
             target,
@@ -415,7 +417,7 @@ impl DuePublish {
             hooks,
         }) = self.0
         else {
-            return;
+            return HooksDone::Nothing;
         };
         run_hooks(&coordinator, move |coordinator| {
             Box::pin(async move {
@@ -424,29 +426,82 @@ impl DuePublish {
                 }
             })
         })
-        .await;
     }
 }
 
-/// Runs `hooks` to completion where the coordinator's harness runs them, and keeps a panic they
-/// raise for the test to raise again ([`Hooks::raise_failure`]).
-async fn run_hooks<Run>(coordinator: &Coordinator, hooks: Run)
+/// What the event that recorded hooks waits on while they run: nothing when none matched, or the
+/// harness's answer once they are done.
+///
+/// A future of its own rather than an `async fn`: a publish waits on it inside a device service's
+/// handler, and its type nests no deeper than the answer it waits for, which keeps the app's
+/// future inside the default recursion limit.
+#[must_use]
+// Machinery the harness crate drives, hidden from the docs; it holds a channel's receiving end.
+#[allow(missing_debug_implementations)]
+#[doc(hidden)]
+pub enum HooksDone {
+    /// No hook to run.
+    Nothing,
+    /// The harness that polls the app runs them, and answers once they are done.
+    InPlace(oneshot::Receiver<()>),
+    /// A thread of their own runs them, and answers with a panic they raised.
+    #[cfg(feature = "tokio")]
+    OnThread {
+        /// Where a panic of the hooks is kept for the test to raise again.
+        coordinator: Coordinator,
+        /// The thread's answer.
+        finished: oneshot::Receiver<Result<(), Box<dyn Any + Send>>>,
+    },
+}
+
+impl Future for HooksDone {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<()> {
+        let this = self.get_mut();
+        match this {
+            Self::Nothing => return Poll::Ready(()),
+            // The harness answers once the hooks are done, or drops the answer with the hooks when
+            // the test ends; either way the dispatch goes on.
+            Self::InPlace(finished) => {
+                let _ = ready!(Pin::new(finished).poll(cx));
+            }
+            #[cfg(feature = "tokio")]
+            Self::OnThread {
+                coordinator,
+                finished,
+            } => {
+                if let Ok(Err(payload)) = ready!(Pin::new(finished).poll(cx)) {
+                    lock(&coordinator.hooks().failed).get_or_insert(payload);
+                }
+            }
+        }
+        // The answer came: the channel goes now, and a poll past the end finds nothing to wait on.
+        *this = Self::Nothing;
+        Poll::Ready(())
+    }
+}
+
+/// Starts `hooks` where the coordinator's harness runs them; the future it returns waits until
+/// they are done and keeps a panic they raise for the test to raise again
+/// ([`Hooks::raise_failure`]).
+fn run_hooks<Run>(coordinator: &Coordinator, hooks: Run) -> HooksDone
 where
     Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + MaybeSend + 'static,
 {
     match coordinator.hooks().runner {
         #[cfg(feature = "tokio")]
-        HookRunner::Thread => on_hook_thread(coordinator, hooks).await,
+        HookRunner::Thread => on_hook_thread(coordinator, hooks),
         #[cfg(not(feature = "tokio"))]
-        HookRunner::Thread => in_place(coordinator, hooks).await,
-        HookRunner::InPlace => in_place(coordinator, hooks).await,
+        HookRunner::Thread => in_place(coordinator, hooks),
+        HookRunner::InPlace => in_place(coordinator, hooks),
     }
 }
 
-/// Hands `hooks` to the harness that polls the app, and waits until it ran them: the dispatch that
-/// recorded the event waits here, and the test's step that polls the app polls the hooks beside
-/// it ([`Hooks::take_pending`]).
-async fn in_place<Run>(coordinator: &Coordinator, hooks: Run)
+/// Hands `hooks` to the harness that polls the app; the dispatch that recorded the event waits on
+/// the answer, and the test's step that polls the app polls the hooks beside it
+/// ([`Hooks::take_pending`]).
+fn in_place<Run>(coordinator: &Coordinator, hooks: Run) -> HooksDone
 where
     Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + MaybeSend + 'static,
 {
@@ -455,9 +510,7 @@ where
         run: pending_run(hooks),
         done,
     });
-    // The harness answers once the hooks are done, or drops the answer with the hooks when the
-    // test ends; either way the dispatch goes on.
-    let _ = finished.await;
+    HooksDone::InPlace(finished)
 }
 
 /// Runs `hooks` to completion on a thread of their own, inside the test's runtime, and waits for
@@ -472,7 +525,7 @@ where
 /// timeout aborted the dispatch that ran them) or the test ends ([`HookFailures::stop`]), so no
 /// hook outlives the harness.
 #[cfg(feature = "tokio")]
-async fn on_hook_thread<Run>(coordinator: &Coordinator, hooks: Run)
+fn on_hook_thread<Run>(coordinator: &Coordinator, hooks: Run) -> HooksDone
 where
     Run: for<'c> FnOnce(&'c Coordinator) -> HookFuture<'c> + MaybeSend + 'static,
 {
@@ -503,8 +556,9 @@ where
         // Released last, once the hooks' future and what it captured are dropped.
         drop(running);
     });
-    if let Ok(Err(payload)) = finished.await {
-        lock(&coordinator.hooks().failed).get_or_insert(payload);
+    HooksDone::OnThread {
+        coordinator: coordinator.clone(),
+        finished,
     }
 }
 
