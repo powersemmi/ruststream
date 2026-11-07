@@ -70,6 +70,8 @@ jobs:
             docs:
               - 'docs/**'
               - 'website/**'
+              # the i18n check holds the README's translations under docs/readme/ to it
+              - 'README.md'
               - 'crates/ruststream/examples/**'
               # API links on the pages resolve against the crate's rustdoc, so a renamed item
               # rebuilds the site and fails it on a link that no longer resolves
