@@ -14,7 +14,10 @@
 //! poll after the first is one lock. Once the heap and the slab have grown to the number of sleeps
 //! a core keeps, none of it allocates. The wheel and its driver task are made once per core, on
 //! its first sleep. The driver waits on one compio timer at a time, which costs what compio's
-//! own timer costs (two `BTreeMap` node allocations per timer that is armed alone and fires).
+//! own timer costs. On compio's polling driver a sleep awaited in the future a runtime blocks on
+//! costs one allocation more: the runtime waits once with no timer pending before that future
+//! arms its next sleep, and the driver builds a new event list after such a wait
+//! (<https://github.com/compio-rs/compio/issues/1107>).
 
 use std::cell::Cell;
 use std::cmp::Reverse;
@@ -291,9 +294,6 @@ impl Future for Earlier<'_> {
 async fn drive(wheel: &'static Wheel) {
     let _orphan = Orphan(wheel);
     let mut due: Vec<Waker> = Vec::new();
-    // compio's timer map frees its node when its last timer goes, so the next timer would allocate
-    // one again. A timer that never fires keeps the node, and every timer after it fits in it.
-
     loop {
         let next = {
             let mut timers = wheel.lock();
