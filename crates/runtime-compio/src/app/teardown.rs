@@ -127,9 +127,10 @@ impl Teardown {
     /// # Errors
     ///
     /// Returns [`RustStreamError::Dispatch`] if the service had already torn itself down on a
-    /// fail-fast failure, a panic of a dispatch loop or a worker outside the handler included,
-    /// and [`RustStreamError::Shutdown`] if a broker failed to shut down. A task of core 0 that
-    /// panicked with no failure on record is [`RustStreamError::Join`].
+    /// fail-fast failure, a panic of a dispatch loop or a worker outside the handler included:
+    /// that failure is the answer even when a broker then fails to shut down, which is logged.
+    /// Otherwise a task of core 0 that panicked is [`RustStreamError::Join`], and a broker that
+    /// failed to shut down is [`RustStreamError::Shutdown`].
     ///
     /// # Cancel safety
     ///
@@ -171,16 +172,16 @@ impl Teardown {
         run_hooks(&mut hooks.after_shutdown, "after_shutdown").await;
         info!(target: "ruststream::lifecycle", "service stopped");
 
-        // A fail-fast failure tore the service down: surface it so an orchestrator restarts the
-        // service and the operator sees a non-zero exit, not a silent stop. A loop that panicked
-        // recorded its failure as it ended, under its subscription's name, so its join error is
-        // that same panic without the name.
-        let failure = stop.failure();
-        if failure.is_none() {
-            drained?;
+        // A fail-fast failure tore the service down: it is the answer, so an orchestrator
+        // restarts the service and the operator sees why it stopped, not a silent stop. What the
+        // teardown met on the way is no news next to it: a loop that panicked recorded that
+        // failure under its subscription's name, so its join error is the same panic without
+        // the name, and a broker that refused to close is logged where it refused.
+        if let Some(reason) = stop.failure() {
+            return Err(RustStreamError::Dispatch(reason));
         }
-        closed?;
-        failure.map_or(Ok(()), |reason| Err(RustStreamError::Dispatch(reason)))
+        drained?;
+        closed
     }
 }
 
