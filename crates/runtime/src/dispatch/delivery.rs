@@ -206,6 +206,9 @@ impl<M> Slot<M> {
     }
 
     /// Puts the next delivery in the slot.
+    // Inlined into the stream's poll, which then writes the delivery where the slot is rather than
+    // handing it over by value.
+    #[inline]
     pub(super) fn fill(&mut self, msg: M) {
         self.0 = Some(msg);
     }

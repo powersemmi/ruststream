@@ -56,7 +56,7 @@ use crate::testing::coordinator::{
 use crate::testing::hooks::DueCall;
 #[cfg(feature = "testing")]
 use crate::testing::{Bookkept, harness_section};
-#[cfg(any(feature = "std", feature = "testing"))]
+#[cfg(feature = "testing")]
 use call::CallOnPoll;
 pub use delivery::{Delivery, Lent, Slot};
 pub use headers::{HeadersAtOnce, HeadersOnDemand, LendHeaders};
@@ -569,18 +569,25 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         // caught too. AssertUnwindSafe is required
         // because the future borrows `&mut ctx`; that state is discarded with the failed delivery.
         // Under the harness, the invocation runs in a task-local slot scope so publishes made
-        // through injected `Out` publishers are attributed to their slot.
-        // The handler's future lies pinned in this frame and the catch above it holds a
-        // reference: the delivery's future nests the handler's one level below this frame
-        // however many combinators its poll runs under (see `CallOnPoll`).
-        #[cfg(any(feature = "std", feature = "testing"))]
+        // through injected `Out` publishers are attributed to their slot. The harness's frames
+        // would nest the handler's future deeper than a device app's future may go, so the call
+        // lies pinned in this frame and the scope and the catch hold a reference to it (see
+        // `CallOnPoll`).
+        #[cfg(feature = "testing")]
         let result = {
             let call = pin!(CallOnPoll::new(|| handler.handle(msg, &mut ctx)));
-            let caught = observed!(delivery, AssertUnwindSafe(call).catch_unwind());
-            #[cfg(feature = "testing")]
-            let caught = in_harness_scope(harness_scope(delivery), caught);
-            caught.await
+            in_harness_scope(
+                harness_scope(delivery),
+                observed!(delivery, AssertUnwindSafe(call).catch_unwind()),
+            )
+            .await
         };
+        #[cfg(all(feature = "std", not(feature = "testing")))]
+        let result = observed!(
+            delivery,
+            AssertUnwindSafe(async { handler.handle(msg, &mut ctx).await }).catch_unwind()
+        )
+        .await;
         // Without `std` a panic aborts, so the handler's future runs uncaught.
         #[cfg(not(any(feature = "std", feature = "testing")))]
         let result = Ok::<_, Infallible>(observed!(delivery, handler.handle(msg, &mut ctx)).await);
@@ -794,8 +801,8 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     }
     // A batch records its call where it settles, inside the handler, so the scope hands back the
     // hooks that call owes.
-    // As in `dispatch`: the handler's future lies pinned in this frame, made on the first poll
-    // inside the catch.
+    // As in `dispatch`: under the harness the handler's future lies pinned in this frame, made on
+    // the first poll inside the catch.
     #[cfg(feature = "testing")]
     let (result, mut due_calls) = {
         let call = pin!(CallOnPoll::new(|| {
@@ -808,12 +815,16 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
         .await
     };
     #[cfg(all(feature = "std", not(feature = "testing")))]
-    let result = {
-        let call = pin!(CallOnPoll::new(|| {
-            handler.handle_batch(&mut *batch, scratch, &mut ctx, host)
-        }));
-        observed!(delivery, AssertUnwindSafe(call).catch_unwind()).await
-    };
+    let result = observed!(
+        delivery,
+        AssertUnwindSafe(async {
+            handler
+                .handle_batch(&mut *batch, scratch, &mut ctx, host)
+                .await;
+        })
+        .catch_unwind()
+    )
+    .await;
     // Without `std` a panic aborts, so the handler's future runs uncaught.
     #[cfg(not(any(feature = "std", feature = "testing")))]
     let result: Result<(), Infallible> = {
@@ -883,7 +894,7 @@ fn harness_scope<C>(delivery: &Delivery<C>) -> Option<HarnessScope> {
         .map(|coordinator| HarnessScope::new(coordinator, delivery.scope_id, delivery.subscription))
 }
 
-#[cfg(any(feature = "std", feature = "testing"))]
+#[cfg(feature = "testing")]
 mod call;
 mod delivery;
 #[cfg(test)]
