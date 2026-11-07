@@ -35,7 +35,8 @@ fn app(messages: usize) -> Pending {
     })
 }
 
-#[library_benchmark(config = common::config(0, 57))]
+// #718 added one cold block: the loop's spare batch, where a failed fill's leftovers are dropped.
+#[library_benchmark(config = common::config(0, 58))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]
