@@ -91,7 +91,7 @@ use std::convert::Infallible;
 use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig};
 use ruststream::PublishOutcome;
 use ruststream::memory::prelude::*;
-use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher, PARTITION_KEY_HEADER};
 use ruststream::runtime::{BrokerScope, Identity, MountChain, MountRoutes, PublishIdentity};
 use ruststream::{Lend, OutgoingMessage, PairError};
 use serde::Deserialize;
@@ -374,6 +374,19 @@ pub fn json_body(size: usize) -> Vec<u8> {
     body.into_bytes()
 }
 
+/// The partition key every delivery of a keyed scenario carries: one key, so one thread or worker
+/// takes every delivery.
+pub const ONE_KEY: &[(&str, &str)] = &[(PARTITION_KEY_HEADER, "orders-17")];
+
+/// The headers of one delivery, from a scenario's fixed set.
+fn header_map(headers: &[(&'static str, &str)]) -> HeaderMap {
+    let mut map = HeaderMap::new();
+    for (key, value) in headers {
+        map.insert(Str::from_static(key), (*value).to_owned());
+    }
+    map
+}
+
 /// Publishes `count` bodies under `name` with a fixed set of headers on each.
 pub fn fill_with_headers(
     publisher: &MemoryPublisher,
@@ -385,12 +398,11 @@ pub fn fill_with_headers(
     let body = json_body(0);
     runtime.block_on(async move {
         for _ in 0..count {
-            let mut map = HeaderMap::new();
-            for (key, value) in headers {
-                map.insert(Str::from_static(key), (*value).to_owned());
-            }
             publisher
-                .publish(OutgoingMessage::new(name, &body).with_headers(map), None)
+                .publish(
+                    OutgoingMessage::new(name, &body).with_headers(header_map(headers)),
+                    None,
+                )
                 .await
                 .expect("in-process publish");
         }
@@ -558,6 +570,7 @@ impl Pending {
             publisher: self.broker.publisher(),
             body: json_body(self.size),
             messages: self.messages,
+            headers: self.headers,
             app: running,
         }
     }
@@ -570,6 +583,8 @@ pub struct Started {
     pub publisher: MemoryPublisher,
     pub body: Vec<u8>,
     pub messages: usize,
+    /// The headers every message carries, empty where the scenario reads none.
+    pub headers: &'static [(&'static str, &'static str)],
     // Held so the service outlives the run.
     pub app: RunningApp,
 }
@@ -582,8 +597,14 @@ impl Started {
     pub fn publish_and_drain(&self) {
         self.runtime.block_on(async {
             for _ in 0..self.messages {
+                let message = OutgoingMessage::new(INPUT, &self.body);
+                let message = if self.headers.is_empty() {
+                    message
+                } else {
+                    message.with_headers(header_map(self.headers))
+                };
                 self.publisher
-                    .publish(OutgoingMessage::new(INPUT, &self.body), None)
+                    .publish(message, None)
                     .await
                     .expect("in-process publish");
             }

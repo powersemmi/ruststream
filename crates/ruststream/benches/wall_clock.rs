@@ -19,7 +19,7 @@ mod common;
 
 use std::hint::black_box;
 
-use common::{Latch, MESSAGES, Order, Ready, Started};
+use common::{Latch, MESSAGES, ONE_KEY, Order, Pending, Ready, Started};
 use divan::Bencher;
 use divan::counter::ItemsCount;
 use ruststream::memory::prelude::*;
@@ -58,6 +58,13 @@ async fn threaded(order: &Order, ctx: &mut Context<'_, (), Latch>) -> HandlerOut
 
 #[subscriber("orders", threads(1))]
 async fn threaded_one(order: &Order, ctx: &mut Context<'_, (), Latch>) -> HandlerOutcome {
+    black_box((order.id, order.quantity));
+    ctx.state().arrived();
+    HandlerOutcome::ack()
+}
+
+#[subscriber("orders", threads(4, by_key))]
+async fn threaded_by_key(order: &Order, ctx: &mut Context<'_, (), Latch>) -> HandlerOutcome {
     black_box((order.id, order.quantity));
     ctx.state().arrived();
     HandlerOutcome::ack()
@@ -125,6 +132,18 @@ fn threaded_across_threads() -> Started {
     .started()
 }
 
+// Four dedicated threads keyed by partition, every delivery under one key: one thread takes them
+// all, and the loop waits on that thread's ring alone whenever it is full.
+fn threaded_by_key_across_threads() -> Started {
+    Pending {
+        headers: ONE_KEY,
+        ..common::pending_on(common::worker_runtime(), MESSAGES, 0, |b| {
+            b.include(threaded_by_key)
+        })
+    }
+    .started()
+}
+
 // One dedicated thread: with a handler this light the thread drains its ring faster than the loop
 // fills it, so what this shows is the cost of a thread that keeps running out of work.
 fn threaded_one_across_threads() -> Started {
@@ -179,6 +198,14 @@ fn threads_across_threads(bencher: Bencher) {
     bencher
         .counter(ItemsCount::new(MESSAGES))
         .with_inputs(threaded_across_threads)
+        .bench_local_values(|started| started.publish_and_drain());
+}
+
+#[divan::bench]
+fn threads_by_key_across_threads(bencher: Bencher) {
+    bencher
+        .counter(ItemsCount::new(MESSAGES))
+        .with_inputs(threaded_by_key_across_threads)
         .bench_local_values(|started| started.publish_and_drain());
 }
 

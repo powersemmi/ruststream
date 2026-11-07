@@ -116,6 +116,10 @@ SCENARIOS = [
         "consume_threads/service",
     ),
     Scenario(
+        "consume on four dedicated threads, every delivery under one key",
+        "consume_threads_by_key/service",
+    ),
+    Scenario(
         "consume through a middleware stack of one",
         "middleware/service_one",
     ),
