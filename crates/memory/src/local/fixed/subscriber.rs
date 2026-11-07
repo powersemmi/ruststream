@@ -475,7 +475,7 @@ mod tests {
 
     async fn publish(connected: &Connected, name: &str, payload: &[u8], headers: Headers) {
         let payload = payload;
-        let message = OutgoingMessage::with_payload(name, payload).with_headers(headers);
+        let message = OutgoingMessage::with_payload(name, payload).with_headers(&headers);
         connected.publisher().publish(message, None).await.unwrap();
     }
 

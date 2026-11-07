@@ -113,6 +113,8 @@ check: && check-firmware
         --features ruststream-core/alloc --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream --no-default-features \
         --features embassy,macros,memory,ruststream-core/alloc --target thumbv7em-none-eabihf
+    # The contract's own unit tests without `alloc` are held to the lints of its sources.
+    cargo clippy --manifest-path checks/noalloc/core/Cargo.toml --lib --tests -- -D warnings
     # The delivery body without `alloc`, and the crate that runs its own unit tests, are held to the
     # same lints.
     cargo clippy -p ruststream-runtime --no-default-features --lib -- -D warnings
@@ -250,12 +252,16 @@ test-no-alloc:
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test doc_device_manual
     # The device build's own futures, without the harness that wraps them in the test above.
     cargo test --no-default-features --features embassy,memory,macros --test embedded_future_size
+    # The no-alloc publish stand's scenarios deliver what they publish.
+    cargo test --no-default-features --features embassy,memory,macros \
+        --test embedded_publish_no_alloc_check
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test ui_no_alloc
     cargo test --manifest-path checks/noalloc/memory/Cargo.toml --features testing
     # Without the harness as well: the bus's claim that it allocates nothing is checked there.
     cargo test --manifest-path checks/noalloc/memory/Cargo.toml
-    # The runtime's own unit tests of the variant: its dev-dependencies turn `alloc` on, so the
-    # sources build as a crate of their own that has none.
+    # The contract's and the runtime's own unit tests of the variant: their dev-dependencies turn
+    # `alloc` on, so the sources build as crates of their own that have none.
+    cargo test --manifest-path checks/noalloc/core/Cargo.toml --lib
     cargo test --manifest-path checks/noalloc/runtime/Cargo.toml --lib
     cargo test --manifest-path checks/noalloc/runtime/Cargo.toml --lib --features postcard,json-core
     # The same for the embedded runner.
@@ -366,7 +372,9 @@ bench *ARGS:
         --no-default-features --features {{ bench_features }}
     cargo bench -p ruststream-runtime-embassy --bench embedded_idle --no-run
     cargo bench --no-default-features --features embassy,memory,macros --bench embedded_idle_no_alloc \
-        --no-run
+        --bench embedded_publish_no_alloc --no-run
+    cargo test --no-default-features --features embassy,memory,macros \
+        --test embedded_publish_no_alloc_check --no-run
     cargo bench --no-default-features --features {{ compio_bench_features }} --bench consume_compio \
         --no-run
     status=0
@@ -386,6 +394,16 @@ bench *ARGS:
     cargo bench --no-default-features --features embassy,memory,macros \
         --bench embedded_idle_no_alloc --no-fail-fast \
         -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
+    # The same app with a handler that publishes, measured only where its check finds every
+    # message arriving: a broken path would measure as a faster one.
+    if cargo test --no-default-features --features embassy,memory,macros \
+        --test embedded_publish_no_alloc_check; then
+        cargo bench --no-default-features --features embassy,memory,macros \
+            --bench embedded_publish_no_alloc --no-fail-fast \
+            -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
+    else
+        status=1
+    fi
     # The compio runner on one core, over the local bus: its floor holds a delivery to zero
     # allocations after the start.
     cargo bench --no-default-features --features {{ compio_bench_features }} \

@@ -66,6 +66,24 @@ pub(crate) fn outgoing<'a, P: PayloadForm>(name: &'a str, payload: &'a [u8]) -> 
     OutgoingMessage::with_payload(name, form)
 }
 
+/// The message with a map the scenario built: handed over where the message owns its headers.
+#[cfg(ruststream_alloc)]
+pub(crate) fn with_map<'a, Payload>(
+    msg: OutgoingMessage<'a, Payload>,
+    headers: &'a Headers,
+) -> OutgoingMessage<'a, Payload> {
+    msg.with_headers(headers.clone())
+}
+
+/// The message with a map the scenario built: lent where the message borrows its headers.
+#[cfg(not(ruststream_alloc))]
+pub(crate) fn with_map<'a, Payload>(
+    msg: OutgoingMessage<'a, Payload>,
+    headers: &'a Headers,
+) -> OutgoingMessage<'a, Payload> {
+    msg.with_headers(headers)
+}
+
 /// Sets a header, in either representation of the headers.
 pub(crate) fn set_header(headers: &mut Headers, name: &'static str, value: &'static str) {
     #[cfg(ruststream_alloc)]

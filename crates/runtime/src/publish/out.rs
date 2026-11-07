@@ -314,7 +314,7 @@ impl<W, Head: PublishLayer + Clone, Tail: PublishPipeline + Clone> OutPipeline<W
     {
         // The pipeline mutates the message, so the borrowed publish takes ownership of its parts
         // here; only a slot that actually has middleware pays for that.
-        let (name, payload, headers) = msg.into_parts();
+        let (name, payload, headers) = msg.into_owned_parts();
         let mut out = <W::Payload as PayloadForm>::rebuilt(name.into(), payload, headers);
         // The middleware rewrites the message in place, so a refusal reports the message as the
         // stages left it, which is the one that was sent.
@@ -351,7 +351,7 @@ where
     {
         // The transforms mutate the message and the call's settings, so both are taken by value
         // here; only a slot that actually mounts one pays for that.
-        let (name, payload, headers) = msg.into_parts();
+        let (name, payload, headers) = msg.into_owned_parts();
         let mut out = <W::Payload as PayloadForm>::rebuilt(name.into(), payload, headers);
         let mut resolved = options.cloned();
         self.stack

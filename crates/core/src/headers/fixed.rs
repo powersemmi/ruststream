@@ -4,6 +4,8 @@ use core::error::Error;
 use core::fmt;
 use core::str;
 
+use heapless::Vec;
+
 /// The header map is full: it holds `ENTRIES` entries already, or the new entry does not fit in
 /// the `BYTES` of its arena.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,33 +27,40 @@ struct Entry {
 }
 
 /// Case-insensitive map of broker-message headers in fixed storage.
+///
+/// The storage is written as headers arrive and never zeroed: an empty map costs two lengths to
+/// make, and a clone copies the entries and bytes the map holds, not its room. An
+/// [`OutgoingMessage`](crate::OutgoingMessage) borrows the map from where it was built.
 pub struct FixedHeaders<const ENTRIES: usize, const BYTES: usize> {
-    entries: [Entry; ENTRIES],
-    count: usize,
-    used: usize,
-    arena: [u8; BYTES],
+    // The entries and the bytes are written as they arrive and never zeroed, so an empty map costs
+    // two lengths to make and a copy of a map copies what it holds.
+    entries: Vec<Entry, ENTRIES>,
+    arena: Vec<u8, BYTES>,
 }
 
 impl<const ENTRIES: usize, const BYTES: usize> Clone for FixedHeaders<ENTRIES, BYTES> {
     fn clone(&self) -> Self {
-        Self {
-            entries: self.entries,
-            count: self.count,
-            used: self.used,
-            arena: self.arena,
-        }
+        let mut copy = Self::new();
+        copy.clone_from(self);
+        copy
     }
 
     // A map is written over in place with the entries and bytes the source uses, so a message
     // with few headers copies few bytes, and one with none copies none of the room.
     fn clone_from(&mut self, source: &Self) {
-        self.count = source.count;
-        self.used = source.used;
-        if source.count == 0 {
+        self.entries.clear();
+        self.arena.clear();
+        // Most messages carry no headers: theirs is written over with the two lengths alone.
+        if source.entries.is_empty() {
             return;
         }
-        self.entries[..source.count].copy_from_slice(&source.entries[..source.count]);
-        self.arena[..source.used].copy_from_slice(&source.arena[..source.used]);
+        let copied = self
+            .entries
+            .extend_from_slice(&source.entries)
+            .and_then(|()| self.arena.extend_from_slice(&source.arena));
+        if copied.is_err() {
+            unreachable!("a map holds what another map of its room holds");
+        }
     }
 }
 
@@ -86,19 +95,9 @@ impl<const ENTRIES: usize, const BYTES: usize> FixedHeaders<ENTRIES, BYTES> {
             );
         }
         Self {
-            entries: [Entry {
-                start: 0,
-                key_len: 0,
-                value_len: 0,
-            }; ENTRIES],
-            count: 0,
-            used: 0,
-            arena: [0; BYTES],
+            entries: Vec::new(),
+            arena: Vec::new(),
         }
-    }
-
-    fn live(&self) -> &[Entry] {
-        &self.entries[..self.count]
     }
 
     fn key_of(&self, entry: Entry) -> &[u8] {
@@ -116,20 +115,19 @@ impl<const ENTRIES: usize, const BYTES: usize> FixedHeaders<ENTRIES, BYTES> {
     }
 
     fn position(&self, name: &str) -> Option<usize> {
-        self.live()
+        self.entries
             .iter()
             .position(|&entry| self.key_of(entry).eq_ignore_ascii_case(name.as_bytes()))
     }
 
     fn remove_at(&mut self, index: usize) {
-        let gone = self.entries[index];
+        let gone = self.entries.remove(index);
         let size = Self::size_of_entry(gone);
         let start = usize::from(gone.start);
-        self.arena.copy_within(start + size..self.used, start);
-        self.used -= size;
-        self.entries.copy_within(index + 1..self.count, index);
-        self.count -= 1;
-        for entry in &mut self.entries[index..self.count] {
+        let used = self.arena.len();
+        self.arena.copy_within(start + size..used, start);
+        self.arena.truncate(used - size);
+        for entry in &mut self.entries[index..] {
             // The tail moved down by `size`, which is below `u16::MAX` like every offset.
             entry.start -= gone.key_len + gone.value_len;
         }
@@ -145,31 +143,33 @@ impl<const ENTRIES: usize, const BYTES: usize> FixedHeaders<ENTRIES, BYTES> {
         let existing = self.position(name);
         let freed = existing.map_or(0, |index| Self::size_of_entry(self.entries[index]));
         let needed = name.len() + value.len();
-        let has_slot = existing.is_some() || self.count < ENTRIES;
+        let has_slot = existing.is_some() || !self.entries.is_full();
         let (Ok(key_len), Ok(value_len)) = (u16::try_from(name.len()), u16::try_from(value.len()))
         else {
             return Err(HeadersFull);
         };
-        if !has_slot || self.used - freed + needed > BYTES {
+        if !has_slot || self.arena.len() - freed + needed > BYTES {
             return Err(HeadersFull);
         }
         if let Some(index) = existing {
             self.remove_at(index);
         }
-        let start = self.used;
-        let key_end = start + name.len();
-        self.arena[start..key_end].copy_from_slice(name.as_bytes());
-        self.arena[start..key_end].make_ascii_lowercase();
-        self.arena[key_end..key_end + value.len()].copy_from_slice(value);
-        self.entries[self.count] = Entry {
+        let start = self.arena.len();
+        let entry = Entry {
             // The room check above keeps `start` below `BYTES`, which fits `u16`.
             start: u16::try_from(start).map_err(|_| HeadersFull)?,
             key_len,
             value_len,
         };
-        self.count += 1;
-        self.used += needed;
-        Ok(())
+        // The room checks above hold the key, the value and the entry.
+        self.arena
+            .extend_from_slice(name.as_bytes())
+            .map_err(|_| HeadersFull)?;
+        self.arena[start..].make_ascii_lowercase();
+        self.arena
+            .extend_from_slice(value)
+            .map_err(|_| HeadersFull)?;
+        self.entries.push(entry).map_err(|_| HeadersFull)
     }
 
     /// Returns the raw bytes of a header value, or `None` if the header is absent.
@@ -201,19 +201,19 @@ impl<const ENTRIES: usize, const BYTES: usize> FixedHeaders<ENTRIES, BYTES> {
 
     /// Returns the number of headers.
     #[must_use]
-    pub const fn len(&self) -> usize {
-        self.count
+    pub fn len(&self) -> usize {
+        self.entries.len()
     }
 
     /// Returns `true` if no headers are present.
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.count == 0
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     /// Iterates over `(name, value)` pairs. Names are returned in their normalized lowercase form.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &[u8])> {
-        self.live().iter().map(|&entry| {
+        self.entries.iter().map(|&entry| {
             // Keys are copied from a `&str` and only ASCII-lowercased, so they stay UTF-8.
             (
                 str::from_utf8(self.key_of(entry)).unwrap_or_default(),
@@ -258,7 +258,7 @@ impl<const ENTRIES: usize, const BYTES: usize> FixedHeaders<ENTRIES, BYTES> {
         for (key, value) in other.iter() {
             merged.insert(key, value)?;
         }
-        *self = merged;
+        self.clone_from(&merged);
         Ok(())
     }
 }

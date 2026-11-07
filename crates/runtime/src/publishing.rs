@@ -525,8 +525,18 @@ where
         let name = self.def.reply_name();
         // The loop's buffer where the dispatch lent one, and one of this publish's own where it
         // did not; `BytesMut::new` allocates nothing, so the second costs the first nothing.
+        #[cfg(ruststream_alloc)]
         let mut own = PayloadBuf::new();
+        #[cfg(ruststream_alloc)]
         let encode = ctx.take_encode_buffer().unwrap_or(&mut own);
+        // Without a heap a buffer is a fixed room, which making zeroes, so the publish makes its
+        // own only where the dispatch lent none.
+        #[cfg(not(ruststream_alloc))]
+        let mut own = None;
+        #[cfg(not(ruststream_alloc))]
+        let encode = ctx
+            .take_encode_buffer()
+            .unwrap_or_else(|| own.insert(PayloadBuf::new()));
         let slot = <<Wiring as ReplySink<Def::Reply, Def::Context, Pipeline>>::Payload as PayloadForm>::encode_slot(
             &mut *encode,
         );

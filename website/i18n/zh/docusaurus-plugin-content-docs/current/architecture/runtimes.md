@@ -74,7 +74,7 @@ embassy 运行器有两种构建形态，一次构建只含其中一种。
 
 | 部分 | 有 `alloc` | 无 `alloc` |
 |---|---|---|
-| 消息的头部 | `HeaderMap` | `FixedHeaders`：8 个条目和 256 字节，装满后 `insert` 返回错误 |
+| 消息的头部 | `HeaderMap`，由 `OutgoingMessage` 持有 | `FixedHeaders`：8 个条目和 256 字节，装满后 `insert` 返回错误；`OutgoingMessage` 在构建它的地方借用它 |
 | 编解码器 | `Codec`：`json`、`cbor`、`msgpack` | `SliceCodec`：`postcard` 和 `json-core`，编码到切片中 |
 | 后续任务（`and_after`、`.then`、`.error`） | 放在堆上 | 放在 128 字节的空间里；更大的捕获无法编译 |
 | `.error` 读取的失败信息 | 按值传入 | 从订阅的固定缓冲区借用 |

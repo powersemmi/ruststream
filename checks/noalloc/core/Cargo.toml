@@ -1,0 +1,32 @@
+[package]
+name = "ruststream-core-noalloc"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+repository = "https://github.com/powersemmi/ruststream"
+description = "The contract without `alloc`, built from the contract's own sources so its in-crate tests run: the contract's dev-dependencies turn `alloc` on."
+publish = false
+build = "../../../crates/core/build.rs"
+
+[lib]
+name = "ruststream_core_noalloc"
+path = "../../../crates/core/src/lib.rs"
+# The doc examples are a service's code and import the facade, which this build does not have.
+doctest = false
+
+[dependencies]
+futures-core = { version = "0.3", default-features = false }
+heapless = { version = "0.9", default-features = false }
+serde = { version = "1.0.69", default-features = false, features = ["derive"] }
+thiserror = { version = "2", default-features = false }
+
+[dev-dependencies]
+# The tests of the contract run on a host: an executor for its async tests, and the standard
+# library's types for the serde ones.
+serde = { version = "1.0.69", default-features = false, features = ["std"] }
+tokio = { version = "1.49", features = ["macros", "rt"] }
+
+# The sources are the contract's, and name features this build never has.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("alloc", "asyncapi", "defmt", "json", "log", "send", "std", "testing", "tracing"))'] }

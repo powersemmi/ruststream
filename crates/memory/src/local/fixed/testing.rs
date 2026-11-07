@@ -172,7 +172,7 @@ mod tests {
             let mut readings = connected.subscribe("temp").await.unwrap();
             let mut headers = Headers::new();
             headers.insert("trace", b"a1").unwrap();
-            connected.inject(OutgoingMessage::new("temp", b"21".as_slice()).with_headers(headers));
+            connected.inject(OutgoingMessage::new("temp", b"21".as_slice()).with_headers(&headers));
 
             let delivery = waiting(&mut pin!(readings.stream())).unwrap();
             assert_eq!(delivery.payload(), b"21");

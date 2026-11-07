@@ -43,7 +43,7 @@ Each part whose size the heap would decide has a fixed form.
 
 | Part | Form without `alloc` |
 |---|---|
-| Headers of a message | `FixedHeaders` of 8 entries and 256 bytes; `insert` returns an error when the map is full |
+| Headers of a message | `FixedHeaders` of 8 entries and 256 bytes; `insert` returns an error when the map is full, and an `OutgoingMessage` borrows the map where it was built: `.with_headers(&headers)` |
 | Codec | `SliceCodec`, which encodes into a slice and decodes from one: `PostcardCodec` (`postcard`) and `JsonCoreCodec` (`json-core`) |
 | Continuation | held in a room of 128 bytes, aligned to 8 bytes |
 | Failures read by `.error` | borrowed from the subscription's fixed buffer: `async move \|failures: &Failures\| ..` |

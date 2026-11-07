@@ -890,6 +890,13 @@ name = "embedded_future_size"
 path = "tests/embedded_future_size.rs"
 required-features = ["embassy", "memory", "macros"]
 
+# The check of the no-alloc publish stand: the benchmark's own scenarios, every message arriving.
+# A binary of its own, so the benchmark's holds the measured code alone.
+[[test]]
+name = "embedded_publish_no_alloc_check"
+path = "tests/embedded_publish_no_alloc_check.rs"
+required-features = ["embassy", "memory", "macros"]
+
 # The brokers of this suite keep their state in `Rc`, which a multi-thread runtime refuses, so it
 # is built where the Tokio runner is off.
 [[test]]
@@ -1155,6 +1162,13 @@ required-features = ["compio", "memory", "macros", "json"]
 # The embedded app without `alloc`: instructions per delivery, and zero allocations.
 [[bench]]
 name = "embedded_idle_no_alloc"
+harness = false
+required-features = ["embassy", "memory", "macros"]
+
+# The same app with a handler that publishes: what the framework's publish path adds to a
+# delivery, and zero allocations.
+[[bench]]
+name = "embedded_publish_no_alloc"
 harness = false
 required-features = ["embassy", "memory", "macros"]
 

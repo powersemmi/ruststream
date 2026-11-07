@@ -848,7 +848,16 @@ async fn deliver<'v, Sink: PublishSink, Hdrs: PublishHeaders>(
     headers
         .write(&mut map)
         .map_err(|err| Refused::Other(PublishError::Headers(err)))?;
+    #[cfg(ruststream_alloc)]
     let msg = OutgoingMessage::assembled(name, payload, map);
+    // The map stays where it was written, in this publish's state, and the message borrows it:
+    // the layers below move a pointer, never the fixed room.
+    #[cfg(not(ruststream_alloc))]
+    let msg = OutgoingMessage::assembled(
+        name,
+        <Sink::Payload as PayloadForm>::shortened(payload),
+        &map,
+    );
     sink.send(msg, options).await.map_err(|failed| {
         let (source, unsent) = failed.into_parts();
         Refused::Sink {

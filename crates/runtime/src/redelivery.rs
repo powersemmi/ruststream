@@ -182,7 +182,7 @@ where
     ) -> Result<(), Refusal> {
         // The publisher's own constants sit under the delivery's headers, as they do under
         // any publish through it; the transforms then see the message as it will be sent.
-        let (name, payload, delivered) = msg.into_parts();
+        let (name, payload, delivered) = msg.into_owned_parts();
         let headers = if let Some(base) = self.live.base_headers() {
             // Past the fixed room the copy cannot be built; the broker moves it instead.
             let Some(headers) = lay_over(base, &delivered) else {
