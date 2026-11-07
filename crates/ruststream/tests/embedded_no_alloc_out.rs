@@ -173,10 +173,7 @@ struct Reading([u8; 1]);
 
 /// The first byte of the message a refused publish handed back.
 fn first_byte<E>(refused: &PublishError<E>) -> Option<u8> {
-    refused
-        .unsent()
-        .and_then(FailedMessage::payload)
-        .and_then(|payload| payload.first().copied())
+    refused.unsent()?.payload()?.first().copied()
 }
 
 /// One bus for the scenario of a publisher's own place.
