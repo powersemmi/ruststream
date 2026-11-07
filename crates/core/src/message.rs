@@ -891,6 +891,17 @@ mod tests {
         assert_eq!(msg.payload(), &[1, 2, 3]);
     }
 
+    // Every layer of a publish takes the message by value, and a refused publish hands it back in
+    // its outcome, so without a heap the fixed header room would travel with each of those moves.
+    #[test]
+    #[cfg(not(feature = "alloc"))]
+    fn an_outgoing_message_without_alloc_is_its_name_its_bytes_and_a_borrow_of_its_headers() {
+        assert_eq!(
+            size_of::<OutgoingMessage<'_>>(),
+            size_of::<&str>() + size_of::<&[u8]>() + size_of::<&Headers>()
+        );
+    }
+
     #[test]
     #[cfg(any(feature = "alloc", feature = "testing"))]
     fn raw_message_payload_bytes_and_headers_mut() {

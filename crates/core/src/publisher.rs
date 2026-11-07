@@ -1496,7 +1496,22 @@ mod tests {
 
 #[cfg(all(test, not(feature = "alloc")))]
 mod fixed_tests {
+    use std::io;
+
     use super::*;
+
+    // Without a heap a refusal holds the message inline, so every publish returns an outcome as
+    // large as the message: a name, the bytes and a borrow of the headers, never their room.
+    #[test]
+    fn a_publish_that_went_out_returns_an_outcome_of_the_cause_and_a_lent_message() {
+        assert!(
+            size_of::<PublishOutcome<'_, io::Error, Lend>>()
+                <= size_of::<io::Error>()
+                    + size_of::<&str>()
+                    + size_of::<&[u8]>()
+                    + size_of::<&Headers>()
+        );
+    }
 
     #[test]
     fn a_refusal_keeps_a_destination_that_fits_its_room() {
