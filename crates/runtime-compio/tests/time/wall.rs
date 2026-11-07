@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use allocation_counter::measure;
+use compio::driver::DriverType;
 use compio::time::sleep as compio_sleep;
 use futures::task::noop_waker_ref;
 use ruststream_runtime::Clock;
@@ -16,6 +17,14 @@ use ruststream_runtime_compio::time::{self, Sleep};
 use ruststream_runtime_compio::{CompioClock, test_runtime};
 
 const DELAY: Duration = Duration::from_millis(30);
+
+/// What a sleep awaited in the future a runtime blocks on may cost beyond compio's own timer on
+/// compio's polling driver (macOS, or a Linux host without `io_uring`). The wheel's task wakes that
+/// future, so the runtime waits once more, with no timer pending, before the future arms its next
+/// sleep; the polling driver builds a new event list after a wait without a deadline
+/// (<https://github.com/compio-rs/compio/issues/1107>). A sleep in a spawned task arms the next
+/// one in the same turn and pays nothing.
+const POLLING_EXTRA_PER_SLEEP: u64 = 1;
 
 fn assert_send<Value: Send>() {}
 
@@ -149,10 +158,17 @@ fn a_sleep_in_turn_costs_what_one_timer_of_compio_costs() {
     cost(1, compio);
     let ours_per_sleep = cost(1010, ours) - cost(10, ours);
     let compio_per_sleep = cost(1010, compio) - cost(10, compio);
+    let driver = runtime.driver_type();
+    let polling_extra = if driver == DriverType::Poll {
+        POLLING_EXTRA_PER_SLEEP * 1000
+    } else {
+        0
+    };
     // A few allocations of the run itself are not a cost per sleep.
     assert!(
-        ours_per_sleep <= compio_per_sleep + 8,
-        "1000 sleeps allocated {ours_per_sleep} times, compio's own {compio_per_sleep}",
+        ours_per_sleep <= compio_per_sleep + polling_extra + 8,
+        "1000 sleeps allocated {ours_per_sleep} times on the {driver:?} driver, compio's own \
+         {compio_per_sleep}",
     );
 }
 
