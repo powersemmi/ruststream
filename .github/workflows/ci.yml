@@ -347,8 +347,19 @@ jobs:
             --features embassy,macros,memory,defmt,log --target thumbv7em-none-eabihf
           cargo build --locked -p ruststream-runtime --no-default-features --features defmt \
             --target thumbv6m-none-eabi
-          # A firmware binary on the no-alloc build, linked for both Cortex-M targets with no
-          # global allocator: it fails to link while any crate of the build needs a heap.
+
+      # A firmware binary on the no-alloc build, linked as a board links it, with no global
+      # allocator. The recipe `check-firmware` of the justfile runs the same commands.
+      - name: Firmware without a heap (link, defmt, the bus in .bss)
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        env:
+          CARGO_BUILD_WARNINGS: deny
+        run: |
+          rustup target add thumbv7em-none-eabihf thumbv6m-none-eabi
+          # The bus check below reads the ELF with the toolchain's own `llvm-nm`.
+          rustup component add llvm-tools
+          # It fails to link while any crate of the build needs a heap. Once with no codec and
+          # once for each slice codec.
           for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do
             for features in "" postcard json-core; do
               cargo build --locked --manifest-path checks/firmware-noalloc/Cargo.toml \
@@ -360,6 +371,11 @@ jobs:
           # in the first.
           for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do
             checks/firmware-noalloc/check-defmt.sh $target
+          done
+          # The board's bus lies in `.bss`: its empty state is all zero bytes, so the flash keeps
+          # no image of it.
+          for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do
+            checks/firmware-noalloc/check-bss.sh $target
           done
 
       # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.

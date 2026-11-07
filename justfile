@@ -41,7 +41,7 @@ ungated_benches := "--bench retry_copy --bench retry_copy_deferred"
 
 default: check
 
-check:
+check: && check-firmware
     cargo fmt --all -- --check
     # The check crates are workspaces of their own, which `--all` above does not reach.
     for manifest in checks/{embedded-broker,firmware-noalloc,no-std-probe,noalloc}/Cargo.toml; do \
@@ -141,20 +141,6 @@ check:
         --features cbor,embassy,macros,memory --target thumbv7em-none-eabihf
     RUSTFLAGS="" cargo build -p ruststream --no-default-features \
         --features json,embassy,macros,memory --target thumbv7em-none-eabihf
-    # A firmware binary on the no-alloc build, linked for both Cortex-M targets with no global
-    # allocator: it fails to link while any crate of the build needs a heap. Once with no codec
-    # and once for each slice codec.
-    for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do \
-        for features in "" postcard json-core; do \
-            RUSTFLAGS="" cargo build --locked --manifest-path checks/firmware-noalloc/Cargo.toml \
-                --target $target ${features:+--features $features} || exit 1; \
-        done; \
-    done
-    # The same binary with defmt: it links with `DefmtLogger` selected and with defmt compiled and
-    # no logger selected, and the optimised ELF carries the framework's defmt code only in the first.
-    for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do \
-        checks/firmware-noalloc/check-defmt.sh $target || exit 1; \
-    done
     # The embassy runtime alone, as a device service builds it: the facade with the embassy set,
     # where every target that needs tokio names it and drops out, then the embedded runner and
     # the local bus with their tests.
@@ -208,6 +194,30 @@ check:
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features macros,memory,testing,tokio --test suite ui_codec_free::
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-runtime-embassy --test ui
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test -p ruststream-cli --test ui
+
+# A firmware binary on the no-alloc build, linked as a board links it, with no global allocator.
+check-firmware:
+    rustup target add thumbv7em-none-eabihf thumbv6m-none-eabi
+    # The bus check below reads the ELF with the toolchain's own `llvm-nm`.
+    rustup component add llvm-tools
+    # It fails to link while any crate of the build needs a heap. Once with no codec and once for
+    # each slice codec.
+    for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do \
+        for features in "" postcard json-core; do \
+            RUSTFLAGS="" cargo build --locked --manifest-path checks/firmware-noalloc/Cargo.toml \
+                --target $target ${features:+--features $features} || exit 1; \
+        done; \
+    done
+    # The same binary with defmt: it links with `DefmtLogger` selected and with defmt compiled and
+    # no logger selected, and the optimised ELF carries the framework's defmt code only in the first.
+    for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do \
+        checks/firmware-noalloc/check-defmt.sh $target || exit 1; \
+    done
+    # The board's bus lies in `.bss`: its empty state is all zero bytes, so the flash keeps no
+    # image of it.
+    for target in thumbv7em-none-eabihf thumbv6m-none-eabi; do \
+        checks/firmware-noalloc/check-bss.sh $target || exit 1; \
+    done
 
 # The embassy runtime without a heap: the facade of a device service with no `alloc`, the facade
 # a device broker's contract checks name, and the crates under them, each as its own invocation
