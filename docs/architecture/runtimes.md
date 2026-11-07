@@ -74,7 +74,7 @@ What differs is the form of the parts whose size the heap would decide:
 
 | Part | With `alloc` | Without `alloc` |
 |---|---|---|
-| Headers of a message | `HeaderMap` | `FixedHeaders`: 8 entries and 256 bytes, and `insert` returns an error when it is full |
+| Headers of a message | `HeaderMap`, which an `OutgoingMessage` owns | `FixedHeaders`: 8 entries and 256 bytes, and `insert` returns an error when it is full; an `OutgoingMessage` borrows it where it was built |
 | Codec | `Codec`: `json`, `cbor`, `msgpack` | `SliceCodec`: `postcard` and `json-core`, which encode into a slice |
 | Continuation (`and_after`, `.then`, `.error`) | boxed | held in a room of 128 bytes; a larger capture does not compile |
 | Failures that `.error` reads | passed by value | borrowed from the subscription's fixed buffer |

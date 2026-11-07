@@ -23,7 +23,8 @@ ruststream = { version = "0.8", default-features = false, features = ["embassy",
 
 ## What the build without `alloc` holds
 
-- Headers are `FixedHeaders` of 8 entries and 256 bytes; `insert` returns an error when full.
+- Headers are `FixedHeaders` of 8 entries and 256 bytes; `insert` returns an error when full. An
+  `OutgoingMessage` borrows its map where it was built: `.with_headers(&headers)`.
 - The codec is a `SliceCodec`, named at the mount: `b.with_codec(PostcardCodec)` for handlers and
   `.out_reply(policy).codec(PostcardCodec)` for a reply. A type that is its own encoding
   (`Deserialized`, `Serialized`) needs no codec.
