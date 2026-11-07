@@ -242,6 +242,8 @@ test-no-alloc:
     cargo test --no-default-features --features embassy,memory,macros --test embedded_future_size
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test ui_no_alloc
     cargo test --manifest-path checks/noalloc/memory/Cargo.toml --features testing
+    # Without the harness as well: the bus's claim that it allocates nothing is checked there.
+    cargo test --manifest-path checks/noalloc/memory/Cargo.toml
     # The runtime's own unit tests of the variant: its dev-dependencies turn `alloc` on, so the
     # sources build as a crate of their own that has none.
     cargo test --manifest-path checks/noalloc/runtime/Cargo.toml --lib
