@@ -26,6 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use compio::runtime::Runtime;
+use futures::executor::block_on;
 use gungraun::{
     Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig, library_benchmark,
     library_benchmark_group, main,
@@ -163,7 +164,7 @@ fn start_and_drain(pending: Pending) {
     latch.expect(messages);
     // The backlog is published off the runtime, so the app's loop takes none of it before the
     // drain: the bus needs no executor to take a publish.
-    futures::executor::block_on(async {
+    block_on(async {
         let connected = bus.connect().await.expect("the bus connects in process");
         let publisher = connected.publisher();
         for _ in 0..messages {

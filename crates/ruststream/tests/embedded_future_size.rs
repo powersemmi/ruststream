@@ -7,6 +7,8 @@
 #![cfg(not(ruststream_alloc))]
 #![cfg(not(feature = "testing"))]
 
+use core::time::Duration;
+
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream::runtime::{
     Control, EmbeddedApp, Failures, HandlerOutcome, MountSteps, Mounts, SubscriberSettings,
@@ -52,11 +54,9 @@ fn a_batch_route_takes_room_for_its_batch_and_not_for_copies_of_its_settling() {
 #[subscriber(LocalMemorySource::new("errored"))]
 async fn on_errored(jobs: &[Job<'_>]) -> HandlerOutcome {
     let _ = jobs.len();
-    HandlerOutcome::retry_after(core::time::Duration::from_secs(1)).error(
-        async move |failures: &Failures| {
-            let _ = failures.len();
-        },
-    )
+    HandlerOutcome::retry_after(Duration::from_secs(1)).error(async move |failures: &Failures| {
+        let _ = failures.len();
+    })
 }
 
 fn errored_app_of_4(bus: Bus) -> EmbeddedApp<impl Mounts> {
