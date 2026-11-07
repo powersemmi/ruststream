@@ -12,7 +12,7 @@ use compio::runtime::JoinHandle;
 use ruststream_core::diag::error;
 use ruststream_core::{BatchSlot, BatchStream, BatchSubscriber};
 use ruststream_runtime::{
-    BatchHandler, DispatchFailure, RING, RetryCopies, Turn, Workers, placed, run_batch,
+    BatchHandler, DispatchFailure, RING, RetryCopies, TakenBatch, Turn, Workers, placed, run_batch,
 };
 
 use super::slots::{Filled, Stock};
@@ -172,9 +172,10 @@ async fn batch_loop<S, H, C, St, Retry>(
                 yield_now().await;
             }
             Turn::Delivery(Err(err)) => {
-                // A failed fill leaves the slot empty; draining it keeps that true of a broker
-                // that left a message behind.
-                slot.drain().for_each(drop);
+                // A failed fill leaves the slot empty; taking what a broker left behind and
+                // dropping it keeps that true.
+                <H as BatchHandler<S::Batch, C, St>>::load(&mut taken, &mut slot);
+                taken.discard();
                 error!(
                     target: "ruststream::dispatch",
                     error = %err,

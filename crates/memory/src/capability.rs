@@ -168,7 +168,8 @@ mod tests {
     }
 
     /// A batch is collected into the slot the runtime lent, which already has the room for the
-    /// registration's size: a short batch and a full one both leave its storage where it was.
+    /// registration's size: a full batch and a short one each fill the storage they were lent
+    /// without growing it.
     #[tokio::test]
     async fn a_batch_is_collected_into_the_lent_slot_without_growing_it() {
         let broker = MemoryBroker::new();
@@ -191,7 +192,11 @@ mod tests {
         assert_eq!(slot.len(), 8);
         assert_eq!(slot.capacity(), 8);
         assert_eq!(slot.as_ptr(), storage);
-        for msg in BatchSlot::drain(&mut slot) {
+        // The runtime's buffer for the batch, which the slot trades storage with.
+        let mut taken = Vec::with_capacity(8);
+        let spare = taken.as_ptr();
+        slot.hand_over(&mut taken);
+        for msg in taken {
             msg.ack().await.unwrap();
         }
         poll_fn(|cx| stream.as_mut().poll_fill(cx, &mut slot))
@@ -199,7 +204,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(slot.len(), 1);
-        assert_eq!(slot.as_ptr(), storage);
+        assert_eq!(slot.as_ptr(), spare);
         for msg in slot {
             msg.ack().await.unwrap();
         }
