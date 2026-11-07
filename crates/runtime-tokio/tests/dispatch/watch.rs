@@ -11,21 +11,27 @@
 #![allow(clippy::future_not_send)]
 
 use crate::common;
+use crate::log_capture;
 
 use std::convert::Infallible;
 use std::future::{pending, ready};
+use std::io;
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use common::Order;
 use futures::Stream;
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublisher,
 };
 use ruststream::prelude::*;
 use ruststream::runtime::{HealthProbe, HealthState, RustStreamError};
-use ruststream::{BrokerMoves, BuildContext, ContextField, Subscriber, SubscriptionSource};
+use ruststream::{
+    BrokerMoves, BuildContext, ConnectedBroker, ContextField, DescribeServer, ServerSpec,
+    Subscriber, SubscriptionSource,
+};
 use tokio::sync::Notify;
 use tokio::time::timeout;
 
@@ -84,6 +90,37 @@ impl Subscriber for BrokenConsumer {
 #[subscriber(BrokenQueue::new())]
 async fn streamed(_order: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
+}
+
+/// A broker that connects and then refuses to shut down.
+struct Stubborn;
+
+/// The connected form of [`Stubborn`].
+struct ConnectedStubborn;
+
+impl Broker for Stubborn {
+    type Error = io::Error;
+    type Connected = ConnectedStubborn;
+
+    fn connect(self) -> impl Future<Output = Result<ConnectedStubborn, io::Error>> {
+        ready(Ok(ConnectedStubborn))
+    }
+}
+
+impl ConnectedBroker for ConnectedStubborn {
+    type Error = io::Error;
+    type Closed = ();
+
+    fn shutdown(self) -> impl Future<Output = Result<(), io::Error>> {
+        ready(Err(io::Error::other("teardown refused")))
+    }
+}
+
+// Self-describing, so it registers under the label the teardown's log names it by.
+impl DescribeServer for Stubborn {
+    fn describe_server(&self) -> ServerSpec {
+        ServerSpec::new("stubborn:0", "memory")
+    }
 }
 
 /// A delivery's context that cannot be built: dispatch builds it on the part of the subscription
@@ -275,6 +312,67 @@ async fn a_keyed_dedicated_thread_that_panics_fails_the_service_while_it_runs() 
     let (reason, error) = failure_of(app, &publisher, "watch.threads_keyed").await;
 
     assert_a_thread_named("watch.threads_keyed", &reason, &error);
+}
+
+/// The failure that stopped the service is what `run` returns, even when a broker then refuses to
+/// close: the refusal is logged where it happens.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_loop_that_panics_is_the_answer_of_the_run_when_a_broker_then_refuses_to_close() {
+    log_capture::record_shared();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .logger(TracingLogger)
+        .with_broker(MemoryBroker::new(), |b| b.include(streamed))
+        .with_broker_labeled("watch-stubborn", Stubborn, |b| b);
+
+    let error = timeout(STOPS_WITHIN, app.run_until(pending()))
+        .await
+        .expect("the subscription's loop died and the service ran on")
+        .expect_err("a loop that panicked fails the run");
+
+    match error {
+        RustStreamError::Dispatch(reason) => {
+            assert_eq!(reason, "watch.stream: its dispatch loop panicked");
+        }
+        other => panic!("expected the dispatch failure, got {other:?}"),
+    }
+    let logged = log_capture::shared_text();
+    let markers = [
+        "broker shutdown failed",
+        r#"broker="watch-stubborn""#,
+        "teardown refused",
+    ];
+    assert!(
+        logged
+            .lines()
+            .any(|line| markers.iter().all(|marker| line.contains(marker))),
+        "the refusal is logged with its broker and its cause:\n{logged}",
+    );
+}
+
+/// `shutdown` answers the same, and the probe keeps the failure that stopped the service.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_loop_that_panics_is_the_answer_of_the_shutdown_when_a_broker_then_refuses_to_close() {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(streamed))
+        .register_broker(Stubborn);
+
+    let running = app.start().await.expect("startup failed");
+    let mut health = running.health();
+    timeout(STOPS_WITHIN, running.stopping())
+        .await
+        .expect("the subscription's loop died and the service ran on");
+    let reason = until_failed(&mut health).await;
+    let error = running
+        .shutdown()
+        .await
+        .expect_err("the teardown returns the failure");
+
+    assert_names("watch.stream", "its dispatch loop", &reason, &error);
+    assert_eq!(
+        health.state(),
+        HealthState::Failed { reason },
+        "the probe's last state"
+    );
 }
 
 /// Every call of [`fragile`] reports here before it settles.
