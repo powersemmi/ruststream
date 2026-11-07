@@ -3,7 +3,7 @@
 use core::convert::Infallible;
 use core::fmt;
 use core::future::ready;
-use core::num::NonZeroUsize;
+use core::num::{NonZeroU64, NonZeroUsize};
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
@@ -394,7 +394,10 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize> fm
         f.debug_struct("LocalMemoryMessage")
             .field(
                 "deliveries",
-                &self.place.as_deref().map(|delivery| delivery.deliveries),
+                &self
+                    .place
+                    .as_deref()
+                    .and_then(|delivery| delivery.deliveries),
             )
             .finish_non_exhaustive()
     }
@@ -412,7 +415,9 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize> In
     }
 
     fn redelivery_count(&self) -> Option<u64> {
-        Some(self.delivery().deliveries.get())
+        // Every place a message holds was written by a publish, so the count is there. Read as
+        // the `u64` it is laid out as, it costs no branch, and the answer stays `Some`.
+        Some(self.delivery().deliveries.map_or(0, NonZeroU64::get))
     }
 }
 
