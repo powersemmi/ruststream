@@ -3,7 +3,6 @@
 use core::convert::Infallible;
 use core::fmt;
 use core::future::ready;
-use core::mem;
 use core::num::NonZeroUsize;
 use core::pin::Pin;
 use core::task::{Context, Poll};
@@ -17,7 +16,7 @@ use ruststream_core::{
 };
 use ruststream_runtime::IntoSource;
 
-use super::bus::{Delivery, Held, LocalMemoryBus, SlotName};
+use super::bus::{Delivery, Held, LocalMemoryBus, Place, SlotName};
 use super::{ConnectedLocalMemoryBroker, LocalMemoryError};
 
 /// The subscription descriptor of the local bus: a subscription to one name.
@@ -176,11 +175,10 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
 
     const fn message(
         &self,
-        delivery: Delivery<PAYLOAD>,
+        place: Place<PAYLOAD>,
     ) -> LocalMemoryMessage<MESSAGES, PAYLOAD, SUBSCRIPTIONS> {
         LocalMemoryMessage {
-            delivery,
-            settled: false,
+            place: Some(place),
             bus: self.bus,
             held: self.held,
         }
@@ -291,7 +289,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize> St
         subscriber
             .bus
             .poll_next(subscriber.held, cx)
-            .map(|delivery| delivery.map(|delivery| Ok(subscriber.message(delivery))))
+            .map(|place| place.map(|place| Ok(subscriber.message(place))))
     }
 }
 
@@ -335,16 +333,17 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
 
 /// One delivery of the local bus, with its settlement.
 ///
-/// It keeps its place in its subscription until it is settled or dropped. One that is dropped
-/// unsettled returns to the end of the queue, as a server redelivers what a consumer dropped.
+/// The delivery lies in its place on the bus, and the message holds the place: moving the message
+/// moves a reference, never the payload and headers. It keeps the place until it is settled or
+/// dropped. One that is dropped unsettled returns to the end of the queue, as a server redelivers
+/// what a consumer dropped.
 pub struct LocalMemoryMessage<
     const MESSAGES: usize,
     const PAYLOAD: usize = 64,
     const SUBSCRIPTIONS: usize = 8,
 > {
-    delivery: Delivery<PAYLOAD>,
-    // Set by a settlement, so the drop that follows it releases the place without a requeue.
-    settled: bool,
+    // Taken by the settlement, so the drop that follows it has nothing to requeue.
+    place: Option<Place<PAYLOAD>>,
     bus: &'static LocalMemoryBus<MESSAGES, PAYLOAD, SUBSCRIPTIONS>,
     held: Held,
 }
@@ -352,14 +351,29 @@ pub struct LocalMemoryMessage<
 impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
     LocalMemoryMessage<MESSAGES, PAYLOAD, SUBSCRIPTIONS>
 {
+    /// The delivery, which the message holds until a settlement takes it.
+    // Why the place is an `Option`: a settlement consumes the message and its `Drop` still runs,
+    // which must then find nothing to requeue. Nothing reads the message after a settlement took
+    // the place.
+    fn delivery(&self) -> &Delivery<PAYLOAD> {
+        self.place
+            .as_deref()
+            .unwrap_or_else(|| unreachable!("a message holds its place until it is settled"))
+    }
+
+    /// Puts the delivery back at the end of its queue.
     fn requeue(&mut self) -> Result<(), LocalMemoryError> {
-        self.settled = true;
-        let delivery = Delivery {
-            payload: mem::take(&mut self.delivery.payload),
-            headers: mem::take(&mut self.delivery.headers),
-            deliveries: self.delivery.deliveries.saturating_add(1),
-        };
-        self.bus.requeue(self.held, delivery)
+        match self.place.take() {
+            Some(place) => self.bus.requeue(self.held, place),
+            None => Ok(()),
+        }
+    }
+
+    /// Frees the delivery's place: the settlement is done.
+    fn release(&mut self) {
+        if let Some(place) = self.place.take() {
+            self.bus.settle(self.held, place);
+        }
     }
 }
 
@@ -367,12 +381,9 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize> Dr
     for LocalMemoryMessage<MESSAGES, PAYLOAD, SUBSCRIPTIONS>
 {
     fn drop(&mut self) {
-        if !self.settled {
-            // A delivery nobody settled comes back, as a server redelivers what a consumer
-            // dropped; after a shutdown there is nowhere to bring it back to.
-            let _ = self.requeue();
-        }
-        self.bus.settle(self.held);
+        // A delivery nobody settled comes back, as a server redelivers what a consumer dropped;
+        // after a shutdown there is nowhere to bring it back to, and its place is freed.
+        let _ = self.requeue();
     }
 }
 
@@ -381,7 +392,10 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize> fm
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LocalMemoryMessage")
-            .field("deliveries", &self.delivery.deliveries)
+            .field(
+                "deliveries",
+                &self.place.as_deref().map(|delivery| delivery.deliveries),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -390,15 +404,15 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize> In
     for LocalMemoryMessage<MESSAGES, PAYLOAD, SUBSCRIPTIONS>
 {
     fn payload(&self) -> &[u8] {
-        &self.delivery.payload
+        &self.delivery().payload
     }
 
     fn headers(&self) -> &Headers {
-        &self.delivery.headers
+        &self.delivery().headers
     }
 
     fn redelivery_count(&self) -> Option<u64> {
-        Some(self.delivery.deliveries.get())
+        Some(self.delivery().deliveries.get())
     }
 }
 
@@ -406,13 +420,13 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize> Se
     for LocalMemoryMessage<MESSAGES, PAYLOAD, SUBSCRIPTIONS>
 {
     fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {
-        self.settled = true;
+        self.release();
         ready(Ok(()))
     }
 
     fn nack(mut self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         if !requeue {
-            self.settled = true;
+            self.release();
             return ready(Ok(()));
         }
         ready(self.requeue().map_err(AckError::from))

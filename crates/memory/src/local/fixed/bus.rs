@@ -1,6 +1,6 @@
-//! The state one fixed local bus holds: its subscriptions, each with the deque its deliveries wait
-//! in, and the fan-out a publish runs. Every size is a const generic, so the bus is one value of
-//! known size that a board declares as a `static`.
+//! The state one fixed local bus holds: its subscriptions, each with the places its deliveries lie
+//! in and the deque of those waiting, and the fan-out a publish runs. Every size is a const
+//! generic, so the bus is one value of known size that a board declares as a `static`.
 
 use core::cell::RefCell;
 use core::fmt;
@@ -10,9 +10,10 @@ use core::task::{Context, Poll};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::waitqueue::WakerRegistration;
-use heapless::{Deque, String as FixedString};
+use heapless::{Deque, String as FixedString, Vec as FixedVec};
 use ruststream_core::{FixedBuf, Headers};
 use ruststream_runtime::RETRY_COUNT_HEADER;
+use static_cell::ConstStaticCell;
 
 use super::LocalMemoryError;
 #[cfg(feature = "testing")]
@@ -24,12 +25,36 @@ pub(super) const NAME_BYTES: usize = 64;
 
 /// One message as a subscription holds it: the payload and the headers the publish handed over,
 /// and how many times it has been delivered.
-#[derive(Clone)]
 pub(super) struct Delivery<const PAYLOAD: usize> {
     pub(super) payload: FixedBuf<PAYLOAD>,
     pub(super) headers: Headers,
     pub(super) deliveries: NonZeroU64,
 }
+
+impl<const PAYLOAD: usize> Delivery<PAYLOAD> {
+    /// A place before its first publish.
+    const EMPTY: Self = Self {
+        payload: FixedBuf::new(),
+        headers: Headers::new(),
+        deliveries: NonZeroU64::MIN,
+    };
+
+    /// Writes a publish into the place: the payload, which the caller checked fits, and the
+    /// headers' used entries and bytes alone.
+    fn write(&mut self, payload: &[u8], headers: &Headers, deliveries: NonZeroU64) {
+        self.payload.clear();
+        if self.payload.extend_from_slice(payload).is_err() {
+            unreachable!("a publish checks that its payload fits before it is written");
+        }
+        self.headers.clone_from(headers);
+        self.deliveries = deliveries;
+    }
+}
+
+/// The place one delivery lies in, from the publish that writes it to the settlement that frees
+/// it: a part of the bus's `static`, handed between a subscription's free places, its queue and
+/// the message that holds it, so a delivery is never copied as it travels.
+pub(super) type Place<const PAYLOAD: usize> = &'static mut Delivery<PAYLOAD>;
 
 /// How many times the bus has delivered a message that is published now: the first time, unless
 /// the runtime published it as the copy of a delivery it retried later. The bus has no delay of
@@ -77,19 +102,17 @@ enum Standing {
     ShutDown,
 }
 
-/// One subscription: the deque its deliveries wait in and the count of those in its handler's
-/// hands.
-///
-/// A delivery in hand keeps its place in the capacity, so a requeue always finds room in the
-/// deque and is never lost.
+/// One subscription: its places, the deque of the deliveries waiting in them, and the places free
+/// for the next publish. A place in its handler's hands is in neither, so a requeue always finds
+/// room in the deque and is never lost.
 struct Slot<const MESSAGES: usize, const PAYLOAD: usize> {
     // Counts the subscribers the slot has had, so a delivery that outlives its subscriber finds the
     // slot taken by another and does not touch it.
     generation: u32,
     standing: Standing,
     name: Option<SlotName>,
-    queue: Deque<Delivery<PAYLOAD>, MESSAGES>,
-    in_hand: usize,
+    queue: Deque<Place<PAYLOAD>, MESSAGES>,
+    free: FixedVec<Place<PAYLOAD>, MESSAGES>,
     // Woken when a delivery arrives and when the bus shuts down.
     reader: WakerRegistration,
 }
@@ -101,29 +124,35 @@ impl<const MESSAGES: usize, const PAYLOAD: usize> Slot<MESSAGES, PAYLOAD> {
             standing: Standing::Free,
             name: None,
             queue: Deque::new(),
-            in_hand: 0,
+            free: FixedVec::new(),
             reader: WakerRegistration::new(),
         }
     }
 
+    #[inline]
     fn reads(&self, name: &str) -> bool {
         self.standing == Standing::Open
             && self.name.as_ref().is_some_and(|own| own.as_str() == name)
     }
 
     fn has_room(&self) -> bool {
-        self.queue.len() + self.in_hand < MESSAGES
+        !self.free.is_empty()
     }
 
-    /// Puts `delivery` in the queue, which [`has_room`](Self::has_room) or a delivery in hand has
-    /// reserved a place for.
-    fn enqueue(&mut self, delivery: Delivery<PAYLOAD>) {
-        if self.queue.push_back(delivery).is_err() {
-            // Every enqueue is preceded by the room check, or comes from a delivery in hand whose
-            // place it takes back, in the same synchronous step.
-            unreachable!("a subscription's deque was full where its capacity had room");
+    /// Puts the delivery in `place` in the queue: a place of this slot's own, so the deque, which
+    /// holds as many as the slot has, always has room for it.
+    fn enqueue(&mut self, place: Place<PAYLOAD>) {
+        if self.queue.push_back(place).is_err() {
+            unreachable!("a subscription's deque holds every place of the subscription");
         }
         self.reader.wake();
+    }
+
+    /// Gives `place` back to the slot it belongs to.
+    fn release(&mut self, place: Place<PAYLOAD>) {
+        if self.free.push(place).is_err() {
+            unreachable!("a subscription's free list holds every place of the subscription");
+        }
     }
 }
 
@@ -137,6 +166,8 @@ pub(super) struct Held {
 /// Whether the bus accepts publishes, and the subscriptions it hands them to.
 struct BusState<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize> {
     live: bool,
+    // Whether the slots hold their places: taken once, at the first connect.
+    placed: bool,
     slots: [Slot<MESSAGES, PAYLOAD>; SUBSCRIPTIONS],
 }
 
@@ -158,8 +189,15 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
 /// `PAYLOAD` the largest payload in bytes; `SUBSCRIPTIONS` how many subscriptions are open at
 /// once.
 ///
+/// Each subscription has `MESSAGES` places in the bus, and a delivery lies in its place from the
+/// publish to its settlement: the message a handler reads holds the place, so moving it moves a
+/// reference, never the payload and the headers. Settling the message frees the place; a delivery
+/// whose subscriber left keeps its place until it is settled.
+///
 /// The state sits behind a critical section, so the bus is `Sync`; the board's binary supplies
-/// the critical-section implementation.
+/// the critical-section implementation. The first connect hands each subscription its places
+/// through a compare-and-swap; on a target without one (a Cortex-M0+) the firmware gives
+/// `portable-atomic` its `critical-section` feature.
 ///
 /// # Examples
 ///
@@ -184,6 +222,9 @@ pub struct LocalMemoryBus<
     const SUBSCRIPTIONS: usize = 8,
 > {
     state: Mutex<CriticalSectionRawMutex, RefCell<BusState<MESSAGES, PAYLOAD, SUBSCRIPTIONS>>>,
+    // Where each subscription's deliveries lie: `MESSAGES` places per subscription, each handed to
+    // its slot once as a `&'static mut`.
+    places: [[ConstStaticCell<Delivery<PAYLOAD>>; MESSAGES]; SUBSCRIPTIONS],
     #[cfg(feature = "testing")]
     harness: Harness,
 }
@@ -226,8 +267,11 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
         Self {
             state: Mutex::new(RefCell::new(BusState {
                 live: false,
+                placed: false,
                 slots: [const { Slot::new() }; SUBSCRIPTIONS],
             })),
+            places: [const { [const { ConstStaticCell::new(Delivery::EMPTY) }; MESSAGES] };
+                SUBSCRIPTIONS],
             #[cfg(feature = "testing")]
             harness: Harness::new(),
         }
@@ -240,8 +284,23 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
         self.state.lock(|cell| access(&mut cell.borrow_mut()))
     }
 
-    pub(super) fn connect(&self) {
-        self.with(|state| state.live = true);
+    /// Opens the bus to publishes; the first connect hands each subscription its places.
+    pub(super) fn connect(&'static self) {
+        self.with(|state| {
+            if !state.placed {
+                for (slot, places) in state.slots.iter_mut().zip(&self.places) {
+                    for place in places {
+                        // Taken here alone, under the bus's lock and once: `placed` is set below.
+                        let Some(place) = place.try_take() else {
+                            unreachable!("a place of the bus is taken once, at its first connect");
+                        };
+                        slot.release(place);
+                    }
+                }
+                state.placed = true;
+            }
+            state.live = true;
+        });
     }
 
     /// Opens a subscription to `name`.
@@ -279,8 +338,9 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
                 for _ in 0..slot.queue.len() {
                     self.harness.consumed();
                 }
-                slot.queue.clear();
-                slot.in_hand = 0;
+                while let Some(place) = slot.queue.pop_front() {
+                    slot.release(place);
+                }
                 slot.name = None;
                 slot.standing = Standing::Free;
                 slot.reader = WakerRegistration::new();
@@ -307,11 +367,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
 
     /// The next delivery, in publish order, or the end once the bus shut down and the queue is
     /// drained.
-    pub(super) fn poll_next(
-        &self,
-        held: Held,
-        cx: &Context<'_>,
-    ) -> Poll<Option<Delivery<PAYLOAD>>> {
+    pub(super) fn poll_next(&self, held: Held, cx: &Context<'_>) -> Poll<Option<Place<PAYLOAD>>> {
         // A reaction that never settles would hand the app's one future a delivery on every poll,
         // so the poll would never return to the test: the deliveries are held back instead, and
         // the test's step reports it.
@@ -326,9 +382,8 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
                 slot.reader.register(cx.waker());
                 return Poll::Pending;
             }
-            if let Some(delivery) = slot.queue.pop_front() {
-                slot.in_hand += 1;
-                Poll::Ready(Some(delivery))
+            if let Some(place) = slot.queue.pop_front() {
+                Poll::Ready(Some(place))
             } else if slot.standing == Standing::ShutDown {
                 Poll::Ready(None)
             } else {
@@ -339,13 +394,8 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
     }
 
     /// The next delivery already waiting, without registering a waker.
-    pub(super) fn try_next(&self, held: Held) -> Option<Delivery<PAYLOAD>> {
-        self.with(|state| {
-            let slot = state.slot(held)?;
-            let delivery = slot.queue.pop_front()?;
-            slot.in_hand += 1;
-            Some(delivery)
-        })
+    pub(super) fn try_next(&self, held: Held) -> Option<Place<PAYLOAD>> {
+        self.with(|state| state.slot(held)?.queue.pop_front())
     }
 
     /// Whether the next poll of the subscription's stream could return `Ready`: a delivery waits,
@@ -358,41 +408,47 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
         })
     }
 
-    /// Releases the place of a delivery that left its handler's hands.
-    pub(super) fn settle(&self, held: Held) {
-        self.with(|state| {
-            if let Some(slot) = state.slot(held) {
-                slot.in_hand = slot.in_hand.saturating_sub(1);
-            }
-        });
+    /// Frees the place of a delivery that left its handler's hands. The place belongs to its slot
+    /// whoever holds the slot now, so it goes back there even after its subscriber left.
+    pub(super) fn settle(&self, held: Held, place: Place<PAYLOAD>) {
+        self.with(|state| state.slots[held.index].release(place));
         // A delivery whose subscriber left is released all the same.
         #[cfg(feature = "testing")]
         self.harness.consumed();
     }
 
-    /// Puts a delivery in hand back at the end of the queue, before its place is released. A
-    /// subscriber that left takes nothing, as on a server whose consumer is gone.
+    /// Puts a delivery in hand back at the end of the queue, one delivery more. A subscriber that
+    /// left takes nothing, as on a server whose consumer is gone, and the place goes back to its
+    /// slot.
     pub(super) fn requeue(
         &self,
         held: Held,
-        delivery: Delivery<PAYLOAD>,
+        place: Place<PAYLOAD>,
     ) -> Result<(), LocalMemoryError> {
-        self.with(|state| {
+        let outcome = self.with(|state| {
             let live = state.live;
-            match state.slot(held) {
+            let refused = match state.slot(held) {
                 Some(slot) if slot.standing == Standing::Open => {
-                    slot.enqueue(delivery);
+                    place.deliveries = place.deliveries.saturating_add(1);
+                    slot.enqueue(place);
                     #[cfg(feature = "testing")]
                     self.harness.enqueued();
-                    Ok(())
+                    return Ok(());
                 }
                 // A bus shut down refuses a requeue even when the subscriber has left: the
                 // settlement must not report success on a dead bus.
                 Some(_) => Err(LocalMemoryError::ShutDown),
                 None if !live => Err(LocalMemoryError::ShutDown),
                 None => Ok(()),
-            }
-        })
+            };
+            // What is not requeued is released: its place goes back to its slot.
+            state.slots[held.index].release(place);
+            refused
+        });
+        // The delivery left its handler's hands either way.
+        #[cfg(feature = "testing")]
+        self.harness.consumed();
+        outcome
     }
 
     /// Hands a publish to every subscription of `name`, or to none of them. The bus copies what it
@@ -407,48 +463,45 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize>
             if !state.live {
                 return Err(LocalMemoryError::ShutDown);
             }
-            // All or nothing: a publish refused by one subscription reaches no other, so the
-            // caller can publish it again without doubling it anywhere.
-            if state
-                .slots
-                .iter()
-                .any(|slot| slot.reads(name) && !slot.has_room())
-            {
-                return Err(LocalMemoryError::Full { capacity: MESSAGES });
+            // The slots that read `name`, each found once. All or nothing: a publish refused by
+            // one subscription reaches no other, so the caller can publish it again without
+            // doubling it anywhere.
+            let mut readers = FixedVec::<usize, SUBSCRIPTIONS>::new();
+            for (index, slot) in state.slots.iter().enumerate() {
+                if !slot.reads(name) {
+                    continue;
+                }
+                if !slot.has_room() {
+                    return Err(LocalMemoryError::Full { capacity: MESSAGES });
+                }
+                if readers.push(index).is_err() {
+                    unreachable!("the list holds one entry per slot of the bus");
+                }
             }
-            let mut readers = state.slots.iter().filter(|slot| slot.reads(name)).count();
-            if readers == 0 {
+            if readers.is_empty() {
                 #[cfg(feature = "testing")]
                 self.harness.record(name, payload, headers);
                 return Ok(());
             }
-            let Ok(payload) = FixedBuf::<PAYLOAD>::try_from(payload) else {
+            if payload.len() > PAYLOAD {
                 return Err(LocalMemoryError::PayloadTooLarge {
                     size: payload.len(),
                     capacity: PAYLOAD,
                 });
-            };
+            }
             #[cfg(feature = "testing")]
-            self.harness.record(name, &payload, headers);
+            self.harness.record(name, payload, headers);
             let deliveries = delivery_count_of(headers);
-            let mut delivery = Some(Delivery {
-                payload,
-                headers: headers.clone(),
-                deliveries,
-            });
-            // The last reader takes the delivery itself; each earlier one costs a copy.
-            for slot in state.slots.iter_mut().filter(|slot| slot.reads(name)) {
-                readers -= 1;
-                let copy = if readers == 0 {
-                    delivery.take()
-                } else {
-                    delivery.clone()
+            // Each reader's delivery is written where it lies.
+            for &index in &readers {
+                let slot = &mut state.slots[index];
+                let Some(place) = slot.free.pop() else {
+                    unreachable!("every reader had a free place a moment ago");
                 };
-                if let Some(copy) = copy {
-                    slot.enqueue(copy);
-                    #[cfg(feature = "testing")]
-                    self.harness.enqueued();
-                }
+                place.write(payload, headers, deliveries);
+                slot.enqueue(place);
+                #[cfg(feature = "testing")]
+                self.harness.enqueued();
             }
             Ok(())
         })

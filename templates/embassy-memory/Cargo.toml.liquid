@@ -35,6 +35,10 @@ embassy-time-driver = "0.2.2"
 systick-timer = { version = "0.2.3", features = ["embassy-time-driver"] }
 # The core support and the critical section the bus locks through, for a single core.
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+# The bus hands each subscription its places through a compare-and-swap, which a Cortex-M0+ lacks:
+# `portable-atomic` makes it through the critical section above there, and a core that has one
+# uses its own.
+portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
 cortex-m-rt = "0.7.5"
 # The log lines go to a debug probe over RTT.
 defmt-rtt = "1"
