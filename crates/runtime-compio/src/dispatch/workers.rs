@@ -13,7 +13,7 @@ use compio::runtime::JoinHandle;
 use futures::Stream;
 use futures::channel::oneshot;
 use ruststream_core::diag::error;
-use ruststream_core::{BuildContext, IncomingMessage, Subscriber};
+use ruststream_core::{BuildContext, IncomingMessage, Places, Subscriber};
 use ruststream_runtime::DeliverySlot as Slot;
 use ruststream_runtime::{
     DispatchFailure, Feed, Handler, HeadersOnDemand, RetryCopies, Workers, dispatch, open_rings,
@@ -155,6 +155,8 @@ where
                     &shared.handler,
                     &mut slot,
                     &mut encode,
+                    // A refusal boxes its message where there is a heap: the loop keeps no places.
+                    Places::none(),
                     &shared.name,
                     &shared.state,
                     &shared.hosted.delivery,

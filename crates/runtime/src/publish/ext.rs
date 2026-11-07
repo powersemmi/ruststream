@@ -4,6 +4,7 @@ use crate::{OutgoingDestination, OwnedTransactions, Publisher, TransactionalPubl
 use ruststream_core::MaybeSend;
 
 use super::builder::{HeadersUnset, MessageBody, PublishBuilder, message_of};
+use super::placed::WithPlaces;
 use super::sink::UnnamedCodec;
 use super::transaction::{AnyDeclared, TransactionScope, TypedTransaction};
 
@@ -178,6 +179,61 @@ pub trait PublishExt: Publisher {
         Self: OwnedTransactions + Sized,
     {
         TypedTransaction::open(self, UnnamedCodec::new())
+    }
+
+    /// Gives this publisher `N` places of its own for the messages its refused publishes hand
+    /// back, in a build without `alloc`: for a publisher used outside a subscription.
+    ///
+    /// A publisher without the step keeps one place in each of its publishes, in the publish's
+    /// own state. With the step its publishes keep none and share the publisher's `N` places, so
+    /// the places do not grow with the publishes that run at once. A refused publish moves its
+    /// message into a free place and reads it back before it returns; when every place is taken,
+    /// it comes back without its message: the error reaches the caller, the message's bytes and
+    /// headers do not. A place is a message's destination, payload and headers in fixed storage,
+    /// about 700 bytes. With `alloc` a refused message is boxed and the step changes nothing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::PublishExt;
+    /// use ruststream::{Outgoing, Serialized};
+    ///
+    /// /// A reading as the sensor reports it.
+    /// #[derive(Outgoing, Serialized)]
+    /// #[outgoing(name = "readings")]
+    /// struct Reading(&'static [u8]);
+    ///
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// // The sensor's task publishes on its own, outside every subscription, and two of its
+    /// // publishes may run at once.
+    /// let readings = MemoryBroker::new().publisher().refusal_capacity::<2>();
+    /// let (first, second) = futures::join!(
+    ///     readings.message(&Reading(b"21.5")).publish(),
+    ///     readings.message(&Reading(b"21.7")).publish(),
+    /// );
+    /// first?;
+    /// second?;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    ///
+    /// A publisher keeps at least one place:
+    ///
+    /// ```compile_fail
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::PublishExt;
+    ///
+    /// let readings = MemoryBroker::new().publisher().refusal_capacity::<0>();
+    /// ```
+    fn refusal_capacity<const N: usize>(self) -> WithPlaces<Self, N>
+    where
+        Self: Sized,
+    {
+        WithPlaces::new(self)
     }
 }
 

@@ -4,7 +4,7 @@
 use alloc::vec::Vec;
 use core::fmt;
 use ruststream_core::diag::warn;
-use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync, Places};
 use serde::Serialize;
 
 use super::{
@@ -28,25 +28,25 @@ use crate::{PayloadForm, Publisher, TransactionalPublisher};
 /// directly.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct BatchRefusal {
+pub struct BatchRefusal<'p> {
     /// The first reply that did not go out.
     lost_from: usize,
     /// Why they did not.
-    cause: Cause,
+    cause: Cause<'p>,
 }
 
 /// Why a batch's replies did not all go out.
 #[derive(Debug)]
-enum Cause {
+enum Cause<'p> {
     /// The reply at the index was refused, with what came back for it.
-    Refused(usize, Refusal),
+    Refused(usize, Refusal<'p>),
     /// No single reply was refused: the transaction could not begin or commit.
     Whole(BoxError),
 }
 
-impl BatchRefusal {
+impl<'p> BatchRefusal<'p> {
     /// The refusal of the reply at `index`, with every reply from `lost_from` on lost.
-    fn at(index: usize, lost_from: usize, refusal: Refusal) -> Self {
+    fn at(index: usize, lost_from: usize, refusal: Refusal<'p>) -> Self {
         Self {
             lost_from,
             cause: Cause::Refused(index, refusal),
@@ -111,7 +111,7 @@ impl BatchRefusal {
 }
 
 #[cfg(not(ruststream_alloc))]
-impl BatchRefusal {
+impl BatchRefusal<'_> {
     /// The replies a refused batch publish lost, each as a [`Failed`] with the batch's cause, in
     /// the batch's order: the refused reply as it was sent, the others encoded again.
     ///
@@ -155,7 +155,7 @@ impl BatchRefusal {
     }
 }
 
-impl fmt::Display for BatchRefusal {
+impl fmt::Display for BatchRefusal<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.cause {
             Cause::Refused(_, refusal) => fmt::Display::fmt(refusal, f),
@@ -184,16 +184,17 @@ pub trait ReplyPublisher<Cx = ()>: Sealed + MaybeSendSync {
     fn reply_codec(&self) -> &Self::Codec;
 
     /// Publishes one batch's replies to `name` through `pipeline`, reading the originating
-    /// delivery through `cx`.
+    /// delivery through `cx`. A refused reply moves into one of `places`.
     #[doc(hidden)]
-    fn publish_batch<'a, T, PP>(
+    fn publish_batch<'a, 'p, T, PP>(
         &'a self,
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         encode: <Self::Payload as PayloadForm>::Encode<'a>,
-    ) -> impl Future<Output = Result<(), BatchRefusal>> + MaybeSend
+        places: Places<'p>,
+    ) -> impl Future<Output = Result<(), BatchRefusal<'p>>> + MaybeSend
     where
         T: Serialize + MaybeSync,
         PP: PublishPipeline;
@@ -216,21 +217,22 @@ where
 
     /// Each reply is published independently: a mid-batch failure leaves the earlier replies
     /// visible, and the retried batch may publish them again (at-least-once).
-    async fn publish_batch<'a, T, PP>(
+    async fn publish_batch<'a, 'p, T, PP>(
         &'a self,
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         mut encode: <P::Payload as PayloadForm>::Encode<'a>,
-    ) -> Result<(), BatchRefusal>
+        places: Places<'p>,
+    ) -> Result<(), BatchRefusal<'p>>
     where
         T: Serialize + MaybeSync,
         PP: PublishPipeline,
     {
         for (index, reply) in replies.iter().enumerate() {
             let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
-            self.publish_batched(name, reply, pipeline, cx, slot)
+            self.publish_batched(name, reply, pipeline, cx, slot, places)
                 .await
                 .map_err(|refusal| BatchRefusal::at(index, index, refusal))?;
         }
@@ -255,14 +257,15 @@ where
 
     /// All replies publish inside one transaction: begin, publish each, commit. Any failure
     /// aborts the transaction, so none of the batch's replies become visible.
-    async fn publish_batch<'a, T, PP>(
+    async fn publish_batch<'a, 'p, T, PP>(
         &'a self,
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         mut encode: <P::Payload as PayloadForm>::Encode<'a>,
-    ) -> Result<(), BatchRefusal>
+        places: Places<'p>,
+    ) -> Result<(), BatchRefusal<'p>>
     where
         T: Serialize + MaybeSync,
         PP: PublishPipeline,
@@ -278,7 +281,7 @@ where
             let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
             if let Err(refusal) = self
                 .inner
-                .publish_batched(name, reply, pipeline, cx, slot)
+                .publish_batched(name, reply, pipeline, cx, slot, places)
                 .await
             {
                 abort_quietly(publisher).await;

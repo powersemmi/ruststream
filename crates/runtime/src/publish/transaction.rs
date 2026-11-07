@@ -4,8 +4,8 @@ use core::fmt;
 use core::marker::PhantomData;
 use ruststream_core::MaybeSync;
 
-use ruststream_core::KeptPayload;
 use ruststream_core::diag::warn;
+use ruststream_core::{KeptPayload, PlaceRoom};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -146,10 +146,12 @@ where
         let payload =
             <P::Payload as PayloadForm>::encoded(&Encoding::new(self.enc.codec(), value), slot)
                 .map_err(TransactionPublishError::Encode)?;
+        // The place a refused message moves into: the scope keeps none of its own.
+        let own = PlaceRoom::<1>::new();
         self.publisher
             .publish(OutgoingMessage::with_payload(name, payload), None)
             .await
-            .map_err(SinkRefusal::returned::<P::Payload>)
+            .map_err(|failed| SinkRefusal::returned::<P::Payload>(failed, own.places()))
             .map_err(|refusal| refused(refusal, &mut buf))
     }
 
@@ -318,10 +320,12 @@ where
         let payload =
             <Txn::Payload as PayloadForm>::encoded(&Encoding::new(self.enc.codec(), value), slot)
                 .map_err(TransactionPublishError::Encode)?;
+        // The place a refused message moves into: the transaction keeps none of its own.
+        let own = PlaceRoom::<1>::new();
         self.txn
             .publish(OutgoingMessage::with_payload(name, payload), None)
             .await
-            .map_err(SinkRefusal::returned::<Txn::Payload>)
+            .map_err(|failed| SinkRefusal::returned::<Txn::Payload>(failed, own.places()))
             .map_err(|refusal| refused(refusal, &mut buf))
     }
 
@@ -387,7 +391,7 @@ pub enum TransactionPublishError<E> {
 /// The error of a refused transactional publish, with the message as it was to be sent.
 ///
 /// `buf` is the scope's buffer for this publish: bytes a lending transaction was shown sit there.
-fn refused<E>(refusal: SinkRefusal<E>, buf: &mut Scratch) -> TransactionPublishError<E> {
+fn refused<E>(refusal: SinkRefusal<'_, E>, buf: &mut Scratch) -> TransactionPublishError<E> {
     let (source, unsent) = refusal.into_parts();
     let message = unsent.map(|(destination, payload, headers)| {
         let payload = match payload {

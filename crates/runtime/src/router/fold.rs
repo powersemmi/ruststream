@@ -16,6 +16,7 @@
 
 use core::cell::Cell;
 use core::future::ready;
+use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 use core::pin::Pin;
 use core::task::{Context, Poll};
@@ -23,8 +24,10 @@ use ruststream_core::MaybeSendSync;
 
 use futures::future::MaybeDone;
 use pin_project_lite::pin_project;
-use ruststream_core::{EncodeBuf, PayloadBuf};
+use ruststream_core::{EncodeBuf, PayloadBuf, PlaceRoom, Places};
 
+#[cfg(not(ruststream_alloc))]
+use crate::batch::BatchSize;
 use crate::batch::{BatchHandler, TakenBatch};
 use crate::coop::Cooperative;
 use crate::dispatch::{Delivery, Gated, HeadersAtOnce, run_batch, run_sequential};
@@ -410,6 +413,8 @@ where
             // and cannot be named in the opened list.
             let handler =
                 BlanketLayer::apply::<Sub::Message, Cx, State, _>(&self.layers, self.handler);
+            // The subscription's one place: the loop handles one delivery at a time.
+            let room = PlaceRoom::<1>::new();
             run_sequential(
                 Cooperative::new(self.subscriber),
                 handler,
@@ -422,6 +427,7 @@ where
                 HeadersAtOnce,
                 parks,
                 PayloadBuf::new(),
+                room.places(),
             )
             .await;
         })
@@ -434,39 +440,76 @@ where
 /// handler runs as the registration built it.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct OpenedBatchRoute<Sub, Body, Cx> {
+pub struct OpenedBatchRoute<Sub, Body, Cx, Size> {
     route: OneTaskBatchRoute<Sub, Body, Cx>,
+    size: PhantomData<fn() -> Size>,
 }
 
-impl<Sub, Body, Cx> OpenedBatchRoute<Sub, Body, Cx> {
+impl<Sub, Body, Cx, Size> OpenedBatchRoute<Sub, Body, Cx, Size> {
     /// An opened subscription, ready to run.
     pub(super) const fn new(route: OneTaskBatchRoute<Sub, Body, Cx>) -> Self {
-        Self { route }
+        Self {
+            route,
+            size: PhantomData,
+        }
     }
 }
 
-impl<State, Sub, Body, Cx> RunRoutes<State> for OpenedBatchRoute<Sub, Body, Cx>
+impl<State, Sub, Body, Cx, Size> RunRoutes<State> for OpenedBatchRoute<Sub, Body, Cx, Size>
 where
     Sub: BatchSubscriber,
     Body: RunsBatches<Sub::Batch, Cx, State>,
+    Size: BatchPlaces,
 {
     type Parks = ();
 
-    // Not an `async fn`: a frame of its own would sit between the caller and the loop for
-    // nothing.
-    fn run_parked<Signal, Host>(
+    // The frame owns the subscription's places: one for each element of the batch it handles.
+    async fn run_parked<Signal, Host>(
         self,
         _parks: &(),
         signal: Signal,
         state: StateRef<'_, State>,
         host: &Host,
-    ) -> impl Future<Output = ()>
-    where
+    ) where
         Signal: ShutdownWait + Halt + Clone,
         Host: Detach,
     {
+        let room = Size::Room::default();
         self.route
-            .run_batches(signal, state, host, PayloadBuf::new())
+            .run_batches(signal, state, host, PayloadBuf::new(), room.places())
+            .await;
+    }
+}
+
+/// The room of places a batch of `Self` keeps by default: one place for each element. Machinery;
+/// never named directly.
+#[doc(hidden)]
+pub trait BatchPlaces {
+    /// The room.
+    type Room: RefusalRoom;
+}
+
+// A single delivery, and any batch of a build with `alloc`, whose size is no type: one place.
+impl BatchPlaces for () {
+    type Room = PlaceRoom<1>;
+}
+
+#[cfg(not(ruststream_alloc))]
+impl<const SIZE: usize> BatchPlaces for BatchSize<SIZE> {
+    type Room = PlaceRoom<SIZE>;
+}
+
+/// A room of places a registration keeps for the messages its refused publishes hand back.
+/// Machinery; never named directly.
+#[doc(hidden)]
+pub trait RefusalRoom: Default {
+    /// The places, for a refusal to take one of.
+    fn places(&self) -> Places<'_>;
+}
+
+impl<const N: usize> RefusalRoom for PlaceRoom<N> {
+    fn places(&self) -> Places<'_> {
+        Self::places(self)
     }
 }
 
@@ -494,6 +537,7 @@ pub trait RunsBatches<Batch, C, S> {
         taken: &mut Self::Taken,
         scratch: &mut Self::Scratch,
         encode: &mut EncodeBuf,
+        places: Places<'_>,
         name: &str,
         state: &S,
         delivery: &Delivery<C>,
@@ -527,6 +571,7 @@ where
         taken: &mut Handler::Taken,
         scratch: &mut Handler::Scratch,
         encode: &mut EncodeBuf,
+        places: Places<'_>,
         name: &str,
         state: &S,
         delivery: &Delivery<C>,
@@ -538,7 +583,7 @@ where
         Host: SendHost<C>,
     {
         run_batch::<Self, Batch, C, S, Signal, Host>(
-            self, slot, taken, scratch, encode, name, state, delivery, host, failure,
+            self, slot, taken, scratch, encode, places, name, state, delivery, host, failure,
         )
     }
 }

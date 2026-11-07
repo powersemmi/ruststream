@@ -8,7 +8,7 @@ use std::pin::pin;
 use embassy_futures::poll_once;
 use send_wrapper::SendWrapper;
 
-use ruststream_core::{Lend, OutgoingDestination, OutgoingMessage, RawMessage};
+use ruststream_core::{Lend, OutgoingDestination, OutgoingMessage, PlaceRoom, RawMessage};
 use ruststream_runtime::SinkOutcome;
 use ruststream_runtime::testing::{
     PublishTarget, PublishedAssertions, RunBroker, SubscriberAssertions, TestError, attribute,
@@ -68,12 +68,15 @@ impl PublishSink for InjectSink<'_> {
     type Error = TestError;
     // An injection stands in for an external producer, which reaches no broker's options type.
     type Options = ();
+    // An injection the harness refuses hands no message back, so the publish keeps no place.
+    type OwnPlaces = PlaceRoom<0>;
 
-    async fn send(
-        &mut self,
+    async fn send<'p>(
+        &'p mut self,
         msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&Self::Options>,
-    ) -> SinkOutcome<Self::Error> {
+        _own: &'p PlaceRoom<0>,
+    ) -> SinkOutcome<'p, Self::Error> {
         let (app, broker) = (&self.app, &self.broker);
         SendWrapper::new(async move {
             let testable = broker.testable().ok_or(TestError::ShutDown)?;

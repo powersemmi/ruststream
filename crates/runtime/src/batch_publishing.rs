@@ -367,9 +367,15 @@ where
                     .unwrap_or_else(|| own.insert(PayloadBuf::new()));
                 let slot = <R::Payload as PayloadForm>::encode_slot(encode);
                 let pubcx = PublishContext::new(ctx.name(), ctx.delivery_headers(), ctx.cx_ref());
-                let publish =
-                    self.publisher
-                        .publish_batch(name, &replies, &self.pipeline, &pubcx, slot);
+                let places = ctx.refusal_places();
+                let publish = self.publisher.publish_batch(
+                    name,
+                    &replies,
+                    &self.pipeline,
+                    &pubcx,
+                    slot,
+                    places,
+                );
                 #[cfg(feature = "testing")]
                 let publish = publishing_to(self.origin, publish);
                 let sent = publish.await;

@@ -9,6 +9,7 @@ use crate::codec::DefaultCodec;
 use crate::{
     HeaderSet, MaybeSend, MaybeSendSync, OutgoingFor, PayloadForm, Publisher, Transaction,
 };
+use ruststream_core::{PlaceRoom, Places};
 pub use ruststream_core::{SinkOutcome, SinkRefusal};
 
 /// The byte sink a publish builder resolves down to.
@@ -70,7 +71,17 @@ pub trait PublishSink: MaybeSend {
     /// publisher and on no other. See [`Publisher::Options`](crate::Publisher::Options).
     type Options: Clone + MaybeSendSync + 'static;
 
+    /// Where a refusal keeps the message it hands back, held by the publish that sends through
+    /// this sink: one place of the publish's own for a sink that brings none, nothing for one
+    /// that brings places of its own. Machinery; without `alloc` it is the room a refused message
+    /// moves into, and with it the message is boxed and this holds nothing.
+    #[doc(hidden)]
+    type OwnPlaces: Default + MaybeSendSync;
+
     /// Sends one message into the sink, with the settings the builder's steps put on it.
+    ///
+    /// `own` is the publish's room of [`OwnPlaces`](Self::OwnPlaces): a refused message moves
+    /// into it, or into the places the sink brings, and the refusal holds the place.
     ///
     /// # Errors
     ///
@@ -81,11 +92,12 @@ pub trait PublishSink: MaybeSend {
     ///
     /// Inherited from the underlying publisher or transaction: dropping the future mid-flight
     /// may leave the message in an indeterminate state.
-    fn send(
-        &mut self,
+    fn send<'p>(
+        &'p mut self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error>> + MaybeSend;
+        own: &'p Self::OwnPlaces,
+    ) -> impl Future<Output = SinkOutcome<'p, Self::Error>> + MaybeSend;
 
     /// The headers the sink contributes underneath the publish's own, or `None` when it
     /// contributes nothing.
@@ -101,18 +113,22 @@ pub trait PublishSink: MaybeSend {
 }
 
 // A shared publisher reference is the ordinary sink: publishing takes `&self`, so the builder
-// only ever borrows it.
+// only ever borrows it. A broker's publisher keeps no places, so the publish keeps one of its own,
+// which a refused message moves into.
 impl<P: Publisher> PublishSink for &P {
     type Payload = P::Payload;
     type Error = P::Error;
     type Options = P::Options;
+    type OwnPlaces = PlaceRoom<1>;
 
-    fn send(
-        &mut self,
+    fn send<'p>(
+        &'p mut self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error>> + MaybeSend {
-        (**self).publish_kept(msg, options)
+        own: &'p PlaceRoom<1>,
+    ) -> impl Future<Output = SinkOutcome<'p, Self::Error>> + MaybeSend {
+        let publisher: &P = self;
+        publisher.publish_kept(msg, options, own.places())
     }
 
     fn base_headers(&self) -> Option<&HeaderSet> {
@@ -126,23 +142,61 @@ impl<T: Transaction> PublishSink for &mut T {
     type Payload = T::Payload;
     type Error = T::Error;
     type Options = T::Options;
+    type OwnPlaces = PlaceRoom<1>;
 
     // An `async fn`, so the transaction's publish future is built in the state that awaits it:
     // built first and captured by a block, it would be copied into the await slot on the first
     // poll, a copy of the whole client future per publish.
-    async fn send(
-        &mut self,
+    async fn send<'p>(
+        &'p mut self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> SinkOutcome<Self::Error> {
+        own: &'p PlaceRoom<1>,
+    ) -> SinkOutcome<'p, Self::Error> {
         (**self)
             .publish(msg, options)
             .await
-            .map_err(SinkRefusal::returned::<T::Payload>)
+            .map_err(|failed| SinkRefusal::returned::<T::Payload>(failed, own.places()))
     }
 
     fn base_headers(&self) -> Option<&HeaderSet> {
         (**self).base_headers()
+    }
+}
+
+/// A publisher that keeps places of its own for the messages its refusals hand back: an `Out`
+/// slot of a subscription, a publisher given a capacity with `refusal_capacity`. Machinery; never
+/// named in user code.
+#[doc(hidden)]
+pub trait KeepsPlaces: Publisher {
+    /// The publisher's places.
+    fn places(&self) -> Places<'_>;
+}
+
+/// The sink of a publisher that keeps places of its own: a refusal takes one of them, so the
+/// publish keeps none. Machinery; the typed `message(..)` of such a publisher builds on it.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct KeptPlaces<'a, P>(pub(crate) &'a P);
+
+impl<P: KeepsPlaces> PublishSink for KeptPlaces<'_, P> {
+    type Payload = P::Payload;
+    type Error = P::Error;
+    type Options = P::Options;
+    type OwnPlaces = PlaceRoom<0>;
+
+    fn send<'p>(
+        &'p mut self,
+        msg: OutgoingFor<'_, Self::Payload>,
+        options: Option<&Self::Options>,
+        _own: &'p PlaceRoom<0>,
+    ) -> impl Future<Output = SinkOutcome<'p, Self::Error>> + MaybeSend {
+        let publisher: &P = self.0;
+        publisher.publish_kept(msg, options, publisher.places())
+    }
+
+    fn base_headers(&self) -> Option<&HeaderSet> {
+        self.0.base_headers()
     }
 }
 
@@ -290,7 +344,8 @@ mod tests {
         let publish =
             size_of_val(&transaction.publish(OutgoingMessage::new("orders", payload), None));
         let mut sink = &mut transaction;
-        let sent = size_of_val(&sink.send(OutgoingMessage::new("orders", payload), None));
+        let own = PlaceRoom::<1>::new();
+        let sent = size_of_val(&sink.send(OutgoingMessage::new("orders", payload), None, &own));
         let message = size_of::<OutgoingMessage<'_, &[u8]>>();
         // The sink adds the message it carries until the first poll, never a second copy of the
         // transaction's future.

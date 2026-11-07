@@ -23,7 +23,7 @@ use core::marker::PhantomData;
 #[cfg(any(feature = "testing", not(ruststream_alloc)))]
 use core::mem;
 
-use ruststream_core::EncodeBuf;
+use ruststream_core::{EncodeBuf, Places};
 
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::RecordedValue;
@@ -253,6 +253,10 @@ pub struct Context<'a, C = (), S = ()> {
     /// The dispatch loop's encode buffer, lent to this delivery's reply. `None` where the
     /// context was built without one, and then the reply encodes into a buffer of its own.
     encode: Option<&'a mut EncodeBuf>,
+    /// The subscription's places, lent to this delivery: a reply or a copy the runtime publishes
+    /// for it and that is refused keeps its message there, without `alloc`. With `alloc` it holds
+    /// nothing.
+    places: Places<'a>,
     /// The subscriber's materialization policy, set by the dispatcher from the definition's
     /// failure policies. It reaches the handler body because a `Headers` contract is parsed
     /// there rather than in the decode adapter.
@@ -302,6 +306,7 @@ impl<'a, C, S> Context<'a, C, S> {
             failures: FailureSlot::new(),
             failfast: None,
             encode: None,
+            places: Places::none(),
             decode: FailurePolicy::Drop,
             #[cfg(any(feature = "testing", feature = "otel"))]
             decode_failed: false,
@@ -367,6 +372,19 @@ impl<'a, C, S> Context<'a, C, S> {
     pub(crate) fn with_encode_buffer(mut self, buf: &'a mut EncodeBuf) -> Self {
         self.encode = Some(buf);
         self
+    }
+
+    /// Lends this delivery the subscription's places, which a refused reply or copy keeps its
+    /// message in.
+    pub(crate) const fn with_refusal_places(mut self, places: Places<'a>) -> Self {
+        self.places = places;
+        self
+    }
+
+    /// The subscription's places this delivery was lent: where a refused reply or copy keeps its
+    /// message.
+    pub(crate) const fn refusal_places(&self) -> Places<'a> {
+        self.places
     }
 
     /// Takes the loop's encode buffer out for this delivery's reply.

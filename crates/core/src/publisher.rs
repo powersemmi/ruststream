@@ -2,8 +2,6 @@
 
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
-#[cfg(feature = "alloc")]
-use alloc::string::String;
 use core::error::Error as StdError;
 use core::fmt;
 
@@ -15,6 +13,7 @@ use thiserror::Error;
 use crate::bindings::Bindings;
 use crate::codec::CodecError;
 use crate::outgoing::{Outgoing, OutgoingName};
+use crate::refusal::{Places, SinkOutcome, SinkRefusal};
 use crate::wire::{Serialized, WireFailure};
 use crate::{ConnectedBroker, Headers, MaybeSend, MaybeSendSync, OutgoingMessage};
 use crate::{EncodeBuf, PayloadBuf};
@@ -566,156 +565,6 @@ impl<Error: StdError + 'static, Message> StdError for PublishMessageError<Error,
     }
 }
 
-/// How a sink reports a message it did not send: the cause, and the message as it was to leave.
-///
-/// The message is owned, so it outlives the stages of the publish path that rewrote it: a payload
-/// a transform wrote into a buffer of the call moves out of that buffer, and a payload nothing
-/// rewrote stays with the caller that lent it. It is `None` only where the client consumed a
-/// [`Take`] buffer and did not return it. In a build without `alloc` the destination is kept in a
-/// room of 64 bytes: a destination longer than that comes back without its message, because a
-/// shortened name would send a republished copy to the wrong place. Machinery; a broker's publisher reports a
-/// [`PublishMessageError`] and the sinks of the runtime turn it into this.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct SinkRefusal<Error> {
-    error: Error,
-    unsent: Option<Held<UnsentMessage>>,
-}
-
-/// The message a refused publish handed back.
-#[derive(Debug)]
-struct UnsentMessage {
-    destination: Destination,
-    payload: KeptPayload,
-    headers: Headers,
-}
-
-/// What a sink returns: nothing on success, and on failure the cause with the unsent message.
-#[doc(hidden)]
-pub type SinkOutcome<Error> = Result<(), SinkRefusal<Error>>;
-
-impl<Error> From<Error> for SinkRefusal<Error> {
-    fn from(error: Error) -> Self {
-        Self::new(error)
-    }
-}
-
-impl<Error> SinkRefusal<Error> {
-    /// A refusal that has no message to hand back.
-    #[must_use]
-    pub const fn new(error: Error) -> Self {
-        Self {
-            error,
-            unsent: None,
-        }
-    }
-
-    /// A refusal with the message that was to leave for `destination`.
-    #[must_use]
-    pub fn with_message(
-        error: Error,
-        destination: &str,
-        payload: KeptPayload,
-        headers: Headers,
-    ) -> Self {
-        let Some(destination) = destination_of(destination) else {
-            return Self::new(error);
-        };
-        Self {
-            error,
-            unsent: Some(hold(UnsentMessage {
-                destination,
-                payload,
-                headers,
-            })),
-        }
-    }
-
-    /// The refusal of a publisher in the form `Form`, with the message it returned.
-    #[must_use]
-    pub fn returned<Form: PayloadForm>(
-        failed: PublishMessageError<Error, OutgoingFor<'_, Form>>,
-    ) -> Self {
-        let (error, message) = failed.into_parts();
-        match message {
-            Some(message) => {
-                let (destination, payload, headers) = message.into_owned_parts();
-                Self::with_message(error, destination, Form::kept(payload), headers)
-            }
-            None => Self::new(error),
-        }
-    }
-
-    /// The same refusal over another cause, the message kept.
-    #[must_use]
-    pub fn map_error<Other>(self, map: impl FnOnce(Error) -> Other) -> SinkRefusal<Other> {
-        SinkRefusal {
-            error: map(self.error),
-            unsent: self.unsent,
-        }
-    }
-
-    /// The cause.
-    #[must_use]
-    pub const fn error(&self) -> &Error {
-        &self.error
-    }
-
-    /// The cause, without the message.
-    #[must_use]
-    pub fn into_error(self) -> Error {
-        self.error
-    }
-
-    /// The refusal once the stage that spent the message takes back what it kept for the send:
-    /// the buffer a stage wrote moves into the message, and nothing is copied.
-    #[must_use]
-    pub fn reclaiming<Form: PayloadForm>(mut self, spent: &mut Form::Spent) -> Self {
-        if let Some(unsent) = &mut self.unsent {
-            Form::reclaimed(spent, &mut unsent.payload);
-        }
-        self
-    }
-
-    /// The cause and the message, taken apart: its destination, its payload as the sink kept it,
-    /// and its headers. `None` where the client consumed the buffer.
-    #[must_use]
-    pub fn into_parts(self) -> (Error, Option<(Destination, KeptPayload, Headers)>) {
-        let unsent = self
-            .unsent
-            .map(unhold)
-            .map(|unsent| (unsent.destination, unsent.payload, unsent.headers));
-        (self.error, unsent)
-    }
-}
-
-/// The room a refused publish gives the destination it returns, in bytes, in a build without
-/// `alloc`.
-#[cfg(not(feature = "alloc"))]
-pub(crate) const DESTINATION_BYTES: usize = 64;
-
-/// The destination a refused publish returns with its message: a `String` with `alloc`, a
-/// string of [`DESTINATION_BYTES`] bytes without.
-#[cfg(feature = "alloc")]
-pub(crate) type Destination = String;
-/// The destination a refused publish returns with its message: a `String` with `alloc`, a
-/// string of [`DESTINATION_BYTES`] bytes without.
-#[cfg(not(feature = "alloc"))]
-pub(crate) type Destination = heapless::String<DESTINATION_BYTES>;
-
-#[cfg(feature = "alloc")]
-#[expect(clippy::unnecessary_wraps, reason = "one signature for both variants")]
-fn destination_of(name: &str) -> Option<Destination> {
-    Some(String::from(name))
-}
-
-// A name past the room is not kept, and the refusal then reports its error without the message:
-// a returned message under a shortened destination would be republished to the wrong place.
-#[cfg(not(feature = "alloc"))]
-fn destination_of(name: &str) -> Option<Destination> {
-    Destination::try_from(name).ok()
-}
-
 /// A refused message is held behind a `Box` where there is a heap, so the outcome of a publish that
 /// went out stays the size of the error, and inline where there is none.
 #[cfg(feature = "alloc")]
@@ -1004,25 +853,27 @@ pub trait Publisher: MaybeSendSync + Clone {
         msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = PublishOutcome<'msg, Self::Error, Self::Payload>> + MaybeSend;
-    /// [`publish`](Self::publish) with the refused message returned owned.
+    /// [`publish`](Self::publish) with the refused message returned owned: moved into a box with
+    /// `alloc`, and without it into one of `places`, which the side that publishes keeps.
     ///
     /// Machinery of the runtime's own publish path: a broker never calls or overrides it.
     ///
     /// # Errors
     ///
     /// Returns the failure of [`publish`](Self::publish) with the message it did not send.
-    fn publish_kept(
+    fn publish_kept<'p>(
         &self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error>> + MaybeSend {
+        places: Places<'p>,
+    ) -> impl Future<Output = SinkOutcome<'p, Self::Error>> + MaybeSend {
         // The publish future is built inside the block, where the block's state holds it: built
         // outside and captured, it would sit in the block's upvars and be copied into the await
         // slot on the first poll, a copy of the whole broker future per publish.
         async move {
             self.publish(msg, options)
                 .await
-                .map_err(SinkRefusal::returned::<Self::Payload>)
+                .map_err(|failed| SinkRefusal::returned::<Self::Payload>(failed, places))
         }
     }
 
@@ -1482,7 +1333,11 @@ mod tests {
     fn the_kept_publish_holds_the_broker_future_once() {
         let payload = b"order";
         let publish = size_of_val(&Large.publish(OutgoingMessage::new("orders", payload), None));
-        let kept = size_of_val(&Large.publish_kept(OutgoingMessage::new("orders", payload), None));
+        let kept = size_of_val(&Large.publish_kept(
+            OutgoingMessage::new("orders", payload),
+            None,
+            Places::none(),
+        ));
         let message = size_of::<OutgoingMessage<'_, &[u8]>>();
         // The wrapper adds the message it carries until the first poll, never a second copy of
         // the broker's future.
@@ -1519,36 +1374,6 @@ mod fixed_tests {
                     + size_of::<&str>()
                     + size_of::<&[u8]>()
                     + size_of::<&Headers>()
-        );
-    }
-
-    #[test]
-    fn a_refusal_keeps_a_destination_that_fits_its_room() {
-        let refusal = SinkRefusal::with_message(
-            "refused",
-            "orders",
-            KeptPayload::Lent { addr: 0, len: 0 },
-            Headers::new(),
-        );
-        let (_, unsent) = refusal.into_parts();
-        let (destination, _, _) = unsent.expect("the message is returned");
-        assert_eq!(destination.as_str(), "orders");
-    }
-
-    #[test]
-    fn a_refusal_reports_its_error_without_a_destination_past_the_room() {
-        let long = "d".repeat(DESTINATION_BYTES + 1);
-        let refusal = SinkRefusal::with_message(
-            "refused",
-            &long,
-            KeptPayload::Lent { addr: 0, len: 0 },
-            Headers::new(),
-        );
-        let (error, unsent) = refusal.into_parts();
-        assert_eq!(error, "refused");
-        assert!(
-            unsent.is_none(),
-            "a shortened destination would misroute a copy"
         );
     }
 }

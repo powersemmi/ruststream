@@ -25,12 +25,12 @@ use ruststream_core::{MaybeSendSync, ReadyHint};
 use futures::FutureExt;
 use futures::Stream;
 use pin_project_lite::pin_project;
-use ruststream_core::EncodeBuf;
 #[cfg(not(ruststream_alloc))]
 use ruststream_core::FixedBuf;
 #[cfg(ruststream_alloc)]
 use ruststream_core::PayloadBuf;
 use ruststream_core::diag::error;
+use ruststream_core::{EncodeBuf, Places};
 
 #[cfg(not(ruststream_alloc))]
 use crate::publish_failure::FailureSlot;
@@ -220,6 +220,7 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers, Park, R
     headers: Headers,
     parked: Park,
     mut room: Room,
+    places: Places<'_>,
 ) where
     S: Subscriber,
     H: Handler<S::Message, C, St>,
@@ -268,6 +269,7 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers, Park, R
                     &handler,
                     &mut slot,
                     &mut *encode,
+                    places,
                     &name,
                     state_in_place(&state),
                     delivery,
@@ -591,6 +593,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     handler: &H,
     slot: &mut Slot<M>,
     encode: &mut EncodeBuf,
+    places: Places<'_>,
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
@@ -640,6 +643,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         let mut ctx = Context::new(name, &source, state, cx, delivery)
             .with_failfast(&failure.shutdown)
             .with_encode_buffer(encode)
+            .with_refusal_places(places)
             .with_decode_policy(failure.policies.decode);
         let result = handled!(delivery, handler.handle(msg, &mut ctx));
         #[cfg(feature = "testing")]
@@ -848,6 +852,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     taken: &mut H::Taken,
     scratch: &mut H::Scratch,
     encode: &mut EncodeBuf,
+    places: Places<'_>,
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
@@ -871,6 +876,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     let mut ctx = Context::new(name, &empty, state, cx, delivery)
         .with_failfast(&failure.shutdown)
         .with_encode_buffer(encode)
+        .with_refusal_places(places)
         .with_decode_policy(failure.policies.decode);
     // See `dispatch`: the harness scope attributes `Out` publishes to their slot, and lets the
     // batch settle path record the batch it applied.

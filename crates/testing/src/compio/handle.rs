@@ -6,7 +6,7 @@ use std::future::poll_fn;
 use std::pin::pin;
 use std::task::Poll;
 
-use ruststream_core::{Lend, OutgoingDestination, OutgoingMessage, RawMessage};
+use ruststream_core::{Lend, OutgoingDestination, OutgoingMessage, PlaceRoom, RawMessage};
 use ruststream_runtime::testing::{
     Coordinator, PublishTarget, PublishedAssertions, SubscriberAssertions, TestError,
     TestableBroker, attribute,
@@ -73,12 +73,15 @@ impl PublishSink for InjectSink<'_> {
     type Error = TestError;
     // An injection stands in for an external producer, which reaches no broker's options type.
     type Options = ();
+    // An injection the harness refuses hands no message back, so the publish keeps no place.
+    type OwnPlaces = PlaceRoom<0>;
 
-    async fn send(
-        &mut self,
+    async fn send<'p>(
+        &'p mut self,
         msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&Self::Options>,
-    ) -> SinkOutcome<Self::Error> {
+        _own: &'p PlaceRoom<0>,
+    ) -> SinkOutcome<'p, Self::Error> {
         // The test's own publish is part of the record: it tells a message the test put on a
         // destination from one the app published there.
         let recorded = RawMessage::new(msg.name().to_owned(), msg.payload().to_vec())

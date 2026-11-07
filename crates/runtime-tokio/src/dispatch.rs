@@ -10,7 +10,7 @@ use bytes::BytesMut;
 use ruststream_core::diag::error;
 use tokio::task::JoinHandle;
 
-use ruststream_core::{BatchSlot, BatchStream};
+use ruststream_core::{BatchSlot, BatchStream, Places};
 use ruststream_runtime::DeliverySlot as Slot;
 use ruststream_runtime::{
     BatchHandler, DispatchFailure, Handler, HeadersOnDemand, Placement, RING, RetryCopies,
@@ -60,6 +60,8 @@ where
         HeadersOnDemand,
         (),
         BytesMut::new(),
+        // A refusal boxes its message where there is a heap: the loop keeps no places.
+        Places::none(),
     ))
 }
 
@@ -153,6 +155,8 @@ where
                     &shared.handler,
                     &mut slot,
                     &mut encode,
+                    // A refusal boxes its message where there is a heap: the loop keeps no places.
+                    Places::none(),
                     &shared.name,
                     &shared.state,
                     &delivery,
@@ -285,6 +289,8 @@ async fn batch_loop<S, H, C, St, Retry>(
                     &mut taken,
                     &mut scratch,
                     &mut encode,
+                    // A refusal boxes its message where there is a heap: the loop keeps no places.
+                    Places::none(),
                     &shared.name,
                     &shared.state,
                     &shared.hosted.delivery,
@@ -364,6 +370,8 @@ where
                 &mut taken,
                 &mut scratch,
                 &mut encode,
+                // A refusal boxes its message where there is a heap: the loop keeps no places.
+                Places::none(),
                 &shared.name,
                 &shared.state,
                 &delivery,

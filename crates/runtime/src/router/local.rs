@@ -8,7 +8,7 @@
 
 use core::error::Error as StdError;
 use core::marker::PhantomData;
-use ruststream_core::{MaybeSend, MaybeSendSync};
+use ruststream_core::{MaybeSend, MaybeSendSync, Places};
 
 use crate::batch::BatchDef;
 use crate::handle::{AsBodyFn, AsDeclared, BodyTag};
@@ -19,7 +19,7 @@ use crate::middleware::Identity;
 use crate::publish::{
     OutPipeline, Outgoing, PublishIdentity, PublishPipeline, SendThrough, SinkOutcome,
 };
-use crate::publish_failure::Refusal;
+use crate::publish_failure::Returned;
 use crate::settings::{BatchSized, Declared, DefMountCodec, MountsWith, Sequential};
 use crate::subscriber_def::SubscriberDef;
 use crate::{
@@ -275,8 +275,8 @@ impl<P: Publisher> SendThrough<P> for LocalPipeline<PublishIdentity> {
         let outcome = send.publish(msg, options).await;
         // A refusal puts the message back into `out`, so the caller reads what was sent.
         outcome
-            .map_err(Refusal::returned::<P::Payload>)
-            .map_err(|refusal| refusal.restore::<P::Payload>(out))
+            .map_err(Returned::of::<P::Payload>)
+            .map_err(|returned| returned.restore::<P::Payload>(out))
     }
 }
 
@@ -289,12 +289,13 @@ impl<W> OutPipeline<W> for LocalPipeline<PublishIdentity> {
         err
     }
 
-    fn send<P>(
+    fn send<'p, P>(
         &self,
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> impl Future<Output = SinkOutcome<P::Error>> + MaybeSend
+        places: Places<'p>,
+    ) -> impl Future<Output = SinkOutcome<'p, P::Error>> + MaybeSend
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
@@ -302,7 +303,7 @@ impl<W> OutPipeline<W> for LocalPipeline<PublishIdentity> {
         // The identity pipeline's own send: under the harness it records the publish with the
         // destination it went to, and it does so when the future is polled, inside the slot's
         // publishing scope.
-        <PublishIdentity as OutPipeline<W>>::send(&PublishIdentity, leaf, msg, options)
+        <PublishIdentity as OutPipeline<W>>::send(&PublishIdentity, leaf, msg, options, places)
     }
 }
 

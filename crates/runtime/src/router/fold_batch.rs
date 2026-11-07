@@ -10,11 +10,12 @@
 #![allow(clippy::future_not_send)]
 
 use core::any::type_name;
+use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 use core::pin::pin;
 use core::task::Poll;
 use ruststream_core::diag::error;
-use ruststream_core::{BatchSlot, BatchStream, MaybeSendSync, PayloadBuf};
+use ruststream_core::{BatchSlot, BatchStream, MaybeSendSync, PayloadBuf, Places};
 
 use core::future::poll_fn;
 
@@ -33,7 +34,7 @@ use crate::redelivery::{
 use crate::shared::{StateRef, SubscriptionName, borrowed};
 use crate::{BatchSubscriber, Broker, Connected, RetryDeclaration, SubscriptionSource};
 
-use super::fold::{OpenLayered, RunRoutes, RunsBatches};
+use super::fold::{BatchPlaces, OpenLayered, RefusalRoom, RunRoutes, RunsBatches};
 use super::fold_plan::{Dispatched, UnboundRetry};
 use super::routes::{BatchRoute, DeclaredRoute};
 use super::routes_inject::BatchInjectRoute;
@@ -99,13 +100,14 @@ pub struct OneTaskBatchRoute<Sub, Body, Cx> {
 
 impl<Sub, Body, Cx> OneTaskBatchRoute<Sub, Body, Cx> {
     /// Runs the route one batch at a time, on the host the plan lends it, replies encoded into
-    /// `room`.
+    /// `room`; a refused reply keeps its message in one of `places`.
     pub async fn run_batches<State, Signal, Lent, Room>(
         mut self,
         signal: Signal,
         state: StateRef<'_, State>,
         host: &Lent,
         mut room: Room,
+        places: Places<'_>,
     ) where
         Room: EncodeRoom,
         Sub: BatchSubscriber,
@@ -147,6 +149,7 @@ impl<Sub, Body, Cx> OneTaskBatchRoute<Sub, Body, Cx> {
                             &mut taken,
                             &mut scratch,
                             &mut *encode,
+                            places,
                             &self.name,
                             borrowed(state),
                             &self.delivery,
@@ -176,25 +179,31 @@ impl<Sub, Body, Cx> OneTaskBatchRoute<Sub, Body, Cx> {
     }
 }
 
-/// The plain plan of a batch: one batch at a time, the work it leaves to the runner's host.
+/// The plain plan of a batch of `Size`: one batch at a time, the work it leaves to the runner's
+/// host.
 #[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SequentialBatchPlan;
+#[derive(Debug, Clone, Copy)]
+pub struct SequentialBatchPlan<Size>(PhantomData<fn() -> Size>);
 
-impl OneTaskBatchDispatch for SequentialBatchPlan {
+impl<Size> SequentialBatchPlan<Size> {
+    /// The plain plan.
+    pub(crate) const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<Size: BatchPlaces> OneTaskBatchDispatch for SequentialBatchPlan<Size> {
     type Copies = NoCopies;
 
-    // Not an `async fn`: a frame of its own would sit between the caller and the loop for
-    // nothing.
-    fn run<Sub, Body, Cx, State, Signal, Host, Path>(
+    // The frame owns the subscription's places: one for each element of the batch it handles.
+    async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
         route: OneTaskBatchRoute<Sub, Body, Cx>,
         _path: Option<Path>,
         signal: Signal,
         state: StateRef<'_, State>,
         host: &Host,
-    ) -> impl Future<Output = ()>
-    where
+    ) where
         Sub: BatchSubscriber,
         Body: RunsBatches<Sub::Batch, Cx, State>,
         Cx: MaybeSendSync + 'static,
@@ -202,7 +211,10 @@ impl OneTaskBatchDispatch for SequentialBatchPlan {
         Host: Detach,
         Path: PrepareCopy<Cx> + MaybeSendSync,
     {
-        route.run_batches(signal, state, host, PayloadBuf::new())
+        let room = Size::Room::default();
+        route
+            .run_batches(signal, state, host, PayloadBuf::new(), room.places())
+            .await;
     }
 }
 
@@ -402,11 +414,13 @@ macro_rules! open_batch_plain {
             State: MaybeSendSync + 'static,
             $route: OpenBatchRoute<B, State>,
             NoCopies: AppliesDeclaration<<$route as OpenBatchRoute<B, State>>::Declaration>,
+            Size: BatchPlaces,
         {
             type Opened<Layers: BlanketLayer + Clone> = super::fold::OpenedBatchRoute<
                 <$route as OpenBatchRoute<B, State>>::Sub,
                 <$route as OpenBatchRoute<B, State>>::Body,
                 <$route as OpenBatchRoute<B, State>>::Cx,
+                Size,
             >;
 
             async fn open_layered<Layers: BlanketLayer + Clone>(

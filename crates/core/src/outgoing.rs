@@ -17,7 +17,7 @@ use bytes_utils::Str;
 #[cfg(not(feature = "alloc"))]
 use crate::BufferFull;
 #[cfg(not(feature = "alloc"))]
-use crate::publisher::Destination;
+use crate::refusal::Destination;
 use crate::{Headers, PayloadBuf};
 
 /// A mutable outgoing message flowing through the publish pipeline.

@@ -13,7 +13,7 @@
 
 use core::cell::Cell;
 use core::marker::PhantomData;
-use ruststream_core::MaybeSendSync;
+use ruststream_core::{MaybeSendSync, PlaceRoom, Places};
 
 use crate::coop::Cooperative;
 use crate::dispatch::{Delivery, EncodeRoom, Gated, HeadersAtOnce, Parks, run_sequential};
@@ -112,6 +112,7 @@ impl<Sub, Body, Cx> OneTaskRoute<Sub, Body, Cx> {
         host: &Lent,
         parked: Park,
         room: Room,
+        places: Places<'_>,
     ) -> impl Future<Output = ()>
     where
         Room: EncodeRoom,
@@ -135,6 +136,7 @@ impl<Sub, Body, Cx> OneTaskRoute<Sub, Body, Cx> {
             HeadersAtOnce,
             parked,
             room,
+            places,
         )
     }
 }
@@ -147,9 +149,8 @@ pub struct SequentialPlan;
 impl OneTaskDispatch for SequentialPlan {
     type Copies = NoCopies;
 
-    // Not an `async fn`: a frame of its own would sit between the caller and the loop for
-    // nothing.
-    fn run<Sub, Body, Cx, State, Signal, Host, Path>(
+    // The frame owns the subscription's one place: the loop handles one delivery at a time.
+    async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
         _path: Option<Path>,
@@ -157,8 +158,7 @@ impl OneTaskDispatch for SequentialPlan {
         state: StateRef<'_, State>,
         host: &Host,
         parked: &Cell<bool>,
-    ) -> impl Future<Output = ()>
-    where
+    ) where
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
@@ -166,7 +166,17 @@ impl OneTaskDispatch for SequentialPlan {
         Host: Detach,
         Path: PrepareCopy<Cx>,
     {
-        route.run_sequential(signal, state, host, parked, PayloadBuf::new())
+        let room = PlaceRoom::<1>::new();
+        route
+            .run_sequential(
+                signal,
+                state,
+                host,
+                parked,
+                PayloadBuf::new(),
+                room.places(),
+            )
+            .await;
     }
 }
 

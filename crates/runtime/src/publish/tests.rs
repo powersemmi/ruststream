@@ -38,6 +38,7 @@ use crate::Settle;
 use crate::Take;
 #[cfg(feature = "json")]
 use crate::{BytesMut, Lend, PayloadForm};
+use ruststream_core::Places;
 
 /// Fixtures the in-memory broker cannot express: a value the codec cannot encode, a
 /// transactional publisher rigged to fail one step of the protocol, and a policy that
@@ -289,6 +290,7 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
             &pipeline,
             &cx,
             <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
+            Places::none(),
         )
         .await
         .expect("publish through the dynamic stack failed");
@@ -361,6 +363,7 @@ async fn the_pipeline_cursors_render_their_position() {
             &pipeline,
             &cx,
             <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
+            Places::none(),
         )
         .await
         .expect("publish through the recorded pipeline failed");
@@ -427,6 +430,7 @@ async fn an_unencodable_reply_stops_both_reply_paths() {
             &PublishIdentity,
             &cx,
             <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
+            Places::none(),
         )
         .await
         .expect_err("the codec cannot encode this reply");
@@ -442,6 +446,7 @@ async fn an_unencodable_reply_stops_both_reply_paths() {
             &PublishIdentity,
             &cx,
             <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
+            Places::none(),
         )
         .await
         .expect_err("the batch path encodes per reply");
@@ -481,6 +486,7 @@ async fn a_plain_wiring_publishes_each_reply_and_names_its_codec() {
             &PublishIdentity,
             &cx,
             <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
+            Places::none(),
         )
         .await
         .expect("publishing a batch of replies failed");
@@ -607,6 +613,7 @@ async fn a_refused_begin_fails_the_batch_before_the_first_reply() {
             &PublishIdentity,
             &cx,
             <Lend as PayloadForm>::encode_slot(&mut BytesMut::new()),
+            Places::none(),
         )
         .await
         .expect_err("a refused begin fails the batch");
@@ -640,6 +647,7 @@ async fn a_failed_reply_aborts_the_whole_batch() {
             &PublishIdentity,
             &cx,
             <Lend as PayloadForm>::encode_slot(&mut BytesMut::new()),
+            Places::none(),
         )
         .await
         .expect_err("a reply that cannot be encoded fails the batch");
@@ -685,6 +693,7 @@ async fn a_failed_abort_is_logged_rather_than_propagated() {
             &PublishIdentity,
             &cx,
             <Lend as PayloadForm>::encode_slot(&mut BytesMut::new()),
+            Places::none(),
         )
         .await
         .expect_err("a reply that cannot be encoded fails the batch");
@@ -736,6 +745,7 @@ async fn a_refused_commit_fails_the_batch() {
             &PublishIdentity,
             &cx,
             <Lend as PayloadForm>::encode_slot(&mut BytesMut::new()),
+            Places::none(),
         )
         .await
         .expect_err("a refused commit fails the batch");
@@ -1069,6 +1079,7 @@ async fn concurrent_batches_take_the_transaction_in_turn() {
             &PublishIdentity,
             &cx,
             <Lend as PayloadForm>::encode_slot(&mut first),
+            Places::none(),
         ),
         wiring.publish_batch(
             "out",
@@ -1076,6 +1087,7 @@ async fn concurrent_batches_take_the_transaction_in_turn() {
             &PublishIdentity,
             &cx,
             <Lend as PayloadForm>::encode_slot(&mut second),
+            Places::none(),
         ),
     );
 

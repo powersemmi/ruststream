@@ -4,14 +4,13 @@
 #[cfg(ruststream_alloc)]
 use alloc::boxed::Box;
 #[cfg(ruststream_alloc)]
-use alloc::string::String;
-#[cfg(ruststream_alloc)]
 use alloc::sync::Arc;
 use core::error::Error as StdError;
 use core::fmt;
+#[cfg(ruststream_alloc)]
 use core::mem;
 
-use ruststream_core::{EncodeBuf, KeptPayload};
+use ruststream_core::{EncodeBuf, KeptPayload, Lease, Places, SentName, Unsent, sent_name};
 use thiserror::Error;
 
 use crate::copied::{CopiedName, CopiedPayload, copy_name};
@@ -54,45 +53,7 @@ impl NoFreeRecordError {
 
 /// The destination a failed message reports: the name with `alloc`, and without it `None` where
 /// the name was longer than the fixed room.
-#[cfg(ruststream_alloc)]
-pub(crate) type DestinationName = CopiedName;
-/// The destination a failed message reports: the name with `alloc`, and without it `None` where
-/// the name was longer than the fixed room.
-#[cfg(not(ruststream_alloc))]
-pub(crate) type DestinationName = Option<CopiedName>;
-
-/// A destination name as a failed message reports it.
-#[cfg(ruststream_alloc)]
-fn destination_name(name: &str) -> DestinationName {
-    String::from(name)
-}
-
-/// A destination name as a failed message reports it: `None` past the fixed room.
-#[cfg(not(ruststream_alloc))]
-fn destination_name(name: &str) -> DestinationName {
-    copy_name(name)
-}
-
-/// The name a refused message went to: `declared` unless a naming transform recorded another.
-#[cfg(ruststream_alloc)]
-#[expect(clippy::unnecessary_wraps, reason = "one signature for both variants")]
-fn sent_name<'name>(
-    sent: Option<&'name DestinationName>,
-    declared: &'name str,
-) -> Option<&'name str> {
-    Some(sent.map_or(declared, String::as_str))
-}
-
-/// The name a refused message went to: `declared` unless a naming transform recorded another,
-/// and `None` where that other name was past the fixed room, so the message is not reported at a
-/// destination it never went to.
-#[cfg(not(ruststream_alloc))]
-fn sent_name<'name>(
-    sent: Option<&'name DestinationName>,
-    declared: &'name str,
-) -> Option<&'name str> {
-    sent.map_or(Some(declared), Option::as_deref)
-}
+pub(crate) type DestinationName = SentName;
 
 /// The message a runtime publish failed to send: the destination it was bound for, its bytes and
 /// its headers.
@@ -235,58 +196,18 @@ impl MessageHeaders for FailedMessage {
 ///
 /// The paths that publish for a handler (a reply, a retry copy, a dead-letter copy) return it, and
 /// the `.error` continuation's [`Failed`] is built from it: the message that comes back is the
-/// one that was sent, moved, with no copy made beforehand. Machinery; never named directly.
+/// one that was sent, moved, with no copy made beforehand. The refusal holds a lease on the
+/// message: a box with `alloc`, and without it a place of the subscription's, so a publish that
+/// went out returns the cause and a pointer-sized handle through every layer of the reply and the
+/// copy. Machinery; never named directly.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct Refusal {
+pub struct Refusal<'p> {
     error: BoxError,
-    unsent: Option<Held>,
+    unsent: Option<Lease<'p>>,
 }
 
-/// A refused message as the refusal holds it: boxed with `alloc`, so a publish that went out
-/// returns a pointer-sized result through every layer of the reply and the copy, with the message
-/// moved into the box only on a refusal. Without a heap the refusal holds it in place.
-#[derive(Debug)]
-struct Held {
-    #[cfg(ruststream_alloc)]
-    unsent: Box<Unsent>,
-    #[cfg(not(ruststream_alloc))]
-    unsent: Unsent,
-}
-
-impl Held {
-    fn new(unsent: Unsent) -> Self {
-        Self {
-            #[cfg(ruststream_alloc)]
-            unsent: Box::new(unsent),
-            #[cfg(not(ruststream_alloc))]
-            unsent,
-        }
-    }
-
-    fn release(self) -> Unsent {
-        #[cfg(ruststream_alloc)]
-        {
-            *self.unsent
-        }
-        #[cfg(not(ruststream_alloc))]
-        {
-            self.unsent
-        }
-    }
-}
-
-/// The message a refused publish handed back, as its owner reads it.
-#[derive(Debug)]
-struct Unsent {
-    // Where the message was sent, recorded only when a naming transform changed it from the
-    // destination the caller declared: the common refusal allocates no name of its own.
-    sent: Option<DestinationName>,
-    payload: KeptPayload,
-    headers: HeaderSet,
-}
-
-impl Refusal {
+impl<'p> Refusal<'p> {
     /// A refusal that carries no message.
     #[must_use]
     pub fn new(error: impl Into<BoxError>) -> Self {
@@ -296,92 +217,62 @@ impl Refusal {
         }
     }
 
-    /// The refusal of a publish in the form `Form`, with the message the publisher returned.
+    /// The refusal of a publish in the form `Form`, with the message the publisher returned moved
+    /// into one of `places`.
     ///
     /// A lent payload stays where it was lent from; whoever owns the bytes resolves it in
     /// [`into_message`](Self::into_message).
     pub fn returned<Form: PayloadForm>(
         failed: PublishMessageError<impl Into<BoxError>, OutgoingFor<'_, Form>>,
+        places: Places<'p>,
     ) -> Self {
         let (error, message) = failed.into_parts();
         Self {
             error: error.into(),
-            unsent: message.map(|message| {
-                let (_, payload, headers) = message.into_owned_parts();
-                Held::new(Unsent {
+            unsent: message.and_then(|message| {
+                let (_, payload, headers) = message.into_parts();
+                places.hold(|place| {
                     // Handed straight to the publisher: the destination is the one the caller
                     // named.
-                    sent: None,
-                    payload: Form::kept(payload),
-                    headers,
+                    place.sent = None;
+                    place.payload = Form::kept(payload);
+                    take_headers(&mut place.headers, headers);
                 })
             }),
         }
     }
 
-    /// The refusal of a sink, whose message is already owned.
+    /// The refusal of a sink, whose message is already in its place.
     #[must_use]
-    pub(crate) fn from_sink<Error: Into<BoxError>>(refusal: SinkRefusal<Error>) -> Self {
-        let (error, unsent) = refusal.into_parts();
+    pub(crate) fn from_sink<Error: Into<BoxError>>(refusal: SinkRefusal<'p, Error>) -> Self {
+        let (error, unsent) = refusal.into_lease();
         Self {
             error: error.into(),
-            unsent: unsent.map(|(destination, payload, headers)| {
-                Held::new(Unsent {
-                    #[cfg(ruststream_alloc)]
-                    sent: Some(destination),
-                    #[cfg(not(ruststream_alloc))]
-                    sent: Some(copy_name(&destination)),
-                    payload,
-                    headers,
-                })
-            }),
+            unsent,
         }
-    }
-
-    /// Puts the message the publisher returned back into `out`, which then reads as the message
-    /// that was sent, and gives the cause.
-    ///
-    /// For a path that returns its error alone and keeps `out`: the stages above read the
-    /// message from `out` once the error reaches them. A refusal with no message leaves `out`
-    /// empty.
-    pub fn restore<Form: PayloadForm>(self, out: &mut Outgoing<'_>) -> BoxError {
-        if let Some(Unsent {
-            payload, headers, ..
-        }) = self.unsent.map(Held::release)
-        {
-            Form::restored(payload, out);
-            *out.headers_mut() = headers;
-        } else {
-            // The client consumed the buffer: nothing of the message is left to read.
-            out.consume();
-        }
-        self.error
     }
 
     /// The refusal of a publish that failed with `error` while `out` held the message: what it
-    /// holds is the message that was sent, and moves into the refusal.
+    /// holds is the message that was sent, and moves into one of `places`.
     ///
     /// A buffer the stages wrote moves as it is; bytes `out` only lends stay where they are, for
     /// the owner of the lender to take in [`into_message`](Self::into_message).
-    pub fn of(error: BoxError, out: &mut Outgoing<'_>) -> Self {
+    pub fn of(error: BoxError, out: &mut Outgoing<'_>, places: Places<'p>) -> Self {
         if out.is_consumed() {
             return Self::new(error);
         }
-        let payload = out.take_owned_payload().map_or_else(
-            || KeptPayload::Lent {
-                addr: out.payload().as_ptr() as usize,
-                len: out.payload().len(),
-            },
-            KeptPayload::Owned,
-        );
-        Self {
-            error,
-            unsent: Some(Held::new(Unsent {
-                sent: None,
-                payload,
-                headers: mem::take(out.headers_mut()),
-            })),
-        }
+        let unsent = places.hold(|place| {
+            place.sent = None;
+            place.payload = out.take_owned_payload().map_or_else(
+                || KeptPayload::Lent {
+                    addr: out.payload().as_ptr() as usize,
+                    len: out.payload().len(),
+                },
+                KeptPayload::Owned,
+            );
+            take_out_headers(&mut place.headers, out);
+        });
+        Self { error, unsent }
     }
 
     /// Records that the message went to `sent` rather than the `declared` destination, as it
@@ -391,7 +282,7 @@ impl Refusal {
         if sent != declared
             && let Some(unsent) = self.unsent.as_mut()
         {
-            unsent.unsent.sent = Some(destination_name(sent));
+            unsent.sent = Some(sent_name(sent));
         }
         self
     }
@@ -403,19 +294,17 @@ impl Refusal {
         self,
         destination: &str,
         wrap: impl FnOnce(BoxError) -> Error,
-    ) -> SinkRefusal<Error> {
+    ) -> SinkRefusal<'p, Error> {
         let error = wrap(self.error);
-        match self.unsent.map(Held::release) {
-            Some(Unsent {
-                sent,
-                payload,
-                headers,
-            }) => match sent_name(sent.as_ref(), destination) {
-                Some(name) => SinkRefusal::with_message(error, name, payload, headers),
-                None => SinkRefusal::new(error),
-            },
-            None => SinkRefusal::new(error),
-        }
+        let unsent = self.unsent.and_then(|mut unsent| {
+            if unsent.sent.is_none() {
+                unsent.sent = Some(sent_name(destination));
+            }
+            // A name past the fixed room is not a destination to report: the message would be
+            // republished to the wrong place, so the sink hands back the error alone.
+            routable(unsent.sent.as_ref()).then_some(unsent)
+        });
+        SinkRefusal::leasing(error, unsent)
     }
 
     /// The cause.
@@ -435,15 +324,15 @@ impl Refusal {
     ///
     /// `lent` takes the bytes a lending publisher was shown, given where they were: the caller
     /// that owns them moves them out instead of copying. A refusal with no message (the client
-    /// consumed the buffer), or whose lent bytes `lent` could not return whole, yields a message
-    /// with no bytes.
+    /// consumed the buffer, or every place was taken), or whose lent bytes `lent` could not
+    /// return whole, yields a message with no bytes.
     #[must_use]
     pub fn into_message(
         self,
         destination: &str,
         lent: impl FnOnce(usize, usize) -> CopiedPayload,
     ) -> (BoxError, FailedMessage) {
-        let message = match self.unsent.map(Held::release) {
+        let message = match self.unsent.map(Lease::into_unsent) {
             Some(Unsent {
                 sent,
                 payload,
@@ -459,7 +348,7 @@ impl Refusal {
                     }
                 };
                 FailedMessage {
-                    destination: sent.unwrap_or_else(|| destination_name(destination)),
+                    destination: sent.unwrap_or_else(|| sent_name(destination)),
                     payload,
                     headers,
                 }
@@ -470,13 +359,117 @@ impl Refusal {
     }
 }
 
-impl fmt::Display for Refusal {
+/// The message a publisher returned when it refused it, taken out of its answer so the stage that
+/// lent it the message can have it back: the cause, and what of the message the stage gives out.
+///
+/// For a path that returns its error alone and keeps the message it lent: the stages above read it
+/// from there once the error reaches them, so it moves back through no place.
+pub(crate) struct Returned {
+    error: BoxError,
+    parts: Option<ReturnedParts>,
+}
+
+impl Returned {
+    /// What a refused publish in the form `Form` handed back.
+    pub(crate) fn of<Form: PayloadForm>(
+        failed: PublishMessageError<impl Into<BoxError>, OutgoingFor<'_, Form>>,
+    ) -> Self {
+        let (error, message) = failed.into_parts();
+        Self {
+            error: error.into(),
+            parts: message.map(returned_parts::<Form>),
+        }
+    }
+
+    /// Puts the message back into `out`, which then reads as the message that was sent, and gives
+    /// the cause. A refusal with no message leaves `out` empty.
+    pub(crate) fn restore<Form: PayloadForm>(self, out: &mut Outgoing<'_>) -> BoxError {
+        match self.parts {
+            Some(parts) => restore_parts::<Form>(parts, out),
+            // The client consumed the buffer: nothing of the message is left to read.
+            None => out.consume(),
+        }
+        self.error
+    }
+}
+
+/// What a returned message hands back to the stage that lent it out: its payload, and its map
+/// where the message owned one.
+#[cfg(ruststream_alloc)]
+type ReturnedParts = (KeptPayload, HeaderSet);
+/// What a returned message hands back to the stage that lent it out: its payload alone, since its
+/// map was the stage's own, borrowed.
+#[cfg(not(ruststream_alloc))]
+type ReturnedParts = KeptPayload;
+
+#[cfg(ruststream_alloc)]
+fn returned_parts<Form: PayloadForm>(message: OutgoingFor<'_, Form>) -> ReturnedParts {
+    let (_, payload, headers) = message.into_parts();
+    (Form::kept(payload), headers)
+}
+
+#[cfg(not(ruststream_alloc))]
+fn returned_parts<Form: PayloadForm>(message: OutgoingFor<'_, Form>) -> ReturnedParts {
+    let (_, payload, _) = message.into_parts();
+    Form::kept(payload)
+}
+
+#[cfg(ruststream_alloc)]
+fn restore_parts<Form: PayloadForm>((payload, headers): ReturnedParts, out: &mut Outgoing<'_>) {
+    Form::restored(payload, out);
+    *out.headers_mut() = headers;
+}
+
+#[cfg(not(ruststream_alloc))]
+fn restore_parts<Form: PayloadForm>(payload: ReturnedParts, out: &mut Outgoing<'_>) {
+    Form::restored(payload, out);
+}
+
+/// Puts the map a refused message carried into its place: moved where there is a heap.
+#[cfg(ruststream_alloc)]
+fn take_headers(place: &mut HeaderSet, headers: HeaderSet) {
+    *place = headers;
+}
+
+/// Puts the map a refused message carried into its place: the entries and bytes it holds, where
+/// there is no heap.
+#[cfg(not(ruststream_alloc))]
+fn take_headers(place: &mut HeaderSet, headers: &HeaderSet) {
+    place.clone_from(headers);
+}
+
+/// Moves the map of the message `out` holds into its place where there is a heap.
+#[cfg(ruststream_alloc)]
+fn take_out_headers(place: &mut HeaderSet, out: &mut Outgoing<'_>) {
+    *place = mem::take(out.headers_mut());
+}
+
+/// Copies the entries and bytes of the map the message `out` holds into its place, where there is
+/// no heap: what `out` keeps is dropped with it.
+#[cfg(not(ruststream_alloc))]
+fn take_out_headers(place: &mut HeaderSet, out: &Outgoing<'_>) {
+    place.clone_from(out.headers());
+}
+
+/// Whether a recorded destination is one a message can be republished to.
+#[cfg(ruststream_alloc)]
+const fn routable(_sent: Option<&SentName>) -> bool {
+    true
+}
+
+/// Whether a recorded destination is one a message can be republished to: not past the room.
+#[cfg(not(ruststream_alloc))]
+const fn routable(sent: Option<&SentName>) -> bool {
+    matches!(sent, Some(Some(_)))
+}
+
+impl fmt::Display for Refusal<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.error, f)
     }
 }
 
-impl From<BoxError> for Refusal {
+impl From<BoxError> for Refusal<'_> {
     fn from(error: BoxError) -> Self {
         Self::new(error)
     }
@@ -650,9 +643,19 @@ mod tests {
 #[cfg(test)]
 #[cfg(not(ruststream_alloc))]
 mod fixed_tests {
-    use super::FailedMessage;
+    use super::{FailedMessage, Refusal};
     use crate::HeaderSet;
     use crate::copied::NAME_CAPACITY;
+    use crate::lifecycle::BoxError;
+
+    // The refused message lies in a place of its own, so a publish that went out returns the
+    // cause and a handle, through every layer of the reply and the copy.
+    #[test]
+    fn a_publish_that_went_out_returns_a_result_of_the_cause_and_a_handle() {
+        let outcome = size_of::<Result<(), Refusal<'_>>>();
+        let bound = size_of::<BoxError>() + 2 * size_of::<usize>();
+        assert!(outcome <= bound, "{outcome} bytes, above {bound}");
+    }
 
     #[test]
     fn a_destination_that_fits_is_reported() {

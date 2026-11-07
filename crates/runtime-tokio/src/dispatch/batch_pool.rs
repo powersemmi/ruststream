@@ -25,7 +25,7 @@ use super::pool::{Crew, Shared};
 use super::{Part, Shutdown, Turn, Watch, Workers};
 use crate::BatchSubscriber;
 use crate::follow::spawn_followed;
-use ruststream_core::{BatchSlot, BatchStream, BatchVec};
+use ruststream_core::{BatchSlot, BatchStream, BatchVec, Places};
 use ruststream_runtime::{BatchHandler, RetryCopies, run_batch};
 
 /// The workers that are free for a batch, in the order they reported, each with the slot it gives
@@ -170,6 +170,8 @@ async fn work<Slot, Body, Cx, State, Retry>(
             &mut taken,
             &mut scratch,
             &mut encode,
+            // A refusal boxes its message where there is a heap: the loop keeps no places.
+            Places::none(),
             &shared.name,
             &shared.state,
             &shared.hosted.delivery,

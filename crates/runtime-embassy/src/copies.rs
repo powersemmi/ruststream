@@ -34,7 +34,7 @@ use ruststream_core::__alloc::bytes::Bytes;
 use ruststream_core::MaybeSendSync;
 #[cfg(not(ruststream_alloc))]
 use ruststream_core::{BufferFull, Cause};
-use ruststream_core::{Headers, PayloadBuf, Settle};
+use ruststream_core::{Headers, PayloadBuf, Places, Settle};
 #[cfg(not(ruststream_alloc))]
 use ruststream_runtime::BoxError;
 #[cfg(ruststream_alloc)]
@@ -243,12 +243,15 @@ struct Record<At, Options> {
 /// the handler's `.error` continuation, or to a warning without one. The store's size and the
 /// broker's capacity are the service's to size for its load.
 pub(crate) struct CopyStore<
+    'p,
     Path: CopyPublisher,
     const CAP: usize,
     Timers: Clock = EmbassyClock,
     Fan = NoFan,
 > {
     path: Path,
+    /// The registration's places, which a refused copy keeps its message in.
+    places: Places<'p>,
     /// The subscription the copies are of, for diagnostics.
     subscription: Subscription,
     records: Mutex<FrameLock, Records<Timers::Instant, Path::Options, CAP>>,
@@ -266,7 +269,7 @@ pub(crate) struct CopyStore<
     fan: Gatherer<Fan>,
 }
 
-impl<Path: CopyPublisher, const CAP: usize> CopyStore<Path, CAP> {
+impl<Path: CopyPublisher, const CAP: usize> CopyStore<'_, Path, CAP> {
     /// A store of `subscription`'s copies on embassy's clock, leaving through `path`.
     #[cfg(ruststream_alloc)]
     pub(crate) fn new(path: Path, subscription: &Arc<str>) -> Self {
@@ -280,13 +283,14 @@ impl<Path: CopyPublisher, const CAP: usize> CopyStore<Path, CAP> {
     }
 }
 
-impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
-    CopyStore<Path, CAP, Timers, Fan>
+impl<'p, Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
+    CopyStore<'p, Path, CAP, Timers, Fan>
 {
-    /// A store on `clock`.
+    /// A store on `clock`, whose refused copies keep no message until it is given places.
     pub(crate) fn on_clock(path: Path, subscription: Subscription, clock: Timers) -> Self {
         Self {
             path,
+            places: Places::none(),
             subscription,
             records: Mutex::new(RefCell::new(array::from_fn(|_| Self::empty_record()))),
             armed: Flag::new(),
@@ -303,9 +307,10 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
     pub(crate) fn with_fan<Gatherer: Fanned>(
         self,
         fan: Gatherer,
-    ) -> CopyStore<Path, CAP, Timers, Gatherer> {
+    ) -> CopyStore<'p, Path, CAP, Timers, Gatherer> {
         CopyStore {
             path: self.path,
+            places: self.places,
             subscription: self.subscription,
             records: self.records,
             armed: self.armed,
@@ -320,6 +325,12 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
     /// Names the type the handler receives, as the diagnostic of a lost copy calls its messages.
     pub(crate) fn input(mut self, input: &'static str) -> Self {
         self.input = input;
+        self
+    }
+
+    /// Gives the store the registration's places, which a refused copy keeps its message in.
+    pub(crate) fn places(mut self, places: Places<'p>) -> Self {
+        self.places = places;
         self
     }
 
@@ -496,7 +507,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
             let _ = oversize;
             let sent = self
                 .path
-                .publish_copy(target, &payload, headers, options.as_ref())
+                .publish_copy(target, &payload, headers, options.as_ref(), self.places)
                 .await;
             match sent {
                 Ok(()) => publish_done(reaction),
@@ -513,7 +524,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
                 Err(Refusal::new(BufferFull))
             } else {
                 self.path
-                    .publish_copy(target, &payload, headers, options.as_ref())
+                    .publish_copy(target, &payload, headers, options.as_ref(), self.places)
                     .await
             };
             // A copy of a batch's uniform outcome reports to the mount's fan instead.
@@ -678,7 +689,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned>
 }
 
 impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned> KeptCopies
-    for CopyStore<Path, CAP, Timers, Fan>
+    for CopyStore<'_, Path, CAP, Timers, Fan>
 {
     type Spilled = Spilled<Path::Options>;
 
@@ -721,13 +732,13 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned> KeptC
                 Err(Refusal::new(BufferFull))
             } else {
                 self.path
-                    .publish_copy(target, &payload, headers, options.as_ref())
+                    .publish_copy(target, &payload, headers, options.as_ref(), self.places)
                     .await
             };
             #[cfg(ruststream_alloc)]
             let sent = self
                 .path
-                .publish_copy(target, &payload, headers, options.as_ref())
+                .publish_copy(target, &payload, headers, options.as_ref(), self.places)
                 .await;
             #[cfg(ruststream_alloc)]
             {
@@ -879,7 +890,7 @@ impl<Path: CopyPublisher, const CAP: usize, Timers: Schedule, Fan: Fanned> KeptC
 }
 
 impl<Cx, Path: PrepareCopy<Cx>, const CAP: usize, Timers: Schedule, Fan: Fanned> PrepareKept<Cx>
-    for CopyStore<Path, CAP, Timers, Fan>
+    for CopyStore<'_, Path, CAP, Timers, Fan>
 {
     fn prepare<M: Settle>(
         &self,
@@ -949,7 +960,7 @@ mod tests {
     use core::task::{Context, Poll, Waker};
     use core::time::Duration;
 
-    use ruststream_core::{HeaderMap, Lend, OutgoingMessage, PublishMessageError};
+    use ruststream_core::{HeaderMap, Lend, OutgoingMessage, Places, PublishMessageError};
     use ruststream_runtime::{
         Clock, CopyPublisher, Detach, ErrorHook, Failures, KeptCopies, Reaction, Refusal,
     };
@@ -1065,13 +1076,14 @@ mod tests {
             "jobs"
         }
 
-        fn publish_copy(
+        fn publish_copy<'p>(
             &self,
             destination: &str,
             payload: &[u8],
             _headers: HeaderMap,
             _options: Option<&()>,
-        ) -> impl Future<Output = Result<(), Refusal>> {
+            _places: Places<'p>,
+        ) -> impl Future<Output = Result<(), Refusal<'p>>> {
             self.0
                 .borrow_mut()
                 .push((destination.into(), payload.to_vec()));
@@ -1089,18 +1101,20 @@ mod tests {
             "jobs"
         }
 
-        fn publish_copy(
+        fn publish_copy<'p>(
             &self,
             destination: &str,
             payload: &[u8],
             headers: HeaderMap,
             _options: Option<&()>,
-        ) -> impl Future<Output = Result<(), Refusal>> {
+            places: Places<'p>,
+        ) -> impl Future<Output = Result<(), Refusal<'p>>> {
             // A publisher answers a refusal with the message it was handed, as the broker
             // crates' do.
             let msg = OutgoingMessage::assembled(destination, payload, headers);
             ready(Err(Refusal::returned::<Lend>(
                 PublishMessageError::with_message("the subscription is full", msg),
+                places,
             )))
         }
     }
@@ -1111,7 +1125,7 @@ mod tests {
     }
 
     fn keep<Path: CopyPublisher, const CAP: usize>(
-        store: &CopyStore<Path, CAP, Probe>,
+        store: &CopyStore<'_, Path, CAP, Probe>,
         payload: &[u8],
         delay: u64,
     ) {
@@ -1220,13 +1234,14 @@ mod tests {
             "jobs"
         }
 
-        fn publish_copy(
+        fn publish_copy<'p>(
             &self,
             destination: &str,
             payload: &[u8],
             _headers: HeaderMap,
             _options: Option<&()>,
-        ) -> impl Future<Output = Result<(), Refusal>> {
+            _places: Places<'p>,
+        ) -> impl Future<Output = Result<(), Refusal<'p>>> {
             if self.refusals.get() > 0 {
                 self.refusals.set(self.refusals.get() - 1);
                 return ready(Err(Refusal::new("the subscription is full")));
@@ -1414,7 +1429,7 @@ mod fixed_tests {
     use core::time::Duration;
 
     use ruststream_core::{
-        AckError, Headers, IncomingMessage, PAYLOAD_CAPACITY, PayloadBuf, Settle,
+        AckError, Headers, IncomingMessage, PAYLOAD_CAPACITY, PayloadBuf, Places, Settle,
     };
     use ruststream_runtime::{
         BatchFan, Clock, Continuation, CopyPublisher, Detach, ErrorHook, Failures, Gathers,
@@ -1484,13 +1499,14 @@ mod fixed_tests {
             "jobs"
         }
 
-        fn publish_copy(
+        fn publish_copy<'p>(
             &self,
             destination: &str,
             payload: &[u8],
             _headers: Headers,
             _options: Option<&()>,
-        ) -> impl Future<Output = Result<(), Refusal>> {
+            _places: Places<'p>,
+        ) -> impl Future<Output = Result<(), Refusal<'p>>> {
             self.sent.set(self.sent.get() + 1);
             let mut last = self.last.borrow_mut();
             last.clear();

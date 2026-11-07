@@ -28,7 +28,7 @@ use crate::{
 };
 
 use super::builder::{AttachRetry, Router};
-use super::fold::OpenLayered;
+use super::fold::{BatchPlaces, OpenLayered};
 use super::fold_batch::{
     OneTaskBatchDispatch, OpenBatchRoute, OpenedBatchDispatch, SequentialBatchPlan,
 };
@@ -327,12 +327,13 @@ macro_rules! open_batch_retried {
                 Stack,
                 <$route as OpenBatchRoute<B, State>>::Cx,
             >>::Path: MaybeSendSync,
+            Size: BatchPlaces,
         {
             type Opened<Layers: BlanketLayer + Clone> = OpenedBatchDispatch<
                 <$route as OpenBatchRoute<B, State>>::Sub,
                 <$route as OpenBatchRoute<B, State>>::Body,
                 <$route as OpenBatchRoute<B, State>>::Cx,
-                SequentialBatchPlan,
+                SequentialBatchPlan<Size>,
                 <NoCopies as PairSlot<
                     B,
                     <$route as OpenBatchRoute<B, State>>::Source,
@@ -348,7 +349,7 @@ macro_rules! open_batch_retried {
                 _layers: &Layers,
                 scope: &ScopeDelivery,
             ) -> impl Future<Output = Result<Self::Opened<Layers>, BoxError>> {
-                open_retried_batch(self, SequentialBatchPlan, connected, scope)
+                open_retried_batch(self, SequentialBatchPlan::new(), connected, scope)
             }
         }
 
