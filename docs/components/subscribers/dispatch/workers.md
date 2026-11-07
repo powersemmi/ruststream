@@ -48,6 +48,8 @@ Four charges that each wait a second on a payment provider take one second toget
 `workers(n, by_key)` makes the same `n` workers handle one delivery at a time each.
 A delivery goes to the worker picked by hashing its partition key, which the broker's message reports through [`IncomingMessage::partition_key`](api:ruststream::IncomingMessage::partition_key).
 Deliveries with one key never reorder, and deliveries with different keys run at once.
+A busy worker holds up the deliveries of its keys: the subscription waits for it rather than reorder a key.
+How the keys spread over the workers is the service's choice, as with any partitioning: a key that carries most deliveries keeps its worker busy while the others idle.
 A delivery without a key rotates over the workers.
 The in-memory broker reads the key from the [`partition-key`](api:ruststream::memory::PARTITION_KEY_HEADER) header.
 At the mount site the setting is [`.workers_by_key(n)`](api:ruststream::runtime::SubscriberSettings::workers_by_key).
