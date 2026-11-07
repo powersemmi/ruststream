@@ -81,8 +81,10 @@ pub enum RustStreamError {
     /// shutdown.
     #[error("broker shutdown failed: {0}")]
     Shutdown(#[source] BoxError),
-    /// A dispatch task ended abnormally, panicked or aborted, with no fail-fast failure on record
-    /// for the service.
+    /// A task of the runner itself ended abnormally: a fault of the framework, to be reported as
+    /// a bug, or a runtime shut down under the running service, which cancels its tasks. A panic
+    /// of the service's own code never ends here: the handler's goes to its panic policy, and any
+    /// other fails the service as [`Dispatch`](Self::Dispatch).
     #[error("dispatch task failed: {0}")]
     Join(#[source] JoinError),
     /// A subscriber hit a fail-fast failure and tore the service down: a handler panic, a panic

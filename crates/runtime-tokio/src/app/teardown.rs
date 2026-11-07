@@ -97,7 +97,7 @@ impl Teardown {
     ///
     /// Returns [`RustStreamError::Dispatch`] if the service had already torn itself down on a
     /// fail-fast failure, a panic outside a handler included: that failure is the answer even
-    /// when a broker then fails to shut down, which is logged. Otherwise a dispatch task that
+    /// when a broker then fails to shut down, which is logged. Otherwise a task of the runner that
     /// ended abnormally is [`RustStreamError::Join`], and a broker that failed to shut down is
     /// [`RustStreamError::Shutdown`].
     ///

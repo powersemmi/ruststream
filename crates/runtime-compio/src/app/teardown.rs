@@ -129,8 +129,8 @@ impl Teardown {
     /// Returns [`RustStreamError::Dispatch`] if the service had already torn itself down on a
     /// fail-fast failure, a panic of a dispatch loop or a worker outside the handler included:
     /// that failure is the answer even when a broker then fails to shut down, which is logged.
-    /// Otherwise a task of core 0 that panicked is [`RustStreamError::Join`], and a broker that
-    /// failed to shut down is [`RustStreamError::Shutdown`].
+    /// Otherwise a task of the runner that panicked is [`RustStreamError::Join`], and a broker
+    /// that failed to shut down is [`RustStreamError::Shutdown`].
     ///
     /// # Cancel safety
     ///
