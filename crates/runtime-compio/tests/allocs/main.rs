@@ -14,6 +14,7 @@ use std::thread;
 use std::time::Duration;
 
 use allocation_counter::measure;
+use compio::driver::DriverType;
 use compio::runtime;
 use futures::channel::oneshot;
 use futures::{Stream, stream};
@@ -27,6 +28,25 @@ use ruststream_runtime_compio::{Stop, Tasks, test_runtime, time};
 /// What a hand-off to another core may cost per delivery: compio's cross-thread wake queue takes a
 /// block of 31 slots for every 31 wakes, and a delivery wakes a parked core at most once.
 const HAND_OFF_BOUND: f64 = 1.0 / 31.0;
+
+/// What a hand-off may cost per delivery on compio's polling driver (macOS, or a Linux host
+/// without `io_uring`), where a wake of a parked core allocates up to twice more: the woken driver
+/// builds a new event list after its wait (<https://github.com/compio-rs/compio/issues/1107>),
+/// and on kqueue the notification allocates its receipt list
+/// (<https://github.com/smol-rs/polling/issues/273>). Measured on macOS: 0.02 to 0.21 per
+/// delivery, as often as the host's scheduling lets a core park.
+const POLLING_HAND_OFF_BOUND: f64 = 2.0 + HAND_OFF_BOUND;
+
+/// The driver the cores' runtimes come up on, and the bound of a hand-off on it.
+fn hand_off_bound() -> (DriverType, f64) {
+    let driver = test_runtime().expect("a runtime").driver_type();
+    let bound = if driver == DriverType::Poll {
+        POLLING_HAND_OFF_BOUND
+    } else {
+        HAND_OFF_BOUND
+    };
+    (driver, bound)
+}
 
 /// Far longer than a run: the timer never fires while deliveries are counted.
 const WAITING: Duration = Duration::from_hours(1);
@@ -187,46 +207,50 @@ fn per_delivery(workers: Workers, keyed: bool, timer_pending: bool) -> f64 {
 #[test]
 fn a_delivery_allocates_nothing_on_core_zero_or_across_the_hand_off() {
     let two = NonZeroUsize::new(2).expect("two");
+    let (driver, bound) = hand_off_bound();
     let sequential = per_delivery(Workers::sequential(), false, false);
     let threads = per_delivery(Workers::threads(two), false, false);
     let keyed = per_delivery(Workers::threads_keyed(two), true, false);
     println!(
-        "per delivery: sequential {sequential}, threads(2) {threads}, threads(2) by_key {keyed}"
+        "per delivery on the {driver:?} driver: sequential {sequential}, threads(2) {threads}, \
+         threads(2) by_key {keyed}"
     );
     assert!(
         sequential < 0.01,
         "sequential allocates {sequential} per delivery"
     );
     assert!(
-        threads < HAND_OFF_BOUND,
-        "threads(2) allocates {threads} per delivery"
+        threads < bound,
+        "threads(2) allocates {threads} per delivery on the {driver:?} driver"
     );
     assert!(
-        keyed < HAND_OFF_BOUND,
-        "threads(2, by_key) allocates {keyed} per delivery"
+        keyed < bound,
+        "threads(2, by_key) allocates {keyed} per delivery on the {driver:?} driver"
     );
 }
 
 #[test]
 fn a_delivery_allocates_nothing_while_a_timer_waits_on_the_core() {
     let two = NonZeroUsize::new(2).expect("two");
+    let (driver, bound) = hand_off_bound();
     let sequential = per_delivery(Workers::sequential(), false, true);
     let threads = per_delivery(Workers::threads(two), false, true);
     let keyed = per_delivery(Workers::threads_keyed(two), true, true);
     println!(
-        "per delivery, timer pending: sequential {sequential}, threads(2) {threads}, \
-         threads(2) by_key {keyed}"
+        "per delivery on the {driver:?} driver, timer pending: sequential {sequential}, \
+         threads(2) {threads}, threads(2) by_key {keyed}"
     );
     assert!(
         sequential < 0.01,
         "sequential allocates {sequential} per delivery with a timer pending"
     );
     assert!(
-        threads < HAND_OFF_BOUND,
-        "threads(2) allocates {threads} per delivery with a timer pending"
+        threads < bound,
+        "threads(2) allocates {threads} per delivery with a timer pending on the {driver:?} driver"
     );
     assert!(
-        keyed < HAND_OFF_BOUND,
-        "threads(2, by_key) allocates {keyed} per delivery with a timer pending"
+        keyed < bound,
+        "threads(2, by_key) allocates {keyed} per delivery with a timer pending on the {driver:?} \
+         driver"
     );
 }

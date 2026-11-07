@@ -64,7 +64,8 @@ The app places its mounts once at startup, before any thread starts:
 - A sequential subscription stays on core 0.
 
 `threads` mounts that ask for more cores than the app has besides core 0 are an error of the run, and it names each of them.
-A hand-off from core 0 to a worker is one queue push and a wake, and it allocates nothing once the workers have started.
+A hand-off from core 0 to a worker is one queue push and a wake, and the runner allocates nothing for it once the workers have started.
+Waking a parked core allocates inside compio: its wake queue takes a block per 31 wakes, and its polling driver, which macOS and a Linux host without `io_uring` run on, allocates on such a wake too ([compio#1107](https://github.com/compio-rs/compio/issues/1107), and on kqueue [polling#273](https://github.com/smol-rs/polling/issues/273)).
 
 [`Core`](api:ruststream::runtime::compio::Core) tells a handler or a hook where it runs: `index()`, `count()` and `is_main()`.
 A hook that does one-time work acts on core 0 and lets the other cores reuse the result.
