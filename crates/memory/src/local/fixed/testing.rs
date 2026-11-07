@@ -114,7 +114,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize> Te
         let (name, payload, headers) = message.into_parts();
         // The harness injects strictly between connect and shutdown and settles what it
         // receives, so a refusal here is a test that outran the capacity it chose.
-        if let Err(refused) = self.bus.fanout(name, payload, &headers) {
+        if let Err(refused) = self.bus.fanout(name, payload, headers) {
             panic!("the harness injected into {name:?} and the bus refused it: {refused}");
         }
     }
