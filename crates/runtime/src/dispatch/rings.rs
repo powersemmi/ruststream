@@ -380,7 +380,18 @@ impl<Item> Feed<Item> {
                 }
                 Err(PushError::Full(back)) => item = back,
             }
-            match self.room(which, cancelled.as_mut().map(Pin::as_mut)).await {
+            // A wait of its own rather than `room`: the pool's wait for room, paid per delivery,
+            // keeps a single caller, which the optimizer folds into the loop.
+            let (rings, signals) = (&mut self.rings, &*self.signals);
+            let mut shutdown = cancelled.as_mut().map(Pin::as_mut);
+            let waited = poll_fn(move |cx| match signals.poll_room(rings, which, cx) {
+                Poll::Ready(found) => Poll::Ready(found.map_err(Stuck::Gone)),
+                Poll::Pending => shutdown.as_mut().map_or(Poll::Pending, |shutdown| {
+                    shutdown.as_mut().poll(cx).map(|()| Err(Stuck::Shutdown))
+                }),
+            })
+            .await;
+            match waited {
                 Ok(_) => {}
                 Err(Stuck::Shutdown) => {
                     // The wait has resolved, and is not polled again.
