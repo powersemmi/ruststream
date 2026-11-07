@@ -84,7 +84,7 @@ pub use ruststream_runtime::{
     PublishPipeline, PublishSink, PublishStack, PublishTransform, PublishTransformIdentity,
     PublishTransformStack, Reads, ResolvedName, SatisfiesContract, SerializePayloadError,
     SerializedWire, SlotContext, SuppliedName, TemplateAddress, TransactionPublishError,
-    TransactionScope, TypedHeaders, TypedTransaction, UnnamedCodec, for_batch,
+    TransactionScope, TypedHeaders, TypedTransaction, UnnamedCodec, WithPlaces, for_batch,
 };
 pub use ruststream_runtime::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, ListOffer, OutMessages, OutSlot,
@@ -125,6 +125,8 @@ pub use ruststream_runtime::{
     IncludeDef, LocalPipeline, MapPublisher, MountChain, Router, RouterOut, RouterPublishing,
     RouterPublishingOut, RouterWith, forms,
 };
+#[doc(hidden)]
+pub use ruststream_runtime::{KeepsPlaces, KeptPlaces};
 #[doc(hidden)]
 pub use ruststream_runtime::{
     NamedByFrame, VariantLane, every_variant_failed, frame_names_no_variant, header_missing,
