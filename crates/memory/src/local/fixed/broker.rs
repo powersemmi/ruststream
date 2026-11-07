@@ -521,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn a_delivery_that_outlives_its_subscriber_settles_into_nothing() {
+    fn a_delivery_that_outlives_its_subscriber_keeps_its_place_and_settles_into_nothing() {
         static BUS: LocalMemoryBus<1, 8, 1> = LocalMemoryBus::new();
         block_on(async {
             let connected = LocalMemoryBroker::new(&BUS).connect().await.unwrap();
@@ -534,12 +534,19 @@ mod tests {
             let orphan = waiting(&mut pin!(gone.stream())).unwrap();
             drop(gone);
 
+            // The orphan lies in the slot's one place, so the slot's next subscriber has no room
+            // until the orphan is settled.
             let mut next = connected.subscribe("temp").await.unwrap();
+            let refused = publisher.publish(reading("temp", b"22"), None).await;
+            assert_eq!(
+                refused.map_err(PublishMessageError::into_error),
+                Err(LocalMemoryError::Full { capacity: 1 })
+            );
+            orphan.nack(true).await.unwrap();
             publisher
                 .publish(reading("temp", b"22"), None)
                 .await
                 .unwrap();
-            orphan.nack(true).await.unwrap();
             let delivery = waiting(&mut pin!(next.stream())).unwrap();
             assert_eq!(delivery.payload(), b"22");
             assert!(pin!(next.stream()).next().now_or_never().is_none());

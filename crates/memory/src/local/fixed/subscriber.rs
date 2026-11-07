@@ -603,6 +603,15 @@ mod tests {
     }
 
     #[test]
+    fn a_delivery_is_a_handle_to_its_place_whatever_the_room_of_the_bus() {
+        // The payload and the headers lie in the bus, so a message moves no room of its own: it
+        // is as large for a bus of 4 KiB payloads as for one of a byte.
+        let large = size_of::<LocalMemoryMessage<4, 4096, 16>>();
+        assert_eq!(large, size_of::<LocalMemoryMessage<4, 1, 16>>());
+        assert!(large <= 4 * size_of::<usize>(), "{large} bytes");
+    }
+
+    #[test]
     fn the_debug_forms_name_the_capacity_and_not_the_messages() {
         static BUS: Bus = LocalMemoryBus::new();
         block_on(async {
