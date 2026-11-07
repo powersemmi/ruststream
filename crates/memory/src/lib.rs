@@ -504,6 +504,8 @@ impl MemoryState {
     }
 
     /// Enqueues `delivery` to the senders registered under its name.
+    // `self` is read only where a harness counts the enqueues.
+    #[cfg_attr(not(feature = "testing"), allow(clippy::unused_self))]
     fn send_to(&self, senders: &[Sender], delivery: &MemoryDelivery) {
         for tx in senders {
             let sent = tx.send(delivery.clone());
@@ -583,6 +585,8 @@ impl MemoryState {
     ///
     /// Every one of them is a subscription with a dispatch loop behind it, whatever name the
     /// delivery carries, so under the harness every enqueue counts.
+    // `self` is read only where a harness counts the enqueues.
+    #[cfg_attr(not(feature = "testing"), allow(clippy::unused_self))]
     fn send_to_pattern(&self, senders: &[Sender], delivery: &MemoryDelivery) {
         for tx in senders {
             let sent = tx.send(delivery.clone());
