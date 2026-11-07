@@ -221,6 +221,7 @@ impl<'p> Places<'p> {
     /// `None` where every place is taken: the refusal then comes back without its message.
     #[cfg(feature = "alloc")]
     #[allow(clippy::unnecessary_wraps)] // one signature for both variants
+    #[must_use]
     #[inline]
     pub fn hold(
         self,
@@ -244,6 +245,7 @@ impl<'p> Places<'p> {
     ///
     /// `None` where every place is taken: the refusal then comes back without its message.
     #[cfg(not(feature = "alloc"))]
+    #[must_use]
     pub fn hold(
         self,
         sent: Option<SentName>,
