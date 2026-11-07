@@ -252,6 +252,9 @@ test-no-alloc:
     cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test doc_device_manual
     # The device build's own futures, without the harness that wraps them in the test above.
     cargo test --no-default-features --features embassy,memory,macros --test embedded_future_size
+    # The no-alloc publish stand's scenarios deliver what they publish.
+    cargo test --no-default-features --features embassy,memory,macros \
+        --test embedded_publish_no_alloc_check
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features embassy,memory,macros,testing,postcard --test ui_no_alloc
     cargo test --manifest-path checks/noalloc/memory/Cargo.toml --features testing
     # Without the harness as well: the bus's claim that it allocates nothing is checked there.
@@ -370,6 +373,8 @@ bench *ARGS:
     cargo bench -p ruststream-runtime-embassy --bench embedded_idle --no-run
     cargo bench --no-default-features --features embassy,memory,macros --bench embedded_idle_no_alloc \
         --bench embedded_publish_no_alloc --no-run
+    cargo test --no-default-features --features embassy,memory,macros \
+        --test embedded_publish_no_alloc_check --no-run
     cargo bench --no-default-features --features {{ compio_bench_features }} --bench consume_compio \
         --no-run
     status=0
@@ -385,11 +390,20 @@ bench *ARGS:
     # crate, and its allocation floor is absolute like the others; its summaries join the rest.
     cargo bench -p ruststream-runtime-embassy --bench embedded_idle --no-fail-fast \
         -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
-    # The same app without `alloc`, and with a handler that publishes: its floor is zero
-    # allocations, the start included.
+    # The same app without `alloc`: its floor is zero allocations, the start included.
     cargo bench --no-default-features --features embassy,memory,macros \
-        --bench embedded_idle_no_alloc --bench embedded_publish_no_alloc --no-fail-fast \
+        --bench embedded_idle_no_alloc --no-fail-fast \
         -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
+    # The same app with a handler that publishes, measured only where its check finds every
+    # message arriving: a broken path would measure as a faster one.
+    if cargo test --no-default-features --features embassy,memory,macros \
+        --test embedded_publish_no_alloc_check; then
+        cargo bench --no-default-features --features embassy,memory,macros \
+            --bench embedded_publish_no_alloc --no-fail-fast \
+            -- --output-format=json "${limits[@]}" "$@" >> target/bench-summary.json || status=$?
+    else
+        status=1
+    fi
     # The compio runner on one core, over the local bus: its floor holds a delivery to zero
     # allocations after the start.
     cargo bench --no-default-features --features {{ compio_bench_features }} \

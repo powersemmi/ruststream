@@ -24,6 +24,12 @@
 //! longer totals divided by [`MESSAGES`]. The bus is the board's: a `static` of fixed size, one
 //! per run, because gungraun runs every benchmark in a process of its own. Nothing here is built
 //! with `testing` or `alloc`.
+//!
+//! A path that published nothing would measure as a faster one, so the scenarios are also the
+//! test `embedded_publish_no_alloc_check`, which runs them over a bus whose destinations have a
+//! reader and holds every message to arriving; `just bench` measures the stand only after it
+//! passed. The check is a binary of its own: code compiled beside the measured code changes how
+//! the measured code is inlined, and with it the count.
 
 // The scenario exists only in a build without `alloc`; a lint leg that builds every target with
 // `alloc` on gets an empty benchmark instead.
@@ -45,18 +51,14 @@ without_alloc! {
         Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig, library_benchmark,
         library_benchmark_group, main,
     };
-    use ruststream::memory::local::{
-        LocalMemoryBroker, LocalMemoryBus, LocalMemoryPublish, LocalMemorySource,
-    };
-    use ruststream::runtime::{Control, EmbeddedApp, HandlerOutcome, Mounts, Out};
-    use ruststream::{
-        Broker, Deserialized, OutSlot, Outgoing, OutgoingMessage, Publisher, Serialized,
-        subscriber,
-    };
-    use serde::Serialize;
+    use ruststream::memory::local::{LocalMemoryBus, LocalMemoryPublish};
+    use ruststream::runtime::{Control, EmbeddedApp, Mounts};
+    use ruststream::{Broker, OutgoingMessage, Publisher};
 
-    /// The bus: each subscription holds four messages, and there is room for sixteen subscriptions.
-    type Bus = LocalMemoryBroker<4, 64, 16>;
+    use scenario::{Bus, HANDLED, Publish, Relay, answer, relay, relay_traced};
+
+    #[path = "embedded_publish_no_alloc/scenario.rs"]
+    mod scenario;
 
     /// The board's bus.
     static BUS: LocalMemoryBus<4, 64, 16> = LocalMemoryBus::new();
@@ -91,83 +93,6 @@ without_alloc! {
         count
     }
 
-    thread_local! {
-        /// Deliveries the publishing subscription handled.
-        static HANDLED: Cell<usize> = const { Cell::new(0) };
-    }
-
-    /// One reading as its bytes.
-    #[derive(Deserialized)]
-    struct Reading<'a>(&'a [u8]);
-
-    /// The reading the handler passes on: its first byte.
-    #[derive(Outgoing, Serialized)]
-    #[outgoing(name = "relayed")]
-    struct Relayed([u8; 1]);
-
-    /// The header contract of a traced reading.
-    #[derive(Serialize)]
-    struct Trace {
-        trace: &'static str,
-    }
-
-    /// The reading the handler passes on with the trace of its origin.
-    #[derive(Outgoing, Serialized)]
-    #[outgoing(name = "relayed", headers = Trace)]
-    struct Traced([u8; 1]);
-
-    /// The slot the readings leave through.
-    #[derive(OutSlot)]
-    #[publishes(Relayed, Traced)]
-    struct Relay;
-
-    /// The answer to a reading, to a destination nothing reads.
-    #[derive(Outgoing, Serialized)]
-    #[outgoing(name = "answers")]
-    struct Answer([u8; 1]);
-
-    /// The first byte of a reading.
-    fn first(reading: &Reading<'_>) -> [u8; 1] {
-        [reading.0.first().copied().unwrap_or_default()]
-    }
-
-    fn handled() {
-        HANDLED.with(|handled| handled.set(handled.get() + 1));
-    }
-
-    #[subscriber(LocalMemorySource::new("busy"))]
-    async fn relay(reading: &Reading<'_>, Out(relay): Out<impl Publisher, Relay>) -> HandlerOutcome {
-        let sent = relay.message(&Relayed(first(reading))).publish().await;
-        handled();
-        match sent {
-            Ok(()) => HandlerOutcome::ack(),
-            Err(_) => HandlerOutcome::retry(),
-        }
-    }
-
-    #[subscriber(LocalMemorySource::new("busy"))]
-    async fn relay_traced(
-        reading: &Reading<'_>,
-        Out(relay): Out<impl Publisher, Relay>,
-    ) -> HandlerOutcome {
-        let sent = relay
-            .message(&Traced(first(reading)))
-            .with_headers(&Trace { trace: "boiler" })
-            .publish()
-            .await;
-        handled();
-        match sent {
-            Ok(()) => HandlerOutcome::ack(),
-            Err(_) => HandlerOutcome::retry(),
-        }
-    }
-
-    #[subscriber(LocalMemorySource::new("busy"), reply)]
-    async fn answer(reading: &Reading<'_>) -> Answer {
-        handled();
-        Answer(first(reading))
-    }
-
     fn through_a_slot_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
         EmbeddedApp::new().with_broker(bus, |b| b.include(relay).out(Relay, LocalMemoryPublish))
     }
@@ -180,14 +105,6 @@ without_alloc! {
     fn as_a_reply_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
         EmbeddedApp::new()
             .with_broker(bus, |b| b.include(answer).out_reply(LocalMemoryPublish))
-    }
-
-    /// The handler a scenario mounts.
-    #[derive(Clone, Copy)]
-    enum Publish {
-        ThroughASlot,
-        WithAHeader,
-        AsAReply,
     }
 
     /// What a scenario runs: the bus, how many deliveries to send and how the handler publishes.
