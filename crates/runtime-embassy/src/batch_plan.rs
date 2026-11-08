@@ -91,7 +91,7 @@ impl<Enc, Size, Refused> OneTaskBatchDispatch
     for EmbeddedPlan<OneWorker, NoRoom, Enc, Size, Refused>
 where
     Enc: EncodeSize,
-    Refused: RefusalCount<OneWorker, Size>,
+    Refused: RefusalCount,
 {
     type Copies = NoCopies;
 
@@ -148,7 +148,7 @@ impl<Enc, Size, Refused, const CAPACITY: usize> OneTaskBatchDispatch
 where
     Enc: EncodeSize,
     Size: FanSize,
-    Refused: RefusalCount<OneWorker, Size>,
+    Refused: RefusalCount,
 {
     type Copies = KeepCopies;
 

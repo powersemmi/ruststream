@@ -32,8 +32,6 @@ use ruststream_core::__alloc::bytes::BytesMut;
 use ruststream_core::FixedBuf;
 use ruststream_core::diag::error;
 use ruststream_core::{BuildContext, IncomingMessage, Settle, Subscriber};
-#[cfg(not(ruststream_alloc))]
-use ruststream_runtime::BatchSize;
 use ruststream_runtime::{
     BatchWidth, Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, EncodeRoom, Halt,
     Handler, HeadersAtOnce, HostDetach, KeepCopies, Keeping, LocalPipeline, NoCopies,
@@ -63,7 +61,7 @@ pub struct EmbeddedPlan<
     Capacity,
     Encoding = Encode<DEFAULT_ENCODE_CAPACITY>,
     Size = (),
-    Refusals = PerDelivery,
+    Refusals = OnePlace,
 > {
     workers: WorkerSet,
     room: Shape<Capacity, Encoding, Size, Refusals>,
@@ -81,11 +79,12 @@ impl<WorkerSet, Capacity, Encoding, Size, Refusals>
     }
 }
 
-/// The places a registration keeps for the messages its refused publishes hand back when its
-/// mount names no count: one for each delivery it holds at once. Machinery; never named directly.
+/// The place a registration keeps for the message of a refused publish when its mount names no
+/// count: one, since a refused message is read out of its place as the publish returns.
+/// Machinery; never named directly.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct PerDelivery;
+pub struct OnePlace;
 
 /// `N` places for the messages a registration's refused publishes hand back, as
 /// `.refusal_capacity::<N>()` names them. Machinery; never named directly.
@@ -93,35 +92,18 @@ pub struct PerDelivery;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Refusals<const N: usize>;
 
-/// The room of places a plan of `WorkerSet` workers and batches of `Size` keeps. Machinery; never
-/// named directly.
+/// The room of places a plan keeps. Machinery; never named directly.
 #[doc(hidden)]
-pub trait RefusalCount<WorkerSet, Size> {
+pub trait RefusalCount {
     /// The room.
     type Room: RefusalRoom;
 }
 
-// One delivery at a time: one place.
-impl RefusalCount<OneWorker, ()> for PerDelivery {
+impl RefusalCount for OnePlace {
     type Room = PlaceRoom<1>;
 }
 
-// A delivery for each worker at once: a place each.
-impl<const WORKERS: usize> RefusalCount<Pool<WORKERS>, ()> for PerDelivery {
-    type Room = PlaceRoom<WORKERS>;
-}
-
-impl<const WORKERS: usize> RefusalCount<Keyed<WORKERS>, ()> for PerDelivery {
-    type Room = PlaceRoom<WORKERS>;
-}
-
-// A batch at a time, on one worker: a place for each element.
-#[cfg(not(ruststream_alloc))]
-impl<const SIZE: usize> RefusalCount<OneWorker, BatchSize<SIZE>> for PerDelivery {
-    type Room = PlaceRoom<SIZE>;
-}
-
-impl<WorkerSet, Size, const N: usize> RefusalCount<WorkerSet, Size> for Refusals<N> {
+impl<const N: usize> RefusalCount for Refusals<N> {
     type Room = PlaceRoom<N>;
 }
 
@@ -368,7 +350,7 @@ impl<L, Enc, Refused> OneTaskDispatch for EmbeddedPlan<L, NoRoom, Enc, (), Refus
 where
     L: WorkerSet,
     Enc: EncodeSize,
-    Refused: RefusalCount<L, ()>,
+    Refused: RefusalCount,
 {
     type Copies = NoCopies;
 
@@ -401,7 +383,7 @@ impl<L, Enc, Refused, const CAPACITY: usize> OneTaskDispatch
 where
     L: WorkerSet,
     Enc: EncodeSize,
-    Refused: RefusalCount<L, ()>,
+    Refused: RefusalCount,
 {
     type Copies = KeepCopies;
 
@@ -1008,7 +990,7 @@ impl SoFar for () {
     type WorkerSet = OneWorker;
     type Room = NoRoom;
     type Encoding = Encode<DEFAULT_ENCODE_CAPACITY>;
-    type Refusals = PerDelivery;
+    type Refusals = OnePlace;
 
     fn into_workers(self) -> OneWorker {
         OneWorker

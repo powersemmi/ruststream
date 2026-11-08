@@ -16,7 +16,6 @@
 
 use core::cell::Cell;
 use core::future::ready;
-use core::marker::PhantomData;
 use core::num::NonZeroUsize;
 use core::pin::Pin;
 use core::task::{Context, Poll};
@@ -26,8 +25,6 @@ use futures::future::MaybeDone;
 use pin_project_lite::pin_project;
 use ruststream_core::{EncodeBuf, PayloadBuf, PlaceRoom, Places};
 
-#[cfg(not(ruststream_alloc))]
-use crate::batch::BatchSize;
 use crate::batch::{BatchHandler, TakenBatch};
 use crate::coop::Cooperative;
 use crate::dispatch::{Delivery, Gated, HeadersAtOnce, run_batch, run_sequential};
@@ -440,30 +437,26 @@ where
 /// handler runs as the registration built it.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct OpenedBatchRoute<Sub, Body, Cx, Size> {
+pub struct OpenedBatchRoute<Sub, Body, Cx> {
     route: OneTaskBatchRoute<Sub, Body, Cx>,
-    size: PhantomData<fn() -> Size>,
 }
 
-impl<Sub, Body, Cx, Size> OpenedBatchRoute<Sub, Body, Cx, Size> {
+impl<Sub, Body, Cx> OpenedBatchRoute<Sub, Body, Cx> {
     /// An opened subscription, ready to run.
     pub(super) const fn new(route: OneTaskBatchRoute<Sub, Body, Cx>) -> Self {
-        Self {
-            route,
-            size: PhantomData,
-        }
+        Self { route }
     }
 }
 
-impl<State, Sub, Body, Cx, Size> RunRoutes<State> for OpenedBatchRoute<Sub, Body, Cx, Size>
+impl<State, Sub, Body, Cx> RunRoutes<State> for OpenedBatchRoute<Sub, Body, Cx>
 where
     Sub: BatchSubscriber,
     Body: RunsBatches<Sub::Batch, Cx, State>,
-    Size: BatchPlaces,
 {
     type Parks = ();
 
-    // The frame owns the subscription's places: one for each element of the batch it handles.
+    // The frame owns the subscription's one place: a refused message is read out of it as the
+    // publish returns, so the elements of a batch take it in turn.
     async fn run_parked<Signal, Host>(
         self,
         _parks: &(),
@@ -474,29 +467,11 @@ where
         Signal: ShutdownWait + Halt + Clone,
         Host: Detach,
     {
-        let room = Size::Room::default();
+        let room = PlaceRoom::<1>::new();
         self.route
             .run_batches(signal, state, host, PayloadBuf::new(), room.places())
             .await;
     }
-}
-
-/// The room of places a batch of `Self` keeps by default: one place for each element. Machinery;
-/// never named directly.
-#[doc(hidden)]
-pub trait BatchPlaces {
-    /// The room.
-    type Room: RefusalRoom;
-}
-
-// A single delivery, and any batch of a build with `alloc`, whose size is no type: one place.
-impl BatchPlaces for () {
-    type Room = PlaceRoom<1>;
-}
-
-#[cfg(not(ruststream_alloc))]
-impl<const SIZE: usize> BatchPlaces for BatchSize<SIZE> {
-    type Room = PlaceRoom<SIZE>;
 }
 
 /// A room of places a registration keeps for the messages its refused publishes hand back.
@@ -585,22 +560,5 @@ where
         run_batch::<Self, Batch, C, S, Signal, Host>(
             self, slot, taken, scratch, encode, places, name, state, delivery, host, failure,
         )
-    }
-}
-
-#[cfg(all(test, not(ruststream_alloc)))]
-mod tests {
-    use ruststream_core::Place;
-
-    use super::BatchPlaces;
-    use crate::BatchSize;
-
-    // A route keeps a place for each delivery it holds at once: one for a single delivery, the
-    // batch size for a batch.
-    #[test]
-    fn a_route_keeps_a_place_for_each_delivery_it_holds_at_once() {
-        let place = size_of::<Place>();
-        assert_eq!(size_of::<<() as BatchPlaces>::Room>(), place);
-        assert_eq!(size_of::<<BatchSize<3> as BatchPlaces>::Room>(), 3 * place);
     }
 }

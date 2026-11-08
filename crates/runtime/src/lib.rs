@@ -356,6 +356,8 @@ pub use retry::{
     OpenDestination, Present, Retried, RetryChain, RetryMount, RetryOffer, RetryOpen, RetryPos,
     RetryStackUse, RouteDeclaring, RoutePosition, SettlesDestination, StepOpen, StepTaken,
 };
+#[doc(hidden)]
+pub use router::RefusalRoom;
 #[cfg(ruststream_alloc)]
 pub use router::RouterHandlers;
 #[doc(hidden)]
@@ -367,8 +369,6 @@ pub use router::{
     RouteSubscription, RouterBroker, RouterCommit, RouterMount, RouterPipe, RunRoutes, RunsBatches,
     SplitHead, TakesWorkers,
 };
-#[doc(hidden)]
-pub use router::{BatchPlaces, RefusalRoom};
 #[doc(hidden)]
 pub use router::{
     BatchWidth, Dispatched, OneTaskBatchDispatch, OneTaskBatchRoute, OneTaskDispatch,
