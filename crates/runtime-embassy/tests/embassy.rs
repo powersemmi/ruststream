@@ -25,7 +25,7 @@ use ruststream_core::IncomingMessage;
 use ruststream_core::{
     BytesMut, CallerName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
 };
-use ruststream_core::{MaybeSend, MaybeSendSync};
+use ruststream_core::{MaybeSend, MaybeSendSync, Places};
 use ruststream_runtime::{
     BlanketLayer, Deserialized, Handle, Input, MessageWire, OpenRoutes, OutEntry, OutSlot, Outs,
     PublishedThrough, Reads, ReplyShape, Router, RunRoutes, Serialized, SerializedReply,
@@ -450,6 +450,7 @@ async fn subscription(subscriber: FrameSubscriber, probe: &'static Probe) {
         HeadersAtOnce,
         (),
         BytesMut::new(),
+        Places::none(),
     )
     .await;
     probe.ended.set(true);

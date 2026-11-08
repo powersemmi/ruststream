@@ -54,9 +54,12 @@ ruststream = { version = "0.8", default-features = false, features = ["embassy",
 
 `.retry_capacity::<CAP>()` (delayed retries waiting at once), `.encode_capacity::<N>()` (bytes a
 reply is encoded into, 256 by default, at most 256 for a publisher that keeps the payload),
+`.refusal_capacity::<N>()` (places for the messages of refused publishes, one by default, whatever
+the subscription holds at once; the same step on a publisher used on its own),
 `.pool::<N>()` and `.keyed::<N>()`, `.batch::<N>()`. A count of zero or past the limit does not
 compile. A reply that does not fit is `CodecFailure::BufferFull`, and a retry that finds the store
-full is the "no free record" error; both reach the handler's `.error`.
+full is the "no free record" error; both reach the handler's `.error`. A refused publish that finds
+every place taken reaches `.error` without its message.
 
 ## Diagnostics
 

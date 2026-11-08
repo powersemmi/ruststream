@@ -304,6 +304,7 @@ mod tests {
     use core::future::ready;
 
     use ruststream_core::__alloc::bytes::BytesMut;
+    use ruststream_core::Places;
 
     use super::super::fixtures::{PlainMessage, Settlement};
     use super::super::{HeadersOnDemand, dispatch};
@@ -348,6 +349,7 @@ mod tests {
             &ack_anything,
             &mut slot,
             &mut encode,
+            Places::none(),
             "orders",
             &state,
             &delivery,

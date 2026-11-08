@@ -43,6 +43,7 @@ mod dynamic;
 mod ext;
 mod out;
 mod pipeline;
+mod placed;
 mod publisher;
 mod reply;
 mod scratch;
@@ -71,9 +72,13 @@ pub use out::{
 };
 pub(crate) use pipeline::SendThrough;
 pub use pipeline::{PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishStack};
+pub use placed::{SharedPlaces, WithPlaces};
 pub use publisher::{Transactional, TypedPublisher};
 pub use reply::{BatchRefusal, ReplyPublisher};
-pub use sink::{CallCodec, PublishCodec, PublishSink, SinkOutcome, SinkRefusal, UnnamedCodec};
+pub use sink::{
+    CallCodec, KeepsPlaces, KeptPlaces, PublishCodec, PublishSink, SinkOutcome, SinkRefusal,
+    UnnamedCodec,
+};
 pub use transaction::{
     Admits, AnyDeclared, TransactionPublishError, TransactionScope, TypedTransaction,
 };

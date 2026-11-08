@@ -47,6 +47,7 @@ Each part whose size the heap would decide has a fixed form.
 | Codec | `SliceCodec`, which encodes into a slice and decodes from one: `PostcardCodec` (`postcard`) and `JsonCoreCodec` (`json-core`) |
 | Continuation | held in a room of 128 bytes, aligned to 8 bytes |
 | Failures read by `.error` | borrowed from the subscription's fixed buffer: `async move \|failures: &Failures\| ..` |
+| Message of a refused publish | a place of fixed size, about 700 bytes, held by the refusal until the message is read out as the publish returns: a subscription keeps one, an `Out` slot one, and a publisher used on its own one in each publish |
 | `ctx.after(..)`, `ctx.after_ack(..)`, `ctx.after_settle(..)` | a delivery holds four registrations; one more returns an error, and nothing registered is dropped |
 | Batch | up to 16 messages, named at the mount with `.batch::<N>()`, of messages that deserialize themselves or that the mount's codec decodes; the outcomes are `Outcomes<HandlerOutcome, N>` |
 | Local bus | a `LocalMemoryBus` of fixed size that the board declares as a `static` |
@@ -63,6 +64,7 @@ A capacity is a const generic or a crate constant, and each is declared at one p
 | Messages, payload bytes and subscriptions of the bus | `LocalMemoryBus<MESSAGES, PAYLOAD, SUBSCRIPTIONS>` | `PAYLOAD` is 64 and `SUBSCRIPTIONS` is 8 unless named |
 | Delayed retries waiting at once | `.retry_capacity::<CAP>()` | a count above zero; on a batch mount at least `N`, and at most 1024 |
 | Bytes a reply is encoded into | `.encode_capacity::<N>()` | 256 unless named |
+| Places for the messages of refused publishes | `.refusal_capacity::<N>()` on the mount, or on a publisher used on its own | one for a subscription, whatever it holds at once, and one in each publish of a publisher, unless named |
 | Workers of a subscription | `.pool::<N>()` or `.keyed::<N>()` | a count above zero |
 | Messages of a batch | `.batch::<N>()` | 1 to 16 |
 | Continuation | crate constant | 128 bytes |
@@ -75,7 +77,7 @@ The compiler holds the capacities that a mount names:
 - A continuation aligned to more than 8 bytes does not build either, and the error names the limit. A future that awaits an `embassy-time` timer is aligned to 8 bytes and fits on every core.
 - A batch size outside 1 to 16 is an error that names `.batch::<N>()` and the limit.
 - An `.encode_capacity::<N>()` past what the reply publisher can carry is an error that names both numbers. A publisher that keeps the payload (`Take`) is handed a buffer of 256 bytes; a publisher that only reads the bytes has no such limit.
-- A retry store, a pool or a worker count of zero does not build.
+- A retry store, a pool, a worker count or a count of places of zero does not build.
 - A batch mount whose `.retry_capacity::<CAP>()` is below its batch size `N` is an error that names both numbers: a batch that retries whole needs one record per element.
 
 A capacity that a run exceeds is a failure the handler hears of:
@@ -83,6 +85,7 @@ A capacity that a run exceeds is a failure the handler hears of:
 - A reply that does not fit its buffer is a publish error, `CodecFailure::BufferFull`, and reaches the handler's [`.error`](../subscribers/messages/error.md) like any failed reply.
 - A delayed retry that finds the retry store full is the "no free record" error of the same kind.
 - A retry or dead-letter copy of a delivery whose payload is larger than 256 bytes cannot be kept, delayed or sent at once, and is a failed publish as well.
+- A refused publish that finds every place taken reaches `.error` with its error and without its message: no bytes and no headers.
 
 ## Continuations and retries
 

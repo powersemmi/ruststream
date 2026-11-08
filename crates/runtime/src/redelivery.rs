@@ -24,7 +24,7 @@ use ruststream_core::Cause;
 use ruststream_core::NameText;
 #[cfg(not(ruststream_alloc))]
 use ruststream_core::diag;
-use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync, Places};
 
 #[cfg(ruststream_alloc)]
 use ruststream_core::diag::info;
@@ -122,12 +122,14 @@ impl<Retry> RetryRoute<Retry> {
 /// dynamic call. Machinery; never named directly.
 #[doc(hidden)]
 pub trait RetryCopies<Cx>: MaybeSendSync + 'static {
-    /// Sends one copy, with the delivery it is a copy of in hand.
-    fn publish_copy<'a>(
+    /// Sends one copy, with the delivery it is a copy of in hand. A refused copy moves into one
+    /// of `places`.
+    fn publish_copy<'a, 'p: 'a>(
         &'a self,
         msg: OutgoingMessage<'a>,
         cx: &'a PublishContext<'a, Cx>,
-    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend + 'a;
+        places: Places<'p>,
+    ) -> impl Future<Output = Result<(), Refusal<'p>>> + MaybeSend + 'a;
 }
 
 /// The retry publisher of a host that has none: there is none.
@@ -141,11 +143,12 @@ pub enum NoRetry {}
 // that is not known to be `Sync`.
 #[allow(clippy::uninhabited_references, clippy::manual_async_fn)]
 impl<Cx> RetryCopies<Cx> for NoRetry {
-    fn publish_copy<'a>(
+    fn publish_copy<'a, 'p: 'a>(
         &'a self,
         _msg: OutgoingMessage<'a>,
         _cx: &'a PublishContext<'a, Cx>,
-    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend + 'a {
+        _places: Places<'p>,
+    ) -> impl Future<Output = Result<(), Refusal<'p>>> + MaybeSend + 'a {
         async move { match *self {} }
     }
 }
@@ -175,11 +178,12 @@ where
     Stack: PublishTransform<ForReply<Cx>, Live::Options> + MaybeSendSync + 'static,
     Pipeline: OutPipeline<Live> + 'static,
 {
-    async fn publish_copy<'a>(
+    async fn publish_copy<'a, 'p: 'a>(
         &'a self,
         msg: OutgoingMessage<'a>,
         cx: &'a PublishContext<'a, Cx>,
-    ) -> Result<(), Refusal> {
+        places: Places<'p>,
+    ) -> Result<(), Refusal<'p>> {
         // The publisher's own constants sit under the delivery's headers, as they do under
         // any publish through it; the transforms then see the message as it will be sent.
         let (name, payload, delivered) = msg.into_owned_parts();
@@ -205,7 +209,9 @@ where
         // rather than being copied on.
         let mut kept = <Live::Payload as PayloadForm>::Spent::default();
         let sent = <Live::Payload as PayloadForm>::handed_on(out, &mut kept);
-        let publish = self.pipeline.send(&self.live, sent, options.as_ref());
+        let publish = self
+            .pipeline
+            .send(&self.live, sent, options.as_ref(), places);
         #[cfg(feature = "testing")]
         let publish = publishing_to(self.origin, publish);
         // What comes back is the message that was sent, transforms applied: its headers, and its

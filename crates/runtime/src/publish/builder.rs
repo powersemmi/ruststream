@@ -21,9 +21,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::codec::{ActiveCodec as Codec, CodecError, Encoding, overflow_error};
-use crate::copied::{
-    CopiedName, CopiedPayload, NameCow, copy_or_empty, empty_payload, form_of, supplied_text,
-};
+use crate::copied::{CopiedPayload, NameCow, copy_or_empty, empty_payload, form_of, supplied_text};
 use crate::{
     CallerName, FixedName, HeaderSet, HeadersContract, MessageHeaders, NameTemplate, NoHeaders,
     OutgoingDestination, OutgoingMessage, PayloadForm, SerializeHeadersError, WithHeaders,
@@ -35,7 +33,7 @@ use ruststream_core::codec::CodecFailure;
 use ruststream_core::wire::WireFailure;
 
 use super::scratch::Scratch;
-use super::sink::{CallCodec, PublishCodec, PublishSink};
+use super::sink::{CallCodec, PublishCodec, PublishSink, SinkRefusal};
 use crate::publish_failure::FailedMessage;
 use crate::wire::Serialized;
 
@@ -414,14 +412,16 @@ pub enum PublishError<E> {
         /// The sink's own error.
         #[source]
         source: E,
-        /// The message the sink did not send, when its client gave it back. It is a
-        /// [`Serialized`] value, so another `Out` publishes it unchanged.
+        /// The message the sink did not send, when its client gave it back and, in a build
+        /// without `alloc`, a place held it. It is a [`Serialized`] value, so another `Out`
+        /// publishes it unchanged.
         message: Option<FailedMessage>,
     },
 }
 
 impl<E> PublishError<E> {
-    /// The message the sink did not send, when its client gave it back.
+    /// The message the sink did not send, when its client gave it back and, in a build without
+    /// `alloc`, a place held it.
     #[must_use]
     pub const fn unsent(&self) -> Option<&FailedMessage> {
         match self {
@@ -798,49 +798,47 @@ pub trait PublishAt {
 }
 
 /// A refused send, before the bytes it kept are taken out of the place they were lent from.
-enum Refused<E> {
+enum Refused<'p, E> {
     /// A failure that has nothing to hand back.
     Other(PublishError<E>),
-    /// The sink's refusal, with the message it returned.
-    Sink { source: E, unsent: Option<Unsent> },
+    /// The sink's refusal, with a lease on the message it returned.
+    Sink(SinkRefusal<'p, E>),
 }
 
-/// The message a sink returned, with the payload still to be taken.
-struct Unsent {
-    destination: CopiedName,
-    payload: KeptPayload,
-    headers: HeaderSet,
-}
-
-impl<E> Refused<E> {
-    /// The error, with the unsent message made the owner of its bytes. `lent` takes the bytes a
-    /// lending sink was shown, given where they were; the caller owns them and so can move them
-    /// out instead of copying.
+impl<E> Refused<'_, E> {
+    /// The error, with the unsent message moved out of its place and made the owner of its bytes.
+    /// `lent` takes the bytes a lending sink was shown, given where they were; the caller owns
+    /// them and so can move them out instead of copying.
     fn into_error(self, lent: impl FnOnce(usize, usize) -> CopiedPayload) -> PublishError<E> {
         match self {
             Self::Other(err) => err,
-            Self::Sink { source, unsent } => PublishError::Publish {
-                source,
-                message: unsent.map(|unsent| {
-                    let payload = match unsent.payload {
-                        KeptPayload::Owned(bytes) => bytes,
-                        KeptPayload::Lent { addr, len } => lent(addr, len),
-                    };
-                    FailedMessage::new(&unsent.destination, Some(payload), unsent.headers)
-                }),
-            },
+            Self::Sink(refusal) => {
+                let (source, unsent) = refusal.into_parts();
+                PublishError::Publish {
+                    source,
+                    message: unsent.map(|(destination, payload, headers)| {
+                        let payload = match payload {
+                            KeptPayload::Owned(bytes) => bytes,
+                            KeptPayload::Lent { addr, len } => lent(addr, len),
+                        };
+                        FailedMessage::new(&destination, Some(payload), headers)
+                    }),
+                }
+            }
         }
     }
 }
 
-/// Sends one message, applying the headers position, the broker's settings and the sink.
-async fn deliver<'v, Sink: PublishSink, Hdrs: PublishHeaders>(
-    mut sink: Sink,
+/// Sends one message, applying the headers position, the broker's settings and the sink. A
+/// refused message moves into the places the sink brings, or into `own`.
+async fn deliver<'v, 'p, Sink: PublishSink, Hdrs: PublishHeaders>(
+    sink: &'p mut Sink,
+    own: &'p Sink::OwnPlaces,
     name: &'v str,
     payload: <Sink::Payload as PayloadForm>::Form<'v>,
     headers: Hdrs,
     options: Option<&Sink::Options>,
-) -> Result<(), Refused<Sink::Error>> {
+) -> Result<(), Refused<'p, Sink::Error>> {
     // The one place the outgoing map is built: the sink's base first, the publish's own headers
     // over it. A sink without a base yields the empty map this always started from, so nothing is
     // cloned and nothing is allocated on the path every publisher takes today.
@@ -858,24 +856,16 @@ async fn deliver<'v, Sink: PublishSink, Hdrs: PublishHeaders>(
         <Sink::Payload as PayloadForm>::shortened(payload),
         &map,
     );
-    sink.send(msg, options).await.map_err(|failed| {
-        let (source, unsent) = failed.into_parts();
-        Refused::Sink {
-            source,
-            unsent: unsent.map(|(destination, payload, headers)| Unsent {
-                destination,
-                payload,
-                headers,
-            }),
-        }
-    })
+    Sink::send(sink, msg, options, own)
+        .await
+        .map_err(Refused::Sink)
 }
 
 /// Produces the value's wire payload and sends it, shared by the resolved and the rendered
 /// terminals. The wire is the value's own ([`MessageWire`]): a `Serialize` value encodes with
 /// the resolved codec, a [`Serialized`] one leaves byte-for-byte and the codec is never called.
 async fn wire_and_send<Sink, T, Enc, Hdrs>(
-    sink: Sink,
+    mut sink: Sink,
     codec: Enc,
     value: &T,
     headers: Hdrs,
@@ -895,7 +885,9 @@ where
     let mut buf = Scratch::of::<Sink::Payload>();
     let payload =
         <T::Wire as WirePayload<T, Enc>>::payload::<Sink::Payload>(value, &codec, &mut buf)?;
-    let refused = match deliver(sink, name, payload, headers, options).await {
+    // The place a refused message moves into where the sink brings none of its own.
+    let own = Sink::OwnPlaces::default();
+    let refused = match deliver(&mut sink, &own, name, payload, headers, options).await {
         Ok(()) => return Ok(()),
         Err(refused) => refused,
     };
@@ -1025,7 +1017,9 @@ where
         let Some(payload) = form_of::<Sink::Payload>(bytes) else {
             return Err(PublishError::Encode(overflow_error()));
         };
-        deliver(sink, name, payload, headers, options.as_ref())
+        let mut sink = sink;
+        let own = Sink::OwnPlaces::default();
+        deliver(&mut sink, &own, name, payload, headers, options.as_ref())
             .await
             .map_err(|refused| refused.into_error(|_, _| copy_or_empty(bytes)))
     }

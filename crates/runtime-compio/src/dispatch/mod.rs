@@ -25,7 +25,7 @@ use bytes::BytesMut;
 use compio::runtime::JoinHandle;
 use futures::Stream;
 use pin_project_lite::pin_project;
-use ruststream_core::{BuildContext, ReadyHint, Subscriber};
+use ruststream_core::{BuildContext, Places, ReadyHint, Subscriber};
 use ruststream_runtime::{
     Copying, Delivery, DispatchFailure, Handler, HeadersOnDemand, Lent, RetryCopies, RetryRoute,
     run_sequential,
@@ -236,6 +236,8 @@ where
         HeadersOnDemand,
         (),
         BytesMut::new(),
+        // A refusal boxes its message where there is a heap: the loop keeps no places.
+        Places::none(),
     ))
 }
 

@@ -17,7 +17,7 @@ use ruststream_core::{BatchSubscriber, MaybeSendSync};
 use ruststream_runtime::{BatchFan, BatchSize, Gathers};
 use ruststream_runtime::{
     Detach, Halt, KeepCopies, Keeping, NoCopies, OneTaskBatchDispatch, OneTaskBatchRoute,
-    PrepareCopy, RunsBatches, ShutdownWait,
+    PrepareCopy, RefusalRoom, RunsBatches, ShutdownWait,
 };
 #[cfg(not(ruststream_alloc))]
 use typenum::{Cmp, Const, ToUInt, U};
@@ -27,7 +27,7 @@ use crate::copies::CopyStore;
 use crate::hooks::AppState;
 #[cfg(not(ruststream_alloc))]
 use crate::host::WorkerHost;
-use crate::workers::{EmbeddedPlan, EncodeSize, NoRoom, OneWorker, Room};
+use crate::workers::{EmbeddedPlan, EncodeSize, NoRoom, OneWorker, RefusalCount, Room};
 
 /// Whether a store of `Self` records holds the retries of a batch of `Size`. Machinery; never
 /// named directly.
@@ -87,21 +87,24 @@ impl<const SIZE: usize> FanSize for BatchSize<SIZE> {
     }
 }
 
-impl<Enc: EncodeSize, Size> OneTaskBatchDispatch for EmbeddedPlan<OneWorker, NoRoom, Enc, Size> {
+impl<Enc, Size, Refused> OneTaskBatchDispatch
+    for EmbeddedPlan<OneWorker, NoRoom, Enc, Size, Refused>
+where
+    Enc: EncodeSize,
+    Refused: RefusalCount,
+{
     type Copies = NoCopies;
 
+    // The frame owns the registration's places, which the loop lends each batch.
     #[cfg(ruststream_alloc)]
-    // Not an `async fn`: a frame of its own would sit between the caller and the worker for
-    // nothing.
-    fn run<Sub, Body, Cx, State, Signal, Host, Path>(
+    async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
         route: OneTaskBatchRoute<Sub, Body, Cx>,
         _path: Option<Path>,
         signal: Signal,
         state: &AppState<State>,
         host: &Host,
-    ) -> impl Future<Output = ()>
-    where
+    ) where
         Sub: BatchSubscriber,
         Body: RunsBatches<Sub::Batch, Cx, State>,
         Cx: MaybeSendSync + 'static,
@@ -109,7 +112,10 @@ impl<Enc: EncodeSize, Size> OneTaskBatchDispatch for EmbeddedPlan<OneWorker, NoR
         Host: Detach,
         Path: PrepareCopy<Cx> + MaybeSendSync,
     {
-        route.run_batches(signal, state, host, Enc::room())
+        let room = Refused::Room::default();
+        route
+            .run_batches(signal, state, host, Enc::room(), room.places())
+            .await;
     }
 
     // The worker's own continuation slot lives in this frame, beside the loop.
@@ -129,15 +135,20 @@ impl<Enc: EncodeSize, Size> OneTaskBatchDispatch for EmbeddedPlan<OneWorker, NoR
         Host: Detach,
         Path: PrepareCopy<Cx> + MaybeSendSync,
     {
+        let room = Refused::Room::default();
         let worker = WorkerHost::new(host);
         worker
-            .around(route.run_batches(signal, state, &worker, Enc::room()))
+            .around(route.run_batches(signal, state, &worker, Enc::room(), room.places()))
             .await;
     }
 }
 
-impl<Enc: EncodeSize, const CAPACITY: usize, Size: FanSize> OneTaskBatchDispatch
-    for EmbeddedPlan<OneWorker, Room<CAPACITY>, Enc, Size>
+impl<Enc, Size, Refused, const CAPACITY: usize> OneTaskBatchDispatch
+    for EmbeddedPlan<OneWorker, Room<CAPACITY>, Enc, Size, Refused>
+where
+    Enc: EncodeSize,
+    Size: FanSize,
+    Refused: RefusalCount,
 {
     type Copies = KeepCopies;
 
@@ -166,7 +177,12 @@ impl<Enc: EncodeSize, const CAPACITY: usize, Size: FanSize> OneTaskBatchDispatch
         // The registration's own store: its copies wait in its records, and its driver
         // publishes the last of them after the batch loop has stopped. The loop, the worker's slot
         // and the driver are joined in this frame, so none of them adds a frame of its own.
-        let store = CopyStore::<Path, CAPACITY>::new(path, &route.name).input(route.input);
+        // The registration's places, which the loop lends each batch and the store's copies take
+        // from.
+        let room = Refused::Room::default();
+        let store = CopyStore::<Path, CAPACITY>::new(path, &route.name)
+            .input(route.input)
+            .places(room.places());
         // The fan of the mount's uniform outcomes: the worker and the store report to it.
         #[cfg(not(ruststream_alloc))]
         let store = store.with_fan(Size::fan());
@@ -174,7 +190,7 @@ impl<Enc: EncodeSize, const CAPACITY: usize, Size: FanSize> OneTaskBatchDispatch
         #[cfg(ruststream_alloc)]
         join(
             route
-                .run_batches(signal, state, &keeping, Enc::room())
+                .run_batches(signal, state, &keeping, Enc::room(), room.places())
                 .map(|()| store.close()),
             store.drive(host),
         )
@@ -184,7 +200,7 @@ impl<Enc: EncodeSize, const CAPACITY: usize, Size: FanSize> OneTaskBatchDispatch
             let worker = WorkerHost::new(&keeping);
             join(
                 worker.around_then(
-                    route.run_batches(signal, state, &worker, Enc::room()),
+                    route.run_batches(signal, state, &worker, Enc::room(), room.places()),
                     || {
                         store.close();
                     },

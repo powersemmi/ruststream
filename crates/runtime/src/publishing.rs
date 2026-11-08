@@ -16,7 +16,7 @@ use alloc::string::String;
 #[cfg(ruststream_alloc)]
 use alloc::vec::Vec;
 use core::{any, fmt};
-use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync, Places};
 
 use crate::copied::{CopiedPayload, copy_or_empty, empty_payload, freeze, take_frozen};
 use ruststream_core::diag::warn;
@@ -54,15 +54,17 @@ pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: MaybeSendSync {
     /// that form carries. See [`Publisher::Payload`].
     type Payload: PayloadForm;
 
-    /// Publishes `reply` to `name`. A refusal carries the message that was sent.
-    fn deliver<'e>(
+    /// Publishes `reply` to `name`. A refusal carries the message that was sent, moved into one
+    /// of `places`.
+    fn deliver<'e, 'p>(
         &self,
         name: &'e str,
         reply: &'e Reply,
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend;
+        places: Places<'p>,
+    ) -> impl Future<Output = Result<(), Refusal<'p>>> + MaybeSend;
 
     /// The bytes of `reply` that a lending publisher was shown and that do not sit in the
     /// encode buffer: the value's own, which the reply holds. A failure path, taken only where
@@ -84,14 +86,16 @@ pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: MaybeSendSync {
 pub(crate) trait EncodeReply: MaybeSendSync {
     /// Delivers `self` through the typed reply stack.
     #[doc(hidden)]
-    fn deliver_typed<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
+    #[allow(clippy::too_many_arguments)]
+    fn deliver_typed<'e, 'p, Leaf, ReplyCodec, Transforms, Cx, PP>(
         &self,
         stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
         name: &'e str,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend
+        places: Places<'p>,
+    ) -> impl Future<Output = Result<(), Refusal<'p>>> + MaybeSend
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
@@ -108,14 +112,15 @@ pub(crate) trait EncodeReply: MaybeSendSync {
 impl<Reply: Serialize + MaybeSendSync> EncodeReply for Reply {
     // The inner future is returned rather than awaited: this is a spelling of the reply's shape,
     // and a state machine of its own here would sit in every dispatch's future for nothing.
-    fn deliver_typed<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
+    fn deliver_typed<'e, 'p, Leaf, ReplyCodec, Transforms, Cx, PP>(
         &self,
         stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
         name: &'e str,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend
+        places: Places<'p>,
+    ) -> impl Future<Output = Result<(), Refusal<'p>>> + MaybeSend
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
@@ -123,7 +128,7 @@ impl<Reply: Serialize + MaybeSendSync> EncodeReply for Reply {
         Cx: MaybeSync,
         PP: SendThrough<Leaf>,
     {
-        stack.publish(name, self, pipeline, cx, encode)
+        stack.publish(name, self, pipeline, cx, encode, places)
     }
 
     fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> CopiedPayload {
@@ -136,14 +141,15 @@ where
     Hd: Serialize + MaybeSendSync,
     Pd: Serialize + MaybeSendSync,
 {
-    fn deliver_typed<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
+    fn deliver_typed<'e, 'p, Leaf, ReplyCodec, Transforms, Cx, PP>(
         &self,
         stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
         name: &'e str,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend
+        places: Places<'p>,
+    ) -> impl Future<Output = Result<(), Refusal<'p>>> + MaybeSend
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
@@ -151,7 +157,15 @@ where
         Cx: MaybeSync,
         PP: SendThrough<Leaf>,
     {
-        stack.publish_pair(name, &self.headers, &self.body, pipeline, cx, encode)
+        stack.publish_pair(
+            name,
+            &self.headers,
+            &self.body,
+            pipeline,
+            cx,
+            encode,
+            places,
+        )
     }
 
     fn encoded_with<ReplyCodec: Codec>(&self, codec: &ReplyCodec) -> CopiedPayload {
@@ -172,15 +186,16 @@ where
 {
     type Payload = Bare::Payload;
 
-    fn deliver<'e>(
+    fn deliver<'e, 'p>(
         &self,
         name: &'e str,
         reply: &'e Reply,
         _pipeline: &Pipeline,
         _cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend {
-        deliver_bare(self, name, reply, encode)
+        places: Places<'p>,
+    ) -> impl Future<Output = Result<(), Refusal<'p>>> + MaybeSend {
+        deliver_bare(self, name, reply, encode, places)
     }
 
     fn own_bytes(&self, reply: &Reply) -> CopiedPayload {
@@ -220,12 +235,13 @@ fn serialized_bytes<Reply: super::Serialized>(reply: &Reply) -> CopiedPayload {
 /// family: the body of both byte wirings, whose future is `Send` exactly where the publisher's
 /// is.
 #[allow(clippy::future_not_send)]
-async fn deliver_bare<'e, Reply, Bare>(
+async fn deliver_bare<'e, 'p, Reply, Bare>(
     bare: &Bare,
     name: &'e str,
     reply: &'e Reply,
     encode: <Bare::Payload as PayloadForm>::Encode<'e>,
-) -> Result<(), Refusal>
+    places: Places<'p>,
+) -> Result<(), Refusal<'p>>
 where
     Reply: super::Serialized,
     Bare: Publisher,
@@ -243,7 +259,7 @@ where
     if sent.is_ok() {
         recorded.sent().await;
     }
-    sent.map_err(Refusal::returned::<Bare::Payload>)
+    sent.map_err(|failed| Refusal::returned::<Bare::Payload>(failed, places))
 }
 
 /// A subscriber definition that produces a reply to publish.
@@ -427,15 +443,16 @@ where
 
     // As in `EncodeReply`: the wiring's own step is the choice of lane, and the future it
     // hands back is the publish itself.
-    fn deliver<'e>(
+    fn deliver<'e, 'p>(
         &self,
         name: &'e str,
         reply: &'e Reply,
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
         encode: <Self::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend {
-        reply.deliver_typed(self, name, pipeline, cx, encode)
+        places: Places<'p>,
+    ) -> impl Future<Output = Result<(), Refusal<'p>>> + MaybeSend {
+        reply.deliver_typed(self, name, pipeline, cx, encode, places)
     }
 
     // The encoded reply is written into the encode buffer or a buffer a transform wrote, and a
@@ -541,9 +558,12 @@ where
             &mut *encode,
         );
         let pubcx = PublishContext::new(ctx.name(), ctx.delivery_headers(), ctx.cx_ref());
+        // A refused reply moves into one of the subscription's places, which the dispatch lent the
+        // delivery.
+        let places = ctx.refusal_places();
         let publish = self
             .publisher
-            .deliver(name, &reply, &self.pipeline, &pubcx, slot);
+            .deliver(name, &reply, &self.pipeline, &pubcx, slot, places);
         #[cfg(feature = "testing")]
         let publish = publishing_to(self.origin, publish);
         let sent = publish.await;

@@ -4,7 +4,7 @@
 use alloc::vec::Vec;
 use core::fmt;
 use ruststream_core::diag::warn;
-use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync, Places};
 use serde::Serialize;
 
 use super::{
@@ -28,25 +28,25 @@ use crate::{PayloadForm, Publisher, TransactionalPublisher};
 /// directly.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct BatchRefusal {
+pub struct BatchRefusal<'p> {
     /// The first reply that did not go out.
     lost_from: usize,
     /// Why they did not.
-    cause: Cause,
+    cause: Cause<'p>,
 }
 
 /// Why a batch's replies did not all go out.
 #[derive(Debug)]
-enum Cause {
+enum Cause<'p> {
     /// The reply at the index was refused, with what came back for it.
-    Refused(usize, Refusal),
+    Refused(usize, Refusal<'p>),
     /// No single reply was refused: the transaction could not begin or commit.
     Whole(BoxError),
 }
 
-impl BatchRefusal {
+impl<'p> BatchRefusal<'p> {
     /// The refusal of the reply at `index`, with every reply from `lost_from` on lost.
-    fn at(index: usize, lost_from: usize, refusal: Refusal) -> Self {
+    fn at(index: usize, lost_from: usize, refusal: Refusal<'p>) -> Self {
         Self {
             lost_from,
             cause: Cause::Refused(index, refusal),
@@ -111,7 +111,7 @@ impl BatchRefusal {
 }
 
 #[cfg(not(ruststream_alloc))]
-impl BatchRefusal {
+impl BatchRefusal<'_> {
     /// The replies a refused batch publish lost, each as a [`Failed`] with the batch's cause, in
     /// the batch's order: the refused reply as it was sent, the others encoded again.
     ///
@@ -155,7 +155,7 @@ impl BatchRefusal {
     }
 }
 
-impl fmt::Display for BatchRefusal {
+impl fmt::Display for BatchRefusal<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.cause {
             Cause::Refused(_, refusal) => fmt::Display::fmt(refusal, f),
@@ -184,16 +184,17 @@ pub trait ReplyPublisher<Cx = ()>: Sealed + MaybeSendSync {
     fn reply_codec(&self) -> &Self::Codec;
 
     /// Publishes one batch's replies to `name` through `pipeline`, reading the originating
-    /// delivery through `cx`.
+    /// delivery through `cx`. A refused reply moves into one of `places`.
     #[doc(hidden)]
-    fn publish_batch<'a, T, PP>(
+    fn publish_batch<'a, 'p, T, PP>(
         &'a self,
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         encode: <Self::Payload as PayloadForm>::Encode<'a>,
-    ) -> impl Future<Output = Result<(), BatchRefusal>> + MaybeSend
+        places: Places<'p>,
+    ) -> impl Future<Output = Result<(), BatchRefusal<'p>>> + MaybeSend
     where
         T: Serialize + MaybeSync,
         PP: PublishPipeline;
@@ -216,21 +217,22 @@ where
 
     /// Each reply is published independently: a mid-batch failure leaves the earlier replies
     /// visible, and the retried batch may publish them again (at-least-once).
-    async fn publish_batch<'a, T, PP>(
+    async fn publish_batch<'a, 'p, T, PP>(
         &'a self,
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         mut encode: <P::Payload as PayloadForm>::Encode<'a>,
-    ) -> Result<(), BatchRefusal>
+        places: Places<'p>,
+    ) -> Result<(), BatchRefusal<'p>>
     where
         T: Serialize + MaybeSync,
         PP: PublishPipeline,
     {
         for (index, reply) in replies.iter().enumerate() {
             let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
-            self.publish_batched(name, reply, pipeline, cx, slot)
+            self.publish_batched(name, reply, pipeline, cx, slot, places)
                 .await
                 .map_err(|refusal| BatchRefusal::at(index, index, refusal))?;
         }
@@ -255,14 +257,15 @@ where
 
     /// All replies publish inside one transaction: begin, publish each, commit. Any failure
     /// aborts the transaction, so none of the batch's replies become visible.
-    async fn publish_batch<'a, T, PP>(
+    async fn publish_batch<'a, 'p, T, PP>(
         &'a self,
         name: &'a str,
         replies: &'a [T],
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
         mut encode: <P::Payload as PayloadForm>::Encode<'a>,
-    ) -> Result<(), BatchRefusal>
+        places: Places<'p>,
+    ) -> Result<(), BatchRefusal<'p>>
     where
         T: Serialize + MaybeSync,
         PP: PublishPipeline,
@@ -278,9 +281,19 @@ where
             let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
             if let Err(refusal) = self
                 .inner
-                .publish_batched(name, reply, pipeline, cx, slot)
+                .publish_batched(name, reply, pipeline, cx, slot, places)
                 .await
             {
+                // Without `alloc` the refused reply lies in the subscription's place, which a copy
+                // the subscription publishes while the transaction aborts may need: the message
+                // leaves the place for the wait.
+                #[cfg(not(ruststream_alloc))]
+                let refusal = {
+                    let detached = refusal.detach();
+                    abort_quietly(publisher).await;
+                    detached.attach(places)
+                };
+                #[cfg(ruststream_alloc)]
                 abort_quietly(publisher).await;
                 // The transaction is aborted, so every reply of the batch is lost.
                 return Err(BatchRefusal::at(index, 0, refusal));
@@ -300,5 +313,124 @@ where
 async fn abort_quietly<P: TransactionalPublisher>(publisher: &P) {
     if let Err(err) = publisher.abort().await {
         warn!(target: "ruststream::dispatch", error = %err, "transaction abort failed");
+    }
+}
+
+#[cfg(all(test, not(ruststream_alloc), feature = "postcard"))]
+mod tests {
+    use core::cell::Cell;
+    use core::error::Error as StdError;
+    use core::fmt;
+    use core::future::ready;
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+
+    use ruststream_core::{
+        Headers, KeptPayload, Lend, MaybeSend, OutgoingFor, PayloadBuf, PlaceRoom,
+        PublishMessageError, PublishOutcome,
+    };
+
+    use super::ReplyPublisher;
+    use crate::codec::PostcardCodec;
+    use crate::publish::{
+        BatchTransformIdentity, PublishContext, PublishIdentity, PublishTransformIdentity,
+        Transactional, TypedPublisher,
+    };
+    use crate::{HeaderSet, PayloadForm, Publisher, TransactionalPublisher};
+
+    /// What the refusing broker reports.
+    #[derive(Debug)]
+    struct Refused;
+
+    impl fmt::Display for Refused {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("refused")
+        }
+    }
+
+    impl StdError for Refused {}
+
+    /// A transactional broker that refuses every message and hands it back, and that looks at
+    /// the subscription's place while its transaction aborts, as a copy published then would.
+    #[derive(Clone)]
+    struct Refusing<'r> {
+        room: &'r PlaceRoom<1>,
+        free_at_abort: &'r Cell<Option<bool>>,
+    }
+
+    impl Publisher for Refusing<'_> {
+        type Payload = Lend;
+        type Error = Refused;
+        type Options = ();
+
+        fn publish<'msg>(
+            &self,
+            msg: OutgoingFor<'msg, Lend>,
+            _options: Option<&()>,
+        ) -> impl Future<Output = PublishOutcome<'msg, Refused, Lend>> + MaybeSend {
+            ready(Err(PublishMessageError::with_message(Refused, msg)))
+        }
+    }
+
+    impl TransactionalPublisher for Refusing<'_> {
+        fn begin_transaction(&self) -> impl Future<Output = Result<(), Refused>> + MaybeSend {
+            ready(Ok(()))
+        }
+
+        fn commit(&self) -> impl Future<Output = Result<(), Refused>> + MaybeSend {
+            ready(Ok(()))
+        }
+
+        fn abort(&self) -> impl Future<Output = Result<(), Refused>> + MaybeSend {
+            let empty = KeptPayload::Lent { addr: 0, len: 0 };
+            let taken = self.room.places().hold(None, empty, &Headers::new());
+            self.free_at_abort.set(Some(taken.is_some()));
+            ready(Ok(()))
+        }
+    }
+
+    // The subscription keeps one place, which its copies share with its replies: a refused reply
+    // of a transaction leaves it while the transaction aborts, and takes it again after.
+    #[test]
+    fn a_refused_reply_leaves_its_place_while_the_transaction_aborts() {
+        let room = PlaceRoom::<1>::new();
+        let free_at_abort = Cell::new(None);
+        let broker = Refusing {
+            room: &room,
+            free_at_abort: &free_at_abort,
+        };
+        let wiring = Transactional::live(TypedPublisher::live(
+            broker,
+            PostcardCodec,
+            PublishTransformIdentity,
+            BatchTransformIdentity,
+        ));
+        let headers = HeaderSet::new();
+        let cx = PublishContext::new("in", &headers, &());
+        let mut buf = PayloadBuf::new();
+        let publish = pin!(wiring.publish_batch(
+            "out",
+            &[1_u8, 2],
+            &PublishIdentity,
+            &cx,
+            <Lend as PayloadForm>::encode_slot(&mut buf),
+            room.places(),
+        ));
+        let Poll::Ready(sent) = publish.poll(&mut Context::from_waker(Waker::noop())) else {
+            panic!("nothing in this batch waits");
+        };
+
+        assert!(sent.is_err(), "the broker refuses the reply");
+        assert_eq!(
+            free_at_abort.get(),
+            Some(true),
+            "a copy published while the transaction aborts finds the place free"
+        );
+        let empty = KeptPayload::Lent { addr: 0, len: 0 };
+        let taken = room.places().hold(None, empty, &Headers::new());
+        assert!(
+            taken.is_none(),
+            "the refusal holds its message in the place again"
+        );
     }
 }

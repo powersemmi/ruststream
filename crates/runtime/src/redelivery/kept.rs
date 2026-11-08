@@ -9,7 +9,7 @@ use core::any::type_name;
 use core::future::ready;
 use core::marker::PhantomData;
 use core::mem;
-use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync, Places};
 use ruststream_core::{NameText, RedeliveryAddress};
 
 use ruststream_core::PayloadBuf;
@@ -39,18 +39,20 @@ pub trait CopyPublisher: MaybeSync {
     /// The address a copy back to the subscription is published under.
     fn address(&self) -> &str;
 
-    /// Publishes one copy to `destination`, as [`PrepareCopy::prepare`] left it.
+    /// Publishes one copy to `destination`, as [`PrepareCopy::prepare`] left it. A refused copy
+    /// moves into one of `places`.
     ///
     /// # Errors
     ///
     /// What the publisher returned.
-    fn publish_copy(
+    fn publish_copy<'p>(
         &self,
         destination: &str,
         payload: &[u8],
         headers: HeaderSet,
         options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Refusal>> + MaybeSend;
+        places: Places<'p>,
+    ) -> impl Future<Output = Result<(), Refusal<'p>>> + MaybeSend;
 }
 
 /// A copy path that prepares the copy of a delivery whose broker context is `Cx` while the
@@ -88,13 +90,14 @@ impl<Live: Publisher, Stack: MaybeSync> CopyPublisher for AddressedCopy<Live, St
         kept_str(&self.address)
     }
 
-    async fn publish_copy(
+    async fn publish_copy<'p>(
         &self,
         destination: &str,
         payload: &[u8],
         headers: HeaderSet,
         options: Option<&Live::Options>,
-    ) -> Result<(), Refusal> {
+        places: Places<'p>,
+    ) -> Result<(), Refusal<'p>> {
         // A transport that reads the bytes is lent the record's buffer; one that keeps them is
         // handed a copy of its own.
         let Some(form) = form_of::<Live::Payload>(payload) else {
@@ -108,7 +111,7 @@ impl<Live: Publisher, Stack: MaybeSync> CopyPublisher for AddressedCopy<Live, St
         self.live
             .publish(msg, options)
             .await
-            .map_err(Refusal::returned::<Live::Payload>)
+            .map_err(|failed| Refusal::returned::<Live::Payload>(failed, places))
     }
 }
 
@@ -230,13 +233,14 @@ impl CopyPublisher for NoCopyPath {
         match *self {}
     }
 
-    async fn publish_copy(
+    async fn publish_copy<'p>(
         &self,
         _destination: &str,
         _payload: &[u8],
         _headers: HeaderSet,
         _options: Option<&()>,
-    ) -> Result<(), Refusal> {
+        _places: Places<'p>,
+    ) -> Result<(), Refusal<'p>> {
         match *self {}
     }
 }
@@ -588,7 +592,7 @@ mod tests {
     use std::io;
     use std::sync::Mutex;
 
-    use ruststream_core::PayloadBuf;
+    use ruststream_core::{PayloadBuf, Places};
 
     use super::{AddressedCopy, CopyPublisher, PrepareCopy};
     use crate::dispatch::RETRY_COUNT_HEADER;
@@ -726,9 +730,15 @@ mod tests {
                 build_cx: |_: &Job| JobContext,
             },
         );
-        copy.publish_copy("jobs.later", &payload, headers, options.as_ref())
-            .await
-            .expect("the broker takes the copy");
+        copy.publish_copy(
+            "jobs.later",
+            &payload,
+            headers,
+            options.as_ref(),
+            Places::none(),
+        )
+        .await
+        .expect("the broker takes the copy");
 
         let sent = copy.live.sent.lock().expect("one test thread").clone();
         let [(name, payload, headers, options)] = sent.as_slice() else {

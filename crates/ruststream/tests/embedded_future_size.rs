@@ -1,6 +1,7 @@
-//! The room a device service's batch route takes in the app's future. Built where the framework's
-//! `alloc` feature and the test harness are off, the build a device ships: the harness wraps every
-//! handler call in a future of its own, which a device does not carry.
+//! The room a device service's routes take in the app's future: a batch route's, and the places a
+//! route keeps for the messages of its refused publishes. Built where the framework's `alloc`
+//! feature and the test harness are off, the build a device ships: the harness wraps every handler
+//! call in a future of its own, which a device does not carry.
 
 // The app and its handlers are not `Send`: the future is measured, not run.
 #![allow(clippy::future_not_send)]
@@ -85,4 +86,117 @@ fn a_batch_route_with_a_store_and_an_error_takes_room_for_its_fan() {
         sixteen <= ERRORED_BUDGETS[1],
         "{sixteen} bytes for a batch of 16"
     );
+}
+
+/// Takes one job at a time.
+#[subscriber(LocalMemorySource::new("jobs"))]
+async fn on_job(job: &Job<'_>) -> HandlerOutcome {
+    let _ = job.0.len();
+    HandlerOutcome::ack()
+}
+
+// Each mount below names its dispatch with a step, and `refusal_capacity` keeps that dispatch, so
+// the places are all that differs between a mount's default and a count it names.
+
+fn waiting_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.include(on_job).retry_capacity::<2>())
+}
+
+fn waiting_app_with<const PLACES: usize>(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_job)
+            .retry_capacity::<2>()
+            .refusal_capacity::<PLACES>()
+    })
+}
+
+fn pool_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.include(on_job).pool::<4>())
+}
+
+fn pool_app_with<const PLACES: usize>(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_job).pool::<4>().refusal_capacity::<PLACES>()
+    })
+}
+
+fn keyed_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.include(on_job).keyed::<3>())
+}
+
+fn keyed_app_with<const PLACES: usize>(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_job).keyed::<3>().refusal_capacity::<PLACES>()
+    })
+}
+
+fn waiting_batch_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_batched.batch::<3>()).retry_capacity::<3>()
+    })
+}
+
+fn waiting_batch_app_with<const PLACES: usize>(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_batched.batch::<3>())
+            .retry_capacity::<3>()
+            .refusal_capacity::<PLACES>()
+    })
+}
+
+fn plain_batch_of_1(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.include(on_batched.batch::<1>()))
+}
+
+fn plain_batch_of_3(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.include(on_batched.batch::<3>()))
+}
+
+fn named_batch_of_1(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_batched.batch::<1>()).refusal_capacity::<1>()
+    })
+}
+
+fn named_batch_of_3(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_batched.batch::<3>()).refusal_capacity::<1>()
+    })
+}
+
+// A route keeps one place, whatever it holds at once, unless its mount names a count: a refused
+// message is read out of its place as the publish returns, so a route never holds two. The room
+// of one place is what a second place adds to a pool.
+#[test]
+fn a_route_keeps_one_place_whatever_it_holds_at_once() {
+    let pool_of_one = size_of_returned(&|bus, control| pool_app_with::<1>(bus).run(control));
+    let pool_of_two = size_of_returned(&|bus, control| pool_app_with::<2>(bus).run(control));
+    assert!(pool_of_two > pool_of_one, "a place takes room in the app");
+
+    let waiting = size_of_returned(&|bus, control| waiting_app(bus).run(control));
+    let waiting_of_one = size_of_returned(&|bus, control| waiting_app_with::<1>(bus).run(control));
+    assert_eq!(
+        waiting, waiting_of_one,
+        "one delivery at a time keeps one place"
+    );
+
+    let pool = size_of_returned(&|bus, control| pool_app(bus).run(control));
+    assert_eq!(pool, pool_of_one, "a pool of four keeps one place");
+
+    let keyed = size_of_returned(&|bus, control| keyed_app(bus).run(control));
+    let keyed_of_one = size_of_returned(&|bus, control| keyed_app_with::<1>(bus).run(control));
+    assert_eq!(keyed, keyed_of_one, "three keyed workers keep one place");
+
+    let batch = size_of_returned(&|bus, control| waiting_batch_app(bus).run(control));
+    let batch_of_one =
+        size_of_returned(&|bus, control| waiting_batch_app_with::<1>(bus).run(control));
+    assert_eq!(batch, batch_of_one, "a batch of three keeps one place");
+
+    // A batch mount with no step runs on a dispatch of its own, so its places show in how its
+    // room grows with the batch: as fast as on a mount that names one place.
+    let plain = size_of_returned(&|bus, control| plain_batch_of_3(bus).run(control))
+        - size_of_returned(&|bus, control| plain_batch_of_1(bus).run(control));
+    let named = size_of_returned(&|bus, control| named_batch_of_3(bus).run(control))
+        - size_of_returned(&|bus, control| named_batch_of_1(bus).run(control));
+    assert_eq!(plain, named, "a batch with no step keeps one place");
 }

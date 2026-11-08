@@ -323,8 +323,10 @@ pub use publish::{
     PublishPipeline, PublishSink, PublishStack, PublishTransform, PublishTransformIdentity,
     PublishTransformStack, Reads, ResolvedName, SatisfiesContract, SerializedWire, SlotContext,
     SuppliedName, TemplateAddress, TransactionPublishError, TransactionScope, TypedHeaders,
-    TypedTransaction, UnnamedCodec, for_batch,
+    TypedTransaction, UnnamedCodec, WithPlaces, for_batch,
 };
+#[doc(hidden)]
+pub use publish::{KeepsPlaces, KeptPlaces, SharedPlaces};
 #[cfg(ruststream_alloc)]
 pub use publish::{PublishDynLayer, PublishDynNext, PublishDynStack};
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
@@ -354,6 +356,8 @@ pub use retry::{
     OpenDestination, Present, Retried, RetryChain, RetryMount, RetryOffer, RetryOpen, RetryPos,
     RetryStackUse, RouteDeclaring, RoutePosition, SettlesDestination, StepOpen, StepTaken,
 };
+#[doc(hidden)]
+pub use router::RefusalRoom;
 #[cfg(ruststream_alloc)]
 pub use router::RouterHandlers;
 #[doc(hidden)]

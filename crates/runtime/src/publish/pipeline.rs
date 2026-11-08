@@ -5,7 +5,7 @@ use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
 
 use super::Outgoing;
 use crate::lifecycle::BoxError;
-use crate::publish_failure::Refusal;
+use crate::publish_failure::Returned;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::PipelinePublish;
 use crate::{PayloadForm, Publisher};
@@ -82,8 +82,8 @@ impl PublishPipeline for PublishIdentity {
         let result = send
             .publish(msg, options)
             .await
-            .map_err(Refusal::returned::<P::Payload>)
-            .map_err(|refusal| refusal.restore::<P::Payload>(out));
+            .map_err(Returned::of::<P::Payload>)
+            .map_err(|returned| returned.restore::<P::Payload>(out));
         #[cfg(feature = "testing")]
         if result.is_ok() {
             recorded.sent().await;

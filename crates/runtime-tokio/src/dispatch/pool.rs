@@ -14,6 +14,7 @@ use std::task::Poll;
 
 use bytes::BytesMut;
 use futures::Stream;
+use ruststream_core::Places;
 use ruststream_core::diag::error;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -104,6 +105,8 @@ async fn work<Message, Body, Cx, State, Retry>(
             &shared.handler,
             &mut slot,
             &mut encode,
+            // A refusal boxes its message where there is a heap: the loop keeps no places.
+            Places::none(),
             &shared.name,
             &shared.state,
             &shared.hosted.delivery,
