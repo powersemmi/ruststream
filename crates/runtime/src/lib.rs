@@ -326,7 +326,7 @@ pub use publish::{
     TypedTransaction, UnnamedCodec, WithPlaces, for_batch,
 };
 #[doc(hidden)]
-pub use publish::{KeepsPlaces, KeptPlaces};
+pub use publish::{KeepsPlaces, KeptPlaces, SharedPlaces};
 #[cfg(ruststream_alloc)]
 pub use publish::{PublishDynLayer, PublishDynNext, PublishDynStack};
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness

@@ -126,7 +126,7 @@ pub use ruststream_runtime::{
     RouterPublishingOut, RouterWith, forms,
 };
 #[doc(hidden)]
-pub use ruststream_runtime::{KeepsPlaces, KeptPlaces};
+pub use ruststream_runtime::{KeepsPlaces, KeptPlaces, SharedPlaces};
 #[doc(hidden)]
 pub use ruststream_runtime::{
     NamedByFrame, VariantLane, every_variant_failed, frame_names_no_variant, header_missing,

@@ -227,3 +227,36 @@ fn a_refused_publish_keeps_its_message_in_a_place_the_publisher_was_given()
         Ok(())
     })
 }
+
+/// One bus for the scenario of a publish's own place.
+static MEASURED_BUS: LocalMemoryBus<1> = LocalMemoryBus::new();
+
+// A publisher used on its own keeps a place in each publish; one given places with
+// `refusal_capacity` keeps none there, whatever runs at once.
+#[test]
+fn a_publish_of_a_publisher_given_places_keeps_no_place_of_its_own() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let connected = Tight::new(&MEASURED_BUS).connect().await?;
+        let bare = LocalMemoryPublish.pair(&connected).await?;
+        let one = LocalMemoryPublish
+            .pair(&connected)
+            .await?
+            .refusal_capacity::<1>();
+        let two = LocalMemoryPublish
+            .pair(&connected)
+            .await?
+            .refusal_capacity::<2>();
+        let place = size_of_val(&two) - size_of_val(&one);
+
+        let reading = Reading([1]);
+        let own = size_of_val(&bare.message(&reading).publish());
+        let shared = size_of_val(&one.message(&reading).publish());
+        assert_eq!(
+            own - shared,
+            place,
+            "a publish of the bare publisher keeps one place"
+        );
+        connected.shutdown().await?;
+        Ok(())
+    })
+}

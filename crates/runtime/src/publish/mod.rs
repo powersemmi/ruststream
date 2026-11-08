@@ -72,7 +72,7 @@ pub use out::{
 };
 pub(crate) use pipeline::SendThrough;
 pub use pipeline::{PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishStack};
-pub use placed::WithPlaces;
+pub use placed::{SharedPlaces, WithPlaces};
 pub use publisher::{Transactional, TypedPublisher};
 pub use reply::{BatchRefusal, ReplyPublisher};
 pub use sink::{

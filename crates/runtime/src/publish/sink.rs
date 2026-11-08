@@ -165,8 +165,7 @@ impl<T: Transaction> PublishSink for &mut T {
 }
 
 /// A publisher that keeps places of its own for the messages its refusals hand back: an `Out`
-/// slot of a subscription, a publisher given a capacity with `refusal_capacity`. Machinery; never
-/// named in user code.
+/// slot of a subscription. Machinery; never named in user code.
 #[doc(hidden)]
 pub trait KeepsPlaces: Publisher {
     /// The publisher's places.
