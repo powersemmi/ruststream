@@ -232,8 +232,8 @@ re-exported in this module. A delayed retry waits in a store the mount sizes wit
 `retry_capacity`; a retry that finds the store full is a failed publish like any other, with its
 own error, and the handler's `.error` continuation is told (see
 [`HandlerOutcome::error`](crate::runtime::HandlerOutcome::error)). Without `alloc` a refused
-publish keeps its message in a place the mount sizes with `refusal_capacity`, one for each delivery
-the subscription holds at once unless named.
+publish keeps its message in a place of the subscription: one, whatever the subscription holds at
+once, unless the mount names more with `refusal_capacity`.
 The embedded app is one task that joins every subscription, so it polls each idle subscription on
 every wake. A subscriber whose broker keeps its deliveries in a channel or a socket returns a
 [`ReadyHint`](crate::ReadyHint) from `Subscriber::ready_hint`, and the app polls its subscription

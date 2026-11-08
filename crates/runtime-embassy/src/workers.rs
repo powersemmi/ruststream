@@ -894,9 +894,9 @@ pub trait MountSteps: Sized {
     /// the broker refuses hands its message back: the message moves into a free place, and the
     /// runtime reads it out of the place as the publish returns, for the handler's
     /// [`.error`](ruststream_runtime::HandlerOutcome::error) continuation. A publish that goes out
-    /// takes no place. By default the registration keeps one place for each
-    /// delivery it holds at once: one for a handler that takes one delivery at a time, the batch
-    /// size for a batch handler, and the worker count for `.pool::<N>()` or `.keyed::<N>()`.
+    /// takes no place. A registration therefore never holds two places at once, and by default it
+    /// keeps one, whatever it holds at once: a single delivery, a batch, or the deliveries of
+    /// `.pool::<N>()` and `.keyed::<N>()` workers.
     ///
     /// When every place is taken, a refused publish comes back without its message: its error
     /// still reaches `.error` and the diagnostics, and the message's bytes and headers do not. A

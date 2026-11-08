@@ -47,7 +47,7 @@ Each part whose size the heap would decide has a fixed form.
 | Codec | `SliceCodec`, which encodes into a slice and decodes from one: `PostcardCodec` (`postcard`) and `JsonCoreCodec` (`json-core`) |
 | Continuation | held in a room of 128 bytes, aligned to 8 bytes |
 | Failures read by `.error` | borrowed from the subscription's fixed buffer: `async move \|failures: &Failures\| ..` |
-| Message of a refused publish | a place of fixed size, about 700 bytes, held by the refusal until the message is read: the subscription keeps one for each delivery it holds at once, an `Out` slot one, and a publisher used on its own one in each publish |
+| Message of a refused publish | a place of fixed size, about 700 bytes, held by the refusal until the message is read out as the publish returns: a subscription keeps one, an `Out` slot one, and a publisher used on its own one in each publish |
 | `ctx.after(..)`, `ctx.after_ack(..)`, `ctx.after_settle(..)` | a delivery holds four registrations; one more returns an error, and nothing registered is dropped |
 | Batch | up to 16 messages, named at the mount with `.batch::<N>()`, of messages that deserialize themselves or that the mount's codec decodes; the outcomes are `Outcomes<HandlerOutcome, N>` |
 | Local bus | a `LocalMemoryBus` of fixed size that the board declares as a `static` |
@@ -64,7 +64,7 @@ A capacity is a const generic or a crate constant, and each is declared at one p
 | Messages, payload bytes and subscriptions of the bus | `LocalMemoryBus<MESSAGES, PAYLOAD, SUBSCRIPTIONS>` | `PAYLOAD` is 64 and `SUBSCRIPTIONS` is 8 unless named |
 | Delayed retries waiting at once | `.retry_capacity::<CAP>()` | a count above zero; on a batch mount at least `N`, and at most 1024 |
 | Bytes a reply is encoded into | `.encode_capacity::<N>()` | 256 unless named |
-| Places for the messages of refused publishes | `.refusal_capacity::<N>()` on the mount, or on a publisher used on its own | one for each delivery the subscription holds at once (1, the batch size or the worker count), one in each publish of a publisher, unless named |
+| Places for the messages of refused publishes | `.refusal_capacity::<N>()` on the mount, or on a publisher used on its own | one for a subscription, whatever it holds at once, and one in each publish of a publisher, unless named |
 | Workers of a subscription | `.pool::<N>()` or `.keyed::<N>()` | a count above zero |
 | Messages of a batch | `.batch::<N>()` | 1 to 16 |
 | Continuation | crate constant | 128 bytes |
