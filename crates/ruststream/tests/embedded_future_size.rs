@@ -144,14 +144,34 @@ fn waiting_batch_app_with<const PLACES: usize>(bus: Bus) -> EmbeddedApp<impl Mou
     })
 }
 
-// A route keeps a place for each delivery it holds at once unless its mount names a count: the
-// room of one place is what a second place adds to a pool.
+fn plain_batch_of_1(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.include(on_batched.batch::<1>()))
+}
+
+fn plain_batch_of_3(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| b.include(on_batched.batch::<3>()))
+}
+
+fn named_batch_of_1(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_batched.batch::<1>()).refusal_capacity::<1>()
+    })
+}
+
+fn named_batch_of_3(bus: Bus) -> EmbeddedApp<impl Mounts> {
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_batched.batch::<3>()).refusal_capacity::<1>()
+    })
+}
+
+// A route keeps one place, whatever it holds at once, unless its mount names a count: a refused
+// message is read out of its place as the publish returns, so a route never holds two. The room
+// of one place is what a second place adds to a pool.
 #[test]
-fn a_route_keeps_a_place_for_each_delivery_it_holds_at_once() {
+fn a_route_keeps_one_place_whatever_it_holds_at_once() {
     let pool_of_one = size_of_returned(&|bus, control| pool_app_with::<1>(bus).run(control));
     let pool_of_two = size_of_returned(&|bus, control| pool_app_with::<2>(bus).run(control));
-    let place = pool_of_two - pool_of_one;
-    assert!(place > 0, "a place takes room in the app");
+    assert!(pool_of_two > pool_of_one, "a place takes room in the app");
 
     let waiting = size_of_returned(&|bus, control| waiting_app(bus).run(control));
     let waiting_of_one = size_of_returned(&|bus, control| waiting_app_with::<1>(bus).run(control));
@@ -161,26 +181,22 @@ fn a_route_keeps_a_place_for_each_delivery_it_holds_at_once() {
     );
 
     let pool = size_of_returned(&|bus, control| pool_app(bus).run(control));
-    assert_eq!(
-        pool - pool_of_one,
-        3 * place,
-        "a pool of four keeps four places"
-    );
+    assert_eq!(pool, pool_of_one, "a pool of four keeps one place");
 
     let keyed = size_of_returned(&|bus, control| keyed_app(bus).run(control));
     let keyed_of_one = size_of_returned(&|bus, control| keyed_app_with::<1>(bus).run(control));
-    assert_eq!(
-        keyed - keyed_of_one,
-        2 * place,
-        "three keyed workers keep three places"
-    );
+    assert_eq!(keyed, keyed_of_one, "three keyed workers keep one place");
 
     let batch = size_of_returned(&|bus, control| waiting_batch_app(bus).run(control));
     let batch_of_one =
         size_of_returned(&|bus, control| waiting_batch_app_with::<1>(bus).run(control));
-    assert_eq!(
-        batch - batch_of_one,
-        2 * place,
-        "a batch of three keeps three places"
-    );
+    assert_eq!(batch, batch_of_one, "a batch of three keeps one place");
+
+    // A batch mount with no step runs on a dispatch of its own, so its places show in how its
+    // room grows with the batch: as fast as on a mount that names one place.
+    let plain = size_of_returned(&|bus, control| plain_batch_of_3(bus).run(control))
+        - size_of_returned(&|bus, control| plain_batch_of_1(bus).run(control));
+    let named = size_of_returned(&|bus, control| named_batch_of_3(bus).run(control))
+        - size_of_returned(&|bus, control| named_batch_of_1(bus).run(control));
+    assert_eq!(plain, named, "a batch with no step keeps one place");
 }
