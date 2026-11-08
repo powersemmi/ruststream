@@ -11,6 +11,8 @@ on:
     paths:
       - docs/**
       - website/i18n/**
+      # the README and its translations under docs/readme/ are one family
+      - README.md
       - crates/ruststream/examples/**
       # the testing and conformance guides embed their snippets from these test files
       - crates/ruststream/tests/doc_*.rs

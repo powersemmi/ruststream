@@ -4,6 +4,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config, Plugin} from '@docusaurus/types';
 import {getVcsPreset} from '@docusaurus/utils';
 import type * as Preset from '@docusaurus/preset-classic';
+import {notPageDirs} from './frontMatter';
 import {resolveMarkdownLinks} from './markdownLinks';
 import {searchLanguages} from './search';
 import {verificationTags} from './siteVerification';
@@ -226,10 +227,8 @@ const config: Config = {
           editUrl: archive ? undefined : editUrl,
           // The build holds one version; its kind decides the banner on every page.
           versions: {current: version.docsVersion},
-          // The benchmark results feed the landing page and the benchmarks page; they are not pages.
-          exclude: [
-            'benchmarks/**',
-          ],
+          // The benchmark results and the README's translations are not pages.
+          exclude: notPageDirs.map((dir) => `${dir}/**`),
         },
         blog: false,
         // The landing page belongs to `latest` and `next`; an archive opens on its first page.

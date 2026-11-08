@@ -2,7 +2,8 @@
 """Require an edit to a documentation page to reach that page's other languages.
 
 The rule is symmetric: it takes its input from changed pages in any language, not from
-English alone.
+English alone. The project README and its translations under `docs/readme/` are one more
+family of pages, held to the same rule.
 
 Three properties bound what it enforces:
 
@@ -44,6 +45,10 @@ TRIGGERING = ("M", "D", "R")
 # banner that says so, so an edit to one has no counterpart to reach.
 ENGLISH_ONLY = ("components/",)
 
+# The README GitHub and crates.io render, and its translations, which GitHub renders beside it:
+# one family of its own, outside the site's tree.
+README_FAMILY = ("README.md", *(f"docs/readme/README.{loc}.md" for loc in LOCALES))
+
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -56,7 +61,7 @@ def git(*args: str) -> str:
 def relative_page(path: str) -> str | None:
     """A page's path relative to its language's tree, or None for a file that is not a
     translated page."""
-    if not path.endswith(".md"):
+    if not path.endswith(".md") or path in README_FAMILY:
         return None
     for prefix in (DOCS_PREFIX, *TRANSLATION_PREFIX.values()):
         if path.startswith(prefix):
@@ -65,11 +70,15 @@ def relative_page(path: str) -> str | None:
     return None
 
 
-def family(path: str) -> tuple[str, dict[str, str]]:
+def family(path: str) -> tuple[str, ...]:
     """The English original of a page and every locale counterpart it could have."""
+    if path in README_FAMILY:
+        return README_FAMILY
     relative = relative_page(path)
-    english = f"{DOCS_PREFIX}{relative}"
-    return english, {loc: f"{prefix}{relative}" for loc, prefix in TRANSLATION_PREFIX.items()}
+    return (
+        f"{DOCS_PREFIX}{relative}",
+        *(f"{prefix}{relative}" for prefix in TRANSLATION_PREFIX.values()),
+    )
 
 
 def changed_pages(base: str) -> dict[str, str]:
@@ -85,7 +94,7 @@ def changed_pages(base: str) -> dict[str, str]:
             continue
         # A rename reports the old path and the new one; both sides are part of the diff.
         for path in fields[1:]:
-            if relative_page(path) is not None:
+            if path in README_FAMILY or relative_page(path) is not None:
                 pages[path] = status
     return pages
 
@@ -108,8 +117,7 @@ def main() -> int:
     for path, status in sorted(pages.items()):
         if status not in TRIGGERING:
             continue
-        english, translations = family(path)
-        for member in (english, *translations.values()):
+        for member in family(path):
             if member == path or member in pages:
                 continue
             if not (REPO / member).exists():

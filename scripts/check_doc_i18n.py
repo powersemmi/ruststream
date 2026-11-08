@@ -13,12 +13,19 @@ Three properties are checked, none of which needs a reviewer who reads the targe
 Pages with no translation yet are skipped, not failed: translations land page by page, and
 demanding all of them at once would block every edit until the site is fully translated.
 
+The project README and its translations under `docs/readme/` are held to the same properties and
+to one more: their code blocks are byte-identical, in the same order, because GitHub shows each
+file as it is written. A README translation is never skipped, since the language line under the
+title of every README links to it.
+
 Run with no arguments; it exits non-zero on the first tree that violates any of the above.
 """
 
+import difflib
 import re
 import sys
 import tomllib
+from itertools import zip_longest
 from pathlib import Path
 
 # Locales with a translation tree. Keep in sync with `i18n.locales` in
@@ -33,6 +40,10 @@ TRANSLATIONS = {
     for locale in LOCALES
 }
 GLOSSARY = REPO / "scripts" / "doc_glossary.toml"
+# The README GitHub and crates.io render, and its translations: `README.<locale>.md` in a
+# directory of `docs/` that the site leaves out.
+README = REPO / "README.md"
+README_TRANSLATIONS = DOCS / "readme"
 
 FENCE = re.compile(r"^(?P<indent>\s*)(?P<ticks>```+|~~~+).*?^(?P=indent)(?P=ticks)\s*$", re.M | re.S)
 HEADING = re.compile(r"^(#{1,6})\s+\S", re.M)
@@ -43,8 +54,10 @@ LINK_TARGET = re.compile(r"\]\([^)]*\)")
 
 
 def english_pages() -> list[Path]:
-    """Every original page: a markdown file under `docs/`."""
-    return sorted(DOCS.rglob("*.md"))
+    """Every original page: a markdown file under `docs/`, outside the README translations."""
+    return sorted(
+        page for page in DOCS.rglob("*.md") if not page.is_relative_to(README_TRANSLATIONS)
+    )
 
 
 def translation_of(page: Path, locale: str) -> Path:
@@ -57,6 +70,11 @@ def includes(text: str) -> list[str]:
 
 def headings(text: str) -> list[int]:
     return [len(m.group(1)) for m in HEADING.finditer(FENCE.sub("", text))]
+
+
+def code_blocks(text: str) -> list[str]:
+    """Every fenced block of a page, its fences and info string included, in page order."""
+    return [m.group(0).strip("\n") for m in FENCE.finditer(text)]
 
 
 def prose(text: str) -> str:
@@ -111,6 +129,33 @@ def check_pair(page: Path, translated: Path, locale: str, terms: list[dict]) -> 
     return errors
 
 
+def check_readme(locale: str, terms: list[dict]) -> list[str]:
+    """The README translation of `locale` against the README: the page checks, then its code."""
+    translated = README_TRANSLATIONS / f"README.{locale}.md"
+    rel = translated.relative_to(REPO)
+    if not translated.exists():
+        return [f"{rel}: missing, while the language line of README.md links to it"]
+    errors = check_pair(README, translated, locale, terms)
+    original = code_blocks(README.read_text(encoding="utf-8"))
+    translation = code_blocks(translated.read_text(encoding="utf-8"))
+    for number, (block, translated_block) in enumerate(zip_longest(original, translation), 1):
+        if block != translated_block:
+            diff = difflib.unified_diff(
+                (block or "").splitlines(),
+                (translated_block or "").splitlines(),
+                "README.md",
+                str(rel),
+                lineterm="",
+                n=0,
+            )
+            errors.append(
+                f"{rel}: code block {number} differs from README.md; code is the same in every"
+                " language\n" + "\n".join(f"    {line}" for line in diff)
+            )
+            break
+    return errors
+
+
 def main() -> int:
     terms = load_glossary()
     errors: list[str] = []
@@ -135,9 +180,15 @@ def main() -> int:
             pairs += 1
             errors.extend(check_pair(page, translated, locale, terms))
 
+    for locale in LOCALES:
+        errors.extend(check_readme(locale, terms))
+
     for error in errors:
         print(error, file=sys.stderr)
-    print(f"checked {pairs} translated page(s), {missing} page(s) not translated yet")
+    print(
+        f"checked {pairs} translated page(s), {missing} page(s) not translated yet,"
+        f" and {len(LOCALES)} README translation(s)"
+    )
     if errors:
         print(f"{len(errors)} i18n parity problem(s)", file=sys.stderr)
         return 1
