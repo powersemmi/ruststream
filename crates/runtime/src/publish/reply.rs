@@ -284,6 +284,16 @@ where
                 .publish_batched(name, reply, pipeline, cx, slot, places)
                 .await
             {
+                // Without `alloc` the refused reply lies in the subscription's place, which a copy
+                // the subscription publishes while the transaction aborts may need: the message
+                // leaves the place for the wait.
+                #[cfg(not(ruststream_alloc))]
+                let refusal = {
+                    let detached = refusal.detach();
+                    abort_quietly(publisher).await;
+                    detached.attach(places)
+                };
+                #[cfg(ruststream_alloc)]
                 abort_quietly(publisher).await;
                 // The transaction is aborted, so every reply of the batch is lost.
                 return Err(BatchRefusal::at(index, 0, refusal));
@@ -303,5 +313,124 @@ where
 async fn abort_quietly<P: TransactionalPublisher>(publisher: &P) {
     if let Err(err) = publisher.abort().await {
         warn!(target: "ruststream::dispatch", error = %err, "transaction abort failed");
+    }
+}
+
+#[cfg(all(test, not(ruststream_alloc), feature = "postcard"))]
+mod tests {
+    use core::cell::Cell;
+    use core::error::Error as StdError;
+    use core::fmt;
+    use core::future::ready;
+    use core::pin::pin;
+    use core::task::{Context, Poll, Waker};
+
+    use ruststream_core::{
+        Headers, KeptPayload, Lend, MaybeSend, OutgoingFor, PayloadBuf, PlaceRoom,
+        PublishMessageError, PublishOutcome,
+    };
+
+    use super::ReplyPublisher;
+    use crate::codec::PostcardCodec;
+    use crate::publish::{
+        BatchTransformIdentity, PublishContext, PublishIdentity, PublishTransformIdentity,
+        Transactional, TypedPublisher,
+    };
+    use crate::{HeaderSet, PayloadForm, Publisher, TransactionalPublisher};
+
+    /// What the refusing broker reports.
+    #[derive(Debug)]
+    struct Refused;
+
+    impl fmt::Display for Refused {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("refused")
+        }
+    }
+
+    impl StdError for Refused {}
+
+    /// A transactional broker that refuses every message and hands it back, and that looks at
+    /// the subscription's place while its transaction aborts, as a copy published then would.
+    #[derive(Clone)]
+    struct Refusing<'r> {
+        room: &'r PlaceRoom<1>,
+        free_at_abort: &'r Cell<Option<bool>>,
+    }
+
+    impl Publisher for Refusing<'_> {
+        type Payload = Lend;
+        type Error = Refused;
+        type Options = ();
+
+        fn publish<'msg>(
+            &self,
+            msg: OutgoingFor<'msg, Lend>,
+            _options: Option<&()>,
+        ) -> impl Future<Output = PublishOutcome<'msg, Refused, Lend>> + MaybeSend {
+            ready(Err(PublishMessageError::with_message(Refused, msg)))
+        }
+    }
+
+    impl TransactionalPublisher for Refusing<'_> {
+        fn begin_transaction(&self) -> impl Future<Output = Result<(), Refused>> + MaybeSend {
+            ready(Ok(()))
+        }
+
+        fn commit(&self) -> impl Future<Output = Result<(), Refused>> + MaybeSend {
+            ready(Ok(()))
+        }
+
+        fn abort(&self) -> impl Future<Output = Result<(), Refused>> + MaybeSend {
+            let empty = KeptPayload::Lent { addr: 0, len: 0 };
+            let taken = self.room.places().hold(None, empty, &Headers::new());
+            self.free_at_abort.set(Some(taken.is_some()));
+            ready(Ok(()))
+        }
+    }
+
+    // The subscription keeps one place, which its copies share with its replies: a refused reply
+    // of a transaction leaves it while the transaction aborts, and takes it again after.
+    #[test]
+    fn a_refused_reply_leaves_its_place_while_the_transaction_aborts() {
+        let room = PlaceRoom::<1>::new();
+        let free_at_abort = Cell::new(None);
+        let broker = Refusing {
+            room: &room,
+            free_at_abort: &free_at_abort,
+        };
+        let wiring = Transactional::live(TypedPublisher::live(
+            broker,
+            PostcardCodec,
+            PublishTransformIdentity,
+            BatchTransformIdentity,
+        ));
+        let headers = HeaderSet::new();
+        let cx = PublishContext::new("in", &headers, &());
+        let mut buf = PayloadBuf::new();
+        let publish = pin!(wiring.publish_batch(
+            "out",
+            &[1_u8, 2],
+            &PublishIdentity,
+            &cx,
+            <Lend as PayloadForm>::encode_slot(&mut buf),
+            room.places(),
+        ));
+        let Poll::Ready(sent) = publish.poll(&mut Context::from_waker(Waker::noop())) else {
+            panic!("nothing in this batch waits");
+        };
+
+        assert!(sent.is_err(), "the broker refuses the reply");
+        assert_eq!(
+            free_at_abort.get(),
+            Some(true),
+            "a copy published while the transaction aborts finds the place free"
+        );
+        let empty = KeptPayload::Lent { addr: 0, len: 0 };
+        let taken = room.places().hold(None, empty, &Headers::new());
+        assert!(
+            taken.is_none(),
+            "the refusal holds its message in the place again"
+        );
     }
 }

@@ -208,6 +208,42 @@ pub struct Refusal<'p> {
     unsent: Option<Lease<'p>>,
 }
 
+/// A refusal whose message left its place, so that no place is held while its caller waits;
+/// [`attach`](Self::attach) moves the message into a place again. Machinery.
+#[cfg(not(ruststream_alloc))]
+#[derive(Debug)]
+pub(crate) struct Detached {
+    error: BoxError,
+    unsent: Option<Unsent>,
+}
+
+#[cfg(not(ruststream_alloc))]
+impl Detached {
+    /// The refusal again, its message moved into a free one of `places`.
+    pub(crate) fn attach(self, places: Places<'_>) -> Refusal<'_> {
+        let unsent = self
+            .unsent
+            .and_then(|unsent| places.hold(unsent.sent, unsent.payload, &unsent.headers));
+        Refusal {
+            error: self.error,
+            unsent,
+        }
+    }
+}
+
+#[cfg(not(ruststream_alloc))]
+impl Refusal<'_> {
+    /// The refusal with its message moved out of its place: the place is free for the
+    /// subscription's other publishes while the caller awaits something before it hands the
+    /// refusal on.
+    pub(crate) fn detach(self) -> Detached {
+        Detached {
+            error: self.error,
+            unsent: self.unsent.map(Lease::into_unsent),
+        }
+    }
+}
+
 impl<'p> Refusal<'p> {
     /// A refusal that carries no message.
     #[must_use]
