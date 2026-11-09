@@ -32,6 +32,7 @@ serde = { version = "1", default-features = false, features = ["derive"] }
 板子把总线声明为 `static`，应用函数收到的是基于它构建的 Broker。
 每个订阅容纳四条消息，处理器手中的那条也计入。
 总线所依赖的临界区由二进制 crate 提供 `critical-section` 实现。
+在没有比较并交换指令的内核上（例如 Cortex-M0+），固件还要为 `portable-atomic` 开启 `critical-section` 特性。
 
 ```rust reference="crates/ruststream/tests/doc_device.rs#bus"
 ```

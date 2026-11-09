@@ -55,7 +55,7 @@ The tokio runner offers `workers(n)`, `threads(n)`, the signals, metrics, OpenTe
 The compio runner offers `workers(n)`, `threads(n)` and `by_key` placed across the cores, `Core` to tell a handler where it runs, the signals, graceful shutdown, health and `asyncapi gen` through `run_main`.
 Core 0 receives every subscription, and a `threads(n)` mount holds `n` cores of its own from core 1 up.
 The component page [Compio runtime](../components/application/compio-runtime.md) shows a service and the placement.
-The embassy runner offers constant-count workers (`.pool::<N>()` and `.keyed::<N>()`), a retry store with a capacity declared at the mount site (`.retry_capacity::<CAP>()`), continuations after the settlement, and shutdown and health through `Control` and `Health`.
+The embassy runner offers constant-count workers (`.pool::<N>()` and `.keyed::<N>()`), a retry store with a capacity declared at the mount site (`.retry_capacity::<CAP>()`), places for the messages of refused publishes (`.refusal_capacity::<N>()`), continuations after the settlement, and shutdown and health through `Control` and `Health`.
 An item one runner does not offer is a compile error on the other.
 
 When a delayed retry finds the embassy store full, the copy has nowhere to wait.
@@ -74,7 +74,7 @@ What differs is the form of the parts whose size the heap would decide:
 
 | Part | With `alloc` | Without `alloc` |
 |---|---|---|
-| Headers of a message | `HeaderMap` | `FixedHeaders`: 8 entries and 256 bytes, and `insert` returns an error when it is full |
+| Headers of a message | `HeaderMap`, which an `OutgoingMessage` owns | `FixedHeaders`: 8 entries and 256 bytes, and `insert` returns an error when it is full; an `OutgoingMessage` borrows it where it was built |
 | Codec | `Codec`: `json`, `cbor`, `msgpack` | `SliceCodec`: `postcard` and `json-core`, which encode into a slice |
 | Continuation (`and_after`, `.then`, `.error`) | boxed | held in a room of 128 bytes; a larger capture does not compile |
 | Failures that `.error` reads | passed by value | borrowed from the subscription's fixed buffer |

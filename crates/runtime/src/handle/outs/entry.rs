@@ -12,13 +12,13 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::ops::Deref;
 use core::time::Duration;
-use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync};
+use ruststream_core::{MaybeSend, MaybeSendSync, MaybeSync, PlaceRoom, Places};
 
 use crate::codec::ActiveCodec as Codec;
 use crate::inject::FromStartup;
 use crate::publish::{
-    Admits, HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishIdentity, SinkOutcome,
-    TransactionScope, TypedTransaction, message_of,
+    Admits, HeadersUnset, KeepsPlaces, KeptPlaces, MessageBody, OutPipeline, PublishBuilder,
+    PublishIdentity, SinkOutcome, TransactionScope, TypedTransaction, message_of,
 };
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 #[cfg(feature = "testing")]
@@ -65,6 +65,10 @@ pub struct Slot<M, W, E, Pipe = PublishIdentity, Body = ()> {
     wired: SlotPublisher<W, M>,
     codec: E,
     pipeline: Pipe,
+    // Where a refused publish of the slot keeps the message it hands back, without `alloc`. One
+    // place serves the subscription's workers: a refusal holds it only while it travels up the
+    // publish that made it, and the publish reads it out before it returns.
+    places: PlaceRoom<1>,
     _declared: PhantomData<fn() -> Body>,
     /// The broker the slot's publisher was paired against, which its publishes go to, whatever
     /// broker the handler holding it consumes from.
@@ -84,6 +88,8 @@ impl<M, W: Clone, E: Clone, Pipe: Clone, Body> Clone for Slot<M, W, E, Pipe, Bod
             wired: SlotPublisher::new(self.wired.inner().clone()),
             codec: self.codec.clone(),
             pipeline: self.pipeline.clone(),
+            // A clone is another handle on the publisher, with a place of its own.
+            places: PlaceRoom::new(),
             _declared: PhantomData,
             #[cfg(feature = "testing")]
             origin: self.origin,
@@ -216,12 +222,14 @@ impl<M: OutSlot, W: Publisher, E: SlotEncoding + MaybeSendSync, Pipe: OutPipelin
     pub fn message<'a, T, Index>(
         &'a self,
         value: &'a T,
-    ) -> PublishBuilder<&'a Self, MessageBody<'a, T>, &'a E, HeadersUnset, T::Form>
+    ) -> PublishBuilder<KeptPlaces<'a, Self>, MessageBody<'a, T>, &'a E, HeadersUnset, T::Form>
     where
         Body: ContainsMessage<T, Index>,
         T: OutgoingDestination + PublishedThrough<M>,
     {
-        message_of(self, value, &self.codec)
+        // A refused publish of the slot keeps its message in the slot's place, so the publish
+        // holds none of its own.
+        message_of(KeptPlaces(self), value, &self.codec)
     }
 }
 
@@ -380,33 +388,43 @@ impl<M: OutSlot, W: Publisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, B
     type Options = W::Options;
 
     // The borrowed outcome cannot outlive the call, and the message a transform rewrote into a
-    // buffer of the call is not the caller's to read back. The typed publish of the slot goes
-    // through [`SlotSink`], which reports the whole message.
+    // buffer of the call is not the caller's to read back, so no place is taken for it. The
+    // typed publish of the slot goes through [`KeptPlaces`], which reports the whole message.
     async fn publish<'msg>(
         &self,
         msg: OutgoingFor<'msg, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> PublishOutcome<'msg, Self::Error, Self::Payload> {
-        self.publish_kept(msg, options)
+        self.publish_kept(msg, options, Places::none())
             .await
             .map_err(|refusal| PublishMessageError::new(refusal.into_error()))
     }
 
     // The owned answer: what a typed publish through the slot reports, the message a transform
-    // rewrote included.
-    async fn publish_kept(
+    // rewrote included. Not an `async fn`: a frame of its own would sit between the publish and
+    // its path for nothing, and move the path's outcome on the way out.
+    fn publish_kept<'p>(
         &self,
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
-    ) -> SinkOutcome<Self::Error> {
-        let publish = self.pipeline.send(&self.wired, msg, options);
+        places: Places<'p>,
+    ) -> impl Future<Output = SinkOutcome<'p, Self::Error>> + MaybeSend {
+        let publish = self.pipeline.send(&self.wired, msg, options, places);
         #[cfg(feature = "testing")]
         let publish = self.anchor.scoped(publishing_to(self.origin, publish));
-        publish.await
+        publish
     }
 
     fn base_headers(&self) -> Option<&HeaderSet> {
         self.wired.base_headers()
+    }
+}
+
+impl<M: OutSlot, W: Publisher, E: Clone + MaybeSendSync, Pipe: OutPipeline<W>, Body> KeepsPlaces
+    for Slot<M, W, E, Pipe, Body>
+{
+    fn places(&self) -> Places<'_> {
+        self.places.places()
     }
 }
 
@@ -471,6 +489,7 @@ impl<M, W, E, Pipe, Body> Slot<M, W, E, Pipe, Body> {
             wired: SlotPublisher::new(wired),
             codec,
             pipeline,
+            places: PlaceRoom::new(),
             _declared: PhantomData,
             #[cfg(feature = "testing")]
             origin: Origin::default(),
@@ -517,6 +536,7 @@ where
             wired: SlotPublisher::new(live),
             codec,
             pipeline,
+            places: PlaceRoom::new(),
             _declared: PhantomData,
             #[cfg(feature = "testing")]
             origin,

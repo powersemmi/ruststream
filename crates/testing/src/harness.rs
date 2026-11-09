@@ -597,10 +597,10 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// # Errors
     ///
-    /// Returns [`RustStreamError::Dispatch`] when a fail-fast failure tore the service down or a
-    /// task of the app keeps itself runnable with no shutdown timeout to end the wait,
-    /// [`RustStreamError::Shutdown`] when a broker fails to shut down, and
-    /// [`RustStreamError::Join`] when a dispatch task panicked.
+    /// Returns [`RustStreamError::Dispatch`] when a fail-fast failure tore the service down (a
+    /// panic outside a handler included) or a task of the app keeps itself runnable with no
+    /// shutdown timeout to end the wait, and [`RustStreamError::Shutdown`] when a broker fails to
+    /// shut down.
     pub async fn shutdown(self) -> Result<(), RustStreamError> {
         let mut teardown = Teardown {
             shutdown: self.shutdown,

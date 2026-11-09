@@ -55,7 +55,7 @@ tokio 运行器提供 `workers(n)`、`threads(n)`、信号处理、指标、Open
 compio 运行器提供按核心放置的 `workers(n)`、`threads(n)` 和 `by_key`，告诉处理器自己在哪个核心上运行的 `Core`，信号处理、优雅关闭、健康状态，以及经由 `run_main` 的 `asyncapi gen`。
 核心 0 接收所有订阅，`threads(n)` 挂载从核心 1 起独占 `n` 个核心。
 组件页面[Compio 运行时](../components/application/compio-runtime.md)展示了一个服务及其放置方式。
-embassy 运行器提供固定数量的 worker（`.pool::<N>()` 和 `.keyed::<N>()`）、容量在挂载处声明的重试存储（`.retry_capacity::<CAP>()`），以及通过 `Control` 和 `Health` 进行的关闭与健康状态。
+embassy 运行器提供固定数量的 worker（`.pool::<N>()` 和 `.keyed::<N>()`）、容量在挂载处声明的重试存储（`.retry_capacity::<CAP>()`）、存放被拒绝发布的消息的位置（`.refusal_capacity::<N>()`），以及通过 `Control` 和 `Health` 进行的关闭与健康状态。
 某个运行器没有提供的条目，在另一个运行器上使用就是编译错误。
 
 当延迟重试发现 embassy 的存储已满时，副本无处等待。
@@ -74,7 +74,7 @@ embassy 运行器有两种构建形态，一次构建只含其中一种。
 
 | 部分 | 有 `alloc` | 无 `alloc` |
 |---|---|---|
-| 消息的头部 | `HeaderMap` | `FixedHeaders`：8 个条目和 256 字节，装满后 `insert` 返回错误 |
+| 消息的头部 | `HeaderMap`，由 `OutgoingMessage` 持有 | `FixedHeaders`：8 个条目和 256 字节，装满后 `insert` 返回错误；`OutgoingMessage` 在构建它的地方借用它 |
 | 编解码器 | `Codec`：`json`、`cbor`、`msgpack` | `SliceCodec`：`postcard` 和 `json-core`，编码到切片中 |
 | 后续任务（`and_after`、`.then`、`.error`） | 放在堆上 | 放在 128 字节的空间里；更大的捕获无法编译 |
 | `.error` 读取的失败信息 | 按值传入 | 从订阅的固定缓冲区借用 |

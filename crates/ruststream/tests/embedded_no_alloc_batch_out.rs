@@ -1,6 +1,9 @@
 //! A batch handler on the build without `alloc` takes `Out` slots: it publishes through them once
 //! per publish, and the harness records each under its slot, all under an allocator that fails the
 //! framework's own allocations.
+//!
+//! The app builds with no `recursion_limit` attribute, so a batch `Out` form that nests the futures
+//! of an app deeper than the compiler's default limit fails this build.
 
 // The app and its handlers are not `Send`: the harness polls them inside the test's future.
 #![allow(clippy::future_not_send)]
@@ -75,6 +78,7 @@ async fn on_asks(asks: &[Ask], Out(audit): Out<impl Publisher, Audit>) -> Handle
     HandlerOutcome::ack()
 }
 
+#[ruststream::app(runtime = embassy)]
 fn audit_app(bus: Bus) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(bus, |b| {
         b.with_codec(PostcardCodec)

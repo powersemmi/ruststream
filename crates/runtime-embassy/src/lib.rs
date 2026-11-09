@@ -14,7 +14,7 @@
 //!   builds the app returns (`EmbeddedApp<impl Mounts>`); [`RunError`] says why a run ended
 //!   other than on request.
 //! - [`MountSteps`]: the runner's mount steps with counts fixed in the registration's type:
-//!   `.pool::<N>()`, `.keyed::<N>()` and `.retry_capacity::<CAP>()`.
+//!   `.pool::<N>()`, `.keyed::<N>()`, `.retry_capacity::<CAP>()` and `.refusal_capacity::<N>()`.
 //!   [`Scope`] is the local
 //!   router a broker's scope starts from; [`MountChain`] finishes what the scope returns.
 //! - [`Control`] and [`Health`]: the stop device code asks for and the health it reads, both in

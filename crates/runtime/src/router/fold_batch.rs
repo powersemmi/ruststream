@@ -14,7 +14,7 @@ use core::num::NonZeroUsize;
 use core::pin::pin;
 use core::task::Poll;
 use ruststream_core::diag::error;
-use ruststream_core::{BatchSlot, BatchStream, MaybeSendSync, PayloadBuf};
+use ruststream_core::{BatchSlot, BatchStream, MaybeSendSync, PayloadBuf, PlaceRoom, Places};
 
 use core::future::poll_fn;
 
@@ -99,13 +99,14 @@ pub struct OneTaskBatchRoute<Sub, Body, Cx> {
 
 impl<Sub, Body, Cx> OneTaskBatchRoute<Sub, Body, Cx> {
     /// Runs the route one batch at a time, on the host the plan lends it, replies encoded into
-    /// `room`.
+    /// `room`; a refused reply keeps its message in one of `places`.
     pub async fn run_batches<State, Signal, Lent, Room>(
         mut self,
         signal: Signal,
         state: StateRef<'_, State>,
         host: &Lent,
         mut room: Room,
+        places: Places<'_>,
     ) where
         Room: EncodeRoom,
         Sub: BatchSubscriber,
@@ -147,6 +148,7 @@ impl<Sub, Body, Cx> OneTaskBatchRoute<Sub, Body, Cx> {
                             &mut taken,
                             &mut scratch,
                             &mut *encode,
+                            places,
                             &self.name,
                             borrowed(state),
                             &self.delivery,
@@ -184,17 +186,16 @@ pub struct SequentialBatchPlan;
 impl OneTaskBatchDispatch for SequentialBatchPlan {
     type Copies = NoCopies;
 
-    // Not an `async fn`: a frame of its own would sit between the caller and the loop for
-    // nothing.
-    fn run<Sub, Body, Cx, State, Signal, Host, Path>(
+    // The frame owns the subscription's one place: a refused message is read out of it as the
+    // publish returns, so the elements of a batch take it in turn.
+    async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
         route: OneTaskBatchRoute<Sub, Body, Cx>,
         _path: Option<Path>,
         signal: Signal,
         state: StateRef<'_, State>,
         host: &Host,
-    ) -> impl Future<Output = ()>
-    where
+    ) where
         Sub: BatchSubscriber,
         Body: RunsBatches<Sub::Batch, Cx, State>,
         Cx: MaybeSendSync + 'static,
@@ -202,7 +203,10 @@ impl OneTaskBatchDispatch for SequentialBatchPlan {
         Host: Detach,
         Path: PrepareCopy<Cx> + MaybeSendSync,
     {
-        route.run_batches(signal, state, host, PayloadBuf::new())
+        let room = PlaceRoom::<1>::new();
+        route
+            .run_batches(signal, state, host, PayloadBuf::new(), room.places())
+            .await;
     }
 }
 

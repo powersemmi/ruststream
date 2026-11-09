@@ -10,8 +10,10 @@ use bytes::BytesMut;
 #[cfg(any(feature = "alloc", feature = "testing"))]
 use bytes_utils::Str;
 
+#[cfg(feature = "alloc")]
+use crate::SerializeHeadersError;
 use crate::codec::CodecError;
-use crate::{AckError, Headers, MaybeSend, MaybeSendSync, PayloadBuf, SerializeHeadersError};
+use crate::{AckError, Headers, MaybeSend, MaybeSendSync, PayloadBuf};
 
 /// An owned snapshot of a message as it travels through the framework.
 ///
@@ -121,6 +123,10 @@ impl RawMessage {
 /// for: free where it lends, one copy where it keeps them. A publish that produced the buffer
 /// itself - the codec's output - hands it over with [`produced`](Self::produced).
 ///
+/// Without `alloc` the message borrows its header map from where the publish built it, as it
+/// borrows the destination: it is a name, the bytes and a pointer wherever it is passed, and the
+/// map's fixed room never moves. A message without headers borrows one empty map shared by all.
+///
 /// [`Publisher::Payload`]: crate::Publisher::Payload
 ///
 /// # Examples
@@ -172,20 +178,57 @@ impl RawMessage {
 pub struct OutgoingMessage<'a, Payload = &'a [u8]> {
     name: &'a str,
     payload: Payload,
+    #[cfg(feature = "alloc")]
     headers: Headers,
+    // Every layer of a publish takes the message by value, and a refusal hands it back, so the
+    // fixed room stays where it was written and the message carries a pointer to it.
+    #[cfg(not(feature = "alloc"))]
+    headers: &'a Headers,
+}
+
+/// The map every message without headers borrows where there is no heap.
+#[cfg(not(feature = "alloc"))]
+static NO_HEADERS: Headers = Headers::new();
+
+/// The headers of a message that carries none: an empty map, made for nothing.
+#[cfg(feature = "alloc")]
+#[inline]
+fn no_headers() -> Headers {
+    Headers::new()
+}
+
+/// The headers of a message that carries none: the one empty map, borrowed.
+#[cfg(not(feature = "alloc"))]
+#[inline]
+fn no_headers() -> &'static Headers {
+    &NO_HEADERS
 }
 
 // Each form is its three fields and nothing on top: no tag, no padding. The promise is checked
 // here rather than left to be measured later.
+#[cfg(feature = "alloc")]
 const _: () = assert!(
     size_of::<OutgoingMessage<'static>>()
         == size_of::<&str>() + size_of::<&[u8]>() + size_of::<Headers>(),
     "a lent outgoing message is its name, its bytes and its headers",
 );
+#[cfg(feature = "alloc")]
 const _: () = assert!(
     size_of::<OutgoingMessage<'static, PayloadBuf>>()
         == size_of::<&str>() + size_of::<PayloadBuf>() + size_of::<Headers>(),
     "an owned outgoing message is its name, its buffer and its headers",
+);
+#[cfg(not(feature = "alloc"))]
+const _: () = assert!(
+    size_of::<OutgoingMessage<'static>>()
+        == size_of::<&str>() + size_of::<&[u8]>() + size_of::<&Headers>(),
+    "a lent outgoing message is its name, its bytes and a borrow of its headers",
+);
+#[cfg(not(feature = "alloc"))]
+const _: () = assert!(
+    size_of::<OutgoingMessage<'static, PayloadBuf>>()
+        == size_of::<&str>() + size_of::<PayloadBuf>() + size_of::<&Headers>(),
+    "an owned outgoing message is its name, its buffer and a borrow of its headers",
 );
 
 impl<'a, Payload> OutgoingMessage<'a, Payload> {
@@ -232,7 +275,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     #[inline]
     #[must_use]
     pub fn with_payload(name: &'a str, payload: Payload) -> Self {
-        Self::assembled(name, payload, Headers::new())
+        Self::assembled(name, payload, no_headers())
     }
 
     /// The whole message at once, for a stage that already holds all three parts.
@@ -242,7 +285,20 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// delivery for that to be worth avoiding.
     #[inline]
     #[doc(hidden)]
+    #[cfg(feature = "alloc")]
     pub fn assembled(name: &'a str, payload: Payload, headers: Headers) -> Self {
+        Self {
+            name,
+            payload,
+            headers,
+        }
+    }
+
+    /// The whole message at once, its map borrowed from where the stage built it.
+    #[inline]
+    #[doc(hidden)]
+    #[cfg(not(feature = "alloc"))]
+    pub fn assembled(name: &'a str, payload: Payload, headers: &'a Headers) -> Self {
         Self {
             name,
             payload,
@@ -252,7 +308,19 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
 
     /// Builder-style setter that replaces the header map.
     #[must_use]
+    #[cfg(feature = "alloc")]
     pub fn with_headers(mut self, headers: Headers) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    /// Builder-style setter that lends the message a header map.
+    ///
+    /// The map stays where the caller built it, and the message borrows it for as long as the
+    /// message lives, so a publish moves a pointer and never the map's room.
+    #[must_use]
+    #[cfg(not(feature = "alloc"))]
+    pub fn with_headers(mut self, headers: &'a Headers) -> Self {
         self.headers = headers;
         self
     }
@@ -317,6 +385,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// # }
     /// # fn main() {}
     /// ```
+    #[cfg(feature = "alloc")]
     pub fn with_typed_headers<T: serde::Serialize + ?Sized>(
         mut self,
         value: &T,
@@ -391,8 +460,18 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// What a transport that only walks the map reads. One that hands the map on to its client
     /// takes it with [`into_parts`](Self::into_parts) rather than cloning it.
     #[must_use]
+    #[cfg(feature = "alloc")]
     pub fn headers(&self) -> &Headers {
         &self.headers
+    }
+
+    /// Returns the headers, where the publish built them.
+    ///
+    /// What a transport reads and copies the entries it sends out of.
+    #[must_use]
+    #[cfg(not(feature = "alloc"))]
+    pub const fn headers(&self) -> &Headers {
+        self.headers
     }
 
     /// The destination, the payload and the header map, taken in one move.
@@ -450,8 +529,35 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// ```
     #[inline]
     #[must_use]
+    #[cfg(feature = "alloc")]
     pub fn into_parts(self) -> (&'a str, Payload, Headers) {
         (self.name, self.payload, self.headers)
+    }
+
+    /// The destination, the payload and the borrowed header map, taken in one move.
+    ///
+    /// What a transport that consumes the message calls. The map is the one the publish built,
+    /// where it built it: a transport that keeps headers copies the entries it needs out of it.
+    #[inline]
+    #[must_use]
+    #[cfg(not(feature = "alloc"))]
+    pub fn into_parts(self) -> (&'a str, Payload, &'a Headers) {
+        (self.name, self.payload, self.headers)
+    }
+
+    /// The destination, the payload and a header map of the caller's own: the message's map
+    /// itself where there is a heap, a copy of the entries and bytes it holds where there is not.
+    ///
+    /// What a stage that rewrites the message or keeps it past the publish takes.
+    #[inline]
+    #[must_use]
+    #[doc(hidden)]
+    pub fn into_owned_parts(self) -> (&'a str, Payload, Headers) {
+        #[cfg(feature = "alloc")]
+        let headers = self.headers;
+        #[cfg(not(feature = "alloc"))]
+        let headers = self.headers.clone();
+        (self.name, self.payload, headers)
     }
 }
 
@@ -852,6 +958,8 @@ pub trait Settle: IncomingMessage + MaybeSendSync {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(feature = "alloc"))]
+    use core::ptr;
     use std::string::String;
     use std::vec;
     use std::vec::Vec;
@@ -859,8 +967,11 @@ mod tests {
     // The parent module defines both flavors of the trait, so a method call on a concrete
     // delivery here names the one it means.
     use super::*;
+    #[cfg(not(feature = "alloc"))]
+    use crate::HeadersFull;
 
     #[test]
+    #[cfg(any(feature = "alloc", feature = "testing"))]
     fn raw_message_construction() {
         let msg = RawMessage::new("name.a", b"payload".as_slice());
         assert_eq!(msg.name(), "name.a");
@@ -869,6 +980,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(feature = "alloc", feature = "testing"))]
     fn raw_message_with_headers() {
         let mut headers = Headers::new();
         headers.insert("X-Tenant", "acme");
@@ -889,7 +1001,40 @@ mod tests {
         assert_eq!(msg.payload(), &[1, 2, 3]);
     }
 
+    // Every layer of a publish takes the message by value, and a refused publish hands it back in
+    // its outcome, so without a heap the fixed header room would travel with each of those moves.
     #[test]
+    #[cfg(not(feature = "alloc"))]
+    fn an_outgoing_message_without_alloc_is_its_name_its_bytes_and_a_borrow_of_its_headers() {
+        assert_eq!(
+            size_of::<OutgoingMessage<'_>>(),
+            size_of::<&str>() + size_of::<&[u8]>() + size_of::<&Headers>()
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "alloc"))]
+    fn an_outgoing_message_without_alloc_lends_the_map_its_caller_built() -> Result<(), HeadersFull>
+    {
+        let mut headers = Headers::new();
+        headers.insert("trace", "t1")?;
+        let msg = OutgoingMessage::with_payload("orders", b"x".as_slice()).with_headers(&headers);
+        assert!(ptr::eq(msg.headers(), &headers));
+
+        // A stage that keeps the message past the publish takes a map of its own.
+        let (_, _, owned) = msg.clone().into_owned_parts();
+        assert_eq!(owned, headers);
+        let (name, payload, lent) = msg.into_parts();
+        assert_eq!((name, payload), ("orders", b"x".as_slice()));
+        assert!(ptr::eq(lent, &headers));
+
+        let bare = OutgoingMessage::with_payload("orders", b"x".as_slice());
+        assert!(bare.headers().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(any(feature = "alloc", feature = "testing"))]
     fn raw_message_payload_bytes_and_headers_mut() {
         let mut msg = RawMessage::new("n", b"data".as_slice());
         assert_eq!(msg.payload_bytes(), Bytes::from_static(b"data"));

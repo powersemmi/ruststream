@@ -414,6 +414,7 @@ name = "ruststream"
 version = "0.8.0-rc.2"
 dependencies = [
  "ruststream-cli",
+ "ruststream-conformance",
  "ruststream-core",
  "ruststream-macros",
  "ruststream-memory",
@@ -429,6 +430,19 @@ version = "0.8.0-rc.2"
 dependencies = [
  "ruststream-runtime",
  "ruststream-runtime-tokio",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "ruststream-conformance"
+version = "0.8.0-rc.2"
+dependencies = [
+ "bytes",
+ "futures",
+ "inventory",
+ "ruststream-core",
+ "ruststream-runtime",
  "thiserror",
  "tokio",
 ]

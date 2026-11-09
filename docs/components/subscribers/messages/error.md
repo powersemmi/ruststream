@@ -22,6 +22,7 @@ On the embedded runtime, a delayed retry copy that finds the mount's store of co
 `message()` is the message the runtime tried to send, with its destination, bytes and headers.
 It is a [`Serialized`](api:ruststream::Serialized) value, so another `Out` republishes it as it was.
 Its bytes are `None` where the publisher took the payload buffer and did not give it back, and such a message cannot be republished.
+Without `alloc` the refused message waits in a place of the subscription's, and its bytes are `None` as well where every place was taken; the embedded runtime page shows [how many places a mount keeps](../../application/embedded-runtime.md#capacities).
 
 The continuation runs once, after the delivery is settled.
 The handler never runs again because a runtime publish failed.

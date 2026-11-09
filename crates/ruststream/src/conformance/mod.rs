@@ -3,11 +3,22 @@
 //!
 //! A broker crate takes them as a dev-dependency. The feature enables `testing`, so the one
 //! in-process mode the crate ships serves these suites and the [`TestApp`](crate::testing::TestApp)
-//! harness a service writes:
+//! harness a service writes. With the default features, the `tokio` runner among them, it brings
+//! both families of suites:
 //!
 //! ```toml
 //! [dev-dependencies]
 //! ruststream = { version = "0.8", features = ["conformance"] }
+//! ```
+//!
+//! On its own the feature brings the local family, which drives a broker on the test's own task
+//! and asks nothing of `Send`. A broker on the embedded runner names the runner beside it and
+//! checks its own types, on a current-thread Tokio runtime:
+//!
+//! ```toml
+//! [dev-dependencies]
+//! ruststream = { version = "0.8", default-features = false, features = ["embassy", "conformance"] }
+//! tokio = { version = "1", features = ["rt", "macros"] }
 //! ```
 //!
 //! Every suite panics with a message naming the step on the first contract violation. The
@@ -15,6 +26,8 @@
 //! implements, and is the executable reference for what each expects.
 //!
 //! # The suites
+//!
+//! The `Send` family needs the `tokio` feature beside `conformance`:
 //!
 //! - [`harness::run_suite`]: the routing surface of the broker's in-process mode, from a factory
 //!   of production brokers. These are the routing guarantees every broker meets; semantics of the
@@ -32,14 +45,21 @@
 //! - [`message_shape`]: keys, per-message settings and credentials in what a broker publishes.
 //! - [`capabilities`]: one suite per capability trait, called for each capability the broker
 //!   implements.
-//! - [`harness::run_local_suite`] and [`harness::local_lifecycle`]: the routing suite and the
-//!   ladder for a broker whose types are not `Send`, on a current-thread runtime.
 //!
 //! The suites that take a [`Broker`](crate::Broker) connect it with `connect`. Wrapping the
 //! production broker in [`harness::InProcessBroker`] runs each of them a second time with no
 //! server, over the crate's own descriptors and publish policies: the live pass proves the
 //! transport, the in-process pass keeps the in-process mode honest. A suite that needs a server is
 //! enabled by an environment variable, such as `NATS_TEST_URL`.
+//!
+//! The local family needs the `conformance` feature alone. Its suites drive a broker on the test's
+//! own task, so a broker whose types are not `Send` runs them with those types:
+//!
+//! - [`harness::run_local_suite`]: the routing suite, from a factory of production brokers.
+//! - [`harness::local_lifecycle`]: the lifecycle ladder and the aliased-handle contract after
+//!   shutdown.
+//! - [`harness::local_readiness`]: the probe a subscription returns from `ready_hint`.
+//! - [`harness::local_refused_publish_returns_message`]: a refused publish hands the message back.
 //!
 //! Every suite names its subject through [`helpers::unique_subject`], so a run reads only what it
 //! published and stays re-runnable against a server that keeps what the last run left. A crate's
@@ -68,6 +88,10 @@
 //! - [`harness::run_suite`] passes, and the other suites pass in process through
 //!   [`harness::InProcessBroker`] as well as against a real server.
 //! - [`harness::lifecycle`] passes against a real server.
+//! - A broker whose types are not `Send` passes the local family instead:
+//!   [`harness::run_local_suite`] in process, and [`harness::local_lifecycle`],
+//!   [`harness::local_readiness`] and [`harness::local_refused_publish_returns_message`] against a
+//!   real server.
 //! - [`lifecycle::shutdown_flushes`] passes with the broker's `Backlog` answer, and
 //!   [`lifecycle::shared_handle_closes`] where the connected form is `Clone`.
 //! - [`lifecycle::refused_publish_returns_message`] passes for every publisher the crate ships,

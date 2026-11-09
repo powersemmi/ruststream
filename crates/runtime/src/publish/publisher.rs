@@ -15,6 +15,7 @@ use crate::codec::{ActiveCodec as Codec, Encoding};
 use crate::lifecycle::BoxError;
 use crate::publish_failure::Refusal;
 use crate::{HeaderSet, PayloadForm, Publisher};
+use ruststream_core::Places;
 
 /// A byte [`Publisher`](crate::Publisher) paired with a [`Codec`] and a static [`PublishTransform`] stack: what a
 /// reply wiring becomes once the broker connects.
@@ -90,15 +91,17 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     }
 
     /// Encodes `value`, applies the static transforms (reading the originating delivery through
-    /// `cx`), then publishes to `name` through `pipeline`.
-    pub(crate) async fn publish<'e, T: Serialize + MaybeSync, Cx, PP>(
+    /// `cx`), then publishes to `name` through `pipeline`. A refused reply moves into one of
+    /// `places`.
+    pub(crate) async fn publish<'e, 'p, T: Serialize + MaybeSync, Cx, PP>(
         &self,
         name: &'e str,
         value: &T,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <P::Payload as PayloadForm>::Encode<'e>,
-    ) -> Result<(), Refusal>
+        places: Places<'p>,
+    ) -> Result<(), Refusal<'p>>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
         BL: MaybeSync,
@@ -117,14 +120,16 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .send_through(&mut out, &self.publisher, options.as_ref())
             .await;
         // A refusal leaves the message that was sent in `out`, transforms applied.
-        sent.map_err(|err| Refusal::of(err, &mut out).sent_to(name, out.name()))
+        sent.map_err(|err| Refusal::of(err, &mut out, places).sent_to(name, out.name()))
     }
 
     /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
     /// serializes into the outgoing headers before the transforms run, and the body encodes
     /// through the reply codec.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn publish_pair<
         'e,
+        'p,
         Hd: Serialize + MaybeSync,
         T: Serialize + MaybeSync,
         Cx,
@@ -137,7 +142,8 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <P::Payload as PayloadForm>::Encode<'e>,
-    ) -> Result<(), Refusal>
+        places: Places<'p>,
+    ) -> Result<(), Refusal<'p>>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
         BL: MaybeSync,
@@ -157,21 +163,22 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .send_through(&mut out, &self.publisher, options.as_ref())
             .await;
         // A refusal leaves the message that was sent in `out`, transforms applied.
-        sent.map_err(|err| Refusal::of(err, &mut out).sent_to(name, out.name()))
+        sent.map_err(|err| Refusal::of(err, &mut out, places).sent_to(name, out.name()))
     }
 
     /// Like [`publish`](Self::publish), but applies the batch-only [`BatchPublishTransform`] stack
     /// instead of the per-message [`PublishTransform`] one. Used per reply on the batch path: the
     /// per-message transforms do not run for batched replies (a transform wanted on both paths is
     /// added to each, reusing it on the batch side with [`for_batch`]).
-    pub(crate) async fn publish_batched<'e, T: Serialize + MaybeSync, Cx, PP>(
+    pub(crate) async fn publish_batched<'e, 'p, T: Serialize + MaybeSync, Cx, PP>(
         &self,
         name: &'e str,
         value: &T,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <P::Payload as PayloadForm>::Encode<'e>,
-    ) -> Result<(), Refusal>
+        places: Places<'p>,
+    ) -> Result<(), Refusal<'p>>
     where
         PL: MaybeSync,
         BL: BatchPublishTransform<Cx, P::Options>,
@@ -188,7 +195,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .send_through(&mut out, &self.publisher, options.as_ref())
             .await;
         // A refusal leaves the message that was sent in `out`, transforms applied.
-        sent.map_err(|err| Refusal::of(err, &mut out).sent_to(name, out.name()))
+        sent.map_err(|err| Refusal::of(err, &mut out, places).sent_to(name, out.name()))
     }
 }
 

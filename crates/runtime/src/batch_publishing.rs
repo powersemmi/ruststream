@@ -354,14 +354,28 @@ where
             Ok(replies) => {
                 let name = self.def.reply_name();
                 // As on the single-message path: the loop's buffer where the dispatch lent one,
-                // and one of this batch's own where it did not.
+                // and one of this batch's own where it did not, made only then without a heap.
+                #[cfg(ruststream_alloc)]
                 let mut own = PayloadBuf::new();
+                #[cfg(ruststream_alloc)]
                 let encode = ctx.take_encode_buffer().unwrap_or(&mut own);
+                #[cfg(not(ruststream_alloc))]
+                let mut own = None;
+                #[cfg(not(ruststream_alloc))]
+                let encode = ctx
+                    .take_encode_buffer()
+                    .unwrap_or_else(|| own.insert(PayloadBuf::new()));
                 let slot = <R::Payload as PayloadForm>::encode_slot(encode);
                 let pubcx = PublishContext::new(ctx.name(), ctx.delivery_headers(), ctx.cx_ref());
-                let publish =
-                    self.publisher
-                        .publish_batch(name, &replies, &self.pipeline, &pubcx, slot);
+                let places = ctx.refusal_places();
+                let publish = self.publisher.publish_batch(
+                    name,
+                    &replies,
+                    &self.pipeline,
+                    &pubcx,
+                    slot,
+                    places,
+                );
                 #[cfg(feature = "testing")]
                 let publish = publishing_to(self.origin, publish);
                 let sent = publish.await;

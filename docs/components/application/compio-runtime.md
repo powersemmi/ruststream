@@ -64,7 +64,8 @@ The app places its mounts once at startup, before any thread starts:
 - A sequential subscription stays on core 0.
 
 `threads` mounts that ask for more cores than the app has besides core 0 are an error of the run, and it names each of them.
-A hand-off from core 0 to a worker is one queue push and a wake, and it allocates nothing once the workers have started.
+A hand-off from core 0 to a worker is one queue push and a wake, and the runner allocates nothing for it once the workers have started.
+Waking a parked core allocates inside compio: its wake queue takes a block per 31 wakes, and its polling driver, which macOS and a Linux host without `io_uring` run on, allocates on such a wake too ([compio#1107](https://github.com/compio-rs/compio/issues/1107), and on kqueue [polling#273](https://github.com/smol-rs/polling/issues/273)).
 
 [`Core`](api:ruststream::runtime::compio::Core) tells a handler or a hook where it runs: `index()`, `count()` and `is_main()`.
 A hook that does one-time work acts on core 0 and lets the other cores reuse the result.
@@ -87,7 +88,7 @@ Retries, batch deadlines and `retry_after` ride the same clock.
 `SIGINT` and `SIGTERM` end the run.
 The app stops receiving, lets the handlers in flight finish, runs the shutdown hooks and shuts every broker down once the workers of every core are gone.
 [`shutdown_timeout`](api:ruststream::runtime::compio::RustStream::shutdown_timeout) bounds the wait for handlers still running.
-A core that fails or panics stops the others, and `run` returns the failure of the lowest core. A worker that panics outside its handler stops the service the way a handler that panics does.
+A core that fails or panics stops the others, and `run` returns the failure of the lowest core. A dispatch loop or a worker that panics outside its handler stops the service the way a handler that panics does, and `run` returns an error that names the subscription.
 
 [`RustStream::run_until`](api:ruststream::runtime::compio::RustStream::run_until) ends the run on a future of the caller's instead of a signal.
 [`RustStream::start`](api:ruststream::runtime::compio::RustStream::start) starts the app on the current runtime and returns a [`RunningApp`](api:ruststream::runtime::compio::RunningApp), whose `health()` is a [`HealthProbe`](api:ruststream::runtime::compio::HealthProbe) a sibling task reads.

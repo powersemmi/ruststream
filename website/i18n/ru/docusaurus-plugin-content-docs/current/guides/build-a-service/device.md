@@ -32,6 +32,7 @@ serde = { version = "1", default-features = false, features = ["derive"] }
 Плата объявляет шину как `static`, а функция приложения получает брокер, построенный поверх неё.
 Каждая подписка хранит четыре сообщения, включая то, что сейчас у обработчика.
 Реализацию `critical-section`, внутри которой работает шина, предоставляет бинарный крейт.
+На ядре без атомарного сравнения с обменом, например на Cortex-M0+, прошивка ещё включает у `portable-atomic` фичу `critical-section`.
 
 ```rust reference="crates/ruststream/tests/doc_device.rs#bus"
 ```

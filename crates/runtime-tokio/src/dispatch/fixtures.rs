@@ -1,9 +1,15 @@
 //! The test doubles the dispatch loop's tests share: a delivery whose transport settles as the test
-//! says, and the context a loop dispatches under outside any app.
+//! says, the batch form of a test subscriber's stream, and the context a loop dispatches under
+//! outside any app.
 
 use std::future::ready;
+use std::num::NonZeroUsize;
+use std::pin::Pin;
+use std::task::{Context as TaskContext, Poll};
 
 use bytes::Bytes;
+use futures::{Stream, StreamExt};
+use ruststream_core::BatchStream;
 use tokio_util::task::TaskTracker;
 
 use crate::detach::Hosted;
@@ -55,6 +61,52 @@ impl Settle for PlainMessage {
 
     fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         ready(self.settlement.apply())
+    }
+}
+
+/// What a test subscriber's stream yields in place of a delivery.
+#[derive(Debug, thiserror::Error)]
+#[error("subscriber stream failed")]
+pub(super) struct StreamFault;
+
+/// The batch form of a subscriber's own stream. A batch closes as soon as it is full, so the
+/// size stays at one: a subscription that goes quiet hands over the delivery it has rather than
+/// waiting for the rest of the batch.
+pub(super) fn batched<S>(
+    stream: S,
+    size: NonZeroUsize,
+) -> impl BatchStream<Vec<PlainMessage>, Error = StreamFault> + Send
+where
+    S: Stream<Item = Result<PlainMessage, StreamFault>> + Send,
+{
+    Poured(Box::pin(
+        stream
+            .chunks(size.get())
+            .map(|chunk| chunk.into_iter().collect::<Result<Vec<_>, _>>()),
+    ))
+}
+
+/// Fills a slot with the batches of a stream of whole batches.
+pub(super) struct Poured<S>(Pin<Box<S>>);
+
+impl<S> BatchStream<Vec<PlainMessage>> for Poured<S>
+where
+    S: Stream<Item = Result<Vec<PlainMessage>, StreamFault>>,
+{
+    type Error = StreamFault;
+
+    fn poll_fill(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        slot: &mut Vec<PlainMessage>,
+    ) -> Poll<Option<Result<(), StreamFault>>> {
+        self.0.as_mut().poll_next(cx).map(|item| {
+            item.map(|batch| {
+                batch.map(|batch| {
+                    slot.extend(batch);
+                })
+            })
+        })
     }
 }
 

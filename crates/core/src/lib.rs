@@ -70,6 +70,7 @@ pub mod outgoing;
 #[doc(hidden)]
 pub mod pairing;
 mod publisher;
+mod refusal;
 mod schema;
 mod send;
 mod subscriber;
@@ -114,7 +115,12 @@ pub use publisher::{
     PublishOutcome, PublishPolicy, Publisher, Take, Unbounded,
 };
 #[doc(hidden)]
-pub use publisher::{KeptPayload, PayloadEncode, SinkOutcome, SinkRefusal};
+pub use publisher::{KeptPayload, PayloadEncode};
+#[doc(hidden)]
+pub use refusal::{
+    Destination, Lease, Place, PlaceRoom, Places, SentName, SinkOutcome, SinkRefusal, Unsent,
+    sent_name,
+};
 pub use schema::{
     CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,
     NameTemplate, NoHeaders, OutgoingDestination, WithHeaders,

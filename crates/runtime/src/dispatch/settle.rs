@@ -46,6 +46,8 @@ use crate::redelivery::RetryRoute;
 #[cfg(all(feature = "testing", ruststream_alloc))]
 use crate::testing::coordinator::{Coordinator, in_harness_scope};
 use crate::{AckError, HeaderSet, RetryDeclaration, Settle};
+#[cfg(ruststream_alloc)]
+use ruststream_core::Places;
 
 mod keep;
 
@@ -779,7 +781,12 @@ where
             let cx = PublishContext::new(&subscription, &delivered, &context);
             let copy =
                 OutgoingMessage::new(target.as_ref(), payload.as_ref()).with_headers(headers);
-            let sent = route.publisher.publish_copy(copy, &cx).await;
+            // A deferred copy runs where there is a heap, which boxes a refused message: it keeps
+            // no places.
+            let sent = route
+                .publisher
+                .publish_copy(copy, &cx, Places::none())
+                .await;
             let done = copy_sent(sent, reaction, &subscription, &target, route.input, payload);
             // A delayed copy runs the continuation in its own task; an immediate one hands it back.
             if run_here {
@@ -827,7 +834,7 @@ where
 /// failure the `.error` continuation, or a log line and the loss of the message without one.
 #[cfg(ruststream_alloc)]
 fn copy_sent(
-    sent: Result<(), Refusal>,
+    sent: Result<(), Refusal<'_>>,
     reaction: Option<Reaction>,
     subscription: &str,
     target: &str,

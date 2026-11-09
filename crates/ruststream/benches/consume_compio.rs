@@ -26,6 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use compio::runtime::Runtime;
+use futures::executor::block_on;
 use gungraun::{
     Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig, library_benchmark,
     library_benchmark_group, main,
@@ -72,8 +73,8 @@ type Bus = LocalMemoryBroker<CAPACITY>;
 const INPUT: &str = "orders";
 
 /// What starting the service and handling the first delivery allocate once; a delivery after it
-/// allocates nothing.
-const COLD_BLOCKS: u64 = 43;
+/// allocates nothing. #691 added two: the live-worker count and the name a panicked loop reports.
+const COLD_BLOCKS: u64 = 45;
 
 /// The payload: two integer fields, so a decode allocates nothing.
 #[derive(Debug, Deserialize)]
@@ -163,7 +164,7 @@ fn start_and_drain(pending: Pending) {
     latch.expect(messages);
     // The backlog is published off the runtime, so the app's loop takes none of it before the
     // drain: the bus needs no executor to take a publish.
-    futures::executor::block_on(async {
+    block_on(async {
         let connected = bus.connect().await.expect("the bus connects in process");
         let publisher = connected.publisher();
         for _ in 0..messages {

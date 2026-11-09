@@ -119,10 +119,9 @@ impl FrameSubscriber {
     }
 
     /// One received frame as the subscription hands it out.
-    fn delivery(&self, frame: Frame) -> FrameDelivery {
+    const fn delivery(&self, frame: Frame) -> FrameDelivery {
         FrameDelivery {
             frame,
-            headers: Headers::new(),
             settled: self.settled,
         }
     }
@@ -223,9 +222,11 @@ impl BatchStream<FrameBatch> for Bursts<'_> {
 #[derive(Debug)]
 pub struct FrameDelivery {
     frame: Frame,
-    headers: Headers,
     settled: &'static Settlements,
 }
+
+/// The headers of every frame: a frame carries none, so a delivery moves no header room.
+static NO_HEADERS: Headers = Headers::new();
 
 impl IncomingMessage for FrameDelivery {
     fn payload(&self) -> &[u8] {
@@ -233,7 +234,7 @@ impl IncomingMessage for FrameDelivery {
     }
 
     fn headers(&self) -> &Headers {
-        &self.headers
+        &NO_HEADERS
     }
 }
 
@@ -522,8 +523,19 @@ mod tests {
     use embassy_executor as _;
 
     use super::{
-        DEPTH, FrameBroker, FramePublish, FramePublishError, Frames, PAYLOAD, Settlements,
+        DEPTH, Frame, FrameBroker, FrameDelivery, FramePublish, FramePublishError, Frames, PAYLOAD,
+        Settlements,
     };
+
+    #[test]
+    fn a_frame_is_handed_out_without_a_header_room() {
+        // A frame carries no headers, so its delivery is the frame and the settlement it counts
+        // in, and moving it moves no header room.
+        assert_eq!(
+            size_of::<FrameDelivery>(),
+            size_of::<Frame>() + size_of::<&Settlements>()
+        );
+    }
 
     #[test]
     fn a_reply_the_frames_cannot_hold_is_refused_with_the_reason() {

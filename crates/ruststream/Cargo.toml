@@ -857,13 +857,22 @@ name = "embedded_no_alloc_batch_reply"
 path = "tests/embedded_no_alloc_batch_reply.rs"
 required-features = ["embassy", "memory", "macros", "testing", "postcard"]
 
-# The `Out` slot of a handler of one message, on the build without `alloc`.
+# The `Out` slot of a handler of one message, on the build without `alloc`. Each `Out` form's app
+# is a binary of its own and sets no `recursion_limit`: the compiler lays a type out once per
+# crate, so an app beside it could lay out the deepest futures first and hide how deep this one is.
 [[test]]
 name = "embedded_no_alloc_out"
 path = "tests/embedded_no_alloc_out.rs"
 required-features = ["embassy", "memory", "macros", "testing", "postcard"]
 
-# The `Out` slots of a batch handler, on the build without `alloc`.
+# The `Out` slot of a handler of one message beside a store of retries, on the build without
+# `alloc`: a binary of its own, as above.
+[[test]]
+name = "embedded_no_alloc_out_retry"
+path = "tests/embedded_no_alloc_out_retry.rs"
+required-features = ["embassy", "memory", "macros", "testing", "postcard"]
+
+# The `Out` slots of a batch handler, on the build without `alloc`: a binary of its own, as above.
 [[test]]
 name = "embedded_no_alloc_batch_out"
 path = "tests/embedded_no_alloc_batch_out.rs"
@@ -879,6 +888,13 @@ required-features = ["embassy", "memory", "macros", "testing", "postcard"]
 [[test]]
 name = "embedded_future_size"
 path = "tests/embedded_future_size.rs"
+required-features = ["embassy", "memory", "macros"]
+
+# The check of the no-alloc publish stand: the benchmark's own scenarios, every message arriving.
+# A binary of its own, so the benchmark's holds the measured code alone.
+[[test]]
+name = "embedded_publish_no_alloc_check"
+path = "tests/embedded_publish_no_alloc_check.rs"
 required-features = ["embassy", "memory", "macros"]
 
 # The brokers of this suite keep their state in `Rc`, which a multi-thread runtime refuses, so it
@@ -979,6 +995,7 @@ tokio = [
     "dep:ruststream-runtime-tokio",
     "dep:ruststream-cli",
     "ruststream-cli/tokio",
+    "ruststream-conformance?/alloc",
     "ruststream-memory?/std",
     "ruststream-testing?/tokio",
 ]
@@ -1027,7 +1044,9 @@ alloc = [
     "ruststream-testing?/alloc",
 ]
 memory = ["dep:ruststream-memory"]
-conformance = ["alloc", "tokio", "testing", "dep:ruststream-conformance"]
+# The broker-author suites. On its own the feature brings the local family, which drives a broker on
+# the caller's task and asks nothing of `Send`; with `tokio` the `Send` family comes as well.
+conformance = ["testing", "dep:ruststream-conformance"]
 json = [
     "alloc",
     "ruststream-core/json",
@@ -1125,6 +1144,11 @@ harness = false
 required-features = ["memory", "json", "macros", "tokio"]
 
 [[bench]]
+name = "consume_threads_by_key"
+harness = false
+required-features = ["memory", "json", "macros", "tokio"]
+
+[[bench]]
 name = "middleware"
 harness = false
 required-features = ["memory", "json", "macros", "tokio"]
@@ -1138,6 +1162,13 @@ required-features = ["compio", "memory", "macros", "json"]
 # The embedded app without `alloc`: instructions per delivery, and zero allocations.
 [[bench]]
 name = "embedded_idle_no_alloc"
+harness = false
+required-features = ["embassy", "memory", "macros"]
+
+# The same app with a handler that publishes: what the framework's publish path adds to a
+# delivery, and zero allocations.
+[[bench]]
+name = "embedded_publish_no_alloc"
 harness = false
 required-features = ["embassy", "memory", "macros"]
 

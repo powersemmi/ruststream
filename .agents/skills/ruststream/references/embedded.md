@@ -23,7 +23,8 @@ ruststream = { version = "0.8", default-features = false, features = ["embassy",
 
 ## What the build without `alloc` holds
 
-- Headers are `FixedHeaders` of 8 entries and 256 bytes; `insert` returns an error when full.
+- Headers are `FixedHeaders` of 8 entries and 256 bytes; `insert` returns an error when full. An
+  `OutgoingMessage` borrows its map where it was built: `.with_headers(&headers)`.
 - The codec is a `SliceCodec`, named at the mount: `b.with_codec(PostcardCodec)` for handlers and
   `.out_reply(policy).codec(PostcardCodec)` for a reply. A type that is its own encoding
   (`Deserialized`, `Serialized`) needs no codec.
@@ -35,16 +36,17 @@ ruststream = { version = "0.8", default-features = false, features = ["embassy",
   holds four registrations and a fifth is refused, never dropped.
 - The local bus is a `LocalMemoryBus<MESSAGES, PAYLOAD, SUBSCRIPTIONS>` declared as a `static`;
   the app function receives `LocalMemoryBroker::new(&BUS)`. The binary supplies
-  `critical-section`.
+  `critical-section`; on a core without compare-and-swap (a Cortex-M0+) it also enables
+  `portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }`.
+- A delivery of the local bus lies in its place in the `static` until it is settled; the handler
+  reads it there, and nothing copies it on the way.
 - A batch is `.batch::<N>()` with N from 1 to 16, of messages that deserialize themselves or that
   the mount's codec decodes. Its outcomes are `Outcomes<HandlerOutcome, N>`, and a batch handler
   mounted with `reply` returns `Outcomes<Reply, N>`, one reply per element.
 - A batch mount takes `.retry_capacity::<CAP>()` (at least N, at most 1024), `.max_attempts(n)
   .dead_letter(..)` and `.out_retry(..)`; `retry_after` and dead letters work per element. A
   uniform `.error` reads every failed copy once, and a second uniform-`.error` batch waits for the
-  first. A batch handler takes `Out` slots, but not a reply and `Out` together. An app with a
-  batch handler that takes `Out` beside a retry store or several other batch routes sets
-  `#![recursion_limit = "256"]`.
+  first. A batch handler takes `Out` slots, but not a reply and `Out` together.
 - State is borrowed, `async |state: &State| ..`, and a state that holds a heap type (`Rc`) frees
   it inside the app's poll; a `static` counter does not.
 
@@ -52,9 +54,12 @@ ruststream = { version = "0.8", default-features = false, features = ["embassy",
 
 `.retry_capacity::<CAP>()` (delayed retries waiting at once), `.encode_capacity::<N>()` (bytes a
 reply is encoded into, 256 by default, at most 256 for a publisher that keeps the payload),
+`.refusal_capacity::<N>()` (places for the messages of refused publishes, one by default, whatever
+the subscription holds at once; the same step on a publisher used on its own),
 `.pool::<N>()` and `.keyed::<N>()`, `.batch::<N>()`. A count of zero or past the limit does not
 compile. A reply that does not fit is `CodecFailure::BufferFull`, and a retry that finds the store
-full is the "no free record" error; both reach the handler's `.error`.
+full is the "no free record" error; both reach the handler's `.error`. A refused publish that finds
+every place taken reaches `.error` without its message.
 
 ## Diagnostics
 

@@ -12,9 +12,10 @@ use core::any::Any;
 use core::cell::Cell;
 #[cfg(not(any(feature = "std", feature = "testing")))]
 use core::convert::Infallible;
+use core::mem::ManuallyDrop;
 #[cfg(any(feature = "std", feature = "testing"))]
 use core::panic::AssertUnwindSafe;
-use core::pin::Pin;
+use core::pin::{Pin, pin};
 use core::task::{Context as TaskContext, Poll};
 #[cfg(feature = "testing")]
 use ruststream_core::__alloc::bytes::Bytes;
@@ -24,12 +25,12 @@ use ruststream_core::{MaybeSendSync, ReadyHint};
 use futures::FutureExt;
 use futures::Stream;
 use pin_project_lite::pin_project;
-use ruststream_core::EncodeBuf;
 #[cfg(not(ruststream_alloc))]
 use ruststream_core::FixedBuf;
 #[cfg(ruststream_alloc)]
 use ruststream_core::PayloadBuf;
 use ruststream_core::diag::error;
+use ruststream_core::{EncodeBuf, Places};
 
 #[cfg(not(ruststream_alloc))]
 use crate::publish_failure::FailureSlot;
@@ -44,8 +45,9 @@ use super::failure::DispatchFailure;
 #[cfg(any(feature = "std", feature = "testing"))]
 use super::failure::{FailurePolicy, panic_reason};
 use super::handler::Handler;
+#[cfg(any(feature = "std", feature = "testing"))]
 use super::handler::HandlerOutcome;
-#[cfg(doc)]
+#[cfg(any(doc, feature = "testing"))]
 use super::handler::HandlerResult;
 use super::host::{Halt, HostDetach, PrepareKept, SendHost, ShutdownWait, detach_continuation};
 #[cfg(feature = "testing")]
@@ -56,6 +58,8 @@ use crate::testing::coordinator::{
 use crate::testing::hooks::DueCall;
 #[cfg(feature = "testing")]
 use crate::testing::{Bookkept, harness_section};
+#[cfg(feature = "testing")]
+use call::CallOnPoll;
 pub use delivery::{Delivery, Lent, Slot};
 pub use headers::{HeadersAtOnce, HeadersOnDemand, LendHeaders};
 pub(crate) use settle::{settle_outcome, settle_reacting};
@@ -147,6 +151,52 @@ macro_rules! observed {
     };
 }
 
+/// The handler's call on one delivery, awaited, as `Ok` with its outcome or `Err` with the
+/// payload of its panic.
+///
+/// Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop the
+/// subscriber consuming) or leave the message unsettled. The call runs inside the caught future,
+/// so a handler (a middleware) that panics while building its future is caught too.
+/// `AssertUnwindSafe` is required because the future borrows `&mut ctx`; that state is discarded
+/// with the failed delivery. Under the harness, the invocation runs in a task-local slot scope so
+/// publishes made through injected `Out` publishers are attributed to their slot. The harness's
+/// frames would nest the handler's future deeper than a device app's future may go, so the call
+/// lies pinned in the dispatch's frame and the scope and the catch hold a reference to it (see
+/// `CallOnPoll`).
+#[cfg(feature = "testing")]
+macro_rules! handled {
+    ($delivery:expr, $call:expr) => {{
+        let call = pin!(CallOnPoll::new(|| $call));
+        in_harness_scope(
+            harness_scope($delivery),
+            observed!($delivery, AssertUnwindSafe(call).catch_unwind()),
+        )
+        .await
+    }};
+}
+
+/// See the harness's form above: with `std` and without the harness, the call caught where it
+/// is awaited.
+#[cfg(all(feature = "std", not(feature = "testing")))]
+macro_rules! handled {
+    ($delivery:expr, $call:expr) => {
+        observed!(
+            $delivery,
+            AssertUnwindSafe(async { $call.await }).catch_unwind()
+        )
+        .await
+    };
+}
+
+/// See the harness's form above: without `std` a panic aborts, so the handler's future runs
+/// uncaught.
+#[cfg(not(any(feature = "std", feature = "testing")))]
+macro_rules! handled {
+    ($delivery:expr, $call:expr) => {
+        Ok::<_, Infallible>(observed!($delivery, $call).await)
+    };
+}
+
 /// Drives `subscriber` through `handler` until `shutdown` is signalled or the stream ends: the
 /// sequential loop a runner spawns for a subscription. Each delivery is given a [`Context`] built
 /// from `name`, the message headers, shared `state`, and the publish context `lent` holds;
@@ -170,6 +220,7 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers, Park, R
     headers: Headers,
     parked: Park,
     mut room: Room,
+    places: Places<'_>,
 ) where
     S: Subscriber,
     H: Handler<S::Message, C, St>,
@@ -188,8 +239,8 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers, Park, R
     let host = lent.host();
     // Taken before the stream opens: the stream borrows the subscriber for the whole loop.
     let probe = subscriber.ready_hint();
-    let mut stream = core::pin::pin!(subscriber.stream());
-    let mut cancelled = core::pin::pin!(shutdown.cancelled());
+    let mut stream = pin!(subscriber.stream());
+    let mut cancelled = pin!(shutdown.cancelled());
     // One encode buffer for the whole loop: a reply that leaves through a publisher which
     // reads the payload is written into this one every time, so the subscription allocates
     // it once and never again. The runner chose its room; the loop owns it.
@@ -214,10 +265,11 @@ pub async fn run_sequential<S, H, C, St, Signal, Lending, Held, Headers, Park, R
                 // context, the handler's own state and the settle path, and awaiting the
                 // call expression makes the loop build it on the stack and copy it into
                 // its own state on every delivery.
-                let handling = core::pin::pin!(dispatch(
+                let handling = pin!(dispatch(
                     &handler,
                     &mut slot,
                     &mut *encode,
+                    places,
                     &name,
                     state_in_place(&state),
                     delivery,
@@ -486,25 +538,50 @@ type Failures = Option<FailureSlot>;
 struct Failures;
 
 #[cfg(not(ruststream_alloc))]
-fn take_failures<C, S>(ctx: &mut Context<'_, C, S>) -> Failures {
-    ctx.take_failures()
+const fn no_failures() -> Failures {
+    None
 }
 
 #[cfg(ruststream_alloc)]
-const fn take_failures<C, S>(_ctx: &mut Context<'_, C, S>) -> Failures {
+const fn no_failures() -> Failures {
     Failures
 }
 
+/// Takes what the context's failed publish left into `failures`, which lies in the dispatch's
+/// state: a delivery whose publishes went through pays the check alone, and its buffer, a fixed
+/// room without a heap, never moves.
 #[cfg(not(ruststream_alloc))]
-async fn react_to(failures: Failures) {
-    if let Some(mut failures) = failures {
+fn take_failures<C, S>(ctx: &mut Context<'_, C, S>, failures: &mut Failures) {
+    if ctx.has_failures() {
+        *failures = ctx.take_failures();
+    }
+}
+
+#[cfg(ruststream_alloc)]
+const fn take_failures<C, S>(_ctx: &mut Context<'_, C, S>, _failures: &mut Failures) {}
+
+/// Runs the `.error` that waits on a failed publish, reading the failures where they lie.
+#[cfg(not(ruststream_alloc))]
+async fn react_to(failures: &mut Failures) {
+    if let Some(failures) = failures {
         failures.react().await;
     }
 }
 
 #[cfg(ruststream_alloc)]
 #[allow(clippy::unused_async)]
-async fn react_to(_failures: Failures) {}
+async fn react_to(_failures: &mut Failures) {}
+
+/// Whether a failed publish left an `.error` to run: the reaction's future is built only then.
+#[cfg(not(ruststream_alloc))]
+const fn failed(failures: &Failures) -> bool {
+    failures.is_some()
+}
+
+#[cfg(ruststream_alloc)]
+const fn failed(_failures: &Failures) -> bool {
+    false
+}
 
 /// One delivery, end to end: the handler, the settle and what the delivery leaves behind.
 // Written over the contract traits, so the future is `Send` exactly where the types it runs are: a runner that spawns it on a multi-thread runtime proves that for its own.
@@ -516,6 +593,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     handler: &H,
     slot: &mut Slot<M>,
     encode: &mut EncodeBuf,
+    places: Places<'_>,
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
@@ -547,10 +625,15 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     // The context lives in a block of its own and is dropped where it stands when the block ends:
     // a `drop(ctx)` call would move the whole context out of this future's state into the call's
     // argument first, a `memcpy` of the context per delivery.
+    // What the delivery leaves for after its settle lies in this future's state from here on and
+    // the block writes it in place: without a heap each part is a fixed room, and a block that
+    // handed the parts out as one value would copy every room, empty or not, on every delivery.
     // The hooks a test registered on this subscription, owed by this call once it is settled.
     #[cfg(feature = "testing")]
     let mut due_calls = None;
-    let (settle, after, continuations, reaction, failures) = {
+    let (settle, after, reaction, continuations);
+    let mut failures = no_failures();
+    {
         let msg = slot.get();
         let cx = C::build(msg);
         // The delivery itself where it can be shared, not its header map: a handler that reads no
@@ -560,40 +643,19 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         let mut ctx = Context::new(name, &source, state, cx, delivery)
             .with_failfast(&failure.shutdown)
             .with_encode_buffer(encode)
+            .with_refusal_places(places)
             .with_decode_policy(failure.policies.decode);
-        // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop
-        // the subscriber consuming) or leave the message unsettled. The call runs inside the
-        // caught future, so a handler (a middleware) that panics while building its future is
-        // caught too. AssertUnwindSafe is required
-        // because the future borrows `&mut ctx`; that state is discarded with the failed delivery.
-        // Under the harness, the invocation runs in a task-local slot scope so publishes made
-        // through injected `Out` publishers are attributed to their slot.
-        #[cfg(feature = "testing")]
-        let result = in_harness_scope(
-            harness_scope(delivery),
-            observed!(
-                delivery,
-                AssertUnwindSafe(async { handler.handle(msg, &mut ctx).await }).catch_unwind()
-            ),
-        )
-        .await;
-        #[cfg(all(feature = "std", not(feature = "testing")))]
-        let result = observed!(
-            delivery,
-            AssertUnwindSafe(async { handler.handle(msg, &mut ctx).await }).catch_unwind()
-        )
-        .await;
-        // Without `std` a panic aborts, so the handler's future runs uncaught.
-        #[cfg(not(any(feature = "std", feature = "testing")))]
-        let result = Ok::<_, Infallible>(observed!(delivery, handler.handle(msg, &mut ctx)).await);
+        let result = handled!(delivery, handler.handle(msg, &mut ctx));
         #[cfg(feature = "testing")]
         let panicked = result.is_err();
         // Resolve into a `HandlerOutcome` regardless of whether the handler panicked.
-        let settled = match result {
+        // The outcome's parts are taken out in place below, each only where it is there, so what
+        // is left of it holds its status alone and has nothing to drop: the drop is skipped.
+        let mut settled = ManuallyDrop::new(match result {
             Ok(s) => Some(s),
             #[cfg(any(feature = "std", feature = "testing"))]
             Err(payload) => outcome_after_panic(payload.as_ref(), name, failure),
-        };
+        });
         // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
         // settling consumes `msg`. The drained futures own their captures. A fail-fast (no
         // settlement) runs no hooks. Most deliveries register none, and those pay the branch alone:
@@ -601,21 +663,41 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         // one.
         // What a publish made for this settlement hands its result to: the `.error` of the outcome
         // (with the `.and_after` beside it, which then follows the publish), else the one the
-        // context registered. Most deliveries carry neither, and pay the two checks.
-        // The outcome is taken apart here, so none of it is left to drop once it is settled.
-        let failures = take_failures(&mut ctx);
-        let (settle, after, reaction) = match settled.map(HandlerOutcome::into_parts) {
-            Some((status, after, Some(error))) => {
+        // context registered. Most deliveries carry neither, and pay the checks alone.
+        take_failures(&mut ctx, &mut failures);
+        if let Some(outcome) = settled.as_mut() {
+            let status = outcome.outcome();
+            settle = Some(status);
+            if let Some(error) = outcome.take_error() {
                 ctx.demote_errors();
-                (Some(status), None, Some(Reaction::new(error, after)))
+                after = None;
+                reaction = Some(Reaction::new(error, outcome.take_after()));
+            } else {
+                // Each part is written in the branch that has it, never through a value that
+                // either branch could be: such a value is a copy of the whole room.
+                if outcome.has_after() {
+                    after = outcome.take_after();
+                } else {
+                    after = None;
+                }
+                if ctx.has_hooks() {
+                    reaction = ctx.take_reaction_for(status);
+                } else {
+                    reaction = None;
+                }
             }
-            Some((status, after, None)) => (Some(status), after, ctx.take_reaction_for(status)),
-            None => (None, None, None),
-        };
-        let continuations = match settle {
-            Some(status) if ctx.has_hooks() => Some(ctx.take_hooks_for(status)),
-            _ => None,
-        };
+            if ctx.has_hooks() {
+                continuations = Some(ctx.take_hooks_for(status));
+            } else {
+                continuations = None;
+            }
+            debug_assert!(outcome.is_spent(), "the outcome's parts are taken out");
+        } else {
+            settle = None;
+            after = None;
+            reaction = None;
+            continuations = None;
+        }
         // The harness records what the handler saw and how it settled, BEFORE settling the
         // message: the matching decrement runs in the broker message's `Drop` (during
         // `settle_outcome`, or at the end of this function on the fail-fast path), so the record
@@ -623,25 +705,10 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
         // `msg` and dropping `ctx` clears the decode flag.
         #[cfg(feature = "testing")]
         if let Some(coordinator) = delivery.hooks.coordinator() {
-            // The record is the harness's own bookkeeping, not the delivery's cost.
-            due_calls = harness_section(|| {
-                let deliveries = vec![Delivered {
-                    raw: Bytes::copy_from_slice(msg.payload()),
-                    value: ctx.take_carried(),
-                    settle,
-                }];
-                record_call(
-                    coordinator,
-                    delivery,
-                    name,
-                    deliveries,
-                    panicked,
-                    ctx.took_decode_failed(),
-                )
-            });
+            due_calls =
+                record_delivery(coordinator, delivery, name, msg, &mut ctx, settle, panicked);
         }
-        (settle, after, continuations, reaction, failures)
-    };
+    }
     if let Some(status) = settle {
         // Named for the same reason as the delivery's own future above: the settle path is
         // built where it is polled instead of being copied into this future's state.
@@ -671,7 +738,12 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
             detach_continuation!(host, fut);
         }
     }
-    react_to(failures).await;
+    // Named, and built only where a reaction waits: the reaction's future is as large as the
+    // `.error` it runs.
+    if failed(&failures) {
+        let reacting = react_to(&mut failures);
+        reacting.await;
+    }
     // The hooks a test registered on this subscription run once the call is settled, inside the
     // dispatch's own in-flight count, so a publish returns only after they are done.
     #[cfg(feature = "testing")]
@@ -713,6 +785,35 @@ fn outcome_after_panic<Signal: Halt>(
     }
 }
 
+/// Records the call of one delivery with the harness: its payload, the value the handler saw and
+/// how it settled. The record is the harness's own bookkeeping, not the delivery's cost.
+#[cfg(feature = "testing")]
+fn record_delivery<C, S, M: Settle>(
+    coordinator: &Coordinator,
+    delivery: &Delivery<C>,
+    name: &str,
+    msg: &M,
+    ctx: &mut Context<'_, C, S>,
+    settle: Option<HandlerResult>,
+    panicked: bool,
+) -> Option<DueCall> {
+    harness_section(|| {
+        let deliveries = vec![Delivered {
+            raw: Bytes::copy_from_slice(msg.payload()),
+            value: ctx.take_carried(),
+            settle,
+        }];
+        record_call(
+            coordinator,
+            delivery,
+            name,
+            deliveries,
+            panicked,
+            ctx.took_decode_failed(),
+        )
+    })
+}
+
 /// Records one call of this subscription with the harness, and hands back the hooks a test
 /// registered on it, which the call now owes.
 #[cfg(feature = "testing")]
@@ -751,6 +852,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     taken: &mut H::Taken,
     scratch: &mut H::Scratch,
     encode: &mut EncodeBuf,
+    places: Places<'_>,
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
@@ -774,6 +876,7 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     let mut ctx = Context::new(name, &empty, state, cx, delivery)
         .with_failfast(&failure.shutdown)
         .with_encode_buffer(encode)
+        .with_refusal_places(places)
         .with_decode_policy(failure.policies.decode);
     // See `dispatch`: the harness scope attributes `Out` publishes to their slot, and lets the
     // batch settle path record the batch it applied.
@@ -796,20 +899,19 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     }
     // A batch records its call where it settles, inside the handler, so the scope hands back the
     // hooks that call owes.
+    // As in `dispatch`: under the harness the handler's future lies pinned in this frame, made on
+    // the first poll inside the catch.
     #[cfg(feature = "testing")]
-    let (result, mut due_calls) = calls_in_harness_scope(
-        harness_scope(delivery),
-        observed!(
-            delivery,
-            AssertUnwindSafe(async {
-                handler
-                    .handle_batch(&mut *batch, scratch, &mut ctx, host)
-                    .await;
-            })
-            .catch_unwind()
-        ),
-    )
-    .await;
+    let (result, mut due_calls) = {
+        let call = pin!(CallOnPoll::new(|| {
+            handler.handle_batch(&mut *batch, scratch, &mut ctx, host)
+        }));
+        calls_in_harness_scope(
+            harness_scope(delivery),
+            observed!(delivery, AssertUnwindSafe(call).catch_unwind()),
+        )
+        .await
+    };
     #[cfg(all(feature = "std", not(feature = "testing")))]
     let result = observed!(
         delivery,
@@ -890,6 +992,8 @@ fn harness_scope<C>(delivery: &Delivery<C>) -> Option<HarnessScope> {
         .map(|coordinator| HarnessScope::new(coordinator, delivery.scope_id, delivery.subscription))
 }
 
+#[cfg(feature = "testing")]
+mod call;
 mod delivery;
 #[cfg(test)]
 #[cfg(ruststream_alloc)]

@@ -149,6 +149,9 @@ def service_region_errors(path: Path, n: int, target: str, region: str) -> list[
         )
     return errors
 PAGES = [ROOT / "docs", *sorted((ROOT / "website" / "i18n").glob("*/docusaurus-plugin-content-docs"))]
+# The README's translations are not pages of the site: GitHub renders them, and
+# `check_doc_i18n.py` holds their code to the README's, byte for byte.
+README_TRANSLATIONS = ROOT / "docs" / "readme"
 
 
 def page_path(path: Path) -> str:
@@ -324,7 +327,8 @@ def main() -> int:
     errors = []
     for root in PAGES:
         for path in sorted(root.rglob("*.md")):
-            errors.extend(lint(path))
+            if not path.is_relative_to(README_TRANSLATIONS):
+                errors.extend(lint(path))
     for error in errors:
         print(error, file=sys.stderr)
     if errors:

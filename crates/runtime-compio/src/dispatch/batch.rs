@@ -10,7 +10,7 @@ use std::task::Poll;
 use bytes::BytesMut;
 use compio::runtime::JoinHandle;
 use ruststream_core::diag::error;
-use ruststream_core::{BatchSlot, BatchStream, BatchSubscriber};
+use ruststream_core::{BatchSlot, BatchStream, BatchSubscriber, Places};
 use ruststream_runtime::{
     BatchHandler, DispatchFailure, RING, RetryCopies, TakenBatch, Turn, Workers, placed, run_batch,
 };
@@ -95,6 +95,8 @@ where
                     &mut taken,
                     &mut scratch,
                     &mut encode,
+                    // A refusal boxes its message where there is a heap: the loop keeps no places.
+                    Places::none(),
                     &shared.name,
                     &shared.state,
                     &shared.hosted.delivery,
@@ -162,6 +164,8 @@ async fn batch_loop<S, H, C, St, Retry>(
                     &mut taken,
                     &mut scratch,
                     &mut encode,
+                    // A refusal boxes its message where there is a heap: the loop keeps no places.
+                    Places::none(),
                     &shared.name,
                     &shared.state,
                     &shared.hosted.delivery,

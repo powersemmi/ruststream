@@ -7,7 +7,7 @@ use std::fmt;
 // The helpers that ENCODE stay gated on a codec feature, like the codec itself; the typed
 // builder entry points do not, because the value's own wire decides whether a codec is needed.
 use ruststream_core::OutgoingDestination;
-use ruststream_core::{Lend, OutgoingMessage, PublishMessageError, RawMessage};
+use ruststream_core::{Lend, OutgoingMessage, PlaceRoom, PublishMessageError, RawMessage};
 use ruststream_runtime::BoxError;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use ruststream_runtime::codec::{Codec, DefaultCodec};
@@ -124,12 +124,15 @@ impl PublishSink for InjectSink<'_> {
     type Error = TestError;
     // An injection stands in for an external producer, which reaches no broker's options type.
     type Options = ();
+    // An injection the harness refuses hands the message back from a place of the publish's own.
+    type OwnPlaces = PlaceRoom<1>;
 
-    async fn send<'msg>(
-        &mut self,
+    async fn send<'p, 'msg>(
+        &'p mut self,
         msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&Self::Options>,
-    ) -> SinkOutcome<Self::Error> {
+        own: &'p PlaceRoom<1>,
+    ) -> SinkOutcome<'p, Self::Error> {
         let Target::Broker {
             harness,
             scope_id,
@@ -139,11 +142,13 @@ impl PublishSink for InjectSink<'_> {
         else {
             return Err(SinkRefusal::returned::<Lend>(
                 PublishMessageError::with_message(TestError::Ambiguous, msg),
+                own.places(),
             ));
         };
         if harness.shutdown.is_cancelled() {
             return Err(SinkRefusal::returned::<Lend>(
                 PublishMessageError::with_message(TestError::ShutDown, msg),
+                own.places(),
             ));
         }
         // The test's own publish is part of the record: in process it is what tells a message
@@ -271,8 +276,9 @@ impl BrokerHandle<'_> {
         let bytes = DefaultCodec::default()
             .encode(value)
             .map_err(|err| TestError::Encode(err.to_string()))?;
+        let own = PlaceRoom::<1>::new();
         self.sink()
-            .send(OutgoingMessage::new(name, &bytes), None)
+            .send(OutgoingMessage::new(name, &bytes), None, &own)
             .await
             .map_err(SinkRefusal::into_error)
     }
@@ -306,8 +312,9 @@ impl BrokerHandle<'_> {
         let msg = OutgoingMessage::new(name, &bytes)
             .with_typed_headers(headers)
             .map_err(|err| TestError::Encode(err.to_string()))?;
+        let own = PlaceRoom::<1>::new();
         self.sink()
-            .send(msg, None)
+            .send(msg, None, &own)
             .await
             .map_err(SinkRefusal::into_error)
     }

@@ -17,7 +17,7 @@ use core::marker::PhantomData;
 use core::pin::{Pin, pin};
 use core::task::Poll;
 use ruststream_core::MaybeSendSync;
-use ruststream_core::{Broker, Unbounded};
+use ruststream_core::{Broker, PlaceRoom, Places, Unbounded};
 #[cfg(not(ruststream_alloc))]
 use ruststream_core::{Capped, PAYLOAD_CAPACITY};
 
@@ -35,9 +35,9 @@ use ruststream_core::{BuildContext, IncomingMessage, Settle, Subscriber};
 use ruststream_runtime::{
     BatchWidth, Delivery, DeliverySlot, Detach, DispatchFailure, Dispatched, EncodeRoom, Halt,
     Handler, HeadersAtOnce, HostDetach, KeepCopies, Keeping, LocalPipeline, NoCopies,
-    OneTaskDispatch, OneTaskPlanned, OneTaskRoute, Parks, PrepareCopy, PrepareKept, ReplyRoom,
-    RetryCopies, RetryDestinationsDeclared, Router, RouterCommit, RouterWith, ShutdownWait,
-    dispatch, idle,
+    OneTaskDispatch, OneTaskPlanned, OneTaskRoute, Parks, PrepareCopy, PrepareKept, RefusalRoom,
+    ReplyRoom, RetryCopies, RetryDestinationsDeclared, Router, RouterCommit, RouterWith,
+    ShutdownWait, dispatch, idle,
 };
 
 use crate::batch_plan::Holds;
@@ -47,28 +47,64 @@ use crate::hooks::{AppState, borrowed};
 use crate::host::WorkerHost;
 use crate::mailbox::{Mailbox, join_workers};
 
-/// What a plan names in its type and holds no value of: the room, the encode buffer and the
-/// batch size of its route.
-type Shape<Capacity, Encoding, Size> = PhantomData<(Capacity, Encoding, fn() -> Size)>;
+/// What a plan names in its type and holds no value of: the room, the encode buffer, the batch
+/// size of its route and the places its refusals keep their messages in.
+type Shape<Capacity, Encoding, Size, Refusals> =
+    PhantomData<(Capacity, Encoding, fn() -> Size, Refusals)>;
 
-/// The plan of one registration on the embedded runner: its workers and the room it keeps for
-/// retry copies, [`NoRoom`] for none.
+/// The plan of one registration on the embedded runner: its workers, the room it keeps for retry
+/// copies ([`NoRoom`] for none), and the places a refused publish of its keeps the message in.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct EmbeddedPlan<WorkerSet, Capacity, Encoding = Encode<DEFAULT_ENCODE_CAPACITY>, Size = ()>
-{
+pub struct EmbeddedPlan<
+    WorkerSet,
+    Capacity,
+    Encoding = Encode<DEFAULT_ENCODE_CAPACITY>,
+    Size = (),
+    Refusals = OnePlace,
+> {
     workers: WorkerSet,
-    room: Shape<Capacity, Encoding, Size>,
+    room: Shape<Capacity, Encoding, Size, Refusals>,
 }
 
-impl<WorkerSet, Capacity, Encoding, Size> EmbeddedPlan<WorkerSet, Capacity, Encoding, Size> {
+impl<WorkerSet, Capacity, Encoding, Size, Refusals>
+    EmbeddedPlan<WorkerSet, Capacity, Encoding, Size, Refusals>
+{
     /// The same plan with no room for retry copies.
-    pub(crate) fn without_room(self) -> EmbeddedPlan<WorkerSet, NoRoom, Encoding, Size> {
+    pub(crate) fn without_room(self) -> EmbeddedPlan<WorkerSet, NoRoom, Encoding, Size, Refusals> {
         EmbeddedPlan {
             workers: self.workers,
             room: PhantomData,
         }
     }
+}
+
+/// The place a registration keeps for the message of a refused publish when its mount names no
+/// count: one, since a refused message is read out of its place as the publish returns.
+/// Machinery; never named directly.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OnePlace;
+
+/// `N` places for the messages a registration's refused publishes hand back, as
+/// `.refusal_capacity::<N>()` names them. Machinery; never named directly.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Refusals<const N: usize>;
+
+/// The room of places a plan keeps. Machinery; never named directly.
+#[doc(hidden)]
+pub trait RefusalCount {
+    /// The room.
+    type Room: RefusalRoom;
+}
+
+impl RefusalCount for OnePlace {
+    type Room = PlaceRoom<1>;
+}
+
+impl<const N: usize> RefusalCount for Refusals<N> {
+    type Room = PlaceRoom<N>;
 }
 
 /// The room, in bytes, of a worker's encode buffer when a registration names none.
@@ -179,7 +215,9 @@ pub struct Keyed<const WORKERS: usize>;
 /// How a plan's workers run the opened route.
 #[doc(hidden)]
 pub trait WorkerSet {
-    /// Runs the route on these workers until `signal` stops it.
+    /// Runs the route on these workers until `signal` stops it; a refused publish of a delivery
+    /// keeps its message in one of `places`.
+    #[allow(clippy::too_many_arguments)]
     fn run<Sub, Body, Cx, State, Signal, Host, Park, Enc>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
@@ -187,6 +225,7 @@ pub trait WorkerSet {
         state: &AppState<State>,
         host: &Host,
         parked: Park,
+        places: Places<'_>,
     ) -> impl Future<Output = ()>
     where
         Enc: EncodeSize,
@@ -207,6 +246,7 @@ impl WorkerSet for OneWorker {
         state: &AppState<State>,
         host: &Host,
         parked: Park,
+        places: Places<'_>,
     ) -> impl Future<Output = ()>
     where
         Enc: EncodeSize,
@@ -217,7 +257,7 @@ impl WorkerSet for OneWorker {
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
-        route.run_sequential(signal, state, host, parked, Enc::room())
+        route.run_sequential(signal, state, host, parked, Enc::room(), places)
     }
 }
 
@@ -230,6 +270,7 @@ impl WorkerSet for OneWorker {
         state: &AppState<State>,
         host: &Host,
         parked: Park,
+        places: Places<'_>,
     ) where
         Enc: EncodeSize,
         Park: Parks,
@@ -241,9 +282,17 @@ impl WorkerSet for OneWorker {
     {
         // The worker's own continuation slot, beside its deliveries.
         let worker = WorkerHost::new(host);
-        worker
-            .around(route.run_sequential(signal, state, &worker, worker.parks(parked), Enc::room()))
-            .await;
+        // Pinned in this frame, so the join beside the slot's driver holds a reference to the
+        // loop and the app's future nests no deeper for the slot than for this frame.
+        let run = pin!(route.run_sequential(
+            signal,
+            state,
+            &worker,
+            worker.parks(parked),
+            Enc::room(),
+            places
+        ));
+        worker.around(run).await;
     }
 }
 
@@ -255,6 +304,7 @@ impl<const WORKERS: usize> WorkerSet for Pool<WORKERS> {
         state: &AppState<State>,
         host: &Host,
         parked: Park,
+        places: Places<'_>,
     ) -> impl Future<Output = ()>
     where
         Enc: EncodeSize,
@@ -265,7 +315,9 @@ impl<const WORKERS: usize> WorkerSet for Pool<WORKERS> {
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
-        run_workers::<WORKERS, _, _, _, _, _, _, _, Enc>(route, signal, state, host, false, parked)
+        run_workers::<WORKERS, _, _, _, _, _, _, _, Enc>(
+            route, signal, state, host, false, parked, places,
+        )
     }
 }
 
@@ -277,6 +329,7 @@ impl<const WORKERS: usize> WorkerSet for Keyed<WORKERS> {
         state: &AppState<State>,
         host: &Host,
         parked: Park,
+        places: Places<'_>,
     ) -> impl Future<Output = ()>
     where
         Enc: EncodeSize,
@@ -287,16 +340,22 @@ impl<const WORKERS: usize> WorkerSet for Keyed<WORKERS> {
         Signal: ShutdownWait + Halt + Clone,
         Host: HostDetach<Kept: PrepareKept<Cx>, Retry: RetryCopies<Cx>>,
     {
-        run_workers::<WORKERS, _, _, _, _, _, _, _, Enc>(route, signal, state, host, true, parked)
+        run_workers::<WORKERS, _, _, _, _, _, _, _, Enc>(
+            route, signal, state, host, true, parked, places,
+        )
     }
 }
 
-impl<L: WorkerSet, Enc: EncodeSize> OneTaskDispatch for EmbeddedPlan<L, NoRoom, Enc> {
+impl<L, Enc, Refused> OneTaskDispatch for EmbeddedPlan<L, NoRoom, Enc, (), Refused>
+where
+    L: WorkerSet,
+    Enc: EncodeSize,
+    Refused: RefusalCount,
+{
     type Copies = NoCopies;
 
-    // Not an `async fn`: a frame of its own would sit between the caller and the workers for
-    // nothing.
-    fn run<Sub, Body, Cx, State, Signal, Host, Path>(
+    // The frame owns the registration's places, which its workers lend each delivery.
+    async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
         _path: Option<Path>,
@@ -304,8 +363,7 @@ impl<L: WorkerSet, Enc: EncodeSize> OneTaskDispatch for EmbeddedPlan<L, NoRoom, 
         state: &AppState<State>,
         host: &Host,
         parked: &Cell<bool>,
-    ) -> impl Future<Output = ()>
-    where
+    ) where
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
@@ -313,13 +371,19 @@ impl<L: WorkerSet, Enc: EncodeSize> OneTaskDispatch for EmbeddedPlan<L, NoRoom, 
         Host: Detach,
         Path: PrepareCopy<Cx>,
     {
+        let room = Refused::Room::default();
         self.workers
-            .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, host, parked)
+            .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, host, parked, room.places())
+            .await;
     }
 }
 
-impl<L: WorkerSet, Enc: EncodeSize, const CAPACITY: usize> OneTaskDispatch
-    for EmbeddedPlan<L, Room<CAPACITY>, Enc>
+impl<L, Enc, Refused, const CAPACITY: usize> OneTaskDispatch
+    for EmbeddedPlan<L, Room<CAPACITY>, Enc, (), Refused>
+where
+    L: WorkerSet,
+    Enc: EncodeSize,
+    Refused: RefusalCount,
 {
     type Copies = KeepCopies;
 
@@ -339,21 +403,26 @@ impl<L: WorkerSet, Enc: EncodeSize, const CAPACITY: usize> OneTaskDispatch
         Host: Detach,
         Path: PrepareCopy<Cx>,
     {
+        // The registration's places, which its workers lend each delivery and its store's copies
+        // take from.
+        let room = Refused::Room::default();
         let Some(path) = path else {
             self.workers
-                .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, host, parked)
+                .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, host, parked, room.places())
                 .await;
             return;
         };
         // The registration's own store: its copies wait in its records, and its driver
         // publishes the last of them after the workers have stopped.
-        let store = CopyStore::<Path, CAPACITY>::new(path, &route.name).input(route.input);
+        let store = CopyStore::<Path, CAPACITY>::new(path, &route.name)
+            .input(route.input)
+            .places(room.places());
         let workers = async {
             let keeping = Keeping(host, &store);
             // The store's driver waits on timers of its own beside the workers, so the join above
             // must not skip this registration while the workers are idle: the flag stays clear.
             self.workers
-                .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, &keeping, ())
+                .run::<_, _, _, _, _, _, _, Enc>(route, signal, state, &keeping, (), room.places())
                 .await;
             store.close();
         };
@@ -374,6 +443,7 @@ async fn run_workers<const COUNT: usize, Sub, Body, Cx, State, Signal, Host, Par
     host: &Host,
     keyed: bool,
     group: Park,
+    places: Places<'_>,
 ) where
     Enc: EncodeSize,
     Park: Parks,
@@ -407,6 +477,7 @@ async fn run_workers<const COUNT: usize, Sub, Body, Cx, State, Signal, Host, Par
         delivery: &delivery,
         host,
         failure: &failure,
+        places,
     };
     let workers = join_workers(&mailboxes, |index, mailbox| {
         work::<_, _, _, _, _, _, Enc, COUNT>(mailbox, (!keyed).then_some((&free, index)), &shared)
@@ -521,6 +592,8 @@ struct Shared<'a, Body, Cx, State, Signal, Host> {
     delivery: &'a Delivery<Cx>,
     host: &'a Host,
     failure: &'a DispatchFailure<Signal>,
+    /// The subscription's places, which every worker lends its deliveries.
+    places: Places<'a>,
 }
 
 /// One worker: dispatches what its worker hands it until the worker ends, and reports itself free
@@ -584,6 +657,7 @@ async fn deliveries<Message, Body, Cx, State, Signal, Host, Lent, Enc, const COU
             shared.handler,
             &mut slot,
             &mut *encode,
+            shared.places,
             shared.name,
             shared.state,
             shared.delivery,
@@ -730,6 +804,28 @@ fn key_index<const WORKERS: usize>(key: &[u8]) -> usize {
 /// }
 /// # let _ = app(LocalMemoryBroker::new());
 /// ```
+///
+/// or for the places of refused messages:
+///
+/// ```compile_fail
+/// # use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
+/// # use ruststream_runtime::{Context, Deserialized, HandlerOutcome, Input, Handle, SoloDeserialized, subscriber};
+/// # use ruststream_runtime_embassy::{EmbeddedApp, MountSteps, Mounts};
+/// # struct Command;
+/// # impl Deserialized for Command { type Output<'a> = Command; type Error = core::convert::Infallible;
+/// #     fn from_payload(_: &[u8]) -> Result<Command, Self::Error> { Ok(Command) } }
+/// # impl Input for Command { type Axis = SoloDeserialized<Command>; }
+/// # struct Drive;
+/// # impl Handle<Command> for Drive {
+/// #     fn handle(&self, _: &Command, _: &(), _: &mut Context<'_>)
+/// #         -> impl Future<Output = Result<(), HandlerOutcome>> { core::future::ready(Ok(())) } }
+/// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
+///     EmbeddedApp::new().with_broker(bus, |b| {
+///         b.include(subscriber(LocalMemorySource::new("motor"), Drive).build()).refusal_capacity::<0>()
+///     })
+/// }
+/// # let _ = app(LocalMemoryBroker::new());
+/// ```
 pub trait MountSteps: Sized {
     /// The router once the registration runs on `Next` workers.
     #[doc(hidden)]
@@ -740,6 +836,9 @@ pub trait MountSteps: Sized {
     /// The router once the registration's workers encode into `N` bytes.
     #[doc(hidden)]
     type WithEncode<const N: usize>;
+    /// The router once the registration keeps `N` places for the messages of refused publishes.
+    #[doc(hidden)]
+    type WithRefusals<const N: usize>;
     /// The room the registration keeps so far.
     #[doc(hidden)]
     type Room;
@@ -788,6 +887,58 @@ pub trait MountSteps: Sized {
     where
         Encode<N>: Within<Self::ReplyRoom>;
 
+    /// Keeps `N` places for the messages of the registration's refused publishes, in a build
+    /// without `alloc`.
+    ///
+    /// A publish the runtime makes for a delivery (its reply, a retry or a dead-letter copy) that
+    /// the broker refuses hands its message back: the message moves into a free place, and the
+    /// runtime reads it out of the place as the publish returns, for the handler's
+    /// [`.error`](ruststream_runtime::HandlerOutcome::error) continuation. A publish that goes out
+    /// takes no place. A registration therefore never holds two places at once, and by default it
+    /// keeps one, whatever it holds at once: a single delivery, a batch, or the deliveries of
+    /// `.pool::<N>()` and `.keyed::<N>()` workers.
+    ///
+    /// When every place is taken, a refused publish comes back without its message: its error
+    /// still reaches `.error` and the diagnostics, and the message's bytes and headers do not. A
+    /// place is a message's destination, payload and headers in fixed storage, about 700 bytes
+    /// of the app. With `alloc` a refused message is boxed and the step changes nothing.
+    ///
+    /// A publish through an `Out` slot keeps a refused message in a place of the slot's own.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
+    /// use ruststream::runtime::{EmbeddedApp, MountSteps, Mounts};
+    /// use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
+    ///
+    /// /// A reading, as its bytes.
+    /// #[derive(Deserialized)]
+    /// struct Reading<'a>(&'a [u8]);
+    ///
+    /// /// The answer to a reading: its first byte.
+    /// #[derive(Outgoing, Serialized)]
+    /// #[outgoing(name = "answers")]
+    /// struct Answer([u8; 1]);
+    ///
+    /// #[subscriber(LocalMemorySource::new("readings"), reply)]
+    /// async fn answer(reading: &Reading<'_>) -> Answer {
+    ///     Answer([reading.0.first().copied().unwrap_or_default()])
+    /// }
+    ///
+    /// fn app(bus: LocalMemoryBroker<8>) -> EmbeddedApp<impl Mounts> {
+    ///     EmbeddedApp::new().with_broker(bus, |b| {
+    ///         // Four readings at once, and two places for the answers the bus refuses.
+    ///         b.include(answer)
+    ///             .out_reply(LocalMemoryPublish)
+    ///             .pool::<4>()
+    ///             .refusal_capacity::<2>()
+    ///     })
+    /// }
+    /// # let _ = app(LocalMemoryBroker::new());
+    /// ```
+    fn refusal_capacity<const N: usize>(self) -> Self::WithRefusals<N>;
+
     /// The room the registration's reply publisher can carry.
     #[doc(hidden)]
     type ReplyRoom;
@@ -828,6 +979,8 @@ pub trait SoFar {
     type Room;
     /// Its encode buffer.
     type Encoding;
+    /// The places its refused publishes keep their messages in.
+    type Refusals;
 
     /// Its workers, for a step that keeps them.
     fn into_workers(self) -> Self::WorkerSet;
@@ -837,16 +990,18 @@ impl SoFar for () {
     type WorkerSet = OneWorker;
     type Room = NoRoom;
     type Encoding = Encode<DEFAULT_ENCODE_CAPACITY>;
+    type Refusals = OnePlace;
 
     fn into_workers(self) -> OneWorker {
         OneWorker
     }
 }
 
-impl<L, R, E, Z> SoFar for EmbeddedPlan<L, R, E, Z> {
+impl<L, R, E, Z, F> SoFar for EmbeddedPlan<L, R, E, Z, F> {
     type WorkerSet = L;
     type Room = R;
     type Encoding = E;
+    type Refusals = F;
 
     fn into_workers(self) -> L {
         self.workers
@@ -872,6 +1027,7 @@ where
                     <Head::Plan as SoFar>::Room,
                     <Head::Plan as SoFar>::Encoding,
                     <Head::Route as BatchWidth>::Size,
+                    <Head::Plan as SoFar>::Refusals,
                 >,
             >,
             Routes,
@@ -890,6 +1046,7 @@ where
                     Room<CAP>,
                     <Head::Plan as SoFar>::Encoding,
                     <Head::Route as BatchWidth>::Size,
+                    <Head::Plan as SoFar>::Refusals,
                 >,
             >,
             Routes,
@@ -908,6 +1065,26 @@ where
                     <Head::Plan as SoFar>::Room,
                     Encode<N>,
                     <Head::Route as BatchWidth>::Size,
+                    <Head::Plan as SoFar>::Refusals,
+                >,
+            >,
+            Routes,
+        ),
+        RouteCodec,
+        RouteLayers,
+        LocalPipeline<Pipe>,
+    >;
+    type WithRefusals<const N: usize> = Router<
+        B,
+        (
+            Dispatched<
+                Head::Route,
+                EmbeddedPlan<
+                    <Head::Plan as SoFar>::WorkerSet,
+                    <Head::Plan as SoFar>::Room,
+                    <Head::Plan as SoFar>::Encoding,
+                    <Head::Route as BatchWidth>::Size,
+                    Refusals<N>,
                 >,
             >,
             Routes,
@@ -956,6 +1133,20 @@ where
             room: PhantomData,
         })
     }
+
+    fn refusal_capacity<const N: usize>(self) -> Self::WithRefusals<N> {
+        const {
+            assert!(
+                N > 0,
+                "a registration keeps at least one place for refused messages: give \
+                 `refusal_capacity` a count above zero"
+            );
+        }
+        self.replan(|plan: Head::Plan| EmbeddedPlan {
+            workers: plan.into_workers(),
+            room: PhantomData,
+        })
+    }
 }
 
 // A registration with steps of its own (`.out_reply(..)`, `.out(..)`) is committed first, so
@@ -967,6 +1158,7 @@ where
     type WithWorkers<Next> = <Attach::Out as MountSteps>::WithWorkers<Next>;
     type WithCapacity<const CAP: usize> = <Attach::Out as MountSteps>::WithCapacity<CAP>;
     type WithEncode<const N: usize> = <Attach::Out as MountSteps>::WithEncode<N>;
+    type WithRefusals<const N: usize> = <Attach::Out as MountSteps>::WithRefusals<N>;
     type Room = <Attach::Out as MountSteps>::Room;
     type Batch = <Attach::Out as MountSteps>::Batch;
 
@@ -988,5 +1180,9 @@ where
         Room<CAP>: Holds<Self::Batch>,
     {
         self.build().retry_capacity::<CAP>()
+    }
+
+    fn refusal_capacity<const N: usize>(self) -> Self::WithRefusals<N> {
+        self.build().refusal_capacity::<N>()
     }
 }

@@ -33,7 +33,8 @@ fn app(messages: usize) -> Pending {
     common::pending(messages, 0, |b| b.include(consume))
 }
 
-#[library_benchmark(config = common::config(0, 134))]
+// #729 added a cold block per thread: the subscription name the thread reports its panic with.
+#[library_benchmark(config = common::config(0, 137))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]

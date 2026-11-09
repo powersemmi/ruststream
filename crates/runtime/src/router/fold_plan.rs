@@ -13,7 +13,7 @@
 
 use core::cell::Cell;
 use core::marker::PhantomData;
-use ruststream_core::MaybeSendSync;
+use ruststream_core::{MaybeSendSync, PlaceRoom, Places};
 
 use crate::coop::Cooperative;
 use crate::dispatch::{Delivery, EncodeRoom, Gated, HeadersAtOnce, Parks, run_sequential};
@@ -103,14 +103,18 @@ pub struct OneTaskRoute<Sub, Body, Cx> {
 impl<Sub, Body, Cx> OneTaskRoute<Sub, Body, Cx> {
     /// Runs the route one delivery at a time, on the host the plan lends it: the plan of a route
     /// that declared no workers.
-    pub async fn run_sequential<State, Signal, Lent, Park, Room>(
+    // Not an `async fn`: the loop owns the route's publish context, so no frame of this call sits
+    // between the plan and the loop.
+    pub fn run_sequential<State, Signal, Lent, Park, Room>(
         self,
         signal: Signal,
         state: StateRef<'_, State>,
         host: &Lent,
         parked: Park,
         room: Room,
-    ) where
+        places: Places<'_>,
+    ) -> impl Future<Output = ()>
+    where
         Room: EncodeRoom,
         Park: Parks,
         Sub: Subscriber,
@@ -126,14 +130,14 @@ impl<Sub, Body, Cx> OneTaskRoute<Sub, Body, Cx> {
             signal,
             self.name,
             handle_of(state),
-            (&self.delivery, host),
+            (self.delivery, host),
             failure,
             (),
             HeadersAtOnce,
             parked,
             room,
+            places,
         )
-        .await;
     }
 }
 
@@ -145,9 +149,8 @@ pub struct SequentialPlan;
 impl OneTaskDispatch for SequentialPlan {
     type Copies = NoCopies;
 
-    // Not an `async fn`: a frame of its own would sit between the caller and the loop for
-    // nothing.
-    fn run<Sub, Body, Cx, State, Signal, Host, Path>(
+    // The frame owns the subscription's one place: the loop handles one delivery at a time.
+    async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
         route: OneTaskRoute<Sub, Body, Cx>,
         _path: Option<Path>,
@@ -155,8 +158,7 @@ impl OneTaskDispatch for SequentialPlan {
         state: StateRef<'_, State>,
         host: &Host,
         parked: &Cell<bool>,
-    ) -> impl Future<Output = ()>
-    where
+    ) where
         Sub: Subscriber,
         Body: Handler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + MaybeSendSync + 'static,
@@ -164,7 +166,17 @@ impl OneTaskDispatch for SequentialPlan {
         Host: Detach,
         Path: PrepareCopy<Cx>,
     {
-        route.run_sequential(signal, state, host, parked, PayloadBuf::new())
+        let room = PlaceRoom::<1>::new();
+        route
+            .run_sequential(
+                signal,
+                state,
+                host,
+                parked,
+                PayloadBuf::new(),
+                room.places(),
+            )
+            .await;
     }
 }
 

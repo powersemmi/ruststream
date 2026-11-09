@@ -1,9 +1,9 @@
 //! The suites of the local family: the routing contract and the lifecycle ladder, driven on the
 //! caller's task.
 //!
-//! They spawn nothing, so nothing of the broker crosses a thread. A broker crate reaches them
-//! through the facade's `conformance` feature, which turns the tokio runner on, so the contract
-//! types are `Send` there, as in every build beside tokio.
+//! They spawn nothing, so nothing of the broker crosses a thread, and they ask nothing of `Send`.
+//! The facade's `conformance` feature brings them without its `tokio` feature, so a broker on the
+//! embedded runner runs them with its own types.
 
 // The suites drive a broker on the caller's task and ask nothing of their own futures.
 #![allow(clippy::future_not_send)]
@@ -25,7 +25,7 @@ use super::routing::{
     nack_without_requeue_drops, ordering, publish_before_subscribe,
     published_log_observes_publishes,
 };
-use super::{expect_next, expect_no_more, outgoing, set_header};
+use super::{expect_next, expect_no_more, outgoing, set_header, with_map};
 use crate::helpers::unique_subject;
 use crate::lifecycle::Unsent;
 
@@ -54,8 +54,9 @@ type LocalLive<C> = <<C as DefaultPublish>::Policy as PublishPolicy<C>>::Live;
 /// | own publishes | `published(name)` records what the broker's default publisher sent beside what was injected, in order and with headers |
 /// | coordinator counts | a delivery is counted in flight before the publish returns and released once when settled; a requeue counts it again; a publish no subscription receives is not counted |
 ///
-/// Run it on a current-thread Tokio runtime: it spawns nothing, so its futures need not be
-/// `Send`, and its timeouts read Tokio's clock.
+/// The facade's `conformance` feature brings it without the `tokio` feature, so a broker whose
+/// types are not `Send` runs it with those types. Run it on a current-thread Tokio runtime: it
+/// spawns nothing, so its futures need not be `Send`, and its timeouts read Tokio's clock.
 ///
 /// # Examples
 ///
@@ -135,7 +136,10 @@ where
     set_header(&mut headers, "x-conformance", "own");
     publish_own(
         &connected,
-        OutgoingMessage::new(name.as_str(), b"first".as_slice()).with_headers(headers),
+        with_map(
+            OutgoingMessage::new(name.as_str(), b"first".as_slice()),
+            &headers,
+        ),
     )
     .await;
     connected.inject(OutgoingMessage::new(name.as_str(), b"injected".as_slice()));
@@ -280,9 +284,10 @@ async fn settle_ack<M: Settle>(msg: M) {
 ///   shutdown and settled with `nack(requeue = true)` after it must answer an error, or come back
 ///   on its own subscription.
 ///
-/// Run it on a current-thread Tokio runtime: it spawns nothing, and its timeouts read Tokio's
-/// clock. A broker that offers [`nack_after`](Settle::nack_after) on its own timer
-/// is checked on that timer by its own crate.
+/// The facade's `conformance` feature brings it without the `tokio` feature, so a broker whose
+/// types are not `Send` runs it with those types. Run it on a current-thread Tokio runtime: it
+/// spawns nothing, and its timeouts read Tokio's clock. A broker that offers
+/// [`nack_after`](Settle::nack_after) on its own timer is checked on that timer by its own crate.
 ///
 /// # Examples
 ///
@@ -437,6 +442,9 @@ where
 /// for a broker of the local family: the broker connects and shuts down, and a publish
 /// through a publisher paired before the shutdown must fail with the message it was handed.
 ///
+/// The facade's `conformance` feature brings it without the `tokio` feature, so a broker whose
+/// types are not `Send` runs it with those types, on a current-thread Tokio runtime.
+///
 /// # Examples
 ///
 /// ```no_run
@@ -485,7 +493,7 @@ pub async fn local_refused_publish_returns_message<B, MkBroker, Pub, MkPub>(
 
     let mut headers = Headers::new();
     set_header(&mut headers, "conformance", "unsent");
-    let outgoing = outgoing::<Pub::Payload>(&subject, UNSENT).with_headers(headers.clone());
+    let outgoing = with_map(outgoing::<Pub::Payload>(&subject, UNSENT), &headers);
     let answer = within(
         "the publish after the shutdown",
         publisher.publish(outgoing, None),

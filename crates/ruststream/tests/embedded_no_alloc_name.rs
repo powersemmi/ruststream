@@ -1,5 +1,7 @@
-//! A reply a naming transform sent to a name past the fixed name room of a build without
-//! `alloc`, which the bus refused: the `.error` continuation is told the message has no
+//! What the `.error` continuation is told of a reply the bus refused, on a build without `alloc`.
+//!
+//! The refused reply keeps its bytes in a place of the subscription, which the mount sizes. A
+//! reply a naming transform sent to a name past the fixed name room is told to have no
 //! destination, so a republish never goes to a name the message was not sent to.
 
 // The app and its handlers are not `Send`: the harness polls them inside the test's future.
@@ -17,8 +19,8 @@ use ruststream::memory::local::{
     LocalMemoryBroker, LocalMemoryBus, LocalMemoryPublish, LocalMemorySource,
 };
 use ruststream::runtime::{
-    EmbeddedApp, Failures, ForReply, HandlerOutcome, Mounts, Names, Outgoing as OutgoingMessage,
-    PublishContext, PublishTransform,
+    EmbeddedApp, Failures, ForReply, HandlerOutcome, MountSteps, Mounts, Names,
+    Outgoing as OutgoingMessage, PublishContext, PublishTransform,
 };
 use ruststream::testing::embedded::TestApp;
 use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
@@ -133,6 +135,81 @@ fn a_refused_reply_sent_to_a_name_past_the_room_reaches_error_with_no_destinatio
         tb.advance(Duration::from_secs(1)).await?;
 
         assert_eq!(nameless.0.get(), 1);
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+/// The first byte of each refused answer a continuation read, in the order it read them.
+#[derive(Clone, Default)]
+struct Kept(Rc<Cell<Option<u8>>>);
+
+/// The answer to an ask, on a name a handler holds full.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "answers")]
+struct Answer(&'static [u8]);
+
+/// Answers every ask, and keeps the first byte of an answer the bus refused.
+#[subscriber(LocalMemorySource::new("asks"), reply)]
+async fn on_ask(ask: &Job<'_>, ctx: &mut Context<'_, (), Kept>) -> Answer {
+    let _ = ask.0;
+    let kept = ctx.state().clone();
+    if let Ok(after) = ctx.after(HandlerOutcome::ack()) {
+        after.error(async move |failures: &Failures| {
+            for failed in failures {
+                let first = failed
+                    .message()
+                    .payload()
+                    .and_then(|payload| payload.first().copied());
+                kept.0.set(first);
+            }
+        });
+    }
+    Answer(b"yes")
+}
+
+/// Holds the answers subscription full.
+#[subscriber(LocalMemorySource::new("answers"))]
+async fn on_answers_stuck(held: &Job<'_>) -> HandlerOutcome {
+    let _ = held.0;
+    embassy_time::Timer::after(embassy_time::Duration::from_secs(3600)).await;
+    HandlerOutcome::ack()
+}
+
+/// A question for the answering handler.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "asks")]
+struct Ask(&'static [u8]);
+
+fn kept_app(bus: Tight) -> EmbeddedApp<impl Mounts<State = Kept>> {
+    EmbeddedApp::new()
+        .with_state(Kept::default())
+        .with_broker(bus, |b| {
+            b.include(on_answers_stuck)
+                .include(on_ask)
+                .out_reply(LocalMemoryPublish)
+                .refusal_capacity::<1>()
+        })
+}
+
+/// One bus for the kept-answer scenario.
+static KEPT_BUS: LocalMemoryBus<1> = LocalMemoryBus::new();
+
+#[test]
+fn a_refused_reply_reaches_error_with_the_bytes_its_place_kept() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let kept = Kept::default();
+        let shared = kept.clone();
+        let tb = TestApp::with_state(kept_app(Tight::new(&KEPT_BUS)), move |_| shared).await?;
+        // The first answer fills the one slot of the answers subscription for good.
+        tb.broker::<Tight>()
+            .message(&Answer(b"x"))
+            .publish()
+            .await?;
+        tb.broker::<Tight>().message(&Ask(b"?")).publish().await?;
+        tb.advance(Duration::from_secs(1)).await?;
+
+        assert_eq!(kept.0.get(), Some(b'y'));
         tb.shutdown().await?;
         Ok(())
     })

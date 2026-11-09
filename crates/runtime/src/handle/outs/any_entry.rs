@@ -11,7 +11,9 @@ use core::ops::Deref;
 
 use crate::codec::ActiveCodec as Codec;
 use crate::publish::{Admits, TransactionScope, TypedTransaction};
-use crate::publish::{HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishSink};
+use crate::publish::{
+    HeadersUnset, KeepsPlaces, KeptPlaces, MessageBody, OutPipeline, PublishBuilder, PublishSink,
+};
 use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 use crate::{
     MaybeSendSync, OutgoingDestination, OwnedTransactions, Publisher, TransactionalPublisher,
@@ -31,16 +33,16 @@ impl<M, W, E, Pipe, Body> SlotEntry<M, Body> for Slot<M, W, E, Pipe, Body> {
     type Wire = W;
 }
 
-/// An entry whose publish sink is the entry itself, which is what lets a body generic over its
-/// entry prove its publish future `Send` where the `tokio` feature is on.
+/// An entry whose publish sink is a borrow of the entry itself, which is what lets a body generic
+/// over its entry prove its publish future `Send` where the `tokio` feature is on.
 #[doc(hidden)]
 pub trait MaybeSendSink<M, Body = ()>:
-    'static + for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Self>
+    'static + for<'sink> SlotPublish<M, Body, Sink<'sink> = KeptPlaces<'sink, Self>>
 {
 }
 
 impl<Entry, M, Body> MaybeSendSink<M, Body> for Entry where
-    Entry: 'static + for<'sink> SlotPublish<M, Body, Sink<'sink> = &'sink Entry>
+    Entry: 'static + for<'sink> SlotPublish<M, Body, Sink<'sink> = KeptPlaces<'sink, Entry>>
 {
 }
 
@@ -49,6 +51,7 @@ impl<Entry, M, Body> MaybeSendSink<M, Body> for Entry where
 pub trait SlotPublish<M, Body = ()>:
     SlotEntry<M, Body, Wire: Publisher>
     + Publisher<Options = <<Self as SlotEntry<M, Body>>::Wire as Publisher>::Options>
+    + KeepsPlaces
 {
     /// The codec typed publishes through the slot encode with.
     type Enc: SlotEncoding;
@@ -76,14 +79,14 @@ where
 {
     type Enc = E;
     type Sink<'a>
-        = &'a Self
+        = KeptPlaces<'a, Self>
     where
         Self: 'a;
 
     fn message<'a, T, Index>(
         &'a self,
         value: &'a T,
-    ) -> PublishBuilder<&'a Self, MessageBody<'a, T>, &'a E, HeadersUnset, T::Form>
+    ) -> PublishBuilder<KeptPlaces<'a, Self>, MessageBody<'a, T>, &'a E, HeadersUnset, T::Form>
     where
         Body: ContainsMessage<T, Index>,
         T: OutgoingDestination + PublishedThrough<M>,

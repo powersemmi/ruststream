@@ -6,9 +6,15 @@
 //! ring is full; `by_key` hashes the key onto a fixed ring and waits on that one, so a key keeps
 //! its order. A thread's [`Drain`] drains its ring and parks only when it has found it empty for a
 //! few microseconds of spinning; the loop wakes it only when it is flagged parked, so under load a
-//! delivery costs no wake, and behind a handler lighter than the loop's read few do. A loop that
-//! waits on room is woken by the first ring to drain to half (or, waiting on a thread, by the
-//! thread's first free slot), not by every pop.
+//! delivery costs no wake, and behind a handler lighter than the loop's read few do.
+//!
+//! A loop that waits on room is woken by a ring that has drained to half, not by every pop: the
+//! first ring to do so when every ring is full, the key's own ring under `by_key`. A hot key behind
+//! handlers slower than the loop thus costs one wake per half ring of deliveries. Shutdown and a
+//! thread that leaves wake the loop at once; stopping, a loop that holds a key's delivery hands it
+//! to that ring's first free slot. How the deliveries spread over the threads is the service's
+//! choice: `by_key` partitions by the key the service picks, and a key that keeps one ring full
+//! while the other threads idle is the consequence of that choice, as with partitioning anywhere.
 //!
 //! Per delivery, under load: `rtrb`'s push and pop (a store each, the other side's index read only
 //! when the cached copy runs out; the ring is preallocated by [`open`], so nothing allocates), a
@@ -26,27 +32,26 @@
 //! everything the task did before the move before everything it does after, so a producer's
 //! unsynchronized cached index stays one thread's at a time.
 
-use std::boxed::Box;
 use std::fmt::{self, Debug, Display, Formatter};
-use std::future::{Pending, poll_fn};
+use std::future::poll_fn;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::hint::spin_loop;
-use std::iter::repeat_with;
-use std::ops::Deref;
 use std::pin::{Pin, pin};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering, fence};
-use std::task::{Context as TaskContext, Poll};
+use std::sync::atomic::{Ordering, fence};
+use std::task::Poll;
 use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use futures::Stream;
-use futures::task::AtomicWaker;
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 
+use self::signals::{Leaving, Signals, Which};
 use super::Turn;
 use crate::host::{Halt, ShutdownWait};
 use ruststream_core::diag::error;
+
+mod signals;
 
 /// The entries of each thread's ring: enough that a thread finishing a delivery finds the next
 /// one waiting while the loop reads on, few enough that the read-ahead stays small.
@@ -79,163 +84,12 @@ pub fn key_index(key: &[u8], threads: usize) -> usize {
     }
 }
 
-/// A value on a cache line of its own, so what one side writes does not evict what the other
-/// reads.
-#[repr(align(128))]
-struct Padded<T>(T);
-
-impl<T> Deref for Padded<T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        &self.0
-    }
-}
-
-/// What `loop_waiting` holds while the loop waits for room in any ring.
-const ANY: usize = usize::MAX;
-
-/// Who waits on whom: a thread on its empty ring, the loop on room.
-struct Signals {
-    parked: Box<[Padded<AtomicBool>]>,
-    wakers: Box<[Padded<AtomicWaker>]>,
-    /// 0 while the loop reads; the waited ring's index plus one, or [`ANY`], while it waits.
-    loop_waiting: Padded<AtomicUsize>,
-    loop_waker: AtomicWaker,
-}
-
-/// Which ring the loop waits on for room.
-#[derive(Clone, Copy)]
-enum Which {
-    /// This one: the thread a key hashes to.
-    One(usize),
-    /// The first with room from here on, in turn.
-    Next(usize),
-}
-
 /// Why the loop could not hand a delivery on.
 enum Stuck {
     /// The thread behind a ring is gone.
     Gone(usize),
     /// Shutdown came first.
     Shutdown,
-}
-
-impl Signals {
-    fn new(count: usize) -> Self {
-        Self {
-            parked: repeat_with(|| Padded(AtomicBool::new(false)))
-                .take(count)
-                .collect(),
-            wakers: repeat_with(|| Padded(AtomicWaker::new()))
-                .take(count)
-                .collect(),
-            loop_waiting: Padded(AtomicUsize::new(0)),
-            loop_waker: AtomicWaker::new(),
-        }
-    }
-
-    /// Thread `index` freed a slot of its ring, which now holds `held` deliveries: wakes the loop
-    /// if it waits on this ring, or on any ring and this one drained to half.
-    #[inline]
-    fn freed(&self, index: usize, held: usize) {
-        // Orders the ring's index store before the flag's load, against the loop's flag store
-        // before its ring load.
-        fence(Ordering::SeqCst);
-        let waiting = self.loop_waiting.load(Ordering::Relaxed);
-        let wakes = match waiting {
-            0 => false,
-            ANY => held <= RING / 2,
-            one => one == index + 1,
-        };
-        if wakes
-            && self
-                .loop_waiting
-                .compare_exchange(waiting, 0, Ordering::SeqCst, Ordering::Relaxed)
-                .is_ok()
-        {
-            self.loop_waker.wake();
-        }
-    }
-
-    /// The loop pushed to ring `index`: wakes its thread if it is parked.
-    #[inline]
-    fn pushed(&self, index: usize) {
-        // Orders the ring's index store before the parked flag's load, against the thread's flag
-        // store before its ring load.
-        fence(Ordering::SeqCst);
-        if self.parked[index].load(Ordering::Relaxed)
-            && self.parked[index].swap(false, Ordering::SeqCst)
-        {
-            self.wakers[index].wake();
-        }
-    }
-
-    /// Wakes the loop, whatever it waits on: a thread is leaving.
-    fn leaving(&self) {
-        self.loop_waiting.store(0, Ordering::SeqCst);
-        self.loop_waker.wake();
-    }
-
-    /// The ring with room the loop waits for, by `which`; an error once the ring it would pick is
-    /// abandoned by its thread.
-    #[inline]
-    fn poll_room<Item>(
-        &self,
-        rings: &[Producer<Item>],
-        which: Which,
-        cx: &TaskContext<'_>,
-    ) -> Poll<Result<usize, usize>> {
-        // A ring's thread is checked before the ring is picked: a delivery pushed to a ring nobody
-        // drains would be lost.
-        let usable = |index: usize| {
-            let ring: &Producer<Item> = &rings[index];
-            if ring.is_abandoned() {
-                Some(Err(index))
-            } else {
-                (!ring.is_full()).then_some(Ok(index))
-            }
-        };
-        let pick = || match which {
-            Which::One(index) => usable(index),
-            Which::Next(start) => {
-                let count = rings.len();
-                (0..count).find_map(|offset| usable((start + offset) % count))
-            }
-        };
-        if let Some(found) = pick() {
-            return Poll::Ready(found);
-        }
-        self.loop_waker.register(cx.waker());
-        let waiting = match which {
-            Which::One(index) => index + 1,
-            Which::Next(_) => ANY,
-        };
-        self.loop_waiting.store(waiting, Ordering::SeqCst);
-        fence(Ordering::SeqCst);
-        if let Some(found) = pick() {
-            self.loop_waiting.store(0, Ordering::SeqCst);
-            return Poll::Ready(found);
-        }
-        Poll::Pending
-    }
-
-    /// Wakes every thread, for each to find its ring abandoned once it has drained it.
-    fn close(&self) {
-        for waker in &*self.wakers {
-            waker.wake();
-        }
-    }
-}
-
-/// Wakes the loop when a thread's work ends, however it ends: a ring the loop waits on is then
-/// found abandoned rather than waited on forever.
-struct Leaving<'a>(&'a Signals);
-
-impl Drop for Leaving<'_> {
-    fn drop(&mut self) {
-        self.0.leaving();
-    }
 }
 
 /// One thread's end of a ring: it drains the ring through a handler and ends once the loop has
@@ -474,7 +328,9 @@ impl<Item> Feed<Item> {
                             }
                         }
                         Err(PushError::Full(item)) => {
-                            if let Err(stuck) = self.hand_over_when_room(index, item).await {
+                            let handed_over =
+                                self.hand_over_when_room(index, item, cancelled.as_mut());
+                            if let Err(stuck) = handed_over.await {
                                 report(name, &stuck);
                                 break;
                             }
@@ -501,10 +357,21 @@ impl<Item> Feed<Item> {
         }
     }
 
-    /// Pushes `item` to ring `index` once it has room. Shutdown does not cut the wait short,
-    /// so the delivery in hand is handed over rather than dropped.
+    /// Pushes `item` to ring `index` once the ring has drained to half. Shutdown wakes the wait
+    /// without cutting it short: the ring's first free slot takes the delivery in hand from then
+    /// on, so it is handed over rather than dropped, and the loop stops as soon as it can.
     #[cold]
-    async fn hand_over_when_room(&mut self, index: usize, mut item: Item) -> Result<(), Stuck> {
+    async fn hand_over_when_room<Cancelled>(
+        &mut self,
+        index: usize,
+        mut item: Item,
+        cancelled: Pin<&mut Cancelled>,
+    ) -> Result<(), Stuck>
+    where
+        Cancelled: Future<Output = ()>,
+    {
+        let mut which = Which::One(index);
+        let mut cancelled = Some(cancelled);
         loop {
             match self.rings[index].push(item) {
                 Ok(()) => {
@@ -513,8 +380,26 @@ impl<Item> Feed<Item> {
                 }
                 Err(PushError::Full(back)) => item = back,
             }
-            self.room(Which::One(index), None::<Pin<&mut Pending<()>>>)
-                .await?;
+            // A wait of its own rather than `room`: the pool's wait for room, paid per delivery,
+            // keeps a single caller, which the optimizer folds into the loop.
+            let (rings, signals) = (&mut self.rings, &*self.signals);
+            let mut shutdown = cancelled.as_mut().map(Pin::as_mut);
+            let waited = poll_fn(move |cx| match signals.poll_room(rings, which, cx) {
+                Poll::Ready(found) => Poll::Ready(found.map_err(Stuck::Gone)),
+                Poll::Pending => shutdown.as_mut().map_or(Poll::Pending, |shutdown| {
+                    shutdown.as_mut().poll(cx).map(|()| Err(Stuck::Shutdown))
+                }),
+            })
+            .await;
+            match waited {
+                Ok(_) => {}
+                Err(Stuck::Shutdown) => {
+                    // The wait has resolved, and is not polled again.
+                    cancelled = None;
+                    which = Which::Stopping(index);
+                }
+                Err(gone) => return Err(gone),
+            }
         }
     }
 
@@ -573,16 +458,21 @@ mod tests {
     use std::convert::Infallible;
     use std::format;
     use std::sync::Mutex;
-    use std::task::{Wake, Waker};
+    use std::sync::atomic::AtomicUsize;
+    use std::task::{Context as TaskContext, Wake, Waker};
     use std::thread;
 
     use futures::StreamExt;
+    use futures::channel::mpsc::{self, UnboundedSender};
     use futures::executor::block_on;
     use futures::stream;
     use tokio::sync::{Notify, Semaphore};
+    use tokio::task::{JoinHandle, yield_now};
     use tokio::time;
+    use tokio::time::error::Elapsed;
     use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
+    use super::signals::STOPPING;
     use super::*;
 
     /// The deliveries the loop may hold ahead of the handlers: one in hand per thread and a full
@@ -691,33 +581,136 @@ mod tests {
         );
     }
 
+    /// A loop of one thread brought to a wait on its full ring: the thread holds the first
+    /// delivery at `gate`, the ring holds the next [`RING`], and a keyed loop holds one more.
+    struct FullRing {
+        reading: JoinHandle<Feed<u32>>,
+        threads: Vec<thread::JoinHandle<()>>,
+        signals: Arc<Signals>,
+        stop: Arc<Stop>,
+        gate: Arc<Semaphore>,
+        handled: Arc<AtomicUsize>,
+        /// Kept open, so the stream does not end under the loop.
+        _deliveries: UnboundedSender<u32>,
+    }
+
+    impl FullRing {
+        /// Starts the loop and returns once it waits on the ring; with `leaves`, the first
+        /// delivery takes the thread down once `gate` lets it go.
+        async fn start(keyed: bool, leaves: bool) -> Self {
+            let gate = Arc::new(Semaphore::new(0));
+            let handled = Arc::new(AtomicUsize::new(0));
+            let holding = Arc::new(Notify::new());
+            let (feed, threads) = start(1, keyed, || {
+                let (gate, handled) = (Arc::clone(&gate), Arc::clone(&handled));
+                let holding = Arc::clone(&holding);
+                async move |item: u32| {
+                    if item == 0 {
+                        holding.notify_one();
+                    }
+                    gate.acquire().await.expect("the gate stays open").forget();
+                    assert!(
+                        !leaves || item > 0,
+                        "the first delivery takes the thread down"
+                    );
+                    handled.fetch_add(1, Ordering::SeqCst);
+                }
+            });
+            let signals = Arc::clone(&feed.signals);
+            let (deliveries, items) = mpsc::unbounded();
+            let stop = Arc::new(Stop::default());
+            let stopping = Arc::clone(&stop);
+            let reading = tokio::spawn(async move {
+                let mut feed = feed;
+                let items = items.map(Ok::<_, Infallible>);
+                feed.read(items, "full", &*stopping, |_| Some(b"key".as_slice()))
+                    .await;
+                feed
+            });
+            // The thread takes the first delivery before the rest arrive, so the ring fills
+            // behind it.
+            deliveries.unbounded_send(0).expect("the loop reads");
+            holding.notified().await;
+            for item in 1..=RING + 1 {
+                let item = u32::try_from(item).expect("a few deliveries");
+                deliveries.unbounded_send(item).expect("the loop reads");
+            }
+            let full = Self {
+                reading,
+                threads,
+                signals,
+                stop,
+                gate,
+                handled,
+                _deliveries: deliveries,
+            };
+            full.waiting(|waiting| waiting != 0).await;
+            full
+        }
+
+        /// Returns once the loop waits the way `waits` reads what it waits on.
+        async fn waiting(&self, waits: impl Fn(usize) -> bool) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !waits(self.signals.loop_waiting.load(Ordering::SeqCst)) {
+                assert!(
+                    Instant::now() < deadline,
+                    "the loop never came to the wait the test expects"
+                );
+                yield_now().await;
+            }
+        }
+
+        /// The loop, once its read has returned; an error where it is still waiting.
+        async fn stopped(&mut self) -> Result<Feed<u32>, Elapsed> {
+            time::timeout(Duration::from_secs(10), &mut self.reading)
+                .await
+                .map(|read| read.expect("the loop ends cleanly"))
+        }
+    }
+
     /// A thread whose work ends early (a panic outside the handler's own catch) stops the loop
-    /// rather than leaving it waiting on a ring nobody drains, the thread's strict wait included.
+    /// rather than leaving it waiting on a ring nobody drains, a ring held above half included.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_thread_that_dies_stops_the_loop() {
         for keyed in [false, true] {
-            let (mut feed, threads) = start(1, keyed, || {
-                async move |item: u32| {
-                    assert!(item > 0, "the first delivery takes the thread down");
-                }
-            });
-            let items = stream::iter(0..1000u32).map(Ok::<_, Infallible>);
-            let stop = Stop::default();
-            let read = time::timeout(
-                Duration::from_secs(10),
-                feed.read(items, "dying", &stop, |_| Some(b"key".as_slice())),
-            )
-            .await;
-            assert!(
-                read.is_ok(),
-                "the loop waited on a dead thread (keyed: {keyed})"
-            );
+            let mut full = FullRing::start(keyed, true).await;
+            full.gate.add_permits(1);
+            let mut feed = full
+                .stopped()
+                .await
+                .unwrap_or_else(|_| panic!("the loop waited on a dead thread (keyed: {keyed})"));
             feed.let_go();
-            for thread in threads {
+            for thread in full.threads {
                 // The thread panicked on purpose.
                 assert!(thread.join().is_err(), "the first delivery should panic");
             }
         }
+    }
+
+    /// Shutdown wakes a loop that waits for its key's ring to drain: the loop hands the delivery
+    /// it holds to the ring's first free slot and stops, and every delivery it read is handled.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_hands_a_waiting_key_its_first_free_slot() {
+        let mut full = FullRing::start(true, false).await;
+        full.stop.raise();
+        // Stopping, the loop waits on its key's ring, the only one, for any free slot.
+        full.waiting(|waiting| waiting == STOPPING | 1).await;
+        // One delivery handled frees one slot, far from half the ring.
+        full.gate.add_permits(1);
+        let mut feed = full
+            .stopped()
+            .await
+            .expect("shutdown left the loop waiting on its key's ring");
+        feed.let_go();
+        full.gate.add_permits(RING + 1);
+        for thread in full.threads {
+            thread.join().expect("the thread ends cleanly");
+        }
+        assert_eq!(
+            full.handled.load(Ordering::SeqCst),
+            RING + 2,
+            "a delivery the loop read was not handled"
+        );
     }
 
     /// A key keeps one thread, so its deliveries reach the handler in the order they were read.
@@ -739,6 +732,74 @@ mod tests {
         }
         let seen = seen.lock().expect("the lock is not poisoned");
         assert_eq!(*seen, (0..200).collect::<Vec<_>>());
+    }
+
+    /// The deliveries of the hot key in [`a_hot_key_wakes_the_loop_once_per_half_ring`]: fewer
+    /// than a turn, so the loop never wakes itself to give an executor its turn.
+    const HOT_KEY: usize = 100;
+
+    const _: () = assert!(HOT_KEY < TURN_LENGTH as usize);
+
+    /// Wakes the thread that polls a future, and counts the wakes.
+    struct Unparks {
+        thread: thread::Thread,
+        wakes: AtomicUsize,
+    }
+
+    impl Wake for Unparks {
+        fn wake(self: Arc<Self>) {
+            self.wake_by_ref();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.wakes.fetch_add(1, Ordering::SeqCst);
+            self.thread.unpark();
+        }
+    }
+
+    /// Polls `future` to its end on this thread, parked between polls, and returns how many
+    /// times it was woken.
+    fn woken_until_done(future: impl Future<Output = ()>) -> usize {
+        let unparks = Arc::new(Unparks {
+            thread: thread::current(),
+            wakes: AtomicUsize::new(0),
+        });
+        let waker = Waker::from(Arc::clone(&unparks));
+        let mut cx = TaskContext::from_waker(&waker);
+        let mut future = pin!(future);
+        while future.as_mut().poll(&mut cx).is_pending() {
+            thread::park();
+        }
+        unparks.wakes.load(Ordering::SeqCst)
+    }
+
+    /// Under one key and handlers far slower than the loop, the loop waits on the key's ring
+    /// nearly all the time: it is woken once that ring has drained to half, so at most once per
+    /// half ring of deliveries.
+    #[test]
+    fn a_hot_key_wakes_the_loop_once_per_half_ring() {
+        let (mut feed, threads) = start(2, true, || {
+            async move |_item: usize| {
+                // Computation that never waits, far longer than the loop's read of a delivery.
+                let until = Instant::now() + Duration::from_micros(100);
+                while Instant::now() < until {
+                    spin_loop();
+                }
+            }
+        });
+        let items = stream::iter(0..HOT_KEY).map(Ok::<_, Infallible>);
+        let stop = Stop::default();
+        let wakes = woken_until_done(feed.read(items, "hot", &stop, |_| Some(b"hot".as_slice())));
+        feed.let_go();
+        for thread in threads {
+            thread.join().expect("the thread ends cleanly");
+        }
+        let bound = HOT_KEY / (RING / 2);
+        assert!(
+            wakes <= bound,
+            "the loop was woken {wakes} times for {HOT_KEY} deliveries of one key, more than once \
+             per half ring ({bound})"
+        );
     }
 
     /// A stream that answers every poll with a ready error still lets the other tasks of the loop's

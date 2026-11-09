@@ -22,10 +22,10 @@ use ruststream_core::diag::error;
 use tokio::sync::Notify;
 
 use super::pool::{Crew, Shared};
-use super::{Shutdown, Turn, Workers};
+use super::{Part, Shutdown, Turn, Watch, Workers};
 use crate::BatchSubscriber;
 use crate::follow::spawn_followed;
-use ruststream_core::{BatchSlot, BatchStream, BatchVec};
+use ruststream_core::{BatchSlot, BatchStream, BatchVec, Places};
 use ruststream_runtime::{BatchHandler, RetryCopies, run_batch};
 
 /// The workers that are free for a batch, in the order they reported, each with the slot it gives
@@ -139,13 +139,15 @@ impl<Slot> Drop for Farewell<Slot> {
     }
 }
 
-/// One worker: a sequential loop over the batches handed to it, with buffers of its own.
+/// One worker: a sequential loop over the batches handed to it, with buffers of its own, failing
+/// the service through its `watch` if it panics outside the handler.
 async fn work<Slot, Body, Cx, State, Retry>(
     shared: Arc<Shared<Body, State, Cx, Retry>>,
     inbox: Arc<Inbox<Slot>>,
     free: Arc<FreeList<Slot>>,
     index: usize,
     batch_size: NonZeroUsize,
+    _watch: Watch,
 ) where
     Retry: RetryCopies<Cx>,
     Body: BatchHandler<Slot, Cx, State>,
@@ -168,6 +170,8 @@ async fn work<Slot, Body, Cx, State, Retry>(
             &mut taken,
             &mut scratch,
             &mut encode,
+            // A refusal boxes its message where there is a heap: the loop keeps no places.
+            Places::none(),
             &shared.name,
             &shared.state,
             &shared.hosted.delivery,
@@ -257,6 +261,7 @@ pub(super) async fn run<Sub, Body, Cx, State, Retry>(
             Arc::clone(&free),
             index,
             batch_size,
+            Watch::new(shutdown, &shared.name, Part::Worker),
         )));
         inboxes.push(inbox);
         free.report(index, None);

@@ -32,6 +32,7 @@ Nothing in this list turns the framework's `alloc` feature on, so every part who
 The board declares the bus as a `static`, and the app function receives a broker built over it.
 Each subscription holds four messages, counting the one a handler has in its hands.
 The binary supplies the `critical-section` implementation the bus sits behind.
+On a core without compare-and-swap, such as a Cortex-M0+, the firmware also gives `portable-atomic` its `critical-section` feature.
 
 ```rust reference="crates/ruststream/tests/doc_device.rs#bus"
 ```

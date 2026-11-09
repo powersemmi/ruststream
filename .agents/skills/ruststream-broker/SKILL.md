@@ -145,8 +145,12 @@ the embedded runner alone, so the same impl serves a device and a server. `Incom
 the accessors of a delivery. Error types stay `Send + Sync + 'static`. A build with both runtime
 features takes the stricter bound, so a type that holds `Rc` does not compile next to tokio. The
 tokio and compio runners ask for `Send + Sync` where they hand a delivery to a task or a core. The suites of the local family
-(`run_local_suite`, `local_lifecycle`) come with the facade's `conformance` feature, which turns
-tokio on, so they check such a client in a build where its types are `Send`.
+(`run_local_suite`, `local_lifecycle`, `local_readiness`, `local_refused_publish_returns_message`)
+come with the facade's `conformance` feature alone and ask nothing of `Send`: the crate's
+dev-dependency is
+`ruststream = { version = "0.8", default-features = false, features = ["embassy", "conformance"] }`,
+and they check the client's own types on the test's current-thread Tokio runtime. The suites of
+the `Send` family need the `tokio` feature beside `conformance`.
 
 ### Report a coordinate, never credentials
 

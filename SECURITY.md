@@ -3,7 +3,7 @@
 ## Supported versions
 
 Security fixes ship as patch releases of the newest minor line of `ruststream` and
-`ruststream-macros` (today 0.7.x). Before 1.0 a minor release may break the API, so older minor
+`ruststream-macros` (today 0.8.x). Before 1.0 a minor release may break the API, so older minor
 lines receive no fixes; upgrading to the newest line is the fix.
 
 Each broker crate (`ruststream-nats`, `ruststream-rdkafka` and the others) tracks the same minor

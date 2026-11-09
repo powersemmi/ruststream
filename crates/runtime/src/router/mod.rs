@@ -56,7 +56,8 @@ pub use local::{BodyFits, LayerFits, PoolFits, RouterPipe, TakesWorkers};
 // types (the default attach of a sealed reply definition), so it is public and hidden.
 #[doc(hidden)]
 pub use fold::{
-    Balance, OpenLayered, OpenRoutes, OpenedBatchRoute, OpenedRoute, RunRoutes, RunsBatches,
+    Balance, OpenLayered, OpenRoutes, OpenedBatchRoute, OpenedRoute, RefusalRoom, RunRoutes,
+    RunsBatches,
 };
 #[doc(hidden)]
 pub use fold_batch::{

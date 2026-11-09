@@ -114,7 +114,7 @@ impl<const MESSAGES: usize, const PAYLOAD: usize, const SUBSCRIPTIONS: usize> Te
         let (name, payload, headers) = message.into_parts();
         // The harness injects strictly between connect and shutdown and settles what it
         // receives, so a refusal here is a test that outran the capacity it chose.
-        if let Err(refused) = self.bus.fanout(name, payload, &headers) {
+        if let Err(refused) = self.bus.fanout(name, payload, headers) {
             panic!("the harness injected into {name:?} and the bus refused it: {refused}");
         }
     }
@@ -172,7 +172,7 @@ mod tests {
             let mut readings = connected.subscribe("temp").await.unwrap();
             let mut headers = Headers::new();
             headers.insert("trace", b"a1").unwrap();
-            connected.inject(OutgoingMessage::new("temp", b"21".as_slice()).with_headers(headers));
+            connected.inject(OutgoingMessage::new("temp", b"21".as_slice()).with_headers(&headers));
 
             let delivery = waiting(&mut pin!(readings.stream())).unwrap();
             assert_eq!(delivery.payload(), b"21");

@@ -39,6 +39,7 @@ use crate::{
     ConnectedBroker, HeaderSet, MaybeSend, MaybeSendSync, OutgoingFor, PairError, PayloadForm,
     PublishOutcome, PublishPolicy, Publisher,
 };
+use ruststream_core::Places;
 
 /// One slot's [`PublishTransform`] stack, paired with the slot it was named on (so the transforms
 /// have their [`SlotContext`] to read) and with the publish path underneath it. Machinery; a
@@ -248,13 +249,15 @@ pub trait OutPipeline<W>: MaybeSendSync + Clone {
     fn from_publish_error<E: StdError + Send + Sync + 'static>(err: E) -> Self::Error<E>;
 
     /// Sends one message through the path into `leaf`, the slot's attributed publisher, with
-    /// the broker's per-message settings the call site adjusted.
-    fn send<P>(
+    /// the broker's per-message settings the call site adjusted. A refused message moves into
+    /// one of `places`.
+    fn send<'p, P>(
         &self,
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> impl Future<Output = SinkOutcome<Self::Error<P::Error>>> + MaybeSend
+        places: Places<'p>,
+    ) -> impl Future<Output = SinkOutcome<'p, Self::Error<P::Error>>> + MaybeSend
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>;
@@ -269,12 +272,13 @@ impl<W> OutPipeline<W> for PublishIdentity {
 
     // Nothing composed onto this slot: the publish is the leaf call it always was, with no
     // message rebuilt and no error rewrapped.
-    async fn send<P>(
+    async fn send<'p, P>(
         &self,
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> SinkOutcome<P::Error>
+        places: Places<'p>,
+    ) -> SinkOutcome<'p, P::Error>
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
@@ -284,7 +288,7 @@ impl<W> OutPipeline<W> for PublishIdentity {
         let sent = leaf
             .publish(msg, options)
             .await
-            .map_err(SinkRefusal::returned::<W::Payload>);
+            .map_err(|failed| SinkRefusal::returned::<W::Payload>(failed, places));
         #[cfg(feature = "testing")]
         if sent.is_ok() {
             recorded.sent().await;
@@ -302,24 +306,25 @@ impl<W, Head: PublishLayer + Clone, Tail: PublishPipeline + Clone> OutPipeline<W
         PipelinePublishError(BoxError::from(err))
     }
 
-    async fn send<P>(
+    async fn send<'p, P>(
         &self,
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> SinkOutcome<PipelinePublishError>
+        places: Places<'p>,
+    ) -> SinkOutcome<'p, PipelinePublishError>
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
         // The pipeline mutates the message, so the borrowed publish takes ownership of its parts
         // here; only a slot that actually has middleware pays for that.
-        let (name, payload, headers) = msg.into_parts();
+        let (name, payload, headers) = msg.into_owned_parts();
         let mut out = <W::Payload as PayloadForm>::rebuilt(name.into(), payload, headers);
         // The middleware rewrites the message in place, so a refusal reports the message as the
         // stages left it, which is the one that was sent.
         self.run(&mut out, leaf, options).await.map_err(|error| {
-            Refusal::of(error, &mut out).into_sink(out.name(), PipelinePublishError)
+            Refusal::of(error, &mut out, places).into_sink(out.name(), PipelinePublishError)
         })
     }
 }
@@ -339,19 +344,20 @@ where
         Pipeline::from_publish_error(err)
     }
 
-    async fn send<P>(
+    async fn send<'p, P>(
         &self,
         leaf: &P,
         msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
-    ) -> SinkOutcome<Self::Error<P::Error>>
+        places: Places<'p>,
+    ) -> SinkOutcome<'p, Self::Error<P::Error>>
     where
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
         // The transforms mutate the message and the call's settings, so both are taken by value
         // here; only a slot that actually mounts one pays for that.
-        let (name, payload, headers) = msg.into_parts();
+        let (name, payload, headers) = msg.into_owned_parts();
         let mut out = <W::Payload as PayloadForm>::rebuilt(name.into(), payload, headers);
         let mut resolved = options.cloned();
         self.stack
@@ -362,7 +368,10 @@ where
         let sent = <W::Payload as PayloadForm>::handed_on(out, &mut kept);
         // What failed is the message the transforms wrote, and a buffer they wrote for this call
         // moves into the refusal, so the message outlives the call that built it.
-        let refused = self.pipeline.send(leaf, sent, resolved.as_ref()).await;
+        let refused = self
+            .pipeline
+            .send(leaf, sent, resolved.as_ref(), places)
+            .await;
         refused.map_err(|refusal| refusal.reclaiming::<W::Payload>(&mut kept))
     }
 }

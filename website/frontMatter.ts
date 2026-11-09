@@ -19,6 +19,13 @@ export interface Page {
   fallback?: boolean;
 }
 
+/**
+ * The directories under `docs/` whose files are not pages of the site: the benchmark results, which
+ * the landing page and the benchmarks page read, and the README's translations, which GitHub
+ * renders beside the README. The docs plugin excludes them.
+ */
+export const notPageDirs = ['benchmarks', 'readme'];
+
 // Google cuts a snippet near 160 characters; a description longer than that ends in an ellipsis.
 const maxDescription = 160;
 // A description written as a sentence ends with its mark; one that does not was cut off, which is
@@ -94,7 +101,9 @@ async function readPage(repoRoot: string, root: string, file: string, locale: st
 export async function readPages(repoRoot: string): Promise<Page[]> {
   const docs = path.join(repoRoot, 'docs');
   const english = await Promise.all(
-    (await markdownFiles(docs)).map((file) => readPage(repoRoot, docs, file, 'en')),
+    (await markdownFiles(docs))
+      .filter((file) => !notPageDirs.includes(file.split(path.sep)[0]!))
+      .map((file) => readPage(repoRoot, docs, file, 'en')),
   );
   const pages = [...english];
   const i18n = path.join(repoRoot, 'website', 'i18n');

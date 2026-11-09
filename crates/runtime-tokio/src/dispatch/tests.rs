@@ -1,9 +1,7 @@
 use std::future;
 use std::future::ready;
 use std::mem;
-use std::pin::Pin;
 use std::sync::Mutex;
-use std::task::Context as TaskContext;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -15,19 +13,14 @@ use tokio_util::sync::CancellationToken;
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 
-use super::fixtures::{PlainMessage, Settlement, Unscoped};
+use super::fixtures::{PlainMessage, Settlement, StreamFault, Unscoped, batched};
 use super::*;
 use crate::Settle;
-use crate::testkit::log_capture;
 use crate::{
     CallerName, Connected, Handle, Name, OutgoingDestination, Router, SubscriberBuilder,
     SubscriberSettings, nonzero, subscriber,
 };
 use crate::{Context, FailurePolicies, HandlerOutcome, HeaderMap, SendHost, SubscriptionEnd};
-
-#[derive(Debug, thiserror::Error)]
-#[error("subscriber stream failed")]
-struct StreamFault;
 
 /// Replays a fixed script of stream items, so a test can put a delivery behind a stream error.
 struct ScriptedSubscriber {
@@ -65,47 +58,6 @@ fn position_of(payload: &Bytes) -> usize {
             .try_into()
             .expect("a delivery of the numbered backlog"),
     )
-}
-
-/// The batch form of a subscriber's own stream. A batch closes as soon as it is full, so the
-/// size stays at one: a subscription that goes quiet hands over the delivery it has rather than
-/// waiting for the rest of the batch.
-fn batched<S>(
-    stream: S,
-    size: NonZeroUsize,
-) -> impl BatchStream<Vec<PlainMessage>, Error = StreamFault> + Send
-where
-    S: Stream<Item = Result<PlainMessage, StreamFault>> + Send,
-{
-    Poured(Box::pin(
-        stream
-            .chunks(size.get())
-            .map(|chunk| chunk.into_iter().collect::<Result<Vec<_>, _>>()),
-    ))
-}
-
-/// Fills a slot with the batches of a stream of whole batches.
-struct Poured<S>(Pin<Box<S>>);
-
-impl<S> BatchStream<Vec<PlainMessage>> for Poured<S>
-where
-    S: Stream<Item = Result<Vec<PlainMessage>, StreamFault>>,
-{
-    type Error = StreamFault;
-
-    fn poll_fill(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-        slot: &mut Vec<PlainMessage>,
-    ) -> Poll<Option<Result<(), StreamFault>>> {
-        self.0.as_mut().poll_next(cx).map(|item| {
-            item.map(|batch| {
-                batch.map(|batch| {
-                    slot.extend(batch);
-                })
-            })
-        })
-    }
 }
 
 /// A subscriber with a long backlog, every delivery ready on the first poll: the loop never
@@ -616,24 +568,6 @@ async fn a_subscription_counts_as_consuming_while_its_loop_runs() {
     }
 }
 
-/// A worker that died yields nothing to account for, and its failure is logged with the cause.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_panicking_worker_is_reported_when_joined() {
-    let joined = tokio::spawn(async { panic!("worker down") }).await;
-    let (events, guard) = log_capture::start();
-    assert!(log_worker_exit(joined).is_none());
-    {
-        drop(guard);
-        let failure = log_capture::find(&events, "worker task failed");
-        assert!(
-            failure
-                .get("error")
-                .is_some_and(|err| err.contains("worker down")),
-            "the diagnostic must carry the panic: {failure:?}",
-        );
-    }
-}
-
 /// A handler that never finishes, holding the sender it reported its start on: the channel
 /// closes only once every copy of the handler and its future are gone.
 struct StuckHandler {
@@ -686,6 +620,8 @@ async fn an_aborted_loop_takes_its_running_workers_down() {
                 .is_ok_and(|message| message.is_none()),
             "{form:?} left a worker running its handler after the loop was aborted",
         );
+        // The loop and its workers went down by the abort, not by a panic.
+        assert_eq!(shutdown.peek_failure(), None, "{form:?} reported the abort");
     }
 }
 

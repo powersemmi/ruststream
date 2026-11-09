@@ -11,7 +11,7 @@ import TabItem from '@theme/TabItem';
 
 [`TestApp::run_result`](api:ruststream::testing::TestApp::run_result) returns what the service `run` would return now: `Ok` while it is healthy, an error once a fail-fast failure stopped it.
 
-A fail-fast failure is a handler panic under the default failure policy, or a decode failure under a `fail_fast` decode policy.
+A fail-fast failure is a handler panic under the default failure policy, a panic outside the handler, or a decode failure under a `fail_fast` decode policy.
 After one the result is [`RustStreamError::Dispatch`](api:ruststream::runtime::RustStreamError) with the subscription and the reason.
 `run_result` reads the harness without consuming it, so a test can check it between publishes.
 [`assert_running`](./assert-running.md) and [`assert_shut_down`](./assert-shut-down.md) state the same as an assertion.

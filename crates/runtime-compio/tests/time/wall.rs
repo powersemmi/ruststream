@@ -9,6 +9,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use allocation_counter::measure;
+use compio::driver::DriverType;
+use compio::runtime::{Runtime, spawn};
 use compio::time::sleep as compio_sleep;
 use futures::task::noop_waker_ref;
 use ruststream_runtime::Clock;
@@ -16,6 +18,26 @@ use ruststream_runtime_compio::time::{self, Sleep};
 use ruststream_runtime_compio::{CompioClock, test_runtime};
 
 const DELAY: Duration = Duration::from_millis(30);
+
+/// What a sleep awaited in the future a runtime blocks on may cost beyond compio's own timer on
+/// compio's polling driver (macOS, or a Linux host without `io_uring`). The wheel's task wakes that
+/// future, so the runtime waits once more, with no timer pending, before the future arms its next
+/// sleep; the polling driver builds a new event list after a wait without a deadline
+/// (<https://github.com/compio-rs/compio/issues/1107>). A sleep in a spawned task arms the next
+/// one in the same turn and pays nothing.
+const POLLING_EXTRA_PER_SLEEP: u64 = 1;
+
+/// A sleep of the measured kind, boxed so both kinds run through the same probe.
+type MakeSleep = fn(Duration) -> Pin<Box<dyn Future<Output = ()>>>;
+
+/// Where the sleeps of a measured run are awaited.
+#[derive(Clone, Copy)]
+enum Awaited {
+    /// In the future the runtime blocks on.
+    InBlockOn,
+    /// In a task spawned on the runtime, where a handler's sleeps are awaited.
+    InSpawnedTask,
+}
 
 fn assert_send<Value: Send>() {}
 
@@ -126,33 +148,69 @@ fn timers_armed_together_cost_no_allocation_once_the_wheel_has_grown() {
     });
 }
 
-#[test]
-fn a_sleep_in_turn_costs_what_one_timer_of_compio_costs() {
-    let runtime = test_runtime().expect("a compio runtime");
-    // Allocations of `count` sleeps in turn, one by one, as `sleep` makes them.
-    let cost = |count: u32, sleep: fn(Duration) -> Pin<Box<dyn Future<Output = ()>>>| {
-        measure(|| {
-            runtime.block_on(async {
+/// Allocations of `count` sleeps in turn, one by one, as `sleep` makes them, awaited where
+/// `awaited` says.
+fn sleeps_in_turn(runtime: &Runtime, count: u32, sleep: MakeSleep, awaited: Awaited) -> u64 {
+    measure(|| {
+        runtime.block_on(async {
+            let sleeps = async move {
                 for _ in 0..count {
                     sleep(Duration::from_micros(20)).await;
                 }
-            });
-        })
-        .count_total
-    };
+            };
+            match awaited {
+                Awaited::InBlockOn => sleeps.await,
+                Awaited::InSpawnedTask => spawn(sleeps).await.expect("the sleeps end"),
+            }
+        });
+    })
+    .count_total
+}
+
+/// What 1000 sleeps in turn allocate, awaited where `awaited` says: ours, then compio's own.
+fn a_thousand_sleeps(runtime: &Runtime, awaited: Awaited) -> (u64, u64) {
     // The box is the probe's own, so it is subtracted by running both sides through it.
-    let ours: fn(Duration) -> Pin<Box<dyn Future<Output = ()>>> =
-        |delay| Box::pin(time::sleep(delay));
-    let compio: fn(Duration) -> Pin<Box<dyn Future<Output = ()>>> =
-        |delay| Box::pin(compio_sleep(delay));
+    let ours: MakeSleep = |delay| Box::pin(time::sleep(delay));
+    let compio: MakeSleep = |delay| Box::pin(compio_sleep(delay));
+    let cost = |count, sleep| sleeps_in_turn(runtime, count, sleep, awaited);
     cost(1, ours);
     cost(1, compio);
-    let ours_per_sleep = cost(1010, ours) - cost(10, ours);
-    let compio_per_sleep = cost(1010, compio) - cost(10, compio);
+    (
+        cost(1010, ours) - cost(10, ours),
+        cost(1010, compio) - cost(10, compio),
+    )
+}
+
+#[test]
+fn a_sleep_in_turn_costs_what_one_timer_of_compio_costs() {
+    let runtime = test_runtime().expect("a compio runtime");
+    let (ours_per_sleep, compio_per_sleep) = a_thousand_sleeps(&runtime, Awaited::InBlockOn);
+    let driver = runtime.driver_type();
+    let polling_extra = if driver == DriverType::Poll {
+        POLLING_EXTRA_PER_SLEEP * 1000
+    } else {
+        0
+    };
+    // A few allocations of the run itself are not a cost per sleep.
+    assert!(
+        ours_per_sleep <= compio_per_sleep + polling_extra + 8,
+        "1000 sleeps allocated {ours_per_sleep} times on the {driver:?} driver, compio's own \
+         {compio_per_sleep}",
+    );
+}
+
+// A handler's sleeps are awaited in a spawned task, which arms the next sleep in the same turn:
+// there a sleep costs what compio's own timer costs on every driver, the polling one included.
+#[test]
+fn a_sleep_in_turn_in_a_spawned_task_costs_what_one_timer_of_compio_costs() {
+    let runtime = test_runtime().expect("a compio runtime");
+    let (ours_per_sleep, compio_per_sleep) = a_thousand_sleeps(&runtime, Awaited::InSpawnedTask);
+    let driver = runtime.driver_type();
     // A few allocations of the run itself are not a cost per sleep.
     assert!(
         ours_per_sleep <= compio_per_sleep + 8,
-        "1000 sleeps allocated {ours_per_sleep} times, compio's own {compio_per_sleep}",
+        "1000 sleeps in a spawned task allocated {ours_per_sleep} times on the {driver:?} driver, \
+         compio's own {compio_per_sleep}",
     );
 }
 

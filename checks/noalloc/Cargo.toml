@@ -4,5 +4,5 @@
 # main workspace would unify `alloc` on through its neighbours. Each command names one member, so
 # the members' features stay apart.
 [workspace]
-members = ["memory", "runtime", "runtime-embassy"]
+members = ["core", "memory", "runtime", "runtime-embassy"]
 resolver = "3"
