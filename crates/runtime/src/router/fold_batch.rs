@@ -156,9 +156,9 @@ impl<Sub, Body, Cx> OneTaskBatchRoute<Sub, Body, Cx> {
                         .await;
                 }
                 Turn::Delivery(Err(err)) => {
-                    // A failed fill leaves the slot empty; draining it keeps that true of a
-                    // broker that left a message behind.
-                    slot.drain().for_each(drop);
+                    // A failed fill leaves the slot empty; taking what a broker left behind and
+                    // dropping it keeps that true.
+                    Body::discard_fill(&mut slot, &mut taken);
                     error!(
                         target: "ruststream::dispatch",
                         subscription = %self.name,

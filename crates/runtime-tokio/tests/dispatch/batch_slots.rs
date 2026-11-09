@@ -1,5 +1,6 @@
-//! A batch subscription collects every batch into a slot the runtime allocated once per worker:
-//! the broker is lent the same storage for each fill, whatever the number of batches.
+//! A batch subscription collects every batch into storage the runtime allocated once per worker:
+//! a worker's slot and its taken batch trade places for each batch, so the broker is lent one of
+//! the same two buffers for every fill, whatever the number of batches.
 
 // A test drives the app on its own task; the app's cold path carries no Send.
 #![allow(clippy::future_not_send)]
@@ -147,8 +148,8 @@ async fn threaded(_jobs: &[Job]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-/// Six jobs in the log before the subscription opens, so the opening replay delivers them as three
-/// batches of two.
+/// Six jobs in the log before the subscription opens, which the opening replay delivers in batches
+/// of the size the mount asks for.
 async fn replayed() -> MemoryBroker<Retaining> {
     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(32)));
     let publisher = broker.publisher();
@@ -176,12 +177,12 @@ async fn replayed() -> MemoryBroker<Retaining> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_sequential_loop_fills_one_slot_for_every_batch() {
+async fn a_sequential_loop_fills_two_buffers_for_every_batch() {
     let storage = Storage::default();
     let app = RustStream::new(AppInfo::new("slots", "0.1.0")).with_broker(replayed().await, |b| {
         b.include(
             sequential
-                .batch(nonzero!(2))
+                .batch(nonzero!(1))
                 .map_source(|probe| Probe {
                     storage: Arc::clone(&storage),
                     ..probe
@@ -194,23 +195,26 @@ async fn a_sequential_loop_fills_one_slot_for_every_batch() {
 
     tb.broker::<MemoryBroker<Retaining>>()
         .subscriber("sequential")
-        .assert_batch_sizes(&[2, 2, 2])
+        .assert_batch_sizes(&[1, 1, 1, 1, 1, 1])
         .settled(HandlerOutcome::ack());
-    let storage = storage.lock().expect("storage").clone();
-    assert_eq!(storage.len(), 3);
+    let mut storage = storage.lock().expect("storage").clone();
+    assert_eq!(storage.len(), 6);
+    storage.sort_unstable();
+    storage.dedup();
     assert!(
-        storage.iter().all(|at| *at == storage[0]),
-        "each batch was collected into storage of its own: {storage:?}"
+        storage.len() <= 2,
+        "six batches on one worker used {} buffers",
+        storage.len()
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_pool_fills_one_slot_per_worker() {
+async fn a_pool_fills_two_buffers_per_worker() {
     let storage = Storage::default();
     let app = RustStream::new(AppInfo::new("slots", "0.1.0")).with_broker(replayed().await, |b| {
         b.include(
             pooled
-                .batch(nonzero!(2))
+                .batch(nonzero!(1))
                 .map_source(|probe| Probe {
                     storage: Arc::clone(&storage),
                     ..probe
@@ -223,15 +227,15 @@ async fn a_pool_fills_one_slot_per_worker() {
 
     tb.broker::<MemoryBroker<Retaining>>()
         .subscriber("pooled")
-        .assert_called(3)
+        .assert_called(6)
         .settled(HandlerOutcome::ack());
     let mut storage = storage.lock().expect("storage").clone();
-    assert_eq!(storage.len(), 3);
+    assert_eq!(storage.len(), 6);
     storage.sort_unstable();
     storage.dedup();
     assert!(
-        storage.len() <= 2,
-        "three batches on a crew of two used {} slots",
+        storage.len() <= 4,
+        "six batches on a crew of two used {} buffers",
         storage.len()
     );
 }

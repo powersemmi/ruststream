@@ -370,9 +370,9 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 /// #         fn with_capacity(size: NonZeroUsize) -> Self {
 /// #             Page { rows: Vec::with_capacity(size.get()), claims: Vec::with_capacity(size.get()) }
 /// #         }
-/// #         fn drain(&mut self) -> impl Iterator<Item = Claimed> + '_ {
+/// #         fn hand_over(&mut self, taken: &mut Vec<Claimed>) {
 /// #             self.rows.clear();
-/// #             self.claims.drain(..)
+/// #             self.claims.hand_over(taken);
 /// #         }
 /// #     }
 /// #     impl IncomingMessage for Claimed {

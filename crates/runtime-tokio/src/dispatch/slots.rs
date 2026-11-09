@@ -14,7 +14,7 @@ use std::task::{Context, Poll};
 use crossbeam_queue::ArrayQueue;
 use futures::Stream;
 use futures::task::AtomicWaker;
-use ruststream_core::{BatchSlot, BatchStream};
+use ruststream_core::{BatchSlot, BatchStream, BatchVec};
 
 /// The slots the threads have given back, waiting to be filled again.
 pub(super) struct Stock<Slot> {
@@ -31,7 +31,7 @@ impl<Slot> Stock<Slot> {
         })
     }
 
-    /// A thread is done with `slot`, drained: the loop may fill it again.
+    /// A thread is done with `slot`, now empty: the loop may fill it again.
     pub(super) fn give(&self, slot: Slot) {
         // The queue holds as many as the loop ever allocates, so there is always room.
         let _ = self.returned.push(slot);
@@ -40,7 +40,7 @@ impl<Slot> Stock<Slot> {
 }
 
 /// The batches of a subscription as a stream of filled slots.
-pub(super) struct Filled<Fill, Slot> {
+pub(super) struct Filled<Fill, Slot: BatchSlot> {
     stream: Pin<Box<Fill>>,
     stock: Arc<Stock<Slot>>,
     size: NonZeroUsize,
@@ -48,12 +48,14 @@ pub(super) struct Filled<Fill, Slot> {
     made: usize,
     /// The slot being filled, which a pending fill keeps its messages in.
     current: Option<Slot>,
+    /// Where a failed fill's leftovers go to be dropped, trading storage with the slot.
+    spare: BatchVec<Slot::Message>,
 }
 
 // The slot is only ever moved, never pinned in place.
-impl<Fill, Slot> Unpin for Filled<Fill, Slot> {}
+impl<Fill, Slot: BatchSlot> Unpin for Filled<Fill, Slot> {}
 
-impl<Fill, Slot> Filled<Fill, Slot> {
+impl<Fill, Slot: BatchSlot> Filled<Fill, Slot> {
     /// Fills slots of `size` from `stream`, taking them from `stock` and allocating up to `most`.
     pub(super) fn new(
         stream: Fill,
@@ -68,6 +70,7 @@ impl<Fill, Slot> Filled<Fill, Slot> {
             most,
             made: 0,
             current: None,
+            spare: BatchVec::with_capacity(size.get()),
         }
     }
 }
@@ -100,7 +103,8 @@ where
             Poll::Ready(Some(Ok(()))) => Poll::Ready(this.current.take().map(Ok)),
             Poll::Ready(Some(Err(err))) => {
                 // A failed fill leaves the slot empty for the next batch.
-                slot.drain().for_each(drop);
+                slot.hand_over(&mut this.spare);
+                this.spare.clear();
                 Poll::Ready(Some(Err(err)))
             }
             Poll::Ready(None) => Poll::Ready(None),

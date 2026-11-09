@@ -87,9 +87,9 @@ impl BatchSlot for Page {
         }
     }
 
-    fn drain(&mut self) -> impl Iterator<Item = Claim> + '_ {
+    fn hand_over(&mut self, taken: &mut Vec<Claim>) {
         self.values.clear();
-        self.claims.drain(..)
+        self.claims.hand_over(taken);
     }
 }
 

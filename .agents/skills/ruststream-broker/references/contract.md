@@ -109,8 +109,9 @@ Each rule names the trait it concerns; the rustdoc of that trait is the referenc
   for: a transport that delivers one message at a time still offers it, assembled on the client
   with the core's `BufferedSubscriber`, whose `batches` honours the size the mount named. The
   batch is collected into a `BatchSlot` the runtime lends and reuses (a `Vec` of your messages is
-  one; a batch type of your own implements the trait), so `batches` returns a `BatchStream` whose
-  `poll_fill` pushes into the slot and allocates no container. The size
+  one; a batch type of your own implements the trait, and its `hand_over` trades the `Vec` of its
+  deliveries with the runtime's buffer, so no delivery is copied), so `batches` returns a
+  `BatchStream` whose `poll_fill` pushes into the slot and allocates no container. The size
   is the framework's word and not yours; the deadline that closes a partial batch is yours, so put
   it on your descriptor (`.max_wait(..)`) - the 10 ms default is sized for an in-process bus, and
   the shipping broker crates settle between 10 and 50 ms. Put the capability on

@@ -529,10 +529,11 @@ impl<Log: LogMode> BatchSlot for RowBatch<Log> {
         }
     }
 
-    // The rows go with the deliveries: a drained page holds nothing for the next one.
-    fn drain(&mut self) -> impl Iterator<Item = RowDelivery<Log>> + '_ {
+    // The rows go with the deliveries: a page that handed its batch over holds nothing for the
+    // next one.
+    fn hand_over(&mut self, taken: &mut Vec<RowDelivery<Log>>) {
         self.rows.clear();
-        self.deliveries.drain(..)
+        self.deliveries.hand_over(taken);
     }
 }
 

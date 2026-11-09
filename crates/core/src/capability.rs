@@ -25,8 +25,8 @@ use crate::{
 /// # Implementing it
 ///
 /// The runtime lends the stream a [`BatchSlot`] to fill (see [`BatchStream::poll_fill`]) and takes
-/// it back drained, so the broker pushes each message into the slot it is given and builds no
-/// container of its own.
+/// the batch out of it with [`BatchSlot::hand_over`], so the broker pushes each message into the
+/// slot it is given and builds no container of its own.
 ///
 /// The mount site names one number, the batch size, and the runtime passes it to
 /// [`batches`](Self::batches) unchanged. Everything else about how a batch forms (a block
@@ -66,8 +66,8 @@ use crate::{
 )]
 pub trait BatchSubscriber: Subscriber {
     /// Where one batch is collected: the slot the runtime lends [`batches`] to fill. The runtime
-    /// allocates one per worker when the subscription starts and reuses it for every batch, so a
-    /// batch costs no allocation. A `Vec` of the subscriber's messages is a slot; a batch type of
+    /// allocates one per worker when the subscription starts and takes each batch out of it with
+    /// [`BatchSlot::hand_over`], so a batch costs no allocation and no copy of its messages. A `Vec` of the subscriber's messages is a slot; a batch type of
     /// the broker's own implements [`BatchSlot`].
     ///
     /// [`batches`]: Self::batches
@@ -624,7 +624,7 @@ mod carries;
 #[cfg(feature = "alloc")]
 mod server;
 
-pub use batch::{BatchSlot, BatchStream};
+pub use batch::{BATCH_CAPACITY, BatchSlot, BatchStream, BatchVec};
 pub use carries::{Carries, CarriesBatch};
 #[cfg(feature = "alloc")]
 pub use server::{ApiKeyLocation, DescribeServer, HttpApiKeyLocation, SecurityScheme, ServerSpec};

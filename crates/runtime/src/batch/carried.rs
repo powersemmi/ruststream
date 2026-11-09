@@ -83,12 +83,12 @@ type Lane<Src, Conn, T> = PhantomData<fn() -> (Src, Conn, T)>;
 
 /// The batch as the carried adapter takes it: whole, because its values are lent from it while
 /// the body runs. A worker keeps one for good: the runtime's slot and this one trade places for
-/// each batch, and the deliveries are drained into the vector beside it only once the body is
-/// done.
+/// each batch, and the batch hands its deliveries over to the vector beside it only once the body
+/// is done.
 #[doc(hidden)]
 pub struct Lent<Src, Conn, Batch, M, T> {
     batch: Batch,
-    /// The deliveries drained out of the batch while they settle.
+    /// The deliveries the batch handed over, while they settle.
     deliveries: BatchVec<M>,
     /// The copies of the lent values the harness records, made once while a harness watches.
     recorded: LentValues,
@@ -132,7 +132,8 @@ where
     }
 
     fn discard(&mut self) {
-        self.batch.drain().for_each(drop);
+        self.deliveries.clear();
+        self.batch.hand_over(&mut self.deliveries);
         self.deliveries.clear();
         self.recorded = lent_nothing();
     }
@@ -198,7 +199,7 @@ where
         }
     }
 
-    // The slot comes back as the batch the last call drained, ready to be filled again.
+    // The slot comes back as the batch the last call emptied, ready to be filled again.
     fn load(taken: &mut Self::Taken, slot: &mut Batch) {
         mem::swap(&mut taken.batch, slot);
     }
@@ -224,7 +225,7 @@ where
             Some(self.inner.handle_slice(values, ctx).await)
         };
         let recorded = mem::replace(&mut taken.recorded, lent_nothing());
-        taken.deliveries.extend(taken.batch.drain());
+        taken.batch.hand_over(&mut taken.deliveries);
         let deliveries = &mut taken.deliveries;
         if deliveries.len() < lent {
             error!(

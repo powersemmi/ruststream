@@ -535,7 +535,9 @@ pub trait BatchHandler<Slot, C = (), S = ()>: MaybeSendSync {
     fn taken(size: NonZeroUsize) -> Self::Taken;
 
     /// Takes the batch the broker filled `slot` with, leaving `slot` empty and ready to be filled
-    /// again. No storage is allocated: the deliveries move, or the two buffers trade places.
+    /// again. Nothing is allocated and no delivery moves: the slot hands its batch over
+    /// ([`BatchSlot::hand_over`]), which trades a `Vec` slot's storage with `taken`, or the
+    /// handler takes the slot whole where it lends the values the slot holds.
     fn load(taken: &mut Self::Taken, slot: &mut Slot);
 
     /// Consumes the batch `taken` holds, acknowledging each of its deliveries and leaving `taken`
@@ -688,7 +690,7 @@ where
     }
 
     fn load(taken: &mut BatchVec<M>, slot: &mut Slot) {
-        taken.extend(slot.drain());
+        slot.hand_over(taken);
     }
 
     async fn handle_batch<Host: SendHost<C>>(
@@ -781,7 +783,7 @@ where
     }
 
     fn load(taken: &mut BatchVec<M>, slot: &mut Slot) {
-        taken.extend(slot.drain());
+        slot.hand_over(taken);
     }
 
     async fn handle_batch<Host: SendHost<C>>(
