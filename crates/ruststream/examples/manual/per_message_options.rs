@@ -2,7 +2,7 @@
 //! broker side is the same code in both forms; only the handlers and their mounting differ.
 //!
 //! ```text
-//! cargo test --example manual_per_message_options --no-default-features --features testing,memory,json
+//! cargo test --example manual_per_message_options --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the tests that use it exist only in the test build.

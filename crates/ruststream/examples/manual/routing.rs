@@ -2,7 +2,7 @@
 //! merge, the layer and the codec are the same calls; only the handlers are written by hand.
 //!
 //! ```text
-//! cargo test --example manual_routing --no-default-features --features testing,memory,json,cbor
+//! cargo test --example manual_routing --no-default-features --features testing,memory,json,cbor,tokio
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.
@@ -123,7 +123,6 @@ mod layer {
 
     use super::{Order, Shipment};
 
-    // --8<-- [start:layer]
     /// Counts the deliveries of the handlers it wraps.
     #[derive(Clone)]
     struct Count(Arc<AtomicUsize>);
@@ -162,6 +161,7 @@ mod layer {
         }
     }
 
+    // --8<-- [start:layer]
     struct Accept;
 
     impl Handle<Order> for Accept {

@@ -1,6 +1,7 @@
-//! The in-process broker for local runtimes: [`LocalMemoryBroker`], a full broker on
-//! embassy-sync channels whose types are not `Send`, and the reference implementation of the
-//! `Local*` broker contract.
+//! The in-process broker for local runtimes: [`LocalMemoryBroker`], on embassy-sync channels.
+//!
+//! It is a full broker whose types are not `Send`, and the reference implementation of the
+//! contract for such a broker.
 //!
 //! It runs on any executor and builds without `std`. With the framework's `alloc` the bus lives on
 //! the heap and a broker is built with `new()`. Without it the bus is a `LocalMemoryBus` of fixed
@@ -13,7 +14,7 @@
 //!   one name, its stream and batches, and one delivery with its settlement.
 //! - [`LocalMemoryPublish`], [`LocalMemoryPublisher`]: the publish policy and the live publisher.
 //! - [`LocalMemoryError`]: a publish to a full subscription, or any use of a shut-down bus.
-//! - [`prelude`]: the bus and the `Local*` traits a device service calls it through.
+//! - [`prelude`]: the bus and the contract traits a device service calls it through.
 //!
 //! How a device service uses it is taught on its component page:
 //! [Local memory broker](https://powersemmi.github.io/ruststream/latest/components/memory/local/).
@@ -140,10 +141,7 @@ mod drive {
     }
 }
 
-/// The local bus and the `Local*` traits a device service calls it through.
-///
-/// It carries the local family of the contract, so a module that imports it does not import the
-/// Send family's prelude beside it: a method call would then match two traits.
+/// The local bus and the contract traits a device service calls it through.
 ///
 /// # Examples
 ///

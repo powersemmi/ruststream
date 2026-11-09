@@ -24,7 +24,7 @@ A payload in another format is a decode failure, settled by the subscriber's [fa
 The example builds with MessagePack as the only codec:
 
 ```text
-cargo test --example codec_msgpack --no-default-features --features testing,macros,memory,msgpack
+cargo test --example codec_msgpack --no-default-features --features tokio,testing,macros,memory,msgpack
 ```
 
 <Tabs groupId="api">

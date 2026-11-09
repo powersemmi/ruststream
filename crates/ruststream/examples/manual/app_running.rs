@@ -3,7 +3,7 @@
 //! service was declared.
 //!
 //! ```text
-//! cargo test --example manual_app_running --no-default-features --features testing,memory,json
+//! cargo test --example manual_app_running --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A test drives the app on its own task; the app's cold path carries no Send.

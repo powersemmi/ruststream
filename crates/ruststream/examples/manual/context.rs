@@ -2,7 +2,7 @@
 //! parameter of `Handle::handle`, and a broker field is read off it by its key.
 //!
 //! ```text
-//! cargo test --example manual_context --no-default-features --features testing,memory,json
+//! cargo test --example manual_context --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

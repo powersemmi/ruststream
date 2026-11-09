@@ -3,7 +3,7 @@
 //! context gated by the settlement. The tests are the ones of `examples/post_settle.rs`.
 //!
 //! ```text
-//! cargo test --example manual_post_settle --no-default-features --features testing,memory,json
+//! cargo test --example manual_post_settle --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

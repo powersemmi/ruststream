@@ -2,8 +2,8 @@
 //! threads are a setting on the mount chain, and `main` picks the app's runtime by hand.
 //!
 //! ```text
-//! cargo run --example manual_threads --no-default-features --features testing,memory,json -- run
-//! cargo test --example manual_threads --no-default-features --features testing,memory,json
+//! cargo run --example manual_threads --no-default-features --features testing,memory,json,tokio -- run
+//! cargo test --example manual_threads --no-default-features --features testing,memory,json,tokio
 //! ```
 
 use std::future::ready;

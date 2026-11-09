@@ -2,7 +2,7 @@
 //! entry of the body's `Outs`, named by its marker, and the mount site binds the same markers.
 //!
 //! ```text
-//! cargo test --example manual_out_slots --no-default-features --features testing,memory,json
+//! cargo test --example manual_out_slots --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the tests that use it exist only in the test build.

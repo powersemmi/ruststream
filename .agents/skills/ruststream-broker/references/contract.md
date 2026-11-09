@@ -2,9 +2,10 @@
 
 Each rule names the trait it concerns; the rustdoc of that trait is the reference, starting from the [`Broker`](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html) hub. The conformance suites hold a crate to these rules.
 
-- A broker is its own crate that depends on `ruststream` with `default-features = false` (broker
-  clients never go into core). Pre-1.0 the broker crate's version tracks the core minor line
-  (core 0.7.x -> broker 0.7.x); breaking broker changes ship as a patch within the line.
+- A broker is its own crate that depends on `ruststream` with `default-features = false` and the
+  runner it serves, `features = ["tokio"]` (broker clients never go into core). Pre-1.0 the broker
+  crate's version tracks the core minor line (core 0.8.x -> broker 0.8.x); breaking broker changes
+  ship as a patch within the line.
 - The lifecycle is a ladder of consuming transitions, not a flag: `Broker::connect(self) ->
   Connected` and `ConnectedBroker::shutdown(self) -> Closed`. Each state is a distinct type, so
   subscribing before connect, publishing after shutdown, or a double shutdown do not compile for
@@ -81,6 +82,15 @@ Each rule names the trait it concerns; the rustdoc of that trait is the referenc
 - A live publisher is `Clone` (a handle on the same connection; shared state behind an `Arc`), so
   a handler moves its `Out` entry into an `.error` continuation. A publisher that holds a client
   directly clones the handle or wraps it in an `Arc`.
+- `Publisher::publish` returns `PublishOutcome<'msg, Self::Error, Self::Payload>`: a refused
+  publish hands the unsent message back, with `PublishMessageError::with_message(error, msg)`, or
+  converts the bare error with `.into()` or `?` where the client consumed the buffer. The returned
+  message names the destination, payload and headers that were published; a `Take` client that
+  consumed the buffer returns none. A handler's `Out` republishes it as it was.
+  `lifecycle::refused_publish_returns_message` takes `Unsent::Returned` or `Unsent::Consumed` and
+  holds the broker to its declaration. The publishes the runtime makes for a delivery (reply,
+  `retry_after` copy, dead-letter copy) report a failure to the handler's `.error` continuation, and a failed
+  reply is acknowledged.
 - Per-message settings (a QoS, a priority, an ordering key, an expiration) are `Publisher::Options`,
   a type you own with every field optional (`()` when you have none). The policy holds the defaults,
   `publish(msg, options)` resolves the call's fields over them, and `options` is `None` on every
@@ -152,6 +162,10 @@ Each rule names the trait it concerns; the rustdoc of that trait is the referenc
   `IncomingMessage::partition_key`), and leave `BatchSubscriber` out of the manifest entirely: the
   framework calls it and no body ever writes it as a bound. Pin both halves behind your own glob:
   `fn _p<T: Publisher>() {}` and `let _: Publish = Publish::default();`.
+- A mount-step extension trait (a setting in the broker's own vocabulary) bounds on
+  `IntoDeclared<Mk>` when it is written right after a handler, and on `SubscriberBuilder<Def,
+  MySource, ..>` when it follows the source. A handler or router used outside any mount names its
+  state, `h::<()>`.
 - `ack` consumes `self`; for transports without acks return `AckError::Unsupported`, at every
   settling site. That answer is what lets the runtime tell a transport that honoured a delay from
   one that cannot hold a message back, and the conformance suite passes on it. A handle that
@@ -194,3 +208,8 @@ Each rule names the trait it concerns; the rustdoc of that trait is the referenc
   until commit); broker-side semantics (fencing, cluster atomicity, broker-held timeouts) are
   tested live with `TestApp::start_live`, and every gap gets a comment naming the assertion it
   makes unsound plus a test pinning it.
+- The zero-cost floor holds for a broker crate as it does for the core: a delivery and a publish
+  allocate nothing the client does not, make no `dyn` call and take no extra atomic or copy of a
+  payload, at every payload size. A change on those paths reports instructions and allocations per
+  message against the raw client from the crate's benchmarks, built with fat LTO and without the
+  `testing` feature, which is never benchmarked.

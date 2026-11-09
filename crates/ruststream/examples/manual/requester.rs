@@ -1,7 +1,7 @@
 //! The service of `examples/requester.rs` written without the `macros` feature.
 //!
 //! ```text
-//! cargo test --example manual_requester --no-default-features --features testing,memory,json
+//! cargo test --example manual_requester --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the tests that use it exist only in the test build.

@@ -29,7 +29,7 @@ The same service source builds with either.
 The example builds with JSON as the only codec:
 
 ```text
-cargo test --example codec_json --no-default-features --features testing,macros,memory,json
+cargo test --example codec_json --no-default-features --features tokio,testing,macros,memory,json
 ```
 
 <Tabs groupId="api">

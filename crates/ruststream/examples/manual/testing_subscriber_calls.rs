@@ -4,7 +4,7 @@
 //! service was declared.
 //!
 //! ```text
-//! cargo test --example manual_testing_subscriber_calls --no-default-features --features testing,memory,json
+//! cargo test --example manual_testing_subscriber_calls --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

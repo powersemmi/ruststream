@@ -30,7 +30,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruststream-core = { version = "0.7", default-features = false, features = ["alloc"] }
+//! ruststream-core = { version = "0.8", default-features = false, features = ["alloc"] }
 //! ```
 //!
 //! On a target without compare-and-swap, such as `thumbv6m-none-eabi`, `bytes` needs its

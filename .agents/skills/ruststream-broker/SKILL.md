@@ -5,13 +5,13 @@ description: "Use when writing, changing or debugging a RustStream broker crate,
 
 # Writing a RustStream broker crate
 
-A broker crate depends on `ruststream = { version = "0.7", default-features = false }` and
-implements the core's traits over one client library. The contract is checked by the
-`conformance` suites, which run in process and against a real server. The hub of the contract is
-the [`Broker` trait on docs.rs](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html);
-`MemoryBroker` (`crates/memory` of the core) is the reference implementation, and
+A broker crate implements the core's traits over one client library. The contract is checked by
+the `conformance` suites, which run in process and against a real server. The route through it is
+the rustdoc of the [`Broker` trait on docs.rs](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html);
+this skill follows the same order and keeps the depth in its references. `MemoryBroker`
+(`crates/memory` of the core) is the reference implementation, and
 [`ruststream-nats`](https://docs.rs/ruststream-nats/latest/ruststream_nats/) is a worked crate over
-a real client. This guidance targets the 0.7 line; a broker crate's version tracks the core's
+a real client. This guidance targets the 0.8 line; a broker crate's version tracks the core's
 minor line.
 
 Depth:
@@ -21,38 +21,62 @@ Depth:
 
 ## The order of work
 
-1. **The lifecycle ladder.** `MyBroker::new(addrs)` is synchronous and does no I/O.
+1. **The crate and its dependencies.** The crate depends on the facade alone:
+   `ruststream = { version = "0.8", default-features = false, features = ["tokio"] }`. The runner
+   feature is part of the line; a crate whose client holds `Rc` or `RefCell` serves the embedded
+   runner instead (see below). A `testing = ["ruststream/testing"]` feature carries the in-process
+   mode, `asyncapi` forwards `ruststream/asyncapi`, and `conformance` is a dev-dependency:
+   `ruststream = { version = "0.8", features = ["conformance", "testing", "macros", "json"] }`.
+2. **The lifecycle.** `MyBroker::new(addrs)` is synchronous and does no I/O.
    `Broker::connect(self) -> Result<Connected, Error>` opens the client;
    `ConnectedBroker::shutdown(self) -> Result<Closed, Error>` tears it down and never blocks or
-   panics. Keep `tokio::runtime::Handle::current()` from `connect` in the connected form and spawn
-   the broker's own tasks (timers, reply dispatchers) through it.
-2. **Deliveries.** `Subscriber::stream(&mut self)` yields deliveries that implement
-   `IncomingMessage` (payload, headers, redelivery count) and `Settle`. `Settle::ack(self)` and
-   `Settle::nack(self, requeue)` consume the delivery; a transport without acks answers
-   `AckError::Unsupported`. Override `redelivery_count(&self) -> Option<u64>` where the transport
-   counts deliveries (the first delivery answers 1). The trait has no error type of its own.
-   A device broker whose deliveries wait in a channel or a socket returns a `ReadyHint` from
-   `Subscriber::ready_hint` (`may_be_ready` is `true` whenever the next poll could yield, the end
-   after a shutdown included), so the embedded app skips the poll of an idle subscription;
-   `harness::local_readiness` holds it to that.
+   panics. A handle that outlives the connection (a publisher made earlier, a clone) errors when
+   used after shutdown. Keep `tokio::runtime::Handle::current()` from `connect` in the connected
+   form and spawn the broker's own tasks (timers, reply dispatchers) through it.
 3. **Subscribing.** `Subscribe` on the connected form for `#[subscriber("name")]`, and a
    descriptor implementing `SubscriptionSource<Connected>` for the broker's own options. Both
    declare `type Copies`: `AddressedCopies` (implement `RedeliveryAddressed` on the descriptor),
    `NamedCopies`, or `BrokerMoves`.
-4. **Publishing.** A policy type (configuration only) implements `PublishPolicy<Connected>`, whose
-   async `pair` builds the live `Publisher`. `DefaultPublish` on the connected form names the
-   policy replies and retry copies use. Per-message settings are `Publisher::Options`, adjusted
-   by a step trait over `PublishBuilder`.
-5. **Capabilities**, only where the transport has them: `BatchSubscriber` (offer it, assembled with
-   the core's `BufferedSubscriber` when the transport delivers one at a time),
-   `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`, `Partitioned`,
-   `Seekable` / `Seeker`, `Positioned`, `Carries`, `DescribeServer`.
-6. **The prelude**: `pub use ruststream::prelude::*;`, the crate's service-facing types, and the
-   policies under the uniform names `Publish`, `TransactionalPublish`, `Request`.
-7. **The in-process mode** under a `testing` feature: `InProcess` on the production broker,
-   `TestableBroker` on its connected form, `register_testable_broker!(MyBroker)`.
-8. **Conformance**, in process and live, then the author checklist at the end of the
-   [conformance overview](https://docs.rs/ruststream/latest/ruststream/conformance/index.html).
+4. **The delivery.** `Subscriber::stream(&mut self)` yields deliveries. A delivery implements
+   `IncomingMessage` (payload, headers, `partition_key`, `redelivery_count`, `decode_error`; no
+   `Send` supertrait) and `Settle: IncomingMessage` (`ack(self)`, `nack(self, requeue)`,
+   `supports_nack_after`, `nack_after`). A transport without acks answers
+   `AckError::Unsupported`. Override `redelivery_count(&self) -> Option<u64>` where the transport
+   counts deliveries (the first delivery answers 1). A device broker whose deliveries wait in a
+   channel or a socket returns a `ReadyHint` from `Subscriber::ready_hint`, and
+   `harness::local_readiness` holds it to that.
+5. **Publishing.** A policy type (configuration only) implements `PublishPolicy<Connected>`, whose
+   async `pair` builds the live `Publisher`; `Publisher: Clone`. `Publisher::Payload` is `Lend`
+   (the client only reads the bytes) or `Take` (the client keeps a `BytesMut`).
+   `Publisher::Options` holds the per-message settings, every field optional. `publish` returns
+   `PublishOutcome<'msg, Self::Error, Self::Payload>`: a refusal hands the unsent message back
+   with `PublishMessageError::with_message(error, msg)`, or a bare error converts with `.into()` or
+   `?`. `DefaultPublish` on the connected form names the policy replies and retry copies use.
+6. **Batches**, where the transport has them. `BatchSubscriber::Batch: BatchSlot` (a `Vec` of
+   deliveries is one). `batches(size)` returns a `BatchStream` whose `poll_fill` fills the slot the
+   runtime lends, and the runtime takes each batch out with `BatchSlot::hand_over`. A transport
+   that delivers one message at a time assembles batches with the core's `BufferedSubscriber`.
+7. **Capabilities**, only where the transport has them: `TransactionalPublisher`,
+   `OwnedTransactions`, `RequestReply`, `Partitioned`, `Seekable` / `Seeker`, `Positioned`,
+   `Carries` / `CarriesBatch`. Each passes its `conformance::capabilities` suite.
+8. **`DescribeServer` and bindings.** The server spec is a coordinate, built with
+   `ServerSpec::from_url`; channel, operation and message bindings ride the descriptor.
+9. **The prelude and the mount steps.** `pub use ruststream::prelude::*;`, the crate's
+   service-facing types, and the policies under the uniform names `Publish`,
+   `TransactionalPublish`, `Request`. The broker's settings in its own vocabulary are extension
+   traits over the mount chain: a trait on `SubscriberBuilder` for the settings that follow the
+   source, and a trait bounded on `IntoDeclared<Mk>` for a step written right after the handler.
+10. **The in-process mode** under a `testing` feature: `InProcess` on the production broker,
+    `TestableBroker` on its connected form, `register_testable_broker!(MyBroker)`.
+11. **Conformance**, in process and live: `harness::run_suite`, `harness::lifecycle`,
+    `lifecycle::refused_publish_returns_message` (with `Unsent::Returned` or `Unsent::Consumed`),
+    `lifecycle::shutdown_flushes`, `settlement::matches_in_process`, the retry, message-shape and
+    capability suites, then the author checklist at the end of the
+    [conformance overview](https://docs.rs/ruststream/latest/ruststream/conformance/index.html).
+12. **Benchmarks and the zero-cost floor.** A delivery and a publish allocate nothing the client
+    does not, make no `dyn` call, take no extra atomic and copy no payload per message, whatever
+    the payload size. The crate's benchmarks count instructions and allocations per message
+    against the raw client, built with fat LTO and without `testing`.
 
 ## Rules that are easy to get wrong
 
@@ -139,3 +163,7 @@ which drops the userinfo. The generated AsyncAPI document is published.
 | a `pub use` in the prelude that shadows a core name | rename it; an explicit re-export silently beats the glob |
 | an emulated capability | implement only what the transport supports |
 | a hand-written test double broker | the production broker's `InProcess` mode |
+| `default-features = false` with no runner feature | `features = ["tokio"]` (or the embedded runner) |
+| `publish` that drops the message on a refusal | `PublishMessageError::with_message(error, msg)`; `lifecycle::refused_publish_returns_message` holds it |
+| `impl IncomingMessage` with an `ack` in it | `ack` and `nack` live in `impl Settle` |
+| a batch type that only has a `drain` | implement `BatchSlot::with_capacity` and `hand_over` |

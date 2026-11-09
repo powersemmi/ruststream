@@ -22,7 +22,7 @@ A payload in another format is a decode failure, settled by the subscriber's [fa
 The example builds with CBOR as the only codec:
 
 ```text
-cargo test --example codec_cbor --no-default-features --features testing,macros,memory,cbor
+cargo test --example codec_cbor --no-default-features --features tokio,testing,macros,memory,cbor
 ```
 
 <Tabs groupId="api">

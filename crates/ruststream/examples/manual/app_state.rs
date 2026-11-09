@@ -2,7 +2,7 @@
 //! its `FromRef` impls, and the handler resolves `State<T>` itself. The test body is the same.
 //!
 //! ```text
-//! cargo test --example manual_app_state --no-default-features --features testing,memory,json
+//! cargo test --example manual_app_state --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the test that uses it exists only in the test build.

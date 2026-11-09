@@ -6,7 +6,9 @@ description: "Use when changing the RustStream core repository itself (powersemm
 # Contributing to the RustStream core
 
 The core is a workspace of crates under `crates/`, released in lockstep: `ruststream-core` (the
-contract), `ruststream-runtime`, `ruststream-memory`, `ruststream-asyncapi`,
+contract), `ruststream-runtime` (the runner-neutral app, router and dispatch) with one crate per
+runner (`ruststream-runtime-tokio`, `ruststream-runtime-compio`, `ruststream-runtime-embassy`),
+`ruststream-memory`, `ruststream-asyncapi`,
 `ruststream-observability`, `ruststream-testing`, `ruststream-conformance`, `ruststream-cli` and
 the proc-macro crate `ruststream-macros`. `ruststream`, at the root, is the facade that re-exports
 them under the public paths; services and broker crates depend on it alone. The core is
@@ -74,8 +76,9 @@ impl Subject {
 - **Broker-agnostic.** No broker client and no broker-specific default in the core. A field with no
   sane default gets no `Default`. Settlement is honest: every settling site accepts
   `AckError::Unsupported`.
-- **Async.** Native `async fn` in traits (RPITIT), `+ Send` on the returned future, no forced object
-  safety; erasure lives in `runtime`. Destructors never panic or block.
+- **Async.** Native `async fn` in traits (RPITIT), one trait per concept for every runner: the
+  returned future is `MaybeSend`, which asks for `Send` when `tokio` or `compio` is in the build
+  and for nothing on embassy alone; no forced object safety, erasure lives in `runtime`. Destructors never panic or block.
 - **Compile-time first.** A misuse is rejected by the compiler where the design allows: an enum
   instead of sibling `bool` / `Option` fields, a newtype or `NonZero*` instead of adjacent
   same-typed parameters, a consuming `self` transition or a phase type instead of a "call X before

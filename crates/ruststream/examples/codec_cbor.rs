@@ -2,7 +2,7 @@
 //! feature, the command below builds it without the other formats.
 //!
 //! ```text
-//! cargo test --example codec_cbor --no-default-features --features testing,macros,memory,cbor
+//! cargo test --example codec_cbor --no-default-features --features tokio,testing,macros,memory,cbor
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

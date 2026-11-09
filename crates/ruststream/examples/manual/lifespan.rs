@@ -10,7 +10,7 @@
 //! only its `connect` / `close` calls would differ.
 //!
 //! ```text
-//! cargo run --example manual_lifespan --no-default-features --features memory,json
+//! cargo run --example manual_lifespan --no-default-features --features memory,json,tokio
 //! ```
 
 use std::error::Error;

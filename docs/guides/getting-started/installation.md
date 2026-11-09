@@ -28,11 +28,16 @@ crate's own `rust-version` field states the exact minimum version.
 
 ## Features
 
-The core traits, the `RustStream` application object, the `Router`, middleware and message dispatch
-are always compiled. Everything else is an additive feature you enable when you need it.
+The core traits, the `Router`, middleware and message dispatch are always compiled. The application
+object comes with a runner feature, and everything else is an additive feature you enable when you
+need it.
 
 | Feature | Pulls in | What it gives you |
 |---|---|---|
+| `tokio` *(default)* | `tokio` | the tokio runner: `RustStream`, the application object that runs on tokio |
+| `compio` | `compio` | the compio runner, one runtime per core, on io_uring where the kernel has it |
+| `embassy` | `embassy` | the embassy runner for firmware: `EmbeddedApp` |
+| `tracing`, `log`, `defmt` | the logging crate of the same name | the loggers an app selects with `.logger(..)`; the tokio runner turns `tracing` on |
 | `json` *(default)* | `serde_json` | `JsonCodec` |
 | `msgpack` | `rmp-serde` | `MsgpackCodec` |
 | `cbor` | `ciborium` | `CborCodec` |

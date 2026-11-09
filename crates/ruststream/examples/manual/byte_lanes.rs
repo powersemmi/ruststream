@@ -2,7 +2,7 @@
 //! the derives write, spelled out.
 //!
 //! ```text
-//! cargo test --example manual_byte_lanes --no-default-features --features testing,memory
+//! cargo test --example manual_byte_lanes --no-default-features --features tokio,testing,memory
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

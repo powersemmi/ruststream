@@ -3,7 +3,7 @@
 //! setters.
 //!
 //! ```text
-//! cargo test --example manual_destinations --no-default-features --features testing,memory,json
+//! cargo test --example manual_destinations --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the tests that use it exist only in the test build.

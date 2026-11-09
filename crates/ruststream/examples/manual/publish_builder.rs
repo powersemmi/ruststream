@@ -2,7 +2,7 @@
 //! builder is the same in both forms: the slot's entry offers it.
 //!
 //! ```text
-//! cargo test --example manual_publish_builder --no-default-features --features testing,memory,json
+//! cargo test --example manual_publish_builder --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the tests that use it exist only in the test build.

@@ -4,7 +4,7 @@
 //! constructor.
 //!
 //! ```text
-//! cargo run --example manual_http_outbox --no-default-features --features memory,json
+//! cargo run --example manual_http_outbox --no-default-features --features memory,json,tokio
 //! ```
 //!
 //! Place an order and watch the subscriber pick it up:

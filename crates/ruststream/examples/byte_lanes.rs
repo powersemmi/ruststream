@@ -2,7 +2,7 @@
 //! reply leaves as the bytes it returns, with no codec on either side. The scenario is a test.
 //!
 //! ```text
-//! cargo test --example byte_lanes --no-default-features --features testing,macros,memory
+//! cargo test --example byte_lanes --no-default-features --features tokio,testing,macros,memory
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

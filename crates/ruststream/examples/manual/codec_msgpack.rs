@@ -1,7 +1,7 @@
 //! The service of `examples/codec_msgpack.rs` written without the `macros` feature.
 //!
 //! ```text
-//! cargo test --example manual_codec_msgpack --no-default-features --features testing,memory,msgpack
+//! cargo test --example manual_codec_msgpack --no-default-features --features tokio,testing,memory,msgpack
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.

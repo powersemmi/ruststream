@@ -51,6 +51,7 @@ const sidebars: SidebarsConfig = {
         'guides/build-a-service/asyncapi',
         'guides/build-a-service/http',
         'guides/build-a-service/networked-broker',
+        'guides/build-a-service/device',
       ],
     },
     {
@@ -60,6 +61,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'brokers/index',
         'brokers/memory',
+        'brokers/local-memory',
         ...brokerSites.map(([label, repo]) => ({
           type: 'link' as const,
           label,

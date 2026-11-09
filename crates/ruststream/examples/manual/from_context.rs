@@ -3,7 +3,7 @@
 //! attribute would.
 //!
 //! ```text
-//! cargo test --example manual_from_context --no-default-features --features testing,memory,json
+//! cargo test --example manual_from_context --no-default-features --features testing,memory,json,tokio
 //! ```
 
 // A plain build compiles the service; the test that uses it exists only in the test build.

@@ -8,7 +8,7 @@ description: "Use when a RustStream service is built without the `macros` featur
 The attribute macros are sugar over public runtime API: a service without the `macros` feature
 loses no capability, only the attribute surface. The handler body is a named type implementing
 `Handle`, a registration is `subscriber(source, body)` plus settings and `.build()`, and `main`
-is yours. This guidance targets ruststream 0.7. For everything the two styles share (outcomes,
+is yours. This guidance targets ruststream 0.8. For everything the two styles share (outcomes,
 the mount chain, publish policies, codecs, state) use the `ruststream` skill; for tests the
 `ruststream-testing` skill.
 

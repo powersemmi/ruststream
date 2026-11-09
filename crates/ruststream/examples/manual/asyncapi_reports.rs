@@ -203,6 +203,7 @@ impl Handle<Message<ShipmentMeta, Shipment>> for Ship {
 }
 // --8<-- [end:headers]
 
+// --8<-- [start:retry]
 /// A payment to charge.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Payment {
@@ -223,7 +224,6 @@ impl Handle<Payment> for Charge {
     }
 }
 
-// --8<-- [start:retry]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(

@@ -10,7 +10,7 @@ import TabItem from '@theme/TabItem';
 处理器、路由器、编解码器和中间件都不依赖 Broker。把服务换到另一个 Broker，你只需要改 `with_broker`
 里的一行。
 
-框架自带一个完整的内存 Broker，用于单个应用内部的队列。基于外部服务的 Broker 是独立的 crate，加进
+框架自带两个完整的内存 Broker，用于单个应用内部的队列：一个用于 tokio 运行时，一个用于 embassy 运行时。基于外部服务的 Broker 是独立的 crate，加进
 依赖即可使用。
 
 每个 Broker crate 都有自己的文档站点，链接在下表的“文档”列和 **Broker** 菜单里。
@@ -18,6 +18,7 @@ import TabItem from '@theme/TabItem';
 | Broker | Crate | 传输 | 文档 |
 |---|---|---|---|
 | [内存](memory.md) | `ruststream`（feature `memory`） | 进程内队列，无需外部服务 | 本站 |
+| [本地内存](local-memory.md) | `ruststream`（feature `memory` 与 `embassy`） | 单个固件内的进程内队列，有堆或无堆均可 | 本站 |
 | NATS | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS 与 JetStream | [powersemmi.github.io/ruststream-nats](https://powersemmi.github.io/ruststream-nats/) |
 | Redis | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams（单机、集群、哨兵） | [powersemmi.github.io/ruststream-fred](https://powersemmi.github.io/ruststream-fred/) |
 | RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1（队列、交换机、发布者确认、direct reply-to） | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |

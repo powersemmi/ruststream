@@ -8,7 +8,7 @@
 //! Note the feature list: no codec is enabled, and none is needed.
 //!
 //! ```text
-//! cargo test --example protobuf --no-default-features --features testing,macros,memory
+//! cargo test --example protobuf --no-default-features --features tokio,testing,macros,memory
 //! ```
 
 // A plain build compiles the services; the tests that use them exist only in the test build.
