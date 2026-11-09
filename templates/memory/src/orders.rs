@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 /// An order placed on the `orders` channel.
 ///
 /// `JsonSchema` lets `asyncapi gen` emit this payload's schema into the generated document.
-#[derive(Debug, Deserialize, JsonSchema)]
+/// `Serialize` and `Outgoing` are what a test needs to place an order through the broker.
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema, Outgoing)]
+#[outgoing(name = "orders")]
 pub struct Order {
     pub id: u64,
     pub item: String,
@@ -22,7 +24,7 @@ pub struct Order {
 /// The reply published to `confirmations` for each order.
 ///
 /// `Outgoing` is what declares it a message this service sends, and `name` is where it goes.
-#[derive(Debug, Serialize, JsonSchema, Outgoing)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema, Outgoing)]
 #[outgoing(name = "confirmations")]
 pub struct Confirmation {
     pub id: u64,

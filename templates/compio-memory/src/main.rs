@@ -31,3 +31,57 @@ fn main() -> ExitCode {
     tracing_subscriber::fmt().init();
     run_main(None, app)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use compio::runtime::Runtime;
+    use ruststream::runtime::HandlerOutcome;
+    use ruststream::testing::compio::TestApp;
+
+    use super::{Bus, app};
+    use crate::orders::{Confirmation, Order};
+
+    /// The harness runs the app as core 0 of 1 on the test's own runtime, so the test is a plain
+    /// `#[test]` that blocks on one future.
+    #[test]
+    fn a_placed_order_is_handled_and_acknowledged() -> Result<(), Box<dyn Error>> {
+        Runtime::new()?.block_on(async {
+            let tb = TestApp::start(app()).await?;
+            let order = Order { id: 7, quantity: 2 };
+            tb.broker::<Bus>().message(&order).publish().await?;
+
+            tb.broker::<Bus>()
+                .subscriber("orders")
+                .assert_called(2)
+                .with(&order)
+                .settled(HandlerOutcome::ack());
+            tb.shutdown().await?;
+            Ok(())
+        })
+    }
+
+    /// The reply is recorded on its destination, where the test reads it back.
+    #[test]
+    fn an_order_is_confirmed_on_the_confirmations_channel() -> Result<(), Box<dyn Error>> {
+        Runtime::new()?.block_on(async {
+            let tb = TestApp::start(app()).await?;
+            tb.broker::<Bus>()
+                .message(&Order { id: 7, quantity: 0 })
+                .publish()
+                .await?;
+
+            tb.broker::<Bus>()
+                .published::<Confirmation>("confirmations")
+                .assert_called_once()
+                .with(&Confirmation {
+                    id: 7,
+                    accepted: false,
+                    core: 0,
+                });
+            tb.shutdown().await?;
+            Ok(())
+        })
+    }
+}
