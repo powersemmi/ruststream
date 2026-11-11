@@ -56,7 +56,7 @@ broker is an independent crate held to one contract. The core is 100% safe Rust.
 
 ```toml
 [dependencies]
-ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json", "logging"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -84,6 +84,7 @@ page lists them.
 ## Write a service
 
 ```rust
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -101,12 +102,14 @@ async fn handle(order: &Order) -> HandlerOutcome {
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| b.include(handle))
 }
 ```
 
-`#[ruststream::app]` generates `main`, so there is no runtime boilerplate. The handler needs only
-`Deserialize`; the other derives are for the test below.
+`#[ruststream::app]` generates `main`, so there is no runtime boilerplate. `.logger(TracingLogger)`
+sends the framework's log to `tracing`, and the `logging` feature prints it on the terminal. The
+handler needs only `Deserialize`; the other derives are for the test below.
 
 ## Run it
 
@@ -114,6 +117,19 @@ fn app() -> RustStream {
 ruststream run                 # start the service (or: cargo run -- run)
 ruststream asyncapi gen        # print the AsyncAPI document
 ```
+
+The service logs its startup and runs until you press <kbd>Ctrl</kbd>+<kbd>C</kbd> (the timestamp
+that opens each line is left out here):
+
+```text
+INFO ruststream::lifecycle starting service service=orders version=0.1.0 brokers=1 subscribers=1
+INFO ruststream::lifecycle broker connected broker="ruststream_memory::broker::MemoryBroker"
+INFO ruststream::dispatch subscriber started subscriber=orders input="orders::Order"
+INFO ruststream::lifecycle service running subscribers=1
+```
+
+The in-memory broker carries messages inside the process: the handler prints `got order` for an
+order the service itself publishes to `orders`, and the test below places one.
 
 `asyncapi gen` needs the `asyncapi` feature of `ruststream`.
 

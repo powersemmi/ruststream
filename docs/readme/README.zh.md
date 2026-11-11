@@ -47,7 +47,7 @@ RustStream 通过一小组泛型 trait，把你的服务接入消息 Broker。�
 
 ```toml
 [dependencies]
-ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json", "logging"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -71,6 +71,7 @@ Cursor 和 Codex 从 [`.agents/skills/`](https://github.com/powersemmi/ruststrea
 ## 编写服务
 
 ```rust
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -88,11 +89,12 @@ async fn handle(order: &Order) -> HandlerOutcome {
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| b.include(handle))
 }
 ```
 
-`#[ruststream::app]` 会生成 `main`，所以不需要运行时样板代码。处理器只需要 `Deserialize`；其余的 derive 供下面的测试使用。
+`#[ruststream::app]` 会生成 `main`，所以不需要运行时样板代码。`.logger(TracingLogger)` 把框架的日志交给 `tracing`，`logging` feature 再把它打印到终端。处理器只需要 `Deserialize`；其余的 derive 供下面的测试使用。
 
 ## 运行
 
@@ -100,6 +102,17 @@ fn app() -> RustStream {
 ruststream run                 # start the service (or: cargo run -- run)
 ruststream asyncapi gen        # print the AsyncAPI document
 ```
+
+服务启动时会打印几行日志，然后一直运行，直到你按下 <kbd>Ctrl</kbd>+<kbd>C</kbd>。下面省略了每行开头的时间戳：
+
+```text
+INFO ruststream::lifecycle starting service service=orders version=0.1.0 brokers=1 subscribers=1
+INFO ruststream::lifecycle broker connected broker="ruststream_memory::broker::MemoryBroker"
+INFO ruststream::dispatch subscriber started subscriber=orders input="orders::Order"
+INFO ruststream::lifecycle service running subscribers=1
+```
+
+内存 Broker 在进程内部传递消息：服务自己向 `orders` 发布订单时，处理器会打印 `got order`；下面的测试就发布了这样一个订单。
 
 `asyncapi gen` 需要启用 `ruststream` 的 `asyncapi` feature。
 
