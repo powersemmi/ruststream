@@ -9,14 +9,14 @@ use std::process::ExitCode;
 use ruststream_observability::logging;
 use ruststream_runtime_compio::{App, Cores};
 
-use crate::{CliError, Command, generate_spec, parse, report};
+use crate::{CliError, Command, generate_spec, parse, print_usage, report};
 
 /// Runs the generated CLI for `build`'s compio service on `cores` cores (every core the process
 /// may use when `None`), returning a process exit code.
 ///
 /// Called by the `#[ruststream::app(runtime = compio)]` expansion; you rarely call it directly.
-/// It reads the process arguments, dispatches to `run` or `asyncapi gen`, and prints any error to
-/// stderr.
+/// It reads the process arguments, dispatches to `run`, `asyncapi gen` or `help`, and prints any
+/// error to stderr.
 ///
 /// # Examples
 ///
@@ -71,6 +71,10 @@ where
             Ok(())
         }
         Command::AsyncApiGen { out, yaml } => generate_spec(&build(), out.as_deref(), yaml),
+        Command::Help => {
+            print_usage();
+            Ok(())
+        }
     }
 }
 
@@ -128,6 +132,24 @@ mod tests {
             code_of(execute(&args(&["asyncapi", "lint"]), one_core(), demo_app)),
             format!("{:?}", ExitCode::FAILURE),
         );
+    }
+
+    #[test]
+    fn help_succeeds_without_building_the_service() {
+        for flag in ["help", "--help", "-h"] {
+            let built = Arc::new(AtomicBool::new(false));
+            let seen = Arc::clone(&built);
+            let outcome = execute(&args(&[flag]), one_core(), move || {
+                seen.store(true, Ordering::Relaxed);
+                demo_app()
+            });
+            assert_eq!(
+                code_of(outcome),
+                format!("{:?}", ExitCode::SUCCESS),
+                "{flag}"
+            );
+            assert!(!built.load(Ordering::Relaxed), "`{flag}` builds no service");
+        }
     }
 
     /// A failing startup is what makes the `run` arm observable without a termination signal.

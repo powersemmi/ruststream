@@ -23,9 +23,13 @@ pub mod compio {
     pub use crate::compio_entry::run_main;
 }
 
+use std::env;
+use std::ffi::OsStr;
+use std::fmt::{self, Display, Formatter};
 #[cfg(feature = "asyncapi")]
 use std::fs;
 use std::io;
+use std::path::Path;
 use std::process::ExitCode;
 
 use thiserror::Error;
@@ -58,7 +62,7 @@ pub enum CliError {
     #[error("a compio service needs at least one core")]
     NoCores,
     /// The first argument was not a recognized command.
-    #[error("unknown command {0:?}; expected `run` or `asyncapi gen`")]
+    #[error("unknown command {0:?}; expected `run`, `asyncapi gen` or `help`")]
     UnknownCommand(String),
     /// `asyncapi` was followed by something other than `gen`.
     #[error("unknown `asyncapi` subcommand {0:?}; expected `gen`")]
@@ -67,7 +71,7 @@ pub enum CliError {
     #[error("unknown option {0:?} for `asyncapi gen`")]
     UnknownOption(String),
     /// `asyncapi gen` was requested but the crate does not enable the `asyncapi` feature.
-    #[error("`asyncapi gen` requires the crate to enable ruststream's `asyncapi` feature")]
+    #[error("`asyncapi gen` {ASYNCAPI_REQUIREMENT}")]
     AsyncApiDisabled,
     /// The generated spec could not be written to the requested file.
     #[error("could not write the spec to {path}: {source}")]
@@ -88,6 +92,9 @@ pub enum CliError {
     SerializeYaml(#[source] serde_norway::Error),
 }
 
+/// What `asyncapi gen` needs, in the words of both the error and the usage text.
+const ASYNCAPI_REQUIREMENT: &str = "requires the crate to enable ruststream's `asyncapi` feature";
+
 /// The command parsed from the process arguments.
 #[doc(hidden)]
 #[derive(Debug, PartialEq, Eq)]
@@ -101,6 +108,65 @@ pub enum Command {
         /// Emit YAML instead of JSON.
         yaml: bool,
     },
+    /// Print the usage text.
+    Help,
+}
+
+/// The usage text of a service binary: the commands its generated `main` understands.
+#[derive(Debug, Clone, Copy)]
+struct Usage<'program> {
+    program: &'program str,
+}
+
+impl<'program> Usage<'program> {
+    /// The usage of the binary named `program`.
+    const fn new(program: &'program str) -> Self {
+        Self { program }
+    }
+}
+
+impl Display for Usage<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Usage: {} [COMMAND]", self.program)?;
+        writeln!(f)?;
+        writeln!(f, "Commands:")?;
+        writeln!(
+            f,
+            "  run                      Run the service until interrupted (the default)"
+        )?;
+        #[cfg(feature = "asyncapi")]
+        writeln!(f, "  asyncapi gen [OPTIONS]   Print the AsyncAPI document")?;
+        #[cfg(not(feature = "asyncapi"))]
+        writeln!(
+            f,
+            "  asyncapi gen [OPTIONS]   Print the AsyncAPI document; {ASYNCAPI_REQUIREMENT}"
+        )?;
+        writeln!(
+            f,
+            "  help                     Print this help (also -h, --help)"
+        )?;
+        writeln!(f)?;
+        writeln!(f, "Options of asyncapi gen:")?;
+        writeln!(
+            f,
+            "  -o, --out <file>   Write the document to <file> instead of stdout"
+        )?;
+        writeln!(f, "      --yaml         Print YAML instead of JSON")
+    }
+}
+
+/// Prints the usage text of the running binary to stdout.
+#[doc(hidden)]
+pub fn print_usage() {
+    let program = env::args_os().next();
+    print!("{}", Usage::new(program_name(program.as_deref())));
+}
+
+/// The name the usage text gives the binary: the file name of the path it was started by.
+fn program_name(arg0: Option<&OsStr>) -> &str {
+    arg0.and_then(|path| Path::new(path).file_name())
+        .and_then(OsStr::to_str)
+        .unwrap_or("service")
 }
 
 /// Maps a dispatch outcome onto the process exit code, printing the error to stderr. Split from
@@ -121,6 +187,7 @@ pub fn report(outcome: Result<(), CliError>) -> ExitCode {
 pub fn parse(args: &[String]) -> Result<Command, CliError> {
     match args.first().map(String::as_str) {
         None | Some("run") => Ok(Command::Run),
+        Some("help" | "--help" | "-h") => Ok(Command::Help),
         Some("asyncapi") => parse_asyncapi(&args[1..]),
         Some(other) => Err(CliError::UnknownCommand(other.to_owned())),
     }
@@ -179,6 +246,7 @@ mod tests {
     use std::collections::BTreeMap;
     #[cfg(feature = "asyncapi")]
     use std::env;
+    use std::ffi::OsStr;
     #[cfg(feature = "asyncapi")]
     use std::fs;
     #[cfg(feature = "asyncapi")]
@@ -188,7 +256,7 @@ mod tests {
     use ruststream_core::ServerSpec;
     use ruststream_runtime::{AppInfo, HandlerMetadata};
 
-    use super::{CliError, Command, Described, generate_spec, parse, report};
+    use super::{CliError, Command, Described, Usage, generate_spec, parse, program_name, report};
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| (*s).to_owned()).collect()
@@ -227,6 +295,68 @@ mod tests {
                 yaml: false,
             }
         );
+    }
+
+    #[test]
+    fn help_and_its_flags_parse_to_help() {
+        for flag in ["help", "--help", "-h"] {
+            assert_eq!(parse(&args(&[flag])).unwrap(), Command::Help, "{flag}");
+        }
+    }
+
+    #[test]
+    fn the_unknown_command_error_names_every_command() {
+        assert_eq!(
+            CliError::UnknownCommand("--version".to_owned()).to_string(),
+            "unknown command \"--version\"; expected `run`, `asyncapi gen` or `help`",
+        );
+    }
+
+    #[cfg(feature = "asyncapi")]
+    #[test]
+    fn the_usage_lists_every_command() {
+        assert_eq!(
+            Usage::new("orders").to_string(),
+            "\
+Usage: orders [COMMAND]
+
+Commands:
+  run                      Run the service until interrupted (the default)
+  asyncapi gen [OPTIONS]   Print the AsyncAPI document
+  help                     Print this help (also -h, --help)
+
+Options of asyncapi gen:
+  -o, --out <file>   Write the document to <file> instead of stdout
+      --yaml         Print YAML instead of JSON
+",
+        );
+    }
+
+    #[cfg(not(feature = "asyncapi"))]
+    #[test]
+    fn the_usage_names_the_feature_asyncapi_gen_needs() {
+        assert_eq!(
+            Usage::new("orders").to_string(),
+            "\
+Usage: orders [COMMAND]
+
+Commands:
+  run                      Run the service until interrupted (the default)
+  asyncapi gen [OPTIONS]   Print the AsyncAPI document; requires the crate to enable ruststream's `asyncapi` feature
+  help                     Print this help (also -h, --help)
+
+Options of asyncapi gen:
+  -o, --out <file>   Write the document to <file> instead of stdout
+      --yaml         Print YAML instead of JSON
+",
+        );
+    }
+
+    #[test]
+    fn the_program_is_named_by_the_file_name_of_its_path() {
+        assert_eq!(program_name(Some(OsStr::new("/srv/bin/orders"))), "orders");
+        assert_eq!(program_name(Some(OsStr::new("orders"))), "orders");
+        assert_eq!(program_name(None), "service");
     }
 
     #[test]

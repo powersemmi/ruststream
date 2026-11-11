@@ -42,7 +42,7 @@ A handler reads the core it runs on with the `Ctx<Core>` extractor (`Core::curre
 </Tabs>
 
 `cores = 4` runs four cores; without it the app runs on every core the process may use.
-The binary reads its first argument as a command, as on tokio: `run`, or no argument, runs the service until `SIGINT` or `SIGTERM`, and `asyncapi gen` prints the AsyncAPI document.
+The binary reads its first argument as a command, as on tokio: `run`, or no argument, runs the service until `SIGINT` or `SIGTERM`, `asyncapi gen` prints the AsyncAPI document, and `help` lists the commands.
 The manual tab writes the `main` the attribute generates, a call to [`run_main`](api:ruststream::runtime::compio::run_main) with the core count.
 
 ## Enabling it

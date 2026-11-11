@@ -5,6 +5,7 @@
 //!
 //! - `cargo run -- run` (or `ruststream run`) starts the service until interrupted.
 //! - `cargo run -- asyncapi gen` (or `ruststream asyncapi gen`) prints the AsyncAPI document.
+//! - `cargo run -- help` lists the commands the binary understands.
 
 mod orders;
 mod routes;

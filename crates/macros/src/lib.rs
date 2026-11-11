@@ -266,8 +266,8 @@ pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Place it on a synchronous, argument-free function that builds and returns an application -
 /// `impl App` (the recommended form, hiding the composed type parameters) or a concrete
 /// `RustStream<_>`. The expansion keeps the function and adds a `main` that hands it to
-/// `ruststream::runtime::cli::run_main`, producing a binary that understands the `run` and
-/// `asyncapi gen` commands with no hand-written runtime boilerplate.
+/// `ruststream::runtime::cli::run_main`, producing a binary that understands the `run`,
+/// `asyncapi gen` and `help` commands with no hand-written runtime boilerplate.
 ///
 /// ```ignore
 /// #[ruststream::app]
@@ -323,7 +323,7 @@ pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `runtime = compio` runs the app on one single-threaded runtime per core, and
 /// `cores = n` sizes it (omitted, every available core). The builder has the same shape as on
 /// tokio, and the expansion hands it to `ruststream::runtime::compio::run_main`, so the binary
-/// understands the same `run` and `asyncapi gen` commands. `cores` takes a number of at least
+/// understands the same `run`, `asyncapi gen` and `help` commands. `cores` takes a number of at least
 /// one; `flavor` and `worker_threads` belong to tokio and are refused here, as `cores` is on
 /// tokio.
 ///

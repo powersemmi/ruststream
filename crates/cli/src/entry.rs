@@ -12,7 +12,7 @@ use tokio::runtime::{Builder, Runtime};
 use ruststream_observability::logging;
 use ruststream_runtime_tokio::App;
 
-use crate::{CliError, Command, generate_spec, parse, report};
+use crate::{CliError, Command, generate_spec, parse, print_usage, report};
 
 /// The Tokio runtime the generated `main` runs the service on: the `flavor` and `worker_threads`
 /// arguments of [`#[ruststream::app]`](https://docs.rs/ruststream/latest/ruststream/attr.app.html), which mirror `#[tokio::main]`'s.
@@ -114,8 +114,8 @@ impl AppRuntime {
 /// Runs the generated CLI for `build`'s service, returning a process exit code.
 ///
 /// Called by the [`#[ruststream::app]`](https://docs.rs/ruststream/latest/ruststream/attr.app.html) expansion; you rarely call it directly.
-/// It reads the process arguments, dispatches to `run` or `asyncapi gen`, and prints any error to
-/// stderr.
+/// It reads the process arguments, dispatches to `run`, `asyncapi gen` or `help`, and prints any
+/// error to stderr.
 ///
 /// # Examples
 ///
@@ -191,6 +191,10 @@ where
             Ok(())
         }
         Command::AsyncApiGen { out, yaml } => generate_spec(&build(), out.as_deref(), yaml),
+        Command::Help => {
+            print_usage();
+            Ok(())
+        }
     }
 }
 
@@ -204,6 +208,8 @@ mod tests {
     #[cfg(feature = "asyncapi")]
     use std::process;
     use std::process::ExitCode;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use ruststream::memory::MemoryBroker;
     use ruststream_runtime_tokio::{App, AppInfo, RustStream, RustStreamError};
@@ -243,6 +249,24 @@ mod tests {
             code_of(execute_default(&args(&["asyncapi", "lint"]), demo_app)),
             format!("{:?}", ExitCode::FAILURE),
         );
+    }
+
+    #[test]
+    fn help_succeeds_without_building_the_service() {
+        for flag in ["help", "--help", "-h"] {
+            let built = Arc::new(AtomicBool::new(false));
+            let seen = Arc::clone(&built);
+            let outcome = execute_default(&args(&[flag]), move || {
+                seen.store(true, Ordering::Relaxed);
+                demo_app()
+            });
+            assert_eq!(
+                code_of(outcome),
+                format!("{:?}", ExitCode::SUCCESS),
+                "{flag}"
+            );
+            assert!(!built.load(Ordering::Relaxed), "`{flag}` builds no service");
+        }
     }
 
     /// The `run` arm builds its own runtime and drives the service to completion, so a plain

@@ -144,7 +144,7 @@ subscription's loop, a worker or a thread, fails the service. A body that awaits
 
 `#[tokio::main]` plus `app().run().await`. `run_until(future)` stops on a future you own;
 `start()` returns a running handle for hosting beside another server. The attribute's command
-line (`run`, `asyncapi gen`) is what the macro path adds.
+line (`run`, `asyncapi gen`, `help`) is what the macro path adds.
 
 ## Common mistakes
 

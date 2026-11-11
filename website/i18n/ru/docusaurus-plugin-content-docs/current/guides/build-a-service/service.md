@@ -65,7 +65,7 @@ Derive-макрос [`Outgoing`](api:ruststream::Outgoing) задаёт тему
 [`RustStream`](api:ruststream::runtime::RustStream) - это приложение. [`with_broker`](api:ruststream::runtime::RustStream::with_broker) регистрирует брокер и монтирует на нём подписчиков через `include`.
 Замыкание возвращает цепочку, которую открывает `include`. Каждый следующий подписчик добавляется в неё ещё одним вызовом `.include(..)`.
 Билдер только запоминает переданное: брокер подключается при запуске сервиса.
-Атрибут [`#[ruststream::app]`](../../components/application/app-macro.md) превращает билдер в `main` с командами `run` и `asyncapi gen`.
+Атрибут [`#[ruststream::app]`](../../components/application/app-macro.md) превращает билдер в `main` с командами `run`, `asyncapi gen` и `help`.
 В ручной форме этот `main` написан явно: [`run_main`](api:ruststream::runtime::cli::run_main) поверх билдера.
 
 <Tabs groupId="api">

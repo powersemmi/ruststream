@@ -20,7 +20,7 @@ The document needs the crate's `asyncapi` feature.
 ## The entry point
 
 `main.rs` builds the shop on the in-memory broker.
-[`#[ruststream::app]`](api:ruststream::app) gives the binary its commands: `run` starts the shop, `asyncapi gen` prints the document.
+[`#[ruststream::app]`](api:ruststream::app) gives the binary its commands: `run` starts the shop, `asyncapi gen` prints the document, `help` lists the commands.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
