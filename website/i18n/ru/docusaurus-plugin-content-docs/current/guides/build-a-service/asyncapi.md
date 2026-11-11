@@ -20,7 +20,7 @@ import TabItem from '@theme/TabItem';
 ## Точка входа
 
 `main.rs` собирает магазин на in-memory брокере.
-[`#[ruststream::app]`](api:ruststream::app) даёт исполняемому файлу команды: `run` запускает магазин, `asyncapi gen` печатает документ.
+[`#[ruststream::app]`](api:ruststream::app) даёт исполняемому файлу команды: `run` запускает магазин, `asyncapi gen` печатает документ, `help` перечисляет команды.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">

@@ -2,7 +2,7 @@
 //!
 //! An app crate exposes a builder function (`fn app() -> impl App`, or a concrete
 //! `RustStream<_>`) and marks it with the attribute macro, which expands to a `main` that calls
-//! [`run_main`]. That gives a zero-boilerplate binary which understands two commands:
+//! [`run_main`]. That gives a zero-boilerplate binary which understands three commands:
 //!
 //! - `run` (the default) builds the Tokio runtime the attribute names (a multi-threaded one
 //!   unless `flavor = "current_thread"` or `worker_threads = n` says otherwise, see
@@ -13,6 +13,8 @@
 //! - `asyncapi gen [-o <file>] [--yaml]` builds the [`AsyncAPI`](crate::asyncapi) document for
 //!   the service and writes it to stdout or a file. Requires the crate to enable the `asyncapi`
 //!   feature.
+//! - `help` (or `--help`, `-h`) prints these commands and their options to stdout and exits with
+//!   success, without building the service. Any other first argument is an error that names them.
 //!
 //! The standalone `ruststream` CLI drives these by shelling out to `cargo run -- <command>`, so the
 //! same dispatch serves both `cargo run` and `ruststream run`.

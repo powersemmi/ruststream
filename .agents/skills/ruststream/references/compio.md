@@ -16,8 +16,8 @@ without `cores` it runs on every core the process may use. Component pages:
   tokio. A body holding an `Rc` across an `.await` fails at `include`.
 - `Ctx(core): Ctx<Core>` (`ruststream::runtime::compio::Core`) tells a handler which core it runs on; `Core::current()` does the same outside a handler signature.
   `ruststream::runtime::compio::time::sleep` sleeps on the app's clock.
-- `RustStream::run`, `run_until` and `start` run it; the attribute's `main` understands `run` and
-  `asyncapi gen`. `ruststream::asyncapi::build_spec` takes a compio app.
+- `RustStream::run`, `run_until` and `start` run it; the attribute's `main` understands `run`,
+  `asyncapi gen` and `help`. `ruststream::asyncapi::build_spec` takes a compio app.
 - The runner reports nothing until the app selects a logger: `RustStream::new(info).logger(TracingLogger)`
   (`ruststream::diagnostics`; `LogLogger` with the `log` feature). The backend's level filter decides what shows.
 - The runner builds on compio 0.20.0-beta.1 and moves to 0.20 when it ships.

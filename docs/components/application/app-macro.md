@@ -18,6 +18,7 @@ The binary reads its first argument as a command, the same commands the [CLI](./
 `run`, or no argument, [runs](./running/run.md) the service until `SIGINT` or `SIGTERM`.
 `asyncapi gen` prints the AsyncAPI document; `-o <file>` writes it to a file and `--yaml` switches the format from JSON.
 `asyncapi gen` needs the crate's `asyncapi` feature.
+`help`, `--help` or `-h` prints the commands the binary understands and exits.
 With the `logging` feature, `run` installs the console logger first, unless the service installed a subscriber of its own.
 An error is printed to stderr and the process exits with a failure code.
 The attribute takes the runtime arguments of `#[tokio::main]`: `flavor = "current_thread"` and `worker_threads = n`.

@@ -15,8 +15,8 @@ use crate::{CliError, Command, generate_spec, parse, print_usage, report};
 /// may use when `None`), returning a process exit code.
 ///
 /// Called by the `#[ruststream::app(runtime = compio)]` expansion; you rarely call it directly.
-/// It reads the process arguments, dispatches to `run` or `asyncapi gen`, and prints any error to
-/// stderr.
+/// It reads the process arguments, dispatches to `run`, `asyncapi gen` or `help`, and prints any
+/// error to stderr.
 ///
 /// # Examples
 ///

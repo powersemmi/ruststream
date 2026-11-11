@@ -114,8 +114,8 @@ impl AppRuntime {
 /// Runs the generated CLI for `build`'s service, returning a process exit code.
 ///
 /// Called by the [`#[ruststream::app]`](https://docs.rs/ruststream/latest/ruststream/attr.app.html) expansion; you rarely call it directly.
-/// It reads the process arguments, dispatches to `run` or `asyncapi gen`, and prints any error to
-/// stderr.
+/// It reads the process arguments, dispatches to `run`, `asyncapi gen` or `help`, and prints any
+/// error to stderr.
 ///
 /// # Examples
 ///

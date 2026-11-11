@@ -104,7 +104,7 @@ fn app() -> impl App {
 ```
 
 `#[ruststream::app]` writes `main`: `cargo run -- run` starts the service and
-`cargo run -- asyncapi gen` prints its AsyncAPI document. On NATS the only change is the glob and
+`cargo run -- asyncapi gen` prints its AsyncAPI document (`cargo run -- help` lists the commands). On NATS the only change is the glob and
 the broker value: `use ruststream_nats::prelude::*;` and `NatsBroker::new("nats://localhost:4222")`.
 The handlers stay as they are.
 

@@ -20,7 +20,7 @@ import TabItem from '@theme/TabItem';
 ## 入口
 
 `main.rs` 在内存 Broker 上构建商店。
-[`#[ruststream::app]`](api:ruststream::app) 给二进制程序提供命令：`run` 启动商店，`asyncapi gen` 打印文档。
+[`#[ruststream::app]`](api:ruststream::app) 给二进制程序提供命令：`run` 启动商店，`asyncapi gen` 打印文档，`help` 列出全部命令。
 
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
