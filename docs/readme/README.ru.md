@@ -60,7 +60,7 @@ RustStream подключает ваш сервис к брокеру очере
 
 ```toml
 [dependencies]
-ruststream = { version = "0.8", features = ["macros", "memory", "json"] }
+ruststream = { version = "0.8", features = ["macros", "memory", "json", "logging"] }
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -88,6 +88,7 @@ Cursor и Codex читают их из
 ## Пример сервиса
 
 ```rust
+use ruststream::diagnostics::TracingLogger;
 use ruststream::memory::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -105,12 +106,14 @@ async fn handle(order: &Order) -> HandlerOutcome {
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .logger(TracingLogger)
         .with_broker(MemoryBroker::new(), |b| b.include(handle))
 }
 ```
 
-`#[ruststream::app]` генерирует `main`, поэтому код запуска рантайма писать не нужно. Обработчику
-достаточно `Deserialize`; остальные derive нужны для теста ниже.
+`#[ruststream::app]` генерирует `main`, поэтому код запуска рантайма писать не нужно.
+`.logger(TracingLogger)` направляет журнал фреймворка в `tracing`, а фича `logging` выводит его в
+терминал. Обработчику достаточно `Deserialize`; остальные derive нужны для теста ниже.
 
 ## Запуск
 
@@ -118,6 +121,19 @@ fn app() -> RustStream {
 ruststream run                 # start the service (or: cargo run -- run)
 ruststream asyncapi gen        # print the AsyncAPI document
 ```
+
+Сервис записывает в журнал свой запуск и работает, пока вы не нажмёте <kbd>Ctrl</kbd>+<kbd>C</kbd>.
+Отметка времени в начале каждой строки здесь опущена:
+
+```text
+INFO ruststream::lifecycle starting service service=orders version=0.1.0 brokers=1 subscribers=1
+INFO ruststream::lifecycle broker connected broker="ruststream_memory::broker::MemoryBroker"
+INFO ruststream::dispatch subscriber started subscriber=orders input="orders::Order"
+INFO ruststream::lifecycle service running subscribers=1
+```
+
+Брокер в памяти передаёт сообщения внутри процесса. Обработчик печатает `got order`, когда сам
+сервис публикует заказ в `orders`; тест ниже отправляет такой заказ.
 
 Команде `asyncapi gen` нужна фича `asyncapi` крейта `ruststream`.
 
